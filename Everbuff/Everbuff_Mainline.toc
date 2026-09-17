@@ -15,6 +15,7 @@ Segments.lua
 UI.lua
 Debug.lua
 Recording.lua
+Signal.lua
 # Raid-lead tools (Runs/Loot/Readiness) are DEFERRED — moved to future/, not loaded yet.
 # To be implemented in a future release; re-list them here when ready.
 Core.lua

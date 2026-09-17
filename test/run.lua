@@ -7,7 +7,7 @@ local ADDON_DIR = (arg and arg[1]) or (here .. "../Everbuff/")
 local M = dofile(here .. "wow_mock.lua")
 
 -- load the addon exactly as WoW would (shared ns, vararg = ADDON, ns), under a chosen flavor.
-local FILES = { "Logging.lua", "Segments.lua", "UI.lua", "Debug.lua", "Recording.lua", "Core.lua" }
+local FILES = { "Logging.lua", "Segments.lua", "UI.lua", "Debug.lua", "Recording.lua", "Signal.lua", "Core.lua" }
 local function loadAddon(flavor)
   M.reset()
   M.setFlavor(flavor or "mainline")
@@ -173,7 +173,11 @@ ok(nsc.isClassic, "detected Classic/SoD client")
 ok(not nsc.hasChallengeMode, "no Mythic+ challenge mode on Classic")
 ok(not nsc.hasDamageMeter, "no C_DamageMeter on Classic")
 ok(M.eventFrames["CHALLENGE_MODE_START"] == nil, "challenge-mode events NOT registered on Classic (would error live)")
-ok(M.eventFrames["ENCOUNTER_START"] == nil, "encounter events not registered anywhere — parsed from the log, not the addon")
+-- Encounter DATA still comes from the log only. The one sanctioned listener is the Signal (visual
+-- event channel), which uses ENCOUNTER_START as an on-screen video↔log sync ANCHOR — so exactly one
+-- frame (Signal's) may be registered; the Recorder itself must not duplicate log data.
+ok(M.eventFrames["ENCOUNTER_START"] ~= nil and #M.eventFrames["ENCOUNTER_START"] == 1,
+  "ENCOUNTER_START registered exactly once (Signal anchor only; data stays in the log)")
 
 M.world.acl = "0"; M.world.combat = false
 M.fireEvent("PLAYER_ENTERING_WORLD"); M.flushAfters()
@@ -196,6 +200,43 @@ ok(not has(cws, "ENCOUNTER"), "no encounter rows on Classic either")
 for _, tabName in ipairs({ "Recording" }) do
   ok((pcall(nsc.UI.Open, tabName)), "tab '" .. tabName .. "' builds on Classic")
 end
+
+-- ════════════════════════════════════════════════════════════════════════════════
+--  SIGNAL — the visual event channel (addon → desktop via the screen recording)
+-- ════════════════════════════════════════════════════════════════════════════════
+section("visual event channel (Signal)")
+local nss = loadAddon("mainline")
+M.fireEvent("ADDON_LOADED", "Everbuff"); M.flushAfters()
+ok(nss.Signal ~= nil, "Signal module loads")
+-- direct emit: encoding invariants
+local s1 = nss.Signal.Emit(2, 7) -- QUEST_ACCEPT payload 7
+eq(s1.etype, 2, "etype encodes")
+eq(s1.payload, 7, "payload encodes")
+eq(s1.check, (s1.etype + s1.seq + s1.payload) % 16, "checksum = (type+seq+payload) % 16")
+eq(#s1.pattern, 10, "10 cells")
+eq(s1.pattern[1], 2, "sentinel cell 1 = magenta")
+eq(s1.pattern[2], 3, "sentinel cell 2 = cyan")
+-- nibble → two bit-pairs, high first
+eq(s1.pattern[3] * 4 + s1.pattern[4], s1.etype, "type cells decode back")
+eq(s1.pattern[5] * 4 + s1.pattern[6], s1.seq, "seq cells decode back")
+eq(s1.pattern[7] * 4 + s1.pattern[8], s1.payload, "payload cells decode back")
+eq(s1.pattern[9] * 4 + s1.pattern[10], s1.check, "check cells decode back")
+-- seq advances per emit (dedupe key for the decoder)
+local s2 = nss.Signal.Emit(2, 7)
+eq((s1.seq + 1) % 16, s2.seq, "sequence increments")
+-- game events drive it
+M.fireEvent("QUEST_ACCEPTED", 12, 4523)
+eq(nss.Signal.last.etype, 2, "QUEST_ACCEPTED → type 2")
+eq(nss.Signal.last.payload, 4523 % 16, "quest id folded into payload")
+M.fireEvent("QUEST_TURNED_IN", 4523, 450, 90)
+eq(nss.Signal.last.etype, 3, "QUEST_TURNED_IN → type 3")
+M.fireEvent("PLAYER_LEVEL_UP", 13)
+eq(nss.Signal.last.etype, 6, "PLAYER_LEVEL_UP → type 6")
+eq(nss.Signal.last.payload, 13, "level in payload")
+M.fireEvent("PLAYER_ENTERING_WORLD")
+eq(nss.Signal.last.etype, 1, "PLAYER_ENTERING_WORLD → type 1")
+ok((pcall(M.fireEvent, "ENCOUNTER_START", 409, "Gelihast", 0, 5)), "encounter anchor emits safely")
+eq(nss.Signal.last.etype, 4, "ENCOUNTER_START → type 4")
 
 -- ── result ────────────────────────────────────────────────────────────────────
 M.realprint(("\n%d passed, %d failed"):format(pass, fail))
