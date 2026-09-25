@@ -1,4 +1,4 @@
--- Everbuff · Debug.lua — the "put Claude in the loop" bridge (Tier 2 of the dev loop).
+-- Everbuff · Debug.lua - the "put Claude in the loop" bridge (Tier 2 of the dev loop).
 --
 -- Addons can't talk to a dev machine, but SavedVariables IS a file on disk. So we:
 --   1. capture every Lua error into EverbuffDB.debug.errors (survives to the SV file),
@@ -60,7 +60,7 @@ function D.snapshot()
     fakeGroup = D.active(),
     errorCount = #errbuf,
   }
-  ns.msg("diagnostics written — |cffffffff/reload|r then share SavedVariables\\Everbuff.lua")
+  ns.msg("diagnostics written - |cffffffff/reload|r then share SavedVariables\\Everbuff.lua")
 end
 
 -- slash: /rb debug [group|clear]
@@ -69,13 +69,13 @@ function D.command(rest)
   if rest == "group" then
     ns.DB.debug = ns.DB.debug or {}
     ns.DB.debug.fakeGroup = not ns.DB.debug.fakeGroup
-    ns.msg("fake group " .. (ns.DB.debug.fakeGroup and "|cff47c97eON|r — open Crew/Readiness" or "|cffe25a5aoff|r"))
+    ns.msg("fake group " .. (ns.DB.debug.fakeGroup and "|cff47c97eON|r - open Crew/Readiness" or "|cffe25a5aoff|r"))
     if ns.UI then ns.UI.onRosterUpdate() end
   elseif rest == "clear" then
     if ns.DB.debug then ns.DB.debug.errors = {}; errbuf = {} end
     ns.msg("debug errors cleared")
   else
     D.snapshot()
-    if #errbuf > 0 then ns.msg(("|cffe25a5a%d error(s) captured|r — included in the snapshot"):format(#errbuf)) end
+    if #errbuf > 0 then ns.msg(("|cffe25a5a%d error(s) captured|r - included in the snapshot"):format(#errbuf)) end
   end
 end

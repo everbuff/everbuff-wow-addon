@@ -1,0 +1,217 @@
+# Everbuff addon roadmap checklist
+
+One line per item from the audit backlog (`ADDON_BACKLOG.md`) plus everything added since. `[x]` is shipped
+and covered by the headless tests where testable; `[ ]` is open. Items marked *Later* belong to the raid
+vertical and are not in the current milestone. Blocked items name what they wait on.
+
+**Progress as of 2026-09-25:** 135 of 144 items shipped (94%), 9 open.
+
+| Area | Done | Open | Progress |
+| --- | ---: | ---: | ---: |
+| Capture layer (what the addon records) | 22 | 2 | 92% |
+| Correctness | 14 | 0 | 100% |
+| Performance and SavedVariables size | 7 | 2 | 78% |
+| Desktop and backend contract | 11 | 1 | 92% |
+| Fights tab | 17 | 0 | 100% |
+| Timeline tab (was Events) | 7 | 0 | 100% |
+| Loot tab | 8 | 0 | 100% |
+| Dungeons tab | 6 | 1 | 86% |
+| Deaths tab | 3 | 1 | 75% |
+| Journey and Economy tabs | 6 | 0 | 100% |
+| Settings | 8 | 0 | 100% |
+| UI framework and brand | 7 | 0 | 100% |
+| On-screen flag and toast (desktop OCR channel) | 9 | 1 | 90% |
+| New tabs and consolidation | 5 | 1 | 83% |
+| Infrastructure and docs | 5 | 0 | 100% |
+| **Total** | **135** | **9** | **94%** |
+
+---
+
+## Capture layer (what the addon records)
+
+- [x] Gold: balance, income and every sink (repairs, vendor, training, flights, auction house, mailbox, other)
+- [x] Vendor sales, auction proceeds and mailed gold counted as income, each separately
+- [x] XP: quest vs kill split, rested, session XP/hour and time-to-level estimate
+- [x] /played total and per-level played time
+- [x] Spec name per fight
+- [x] Classic talent split per fight (`31/20/0`)
+- [x] Retail / Midnight talent import string per fight (snapshot at the pull)
+- [x] Items used per fight (potions, food, bandages: casts that are not known spells) with scrubber landmarks and a persisted tally
+- [x] Group composition over time (roster join / leave markers)
+- [x] Party deaths per fight (who died, when)
+- [x] First-visit zones (FIRSTZONE milestone once)
+- [ ] Exploration percentage (no clean API on Classic; first-visit zones cover the leveling need)
+- [x] Durability aggregate, broken gear milestone, repair gold
+- [x] Durability lost across a death, stamped on the death row and shown in Deaths
+- [x] Profession tiers (structured snapshot + tier milestones)
+- [x] Collections: mounts, pets, toys
+- [x] Death context: location with coordinates, killer, corpse-run downtime
+- [x] Flight trips: route, duration, cost
+- [x] Reputation full standings snapshot
+- [x] Recipes learned
+- [x] Instance lockouts: saved instances with reset time and boss progress, shown above the Dungeons list
+- [x] Equipped item level upgrade milestones
+- [x] Mailbox: auction sales, auction wins and returns, items and gold from players
+- [ ] PvP: honor, battlegrounds, duels (*Later*)
+
+## Correctness
+
+- [x] Party loot no longer logged as yours (self-loot gate)
+- [x] Skill-up, discovery and craft parsing derived from the client's localized strings
+- [x] Loot quantity parsing (best effort on locales without `x%d`)
+- [x] Member drill-down reachable again (party names clickable)
+- [x] Aura cap keeps pull-time seeds
+- [x] Kill inference no longer over-counts (foe must be dead or gone)
+- [x] Loot source for nodes, chests, gathering and creatures with coordinates
+- [x] Duplicate DUNGEON event on reload removed
+- [x] Death killer from the combat log on Classic (the last thing that damaged you); current target stays the fallback on the beta client where the log is secret
+- [x] Secret Values: enemy GUIDs and names, aura fields, stats guarded everywhere (no crashes)
+- [x] In-combat aura hiding on the beta: instance-id identity, blind and vanish guards, backfill
+- [x] Scrubber-side repair so a hidden window never reads as a buff wipe-and-return
+- [x] Disconnect reminder never shows in combat and returns once safe (throttle not reset by combat)
+- [x] Header wording is honest: CAPTURING, never RECORDING (video state lives in the desktop)
+
+## Performance and SavedVariables size
+
+- [x] UNIT_AURA rate-limited per unit
+- [x] Enemy sweep decoupled to every 2 seconds
+- [x] Member aura timelines skipped in raids (groups over 6)
+- [ ] Per-fight aggregate aura cap for 25 and 40 player raids (*Later*)
+- [x] Scan entries reused across scans (allocation churn)
+- [x] Unit-to-member O(1) lookup
+- [x] Gear swap cap
+- [x] List rebuild tickers only run while the tab is visible
+- [ ] Incremental sanitize on combat exit (low value: entries are already plain)
+
+## Desktop and backend contract
+
+- [x] Globally unique fight uid, player and realm, session id on every fight
+- [x] Correlation keys: local and server start, high-resolution video anchor, encounter id, instance map and difficulty
+- [x] Per-fight schema version
+- [x] Enemy GUIDs persisted when plain
+- [x] Written contract: `ADDON_DATA_CONTRACT.md` with a contract test in the suite
+- [x] Source, Location name and Coordinates as separate numeric fields and separate columns everywhere
+- [x] Cap warning when fights or loot approach the storage cap
+- [x] Upload ack channel, addon side: `EverbuffAck` companion file applied on load, `/eb ack` and a Settings > Data paste box; desktop side still to build (write the file while WoW is closed, show the code after upload)
+- [x] Acked fights, loot rows and events are pruned; unacked data is never touched
+- [x] Finished sessions before the ack point are pruned; the live session never is
+- [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
+- [ ] Loot council data contract (*Later*)
+
+## Fights tab
+
+- [x] Filter tabs: All, Notable, Kills, Wipes, Deaths
+- [x] Text search over foe and zone
+- [x] Sortable columns
+- [x] Aggregate summary line
+- [x] Day separators in the list
+- [x] Run headers inside the Fights list (dungeon name, start time, bosses down, deaths) for fights that fall inside a run
+- [x] Row shows date, zone and coordinates
+- [x] Group size marker after the foe name for group fights
+- [x] Scrubber landmarks: death, gear swaps, enemies joining
+- [x] Combatant rows for you, your group and every monster with buff and debuff icons per moment
+- [x] Gear worn with icons and readable names
+- [x] Loot picked up during the fight and its looting window
+- [x] Party deaths in the list and on the combatant rows
+- [x] Delete a single fight (two-click confirm)
+- [x] Clear all fights (Settings, Data)
+- [x] Row hover tooltip: foes, exact start, length, result, zone and coords, group with who died, spec and talents
+- [x] Timeline button in the fight detail opens Home / Timeline filtered to the fight's span plus its looting window, with a banner to clear (loot for the fight is inline in the detail)
+
+## Timeline tab (was Events)
+
+- [x] Renamed Timeline
+- [x] Filter tabs: All, Journey, Combat, Travel, Loot
+- [x] Text search
+- [x] Location and Coords columns
+- [x] Day separators
+- [x] Rows click through to the fight or the Loot tab
+- [x] Row hover tooltip: full text, time, kind, place and coords, standing, crafted item, foe, downtime, guid
+
+## Loot tab
+
+- [x] Coin rows, running gold total and item count
+- [x] Dropped by, Location and Coords as separate columns
+- [x] Mailbox and auction rows with the mail's origin as source
+- [x] Text search
+- [x] By item view: one row per item with total quantity, drop count and most frequent source (toggle next to search)
+- [x] Item tooltip on hover and shift-click chat link (item id stored on every row)
+- [x] Quality floor (All, Uncommon+, Rare+, Epic+) and sortable Time, Item, Qty, Dropped by, Location columns
+- [x] Empty-state copy consistent with persistence
+
+## Dungeons tab
+
+- [x] Runs list (window between enter and leave) with length, bosses, deaths, loot
+- [x] Run detail: party, encounters deep-linking into the fight detail
+- [x] Boss-by-boss breakdown: attempts, wipes, time in combat, down-at offset, your and party deaths
+- [x] Run deaths with corpse-run downtime
+- [x] Rare and better loot listed per run
+- [ ] Per-run combat-log file correlation (desktop side, needs the file naming from the desktop)
+- [x] Lockouts shown on the Dungeons pane (saved to, progress, resets in)
+
+## Deaths tab
+
+- [x] Every death, linked to its fight, click opens the recap at the death moment
+- [x] Cause-of-death summary (most frequent killer, deadliest zone)
+- [x] Location, Coords and Downtime columns
+- [ ] Hardcore final-clip framing (needs the desktop clip contract)
+
+## Journey and Economy tabs
+
+- [x] Journey landing: character, XP bar with quest/kill split, time played, gold, combat, milestones
+- [x] Leveling pace card: XP/hour, time to level, last level duration
+- [x] XP per session bar strip on the Sessions pane, hover for the exact value, live session highlighted
+- [x] Economy cards: balance, looted, gained, spent, net with full breakdowns
+- [x] Gold per hour this session
+- [x] Net gold per session bar strip on the Sessions pane, losses hang below the baseline
+
+## Settings
+
+- [x] Sub-tabs General, Capture, Data as real tabs
+- [x] Flag corner, window scale, per-kind notification toggles
+- [x] Loot toast threshold (Uncommon+, Rare+, Epic+, Off)
+- [x] Capture sub-tab: capture state, combat logging, client mode, aura diagnostics, disconnect protection, secure Reload & save, UI health
+- [x] Data sub-tab: stored counts, clear with two-click confirm, stat sampling slider
+- [x] Preview button cycles level-up, loot, boss, death, discovery
+- [x] Flag opacity slider (30 to 100 percent)
+- [x] Settings > Capture shows Desktop sync: last synced time, source, fights waiting
+
+## UI framework and brand
+
+- [x] Brand palette, ornate game frame, tooltip-textured cards, Chakra Petch type kit, Morpheus titles
+- [x] Shared `UI.Tabs` control used for every switch and filter
+- [x] Close button centered, header status honest
+- [x] Window position and scale persisted
+- [x] Design system document shared with desktop and web (`DESIGN-SYSTEM.md`, tokens)
+- [x] Resizable window from a bottom-right grip, never below the designed 900x580, size persisted
+- [x] List rows and scroll areas stretch to the pane's right edge when the window is resized (columns keep their left offsets)
+
+## On-screen flag and toast (desktop OCR channel)
+
+- [x] Per-kind flag toggles
+- [x] Minimap button (draggable, left opens, right opens Settings)
+- [x] Toast is presentation only; state is written first
+- [ ] Machine-readable OCR line contract agreed with the desktop parser
+- [x] Toast bursts: identical lines shown once, a kind queued at most three times, level-up / death / wipe / boss jump the queue
+- [x] Flag size slider (70 to 150 percent) and hide toggle with the OCR warning; hidden also silences toasts, recording continues
+- [x] Flag free-drag anywhere on screen, position persisted; right-click or a corner button snaps it back
+- [x] First-run walkthrough card on Home (flag, play, where things are) with Got it and Open Settings
+- [x] Result glyphs (check, cross, waiting) next to Kill, Wipe, Death, Fled so color is never the only signal
+- [x] Flag and toast sit below game tooltips (FULLSCREEN_DIALOG strata); flag tooltip explains drag and snap
+
+## New tabs and consolidation
+
+- [x] Quests, Reputation and Professions panes (completed / in progress with location and coords; standings with last gain; skill bars, milestones, skill-ups), hosted as Journey sub-tabs
+- [x] Five-tab structure (2026-09-25): Home (Overview · Timeline · Sessions), Combat (Dungeons · Fights · Deaths), Loot (Items · Gold), Character (Quests · Reputation · Professions), Settings. Hosts own title and tab control; the old tabs are panes; cards on Home drill into the right pane
+- [x] Sessions pane: one row per play session with length, level change, XP, gold net, kills, deaths, dungeons, items; a /reload keeps the session, a real login starts a new one
+- [x] SavedVariables schema 2 mirrors the structure: settings · sessions · combat · loot · character · story, every record carries its session id; v1 files migrate in place
+- [x] Pushed items (no loot window) get a real source: the world object clicked, the mob just killed, or Quest reward; quest items flagged
+- [ ] Raids grouping and the deferred raid tabs (*Later*)
+
+## Infrastructure and docs
+
+- [x] Headless Lua test harness with UI smoke, contract tests and fight timeline tests
+- [x] Beta SavedVariables persistence bug documented with the Blizzard thread
+- [x] Data contract, ack channel design, backlog and this roadmap kept current
+- [x] Stale `.toc` files removed (only `EverbuffJournal.toc` remains)
+- [x] Aura guards verified on the beta from the save file written 15:45 on 2026-09-25: 23 fights of 1 to 80 seconds where the client hid aura data 1 to 11 times each, every buff seeded at the pull held for the whole fight, zero mass-loss clusters

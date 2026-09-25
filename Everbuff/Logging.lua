@@ -1,13 +1,13 @@
--- Everbuff · Logging.lua — client-flavor detection + the combat-log recording GUARANTEE.
+-- Everbuff · Logging.lua - client-flavor detection + the combat-log recording GUARANTEE.
 --
 -- This is the addon's highest-value job and the first vertical of "recording": whenever you are
 -- playing, the engine-written WoWCombatLog.txt IS being written, with advanced params, cleanly,
--- for the WHOLE time — not just in instances. There is no opt-out, and if logging is ever off we
+-- for the WHOLE time - not just in instances. There is no opt-out, and if logging is ever off we
 -- complain heavily and repeatedly until it is back on.
 --
 -- Cross-client (Midnight "WoW Forever" + Classic/SoD):
 --   Midnight's Secret Values (12.0) make in-combat CLEU unreadable to addons, so the file is the
---   only clean path. Classic/SoD have NO Secret Values (CLEU is readable) — but we deliberately use
+--   only clean path. Classic/SoD have NO Secret Values (CLEU is readable) - but we deliberately use
 --   the SAME file-guarantee + landmark model on both so there is a single code path. The only
 --   sanctioned APIs we touch here exist on every flavor: SetCVar/GetCVar("advancedCombatLogging"),
 --   LoggingCombat(bool) and LoggingCombat() (query).
@@ -16,7 +16,7 @@ local ADDON, ns = ...
 local L = {}
 ns.Logging = L
 
--- ── client flavor (set once at load — Logging loads first, so all modules can read these) ──
+-- ── client flavor (set once at load - Logging loads first, so all modules can read these) ──
 local MAINLINE = WOW_PROJECT_MAINLINE or 1
 ns.isMainline     = (WOW_PROJECT_ID == nil) or (WOW_PROJECT_ID == MAINLINE)
 ns.isClassic      = not ns.isMainline
@@ -25,7 +25,7 @@ ns.hasChallengeMode = ns.isMainline and (C_ChallengeMode ~= nil) -- Mythic+ is r
 ns.hasDamageMeter   = (C_DamageMeter ~= nil)                     -- Blizzard's 12.0 meter; nil on Classic
 ns.flavor          = ns.isMainline and "mainline" or "classic"
 
--- advancedCombatLogging=1 adds infoGUID, HP, position, item level + COMBATANT_INFO to the file —
+-- advancedCombatLogging=1 adds infoGUID, HP, position, item level + COMBATANT_INFO to the file -
 -- the fields the backend segmenter and CLA/RPB metrics depend on. Best-effort: some clients gate
 -- cvars, so we pcall and re-read rather than trust the write.
 local function setACL(on)
@@ -34,7 +34,7 @@ local function setACL(on)
 end
 
 -- CRITICAL: never call LoggingCombat() with NO argument. On the Classic/SoD client a nil/absent arg
--- is treated as false, so *querying* combat logging actually DISABLES it — which caused a vicious
+-- is treated as false, so *querying* combat logging actually DISABLES it - which caused a vicious
 -- ON→OFF cycle (every status read turned it off; the guardian turned it back on). We only ever call
 -- LoggingCombat(true)/(false) explicitly and track our own intent in L._combat.
 L._combat = false
@@ -72,7 +72,7 @@ end
 -- ── heavy, repeating complaint when logging is not actually on ────────────────────────────────
 -- The user's rule: if advanced logging is off, complain HEAVILY and always. So we hit three
 -- channels at once (chat, center-screen raid warning, red UI error text + a sound) and repeat on a
--- timer until it is fixed — impossible to miss, whether the player is leveling or mid-raid.
+-- timer until it is fixed - impossible to miss, whether the player is leveling or mid-raid.
 local NAG_PERIOD = 10
 local lastNag, wasOff = -1e9, false
 
@@ -92,7 +92,7 @@ function L.nag(force)
   lastNag = now
   local msg = "ADVANCED COMBAT LOGGING is off and couldn't be enabled."
   ns.msg("|cffe5544b" .. msg .. "|r  Everbuff needs the |cffffffffadvancedCombatLogging|r CVar on. If this keeps happening, a script or another addon is resetting it.")
-  bigWarn("Everbuff: " .. msg)
+  bigWarn("Everbuff.GG: " .. msg)
 end
 
 -- The guardian runs for the WHOLE play session (not just in instances). It enforces logging every
@@ -124,8 +124,8 @@ local function onTamper(what)
   L.repairs = (L.repairs or 0) + 1
   L.lastCulprit = culprit
   local who = culprit and ("|cffff4444" .. culprit .. "|r") or "another addon or a macro"
-  ns.msg(("|cffe5544bBlocked " .. who .. "|r from disabling %s — recording re-enabled. If that wasn't you, that addon is sabotaging your logs; consider removing it."):format(what))
-  bigWarn("Everbuff: blocked an addon from stopping your combat log")
+  ns.msg(("|cffe5544bBlocked " .. who .. "|r from disabling %s - recording re-enabled. If that wasn't you, that addon is sabotaging your logs; consider removing it."):format(what))
+  bigWarn("Everbuff.GG: blocked an addon from stopping your combat log")
 end
 
 function L.installTamperGuards()
@@ -153,9 +153,9 @@ function L.startGuardian()
       wasOff = true
     elseif wasOff then
       wasOff = false
-      ns.msg("|cff47c97ecombat logging is back ON|r — recording resumed.")
+      ns.msg("|cff47c97ecombat logging is back ON|r - recording resumed.")
     end
-    -- A change after startup means something dropped logging and we corrected it — count it + mark
+    -- A change after startup means something dropped logging and we corrected it - count it + mark
     -- the gap in the landmark index (the first tick is initial setup, not a repair).
     if changed and started then
       L.repairs = L.repairs + 1

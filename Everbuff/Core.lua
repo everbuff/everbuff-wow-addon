@@ -1,9 +1,7 @@
--- Everbuff · Core.lua — boot, event router, slash.
+-- Everbuff.GG · Core.lua - boot, event router, slash.
 --
--- CORE GUARANTEE (not optional): advanced combat logging + landmark recording are ALWAYS ON, and
--- now EVERYWHERE — open-world leveling included, not just instances. Recording is the entire reason
--- the addon exists; a night with logging silently off is a lost night, so it is unconditional and
--- self-healing (ns.Logging guardian) and complains heavily if it ever can't keep logging on.
+-- Keeps combat logging on (self-healing via ns.Logging guardian) and captures leveling + dungeon
+-- landmarks so everbuff.gg can rebuild the session.
 --
 -- Cross-client: the primary target is the Midnight "WoW Forever" model (Secret Values → CLEU-free,
 -- the file is the source of truth). The same code runs on Classic/SoD (our current data-gathering
@@ -12,55 +10,157 @@
 
 local ADDON, ns = ...
 
-ns.VERSION = "0.6.1"
+-- the ONE version number lives in the TOC (## Version); read it so the header can never drift from the package
+do
+  local meta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+  local ok, v = pcall(function() return meta and meta(ADDON, "Version") end)
+  ns.VERSION = (ok and type(v) == "string" and v ~= "" and v) or "dev"
+end
 ns.GOLD = "|cffc9a63c"
 ns.CYAN = "|cff00afd7"
-function ns.msg(text) print(ns.GOLD .. "Everbuff|r: " .. text) end
+function ns.msg(text) print(ns.GOLD .. "Everbuff.GG|r: " .. text) end
 
 EverbuffDB = EverbuffDB or nil -- materialized on ADDON_LOADED
 
 local f = CreateFrame("Frame")
 
--- ── context detection (ambient recording — always on, no opt-out) ─────────────
+-- ── SavedVariables schema 2: the data mirrors the product structure ─────────────
+--   settings                      what the player configured
+--   sessions[id] (+ active)       HOME: one record per login -> logout, with live counters; every fight,
+--                                 pickup and event carries s = its session id
+--   combat.fights                 COMBAT: every fight (dungeon runs and deaths are derived views)
+--   loot.log, loot.gold           LOOT: every pickup (item or coin row) + gold totals and sinks
+--   character.*                   CHARACTER: xp, played, professions, reputation, durability, ...
+--   story.events                  the feed (timeline) behind Home
+-- Facts are stored once; anything a tab shows that can be derived is derived at render time.
+function ns.migrateDB(db)
+  db.settings = db.settings or {}
+  db.sessions = db.sessions or {}
+  db.combat = db.combat or {}
+  db.loot = db.loot or {}
+  db.character = db.character or {}
+  db.story = db.story or {}
+  if (tonumber(db.schema) or 1) < 2 then
+    -- v1 kept everything at the top level; move each key into its area, then drop the old slot
+    db.combat.fights = db.fights or db.combat.fights; db.fights = nil
+    db.combat.fightSeq = db.fightSeq or db.combat.fightSeq; db.fightSeq = nil
+    db.combat.uploadedThrough = db.uploadedThrough or db.combat.uploadedThrough; db.uploadedThrough = nil
+    db.loot.log = db.lootlog or db.loot.log; db.lootlog = nil
+    db.loot.gold = db.gold or db.loot.gold; db.gold = nil
+    db.story.events = db.eventlog or db.story.events; db.eventlog = nil
+    db.story.inInstance = db._inInstance; db._inInstance = nil
+    for _, k in ipairs({ "xp", "played", "playedAtLevel", "professions", "reputation", "durability", "ilvl", "seenZones", "itemUses", "flightTime" }) do
+      if db[k] ~= nil then db.character[k] = db[k]; db[k] = nil end
+    end
+    db.session = nil; db.runs = nil; db.consent = nil   -- superseded (sessions carry the pace counters) / never built
+    db.schema = 2
+  end
+  db.combat.fights = db.combat.fights or {}
+  db.combat.fightSeq = db.combat.fightSeq or 0
+  db.loot.log = db.loot.log or {}
+  db.loot.gold = db.loot.gold or { looted = 0, gained = 0, spent = 0 }
+  db.loot.history = db.loot.history or {}     -- raid loot council (Later)
+  db.loot.reserves = db.loot.reserves or {}
+  db.character.xp = db.character.xp or { gained = 0 }
+  db.character.played = db.character.played or {}
+  db.story.events = db.story.events or {}
+  return db
+end
+
+-- ── upload ack channel (addon side) ─────────────────────────────────────────────
+-- The desktop tells the addon what it has already uploaded so the addon can prune. Two inbound paths,
+-- both landing in ns.applyAck:
+--   A. `EverbuffAck` companion SavedVariable, written by the desktop ONLY while WoW is closed:
+--      EverbuffAck = { uids = { ["<fight uid>"] = true, ... }, through = <epoch> }
+--      Read on ADDON_LOADED; uids are cleared after use so the file never grows.
+--   B. a paste code from the desktop: EB-ACK-<epoch>[:<uid>,<uid>,...]  (/eb ack <code>, or Settings > Data)
+-- Effect: fights with an acked uid, or that started at or before `through`, are marked uploaded and pruned;
+-- loot rows, events and finished sessions at or before `through` are pruned. `combat.lastAck` records it.
+function ns.applyAck(ack, source)
+  local db = ns.DB
+  if not (db and type(ack) == "table") then return 0, 0 end
+  local through = tonumber(ack.through) or 0
+  local uids = type(ack.uids) == "table" and ack.uids or {}
+  local marked = 0
+  for _, f in ipairs(db.combat.fights or {}) do
+    if (f.uid and uids[f.uid]) or (through > 0 and (f.startEpoch or math.huge) <= through) then
+      if f.uploaded ~= true then marked = marked + 1 end
+      f.uploaded = true
+    end
+  end
+  local removed = (ns.Fights and ns.Fights.pruneUploaded and ns.Fights.pruneUploaded()) or 0
+  if through > 0 then
+    local function pruneT(list) if not list then return end for i = #list, 1, -1 do if (list[i].t or 0) <= through then table.remove(list, i) end end end
+    pruneT(db.loot.log); pruneT(db.story.events)
+    for id, sess in pairs(db.sessions or {}) do
+      if id ~= db.active and sess.endedEpoch and sess.endedEpoch <= through then db.sessions[id] = nil end
+    end
+  end
+  local now = (GetServerTime and GetServerTime()) or time()
+  db.combat.lastAck = { at = now, through = through > 0 and through or nil, fights = marked, source = source or "file" }
+  if ack.uids then ack.uids = {} end          -- consumed: the companion file cannot grow
+  ack.applied = now
+  return marked, removed
+end
+-- "EB-ACK-1758800000" or "EB-ACK-1758800000:Hart-Realm-1758..-3f2a,Hart-Realm-..." -> ack table, or nil
+function ns.parseAckCode(code)
+  code = tostring(code or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  local epoch, rest = code:match("^EB%-ACK%-(%d+):?(.*)$")
+  if not epoch then return nil end
+  local ack = { through = tonumber(epoch), uids = {} }
+  for uid in (rest or ""):gmatch("[^,%s]+") do ack.uids[uid] = true end
+  if ack.through == 0 then ack.through = nil end
+  return ack
+end
+
+-- ── context detection (one session per play session) ──
 -- Raid/dungeon → a full "instance" session (encounters, challenge mode, combat edges, meter).
 -- Everywhere else → a lightweight "world" session for leveling (level-ups, deaths, zone changes).
 -- We transition between them so exactly one session is active at a time.
 -- One session per play session (login → logout). The combat log delimits fights, so we don't churn
--- sessions on zoning — the addon record is a thin identity/leveling/integrity beacon.
+-- sessions on zoning - the addon record is a thin identity/leveling/integrity beacon.
 local function checkContext()
   if not ns.Recorder.active() then ns.Recorder.start() end
 end
 ns.checkContext = checkContext
 ns.checkInstance = checkContext -- back-compat alias
 
--- ── event router (minimal — the combat-log FILE is the real record) ───────────
+-- ── event router (minimal - the combat-log FILE is the real record) ───────────
 local handlers = {
   -- Re-assert logging the instant combat starts (the one moment it must be on), then the file does
-  -- the rest. We do NOT record encounters/zones/deaths/meters here — those are all in the log.
+  -- the rest. We do NOT record encounters/zones/deaths/meters here - those are all in the log.
   PLAYER_REGEN_DISABLED = function() ns.Logging.enforce() end,
   PLAYER_LEVEL_UP = function(level) ns.Recorder.onLevelUp(level) end,
 }
 
 -- ── slash ─────────────────────────────────────────────────────────────────────
-SLASH_EVERBUFF1 = "/rb"
+SLASH_EVERBUFF1 = "/eb"
 SLASH_EVERBUFF2 = "/everbuff"
 SlashCmdList.EVERBUFF = function(arg)
   arg = (arg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if arg == "" or arg == "show" or arg == "open" then
     if ns.UI then ns.UI.Toggle() else ns.msg("UI not loaded") end
   elseif arg == "rec" or arg == "recording" then
-    if ns.UI then ns.UI.Open("Recording") end
-  -- NOTE: /rb loot · /rb ready · /rb crew (raid-lead tools) are DEFERRED — see addon/Everbuff/future/.
+    if ns.UI then ns.UI.Open("Combat", "fights") end
+  -- NOTE: /eb loot · /eb ready · /eb crew (raid-lead tools) are DEFERRED - see addon/Everbuff/future/.
+  elseif arg:match("^ack") then
+    local ack = ns.parseAckCode((arg:gsub("^ack%s*", "")))
+    if ack then
+      local marked, removed = ns.applyAck(ack, "paste")
+      ns.msg(("desktop sync applied: %d fight%s acked, %d pruned"):format(marked, marked == 1 and "" or "s", removed))
+    else
+      ns.msg("usage: /eb ack EB-ACK-<epoch>[:<uid>,<uid>...]  (the desktop app shows this code)")
+    end
   elseif arg == "export" or arg == "end" then
     if ns.Recorder.active() then
       ns.Recorder.stop("manual export")
-      ns.msg("now |cffffffff/reload|r (or log out) to hand the session to the uploader")
+      ns.msg("session closed")
     else ns.msg("no active session") end
   elseif arg == "status" then
     local sess = ns.Recorder.active()
     local aclOn, combatOn = ns.Logging.state()
     if sess then
-      ns.msg(("|cff46b36brecording|r · %s · session %s · %d markers · logging acl=%s combat=%s")
+      ns.msg(("|cff46b36bcapturing|r · %s · session %s · %d markers · logging acl=%s combat=%s")
         :format(sess.context or "?", sess.id, #sess.segments,
                 aclOn and "|cff46b36bon|r" or "|cffe25a5aOFF|r",
                 combatOn and "|cff46b36bon|r" or "|cffe25a5aOFF|r"))
@@ -71,44 +171,81 @@ SlashCmdList.EVERBUFF = function(arg)
     end
     local n = 0
     for _ in pairs(ns.DB.sessions) do n = n + 1 end
-    ns.msg(("client: %s · %d session(s) stored — flushed to disk on /reload or logout"):format(ns.flavor, n))
+    ns.msg(("client: %s · %d session(s) stored"):format(ns.flavor, n))
   elseif arg == "debug" or arg:match("^debug ") then
     if ns.Debug then ns.Debug.command((arg:gsub("^debug%s*", ""))) else ns.msg("debug module not loaded") end
   elseif arg == "wipe" then
     ns.DB.sessions = {}; ns.DB.active = nil
     ns.msg("stored sessions wiped")
+  elseif arg:match("^corner") then
+    local where = arg:gsub("^corner%s*", "")
+    if ns.Emitter and ns.Emitter.setCorner(where) then
+      ns.msg("event overlay moved to |cffffffff" .. ns.DB.settings.emitCorner .. "|r")
+    else
+      ns.msg("usage: /eb corner tl|tr|bl|br (top/bottom, left/right)")
+    end
+  elseif arg == "testevent" or arg == "test" then
+    if ns.Emitter then
+      local samples = {
+        { "LEVELUP", {} }, { "ZONE", { zone = GetRealZoneText() or "Stranglethorn Vale" } },
+        { "DUNGEON", { name = "Deadmines" } }, { "KILL", { name = "Edwin VanCleef" } },
+        { "DEATH", {} },
+      }
+      local i = 0
+      local function step()
+        i = i + 1
+        if samples[i] then ns.Emitter.event(samples[i][1], samples[i][2]); C_Timer.After(3, step) end
+      end
+      step()
+      ns.msg("firing test events into the " .. ((ns.DB.settings.emitCorner) or "TOPLEFT") .. " toast")
+    end
+  elseif arg:match("^combat") then
+    local on = not arg:match("off")
+    if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /rb (open) · /rb status · /rb debug · /rb export · /rb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb export · /eb wipe")
   end
 end
 
 -- ── boot ───────────────────────────────────────────────────────────────────────
 f:SetScript("OnEvent", function(_, event, ...)
   if event == "ADDON_LOADED" and ... == ADDON then
+    -- second SavedVariable (load canary), declared in the TOC. Its counter climbing across a full
+    -- restart proves SavedVariables persisted; on the WoW Forever beta they currently do not (client bug).
+    EverbuffTest = (type(EverbuffTest) == "table") and EverbuffTest or {}
+    EverbuffTest.n = (tonumber(EverbuffTest.n) or 0) + 1
     EverbuffDB = EverbuffDB or {}
     local db = EverbuffDB
-    db.sessions = db.sessions or {}
-    db.runs = db.runs or {}                   -- saved party/raid runs (Runs.lua)
-    db.loot = db.loot or {}                   -- loot state (Loot.lua)
-    db.loot.history = db.loot.history or {}   -- award history
-    db.loot.reserves = db.loot.reserves or {} -- [itemId] = { {player, class}, ... } (imported SR)
-    db.settings = db.settings or {}           -- cosmetic/UI prefs only — never gates core recording
-    db.consent = nil                          -- removed: core recording is unconditional
+    ns.migrateDB(db)
     ns.DB = db
-    -- crash recovery: an 'active' session on load means we died mid-run; finalize it so it uploads.
-    if db.active and db.sessions[db.active] then
-      local orphan = db.sessions[db.active]
+    -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
+    if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
+      local marked, removed = ns.applyAck(EverbuffAck, "file")
+      ns.msg(("desktop sync applied: %d fight%s acked, %d pruned"):format(marked, marked == 1 and "" or "s", removed))
+    end
+    -- drop fights the desktop already uploaded to the backend (upload-driven cleanup handshake)
+    if ns.Fights and ns.Fights.pruneUploaded then ns.Fights.pruneUploaded() end
+    -- one clean load line: confirms SavedVariables came back (numbers > 0 after you've played = persisting)
+    ns.msg(("ready · %d fights · %d loot · flag %s"):format(
+      #db.combat.fights, #db.loot.log, tostring(db.settings.emitCorner or "default")))
+  elseif event == "PLAYER_ENTERING_WORLD" then
+    local isLogin = ...
+    -- a REAL login with a session still marked active means the last session never closed (crash or
+    -- disconnect): finalize it so it uploads. A /reload keeps the session (Recorder.start resumes it).
+    if isLogin and ns.Recorder.active() then ns.Recorder.stop("relogin") end   -- a stale in-memory session (never in a real client, but be safe)
+    if isLogin and ns.DB.active and ns.DB.sessions[ns.DB.active] then
+      local orphan = ns.DB.sessions[ns.DB.active]
       orphan.endedEpoch = orphan.endedEpoch or GetServerTime()
       orphan.recovered = true
-      db.active = nil
-      ns.msg("recovered an interrupted session (" .. orphan.id .. ") — it will upload normally")
+      ns.DB.active = nil
+      ns.msg("recovered an interrupted session (" .. orphan.id .. ")")
     end
-  elseif event == "PLAYER_ENTERING_WORLD" then
-    ns.Logging.startGuardian() -- always-on logging everywhere, from the moment we log in
+    ns.Logging.startGuardian() -- keep combat logging on from login
+    if ns.UI and ns.UI.buildMinimapButton then pcall(ns.UI.buildMinimapButton) end
     if not ns.DB.settings.welcomed then
       ns.DB.settings.welcomed = true
       C_Timer.After(4, function()
-        ns.msg("installed — combat logging & recording are |cff46b36bon automatically|r, everywhere. Open the panel with |cffffffff/rb|r.")
+        ns.msg("ready. Open the panel with |cffffffff/eb|r.")
       end)
     end
     checkContext()

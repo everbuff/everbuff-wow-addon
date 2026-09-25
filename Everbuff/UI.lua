@@ -1,27 +1,65 @@
--- Everbuff · UI.lua — the in-game panel: window frame, tab strip, shared widgets, theme.
+-- Everbuff.GG · UI.lua - the in-game panel: window frame, tab strip, shared widgets, theme.
 --
--- Theme mirrors the web console (everbuff.gg / localhost:8080): dark panels, gold + cyan accents.
--- Tabs register themselves and are built lazily on first open. Today that's just Recording (the
--- always-on logging status); the raid-lead tabs (Runs/Loot/Readiness) are deferred — see future/.
+-- Theme mirrors everbuff.gg: dark panels, gold + cyan accents. Tabs register themselves and are
+-- built lazily on first open. Raid-lead tabs (Runs/Loot/Readiness) are deferred, see future/.
 
 local ADDON, ns = ...
 local UI = {}
 ns.UI = UI
 
 -- ── palette (RGB 0..1) ────────────────────────────────────────────────────────
+-- everbuff.gg brand kit: deep ink ground, tan metal, lagoon accent, ember for danger, bone text.
 UI.C = {
-  bg      = { 0.051, 0.059, 0.075 },
-  panel   = { 0.082, 0.102, 0.129 },
-  panel2  = { 0.106, 0.133, 0.173 },
-  line    = { 0.149, 0.184, 0.231 },
-  ink     = { 0.902, 0.922, 0.949 },
-  dim     = { 0.541, 0.588, 0.651 },
-  gold    = { 0.788, 0.651, 0.235 },
-  cyan    = { 0.000, 0.686, 0.843 },
-  green   = { 0.278, 0.788, 0.494 },
-  red     = { 0.898, 0.329, 0.294 },
+  bg      = { 0.047, 0.102, 0.133 },   -- ink #0C1A22
+  panel   = { 0.035, 0.075, 0.098 },   -- deeper ink: inset cards
+  panel2  = { 0.090, 0.165, 0.205 },   -- raised / hover
+  line    = { 0.235, 0.300, 0.330 },   -- hairline
+  ink     = { 0.957, 0.941, 0.922 },   -- bone #F4F0EB (text)
+  dim     = { 0.560, 0.630, 0.660 },
+  gold    = { 0.790, 0.680, 0.510 },   -- tan #C9AD82
+  cyan    = { 0.120, 0.640, 0.780 },   -- lagoon #1FA3C6
+  green   = { 0.350, 0.780, 0.500 },
+  red     = { 0.990, 0.440, 0.300 },   -- ember #FE704D
 }
 local C = UI.C
+-- ── type kit ──────────────────────────────────────────────────────────────────
+-- The desktop app's whole UI is set in Chakra Petch (its --disp / --sans / --mono all resolve to it),
+-- so the addon uses the same face for everything except the page title, which keeps WoW's Morpheus as
+-- the one deliberate "game voice" note. Bundled as TTF in media/fonts (SIL OFL); native fallback.
+local FONT_DIR = "Interface\\AddOns\\EverbuffJournal\\media\\fonts\\"
+local NATIVE_FALLBACK = "Fonts\\ARIALN.TTF"
+local function mkfont(name, file, size, flags, color, shadow)
+  if not CreateFont then return nil end
+  local f = CreateFont(name)
+  local ok = f:SetFont(file, size, flags or "")
+  if ok == false then f:SetFont(NATIVE_FALLBACK, size, flags or "") end   -- file missing: native face
+  if color then f:SetTextColor(color[1], color[2], color[3]) end
+  if shadow then f:SetShadowColor(0, 0, 0, 0.9); f:SetShadowOffset(1, -1) end
+  return f
+end
+UI.TITLE_FONT = mkfont("EverbuffTitleFont", "Fonts\\MORPHEUS.ttf", 20, "", C.gold, true)
+UI.VALUE_FONT = mkfont("EverbuffValueFont", FONT_DIR .. "ChakraPetch-Bold.ttf", 18, "", C.ink, true)
+UI.HEAD_FONT  = mkfont("EverbuffHeadFont",  FONT_DIR .. "ChakraPetch-SemiBold.ttf", 13, "", C.gold, true)
+UI.LABEL_FONT = mkfont("EverbuffLabelFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 10, "", C.dim, false)
+UI.TAB_FONT   = mkfont("EverbuffTabFont",   FONT_DIR .. "ChakraPetch-SemiBold.ttf", 11, "", C.dim, true)
+UI.BODY_FONT  = mkfont("EverbuffBodyFont",  FONT_DIR .. "ChakraPetch-Regular.ttf", 12, "", C.ink, false)
+UI.BODY_SM    = mkfont("EverbuffBodySmall", FONT_DIR .. "ChakraPetch-Regular.ttf", 11, "", C.ink, false)
+UI.DIM_SM     = mkfont("EverbuffDimSmall",  FONT_DIR .. "ChakraPetch-Regular.ttf", 11, "", C.dim, false)
+-- map a Blizzard template (name or font object) to the brand font that plays its role
+local FONT_ROLE = {
+  GameFontNormalLarge = "TITLE_FONT", GameFontNormal = "HEAD_FONT", GameFontNormalSmall = "LABEL_FONT",
+  GameFontHighlight = "BODY_FONT", GameFontHighlightSmall = "BODY_SM", GameFontDisableSmall = "DIM_SM",
+}
+function UI.Font(tmpl)
+  if tmpl == nil then return nil end
+  local key = tmpl
+  if type(tmpl) ~= "string" then
+    key = nil
+    for name in pairs(FONT_ROLE) do if _G[name] == tmpl then key = name; break end end
+  end
+  local role = key and FONT_ROLE[key]
+  return role and UI[role] or nil
+end
 
 local function unpackc(c, a) return c[1], c[2], c[3], a or 1 end
 
@@ -31,17 +69,19 @@ local function unpackc(c, a) return c[1], c[2], c[3], a or 1 end
 function UI.Panel(parent, r, g, b, a)
   local p = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   p:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
-    insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
   })
-  p:SetBackdropColor(r or C.panel[1], g or C.panel[2], b or C.panel[3], a or 1)
-  p:SetBackdropBorderColor(unpackc(C.line))
+  p:SetBackdropColor(r or C.panel[1], g or C.panel[2], b or C.panel[3], a or 0.92)
+  p:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.55)   -- tan metal trim, kept quiet
   return p
 end
 
 function UI.FS(parent, template, color)
   local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontHighlight")
+  local f = UI.Font(template or "GameFontHighlight")
+  if f then fs:SetFontObject(f) end
   if color then fs:SetTextColor(unpackc(color)) end
   return fs
 end
@@ -50,16 +90,17 @@ function UI.Button(parent, text, w, h, onClick)
   local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
   b:SetSize(w or 100, h or 22)
   b:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10,
+    insets = { left = 2, right = 2, top = 2, bottom = 2 },
   })
-  b:SetBackdropColor(unpackc(C.panel2))
-  b:SetBackdropBorderColor(unpackc(C.line))
-  local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  b:SetBackdropColor(unpackc(C.panel2, 0.9))
+  b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5)
+  local fs = ns.UI.FS(b, "GameFontNormal")
   fs:SetPoint("CENTER"); fs:SetText(text); fs:SetTextColor(unpackc(C.gold))
   b.text = fs
-  b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(unpackc(C.gold)) end)
-  b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(unpackc(C.line)) end)
+  b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(unpackc(C.gold)); s:SetBackdropColor(unpackc(C.cyan, 0.22)) end)
+  b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5); s:SetBackdropColor(unpackc(C.panel2, 0.9)) end)
   if onClick then b:SetScript("OnClick", onClick) end
   return b
 end
@@ -67,10 +108,12 @@ end
 function UI.EditBox(parent, w, h)
   local e = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
   e:SetSize(w or 200, h or 22)
-  e:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-  e:SetBackdropColor(0.03, 0.04, 0.05, 1); e:SetBackdropBorderColor(unpackc(C.line))
-  e:SetFontObject("GameFontHighlight")
+  e:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+  e:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.95); e:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5)
+  e:SetFontObject(UI.BODY_SM or "GameFontHighlight")
+  e:SetScript("OnEditFocusGained", function(x) x:SetBackdropBorderColor(unpackc(C.gold)) end)
+  e:SetScript("OnEditFocusLost", function(x) x:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5) end)
   e:SetTextInsets(6, 6, 0, 0)
   e:SetAutoFocus(false)
   e:SetScript("OnEscapePressed", e.ClearFocus)
@@ -100,14 +143,17 @@ local tabs = {}      -- { {name=, build=, order=, btn=, content=, built=} }
 local activeName
 
 local function styleTabButton(t, active)
+  local b = t.btn
   if active then
-    t.btn:SetBackdropColor(unpackc(C.panel2))
-    t.btn:SetBackdropBorderColor(unpackc(C.gold))
-    t.btn.text:SetTextColor(unpackc(C.gold))
+    b:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.95)
+    if b.accent then b.accent:SetColorTexture(unpackc(C.gold)) end
+    b.text:SetTextColor(unpackc(C.gold))
+    if b.icon then b.icon:SetVertexColor(1, 1, 1) end
   else
-    t.btn:SetBackdropColor(unpackc(C.bg))
-    t.btn:SetBackdropBorderColor(unpackc(C.line))
-    t.btn.text:SetTextColor(unpackc(C.dim))
+    b:SetBackdropColor(0, 0, 0, 0)
+    if b.accent then b.accent:SetColorTexture(0, 0, 0, 0) end
+    b.text:SetTextColor(unpackc(C.dim))
+    if b.icon then b.icon:SetVertexColor(0.72, 0.72, 0.72) end
   end
 end
 
@@ -121,14 +167,18 @@ local function selectTab(name)
         t.content = CreateFrame("Frame", nil, frame.contentHost)
         t.content:SetAllPoints(frame.contentHost)
         local ok, err = pcall(t.build, t.content)
+        t.buildError = (not ok) and tostring(err) or nil      -- surfaced in Sync + the test suite
         if not ok then
-          local fs = t.content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+          local fs = ns.UI.FS(t.content, "GameFontHighlight")
           fs:SetPoint("TOPLEFT", 12, -12); fs:SetText("|cffe25a5aerror building tab:|r " .. tostring(err))
         end
         t.built = true
       end
       t.content:Show()
-      if t.onShow then pcall(t.onShow) end
+      if t.onShow then
+        local ok2, e2 = pcall(t.onShow)
+        t.showError = (not ok2) and tostring(e2) or nil
+      end
     elseif t.content then
       t.content:Hide()
     end
@@ -140,71 +190,140 @@ local function buildFrame()
   if frame then return end
   local f = CreateFrame("Frame", "EverbuffFrame", UIParent, "BackdropTemplate")
   frame = f
-  f:SetSize(900, 580)
-  f:SetPoint("CENTER")
+  local ws = ns.DB and ns.DB.settings and ns.DB.settings.winSize
+  f:SetSize((ws and tonumber(ws.w)) or 900, (ws and tonumber(ws.h)) or 580)
+  f:SetScale((ns.DB and ns.DB.settings and tonumber(ns.DB.settings.winScale)) or 1)
+  local pos = ns.DB and ns.DB.settings and ns.DB.settings.winPos
+  if pos and type(pos.point) == "string" then f:SetPoint(pos.point, UIParent, pos.point, pos.x or 0, pos.y or 0)
+  else f:SetPoint("CENTER") end
   f:SetFrameStrata("HIGH")
   f:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
+    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", edgeSize = 32,
+    insets = { left = 11, right = 11, top = 11, bottom = 11 },
   })
-  f:SetBackdropColor(unpackc(C.bg))
-  f:SetBackdropBorderColor(unpackc(C.gold))
+  f:SetBackdropColor(1, 1, 1, 1)
+  f:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 1)
   f:EnableMouse(true); f:SetMovable(true); f:SetClampedToScreen(true)
   f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  f:SetScript("OnDragStart", f.StartMoving)
+  f:SetScript("OnDragStop", function(w)
+    w:StopMovingOrSizing()
+    if ns.DB and ns.DB.settings then   -- persist so the window opens where you left it
+      local pt, _, _, x, y = w:GetPoint(1)
+      if type(pt) == "string" then ns.DB.settings.winPos = { point = pt, x = x, y = y } end
+    end
+  end)
   tinsert(UISpecialFrames, "EverbuffFrame") -- ESC closes
+  -- resizable: grow from the bottom-right grip; lists and panes are anchored to the edges so they grow
+  -- with the window. Never smaller than the designed 900x580 (fixed column grids), persisted in settings.
+  f:SetResizable(true)
+  if f.SetResizeBounds then f:SetResizeBounds(900, 580, 1600, 1000) elseif f.SetMinResize then f:SetMinResize(900, 580); f:SetMaxResize(1600, 1000) end
+  local grip = CreateFrame("Button", nil, f)
+  grip:SetSize(16, 16); grip:SetPoint("BOTTOMRIGHT", -8, 8)
+  grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+  grip:SetScript("OnMouseUp", function()
+    f:StopMovingOrSizing()
+    UI.SetWindowSize(f:GetWidth(), f:GetHeight())
+  end)
 
   -- title bar
-  local bar = UI.Panel(f, unpackc(C.panel))
-  bar:SetPoint("TOPLEFT", 1, -1); bar:SetPoint("TOPRIGHT", -1, -1); bar:SetHeight(38)
+  local bar = CreateFrame("Frame", nil, f)
+  bar:SetPoint("TOPLEFT", 12, -12); bar:SetPoint("TOPRIGHT", -12, -12); bar:SetHeight(40)
+  local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 0.80)
+  local barRule = bar:CreateTexture(nil, "ARTWORK"); barRule:SetPoint("BOTTOMLEFT"); barRule:SetPoint("BOTTOMRIGHT"); barRule:SetHeight(1)
+  barRule:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.55)
+  local mark = bar:CreateTexture(nil, "ARTWORK")
+  mark:SetSize(26, 26); mark:SetPoint("LEFT", 10, 0)
+  mark:SetTexture("Interface\\AddOns\\EverbuffJournal\\media\\mark")
   local brand = UI.FS(bar, "GameFontNormalLarge")
-  brand:SetPoint("LEFT", 14, 0)
-  brand:SetText(ns.GOLD .. "Everbuff|r  " .. ns.CYAN .. "·|r  always-on recording")
+  brand:SetPoint("LEFT", mark, "RIGHT", 8, -1)
+  brand:SetText("everbuff.gg")
   local ver = UI.FS(bar, "GameFontDisableSmall", C.dim)
   ver:SetPoint("LEFT", brand, "RIGHT", 8, -1); ver:SetText("v" .. ns.VERSION)
 
-  local rec = UI.FS(bar, "GameFontHighlightSmall")
-  rec:SetPoint("RIGHT", -44, 0)
+  local rec = UI.FS(bar, "GameFontNormalSmall")
+  rec:SetPoint("RIGHT", -46, 0)
   f.recFS = rec
 
-  local close = UI.Button(bar, "X", 24, 22, function() f:Hide() end)
-  close:SetPoint("RIGHT", -8, 0)
+  -- native WoW close button: always centered and reads as the game
+  local close = CreateFrame("Button", nil, bar, "UIPanelCloseButton")
+  close:SetSize(26, 26); close:SetPoint("RIGHT", -2, 0)
+  close:SetScript("OnClick", function() f:Hide() end)
 
   -- left tab strip
-  local strip = UI.Panel(f, unpackc(C.bg))
-  strip:SetPoint("TOPLEFT", 1, -39); strip:SetPoint("BOTTOMLEFT", 1, 1); strip:SetWidth(140)
+  local strip = CreateFrame("Frame", nil, f)
+  strip:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -1); strip:SetPoint("BOTTOMLEFT", 12, 12); strip:SetWidth(142)
+  local stripBg = strip:CreateTexture(nil, "BACKGROUND"); stripBg:SetAllPoints(); stripBg:SetColorTexture(0, 0, 0, 0.35)
+  local stripRule = strip:CreateTexture(nil, "ARTWORK"); stripRule:SetPoint("TOPRIGHT"); stripRule:SetPoint("BOTTOMRIGHT"); stripRule:SetWidth(1)
+  stripRule:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.30)
   f.strip = strip
 
   -- content host
   local host = CreateFrame("Frame", nil, f)
-  host:SetPoint("TOPLEFT", strip, "TOPRIGHT", 1, -8)
-  host:SetPoint("BOTTOMRIGHT", -8, 8)
+  host:SetPoint("TOPLEFT", strip, "TOPRIGHT", 1, -6)
+  host:SetPoint("BOTTOMRIGHT", -14, 14)
   f.contentHost = host
 
-  -- lay out tab buttons, grouped (Background vs Raid lead) with dim section labels
+  -- lay out tab buttons, grouped (Background vs Raid lead) with dim section labels.
+  -- tabs flagged pin=="bottom" are anchored to the bottom of the strip instead of flowing top-down.
   table.sort(tabs, function(a, b) return a.order < b.order end)
-  local y = -8
-  local lastGroup
-  for _, t in ipairs(tabs) do
-    if t.group and t.group ~= lastGroup then
-      local lbl = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-      lbl:SetPoint("TOPLEFT", 10, y - 2)
-      lbl:SetText(t.group:upper()); lbl:SetTextColor(unpackc(C.dim))
-      y = y - 18
-      lastGroup = t.group
-    end
+  -- per-tab nav icons (WoW built-in textures)
+  local TAB_ICONS = {
+    ["Home"]       = "Interface\\Icons\\INV_Misc_Map_01",              -- how am I doing
+    ["Combat"]     = "Interface\\GossipFrame\\BattleMasterGossipIcon", -- what happened when I fought
+    ["Loot"]       = "Interface\\Icons\\INV_Misc_Coin_01",             -- what did I get
+    ["Character"]  = "Interface\\Icons\\INV_Misc_Book_09",             -- how is my character growing
+    ["Settings"]   = "Interface\\Buttons\\UI-OptionsButton",           -- gear
+  }
+  local function makeButton(t, point, ox, oy, rel)
     local b = CreateFrame("Button", nil, strip, "BackdropTemplate")
-    b:SetSize(122, 30)
-    b:SetPoint("TOPLEFT", 8, y)
-    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
-      edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    fs:SetPoint("LEFT", 10, 0); fs:SetText(t.name)
+    b:SetSize(130, 30)
+    b:SetPoint(point, rel or strip, point, ox, oy)
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" })
+    b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("TOPLEFT"); b.accent:SetPoint("BOTTOMLEFT"); b.accent:SetWidth(3)
+    b:SetScript("OnEnter", function(s) if activeName ~= t.name then s:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.12) end end)
+    b:SetScript("OnLeave", function(s) styleTabButton(t, activeName == t.name) end)
+    local ic = TAB_ICONS[t.name]
+    local tx = 10
+    if ic then
+      local icon = b:CreateTexture(nil, "ARTWORK")
+      icon:SetSize(16, 16); icon:SetPoint("LEFT", 10, 0); icon:SetTexture(ic)
+      b.icon = icon; tx = 32
+    end
+    local fs = ns.UI.FS(b, "GameFontNormal")
+    fs:SetPoint("LEFT", tx, 0); fs:SetText(t.name)
     b.text = fs
     b:SetScript("OnClick", function() selectTab(t.name) end)
     t.btn = b
     styleTabButton(t, false)
-    y = y - 34
+  end
+  local y = -10
+  local lastGroup
+  for _, t in ipairs(tabs) do
+    if t.pin ~= "bottom" then
+      if t.group and t.group ~= lastGroup then
+        local lbl = ns.UI.FS(strip, "GameFontNormalSmall")
+        lbl:SetPoint("TOPLEFT", 10, y - 2)
+        lbl:SetText(t.group:upper()); lbl:SetTextColor(unpackc(C.dim))
+        y = y - 18
+        lastGroup = t.group
+      end
+      makeButton(t, "TOPLEFT", 6, y)
+      y = y - 32
+    end
+  end
+  -- bottom-pinned tabs (e.g. Settings): stack up from the strip's bottom edge
+  local by = 8
+  for i = #tabs, 1, -1 do
+    local t = tabs[i]
+    if t.pin == "bottom" then
+      makeButton(t, "BOTTOMLEFT", 6, by)
+      by = by + 32
+    end
   end
 
   -- live recording status ticker on the title bar
@@ -215,32 +334,276 @@ local function buildFrame()
   f:SetScript("OnHide", function()
     if f.ticker then f.ticker:Cancel(); f.ticker = nil end
   end)
+  f:Hide()  -- CreateFrame shows by default; start hidden so the first Toggle opens (not hides) it
 end
+
+-- inline status icons for the title bar (WoW texture escape sequences)
+local ICO = "|T%s:14:14:0:-1|t"
+local IND_GREEN  = "Interface\\COMMON\\Indicator-Green"
+local IND_GRAY   = "Interface\\COMMON\\Indicator-Gray"
+local IND_YELLOW = "Interface\\COMMON\\Indicator-Yellow"
+local CHK_ON     = "Interface\\RaidFrame\\ReadyCheck-Ready"
+local CHK_OFF    = "Interface\\RaidFrame\\ReadyCheck-NotReady"
+local CHK_WAIT   = "Interface\\RaidFrame\\ReadyCheck-Waiting"
 
 function UI.refreshStatus()
   if not (frame and frame:IsShown()) then return end
   local sess = ns.Recorder and ns.Recorder.active()
-  if sess then
-    local aclOn, combatOn = ns.Logging.state()
-    local ok = aclOn and combatOn
-    frame.recFS:SetText((ok and "|cff47c97erecording|r " or "|cffe5544blogging OFF|r ")
-      .. (ns.CYAN .. (sess.context or "?") .. "|r"))
+  local aclOn, combatOn = ns.Logging.state()
+  -- ONE honest indicator of what the addon can actually know: whether ITS capture (session beacon +
+  -- combat-log file) is live. It cannot see the desktop app, so video "recording" is never claimed here.
+  local state
+  if sess and combatOn and aclOn then
+    state = ICO:format(IND_GREEN) .. " |cff59c77fCAPTURING|r  |cff1fa3c6" .. (sess.context or "?") .. "|r"
+  elseif sess and combatOn then
+    state = ICO:format(IND_YELLOW) .. " |cffc9ad82CAPTURING (basic log)|r"
+  elseif sess then
+    state = ICO:format(IND_YELLOW) .. " |cffc9ad82CAPTURING, COMBAT LOG OFF|r"
+  elseif IsInInstance() then
+    state = ICO:format(IND_YELLOW) .. " |cffc9ad82STARTING|r"
   else
-    frame.recFS:SetText("|cff8a96a6idle|r")
+    state = ICO:format(IND_GRAY) .. " |cff8fa1a8STANDING BY|r"
   end
+  frame.recFS:SetText(state)
 end
 
 -- ── public API ────────────────────────────────────────────────────────────────
 
 -- order: lower shows higher in the strip. group: dim section label shown above the first tab of it.
-function UI.registerTab(order, name, build, onShow, group)
-  tabs[#tabs + 1] = { order = order, name = name, build = build, onShow = onShow, group = group }
+-- pin: "bottom" anchors the tab to the bottom of the strip (e.g. Settings) instead of the top-down flow.
+function UI.registerTab(order, name, build, onShow, group, pin)
+  tabs[#tabs + 1] = { order = order, name = name, build = build, onShow = onShow, group = group, pin = pin }
 end
 
-function UI.Open(name)
+-- ── HOST tabs: one question each (Home · Combat · Loot · Character), answered by PANES on a UI.Tabs
+--    control. A pane is what used to be a whole tab; it is built lazily on first select into the pane's
+--    content frame and refreshed (onShow) every time it is selected. Panes never draw a title: the host
+--    owns the title and subtitle. Pane key = label lowercased without spaces ("Dungeons" -> "dungeons").
+local hosts = {}
+local function paneKey(label) return (label:lower():gsub("%s+", "")) end
+local function buildHost(t, content)
+  local title = UI.FS(content, "GameFontNormalLarge"); title:SetPoint("TOPLEFT", 14, -14); title:SetText(t.name)
+  local sub = UI.FS(content, "GameFontHighlightSmall", C.dim); sub:SetPoint("TOPLEFT", 14, -38); sub:SetWidth(700); sub:SetJustifyH("LEFT")
+  sub:SetText(t.subtitle or "")
+  table.sort(t.panes, function(a, b) return a.order < b.order end)
+  local items = {}
+  t.paneByKey = {}
+  for _, pn in ipairs(t.panes) do items[#items + 1] = { key = pn.key, label = pn.label }; t.paneByKey[pn.key] = pn end
+  t.ctl = UI.Tabs(content, items, nil, 14, { onSelect = function(key)
+    local pn = t.paneByKey[key]; if not pn then return end
+    if not pn.built then
+      pn.content = CreateFrame("Frame", nil, t.ctl.panes[key]); pn.content:SetAllPoints()
+      local ok, err = pcall(pn.build, pn.content)
+      pn.buildError = (not ok) and tostring(err) or nil
+      if not ok then
+        local fs = UI.FS(pn.content, "GameFontHighlight"); fs:SetPoint("TOPLEFT", 12, -12); fs:SetText("|cffe25a5aerror building pane:|r " .. tostring(err))
+      end
+      pn.built = true
+    end
+    if pn.onShow then local ok2, e2 = pcall(pn.onShow); pn.showError = (not ok2) and tostring(e2) or nil end
+  end })
+  content.tabs = t.ctl
+  if items[1] then t.ctl.select(items[1].key) end
+end
+function UI.registerHost(order, name, subtitle)
+  if hosts[name] then if subtitle then hosts[name].subtitle = subtitle end return hosts[name] end
+  local t = { order = order, name = name, subtitle = subtitle, panes = {}, host = true }
+  t.build = function(content) buildHost(t, content) end
+  t.onShow = function()
+    local pn = t.ctl and t.paneByKey and t.paneByKey[t.ctl.active]
+    if pn and pn.built and pn.onShow then pn.onShow() end
+  end
+  tabs[#tabs + 1] = t; hosts[name] = t
+  return t
+end
+function UI.registerPane(hostName, order, label, build, onShow)
+  local h = hosts[hostName] or UI.registerHost(50, hostName, nil)
+  h.panes[#h.panes + 1] = { order = order, key = paneKey(label), label = label, build = build, onShow = onShow }
+end
+function UI.paneErrors()
+  local out = {}
+  for _, t in ipairs(tabs) do
+    if t.host and t.paneByKey then
+      for k, pn in pairs(t.paneByKey) do
+        if pn.buildError then out[#out + 1] = t.name .. "/" .. k .. ": " .. pn.buildError end
+        if pn.showError then out[#out + 1] = t.name .. "/" .. k .. " (show): " .. pn.showError end
+      end
+    end
+  end
+  return out
+end
+
+-- Open the window on a tab; `sub` selects a pane of a host tab ("Combat", "fights").
+-- persist + apply a window size (used by the resize grip; clamped to the designed minimum)
+function UI.SetWindowSize(w, h)
+  w = math.max(900, math.floor(tonumber(w) or 900)); h = math.max(580, math.floor(tonumber(h) or 580))
+  if ns.DB and ns.DB.settings then ns.DB.settings.winSize = { w = w, h = h } end
+  if frame then frame:SetSize(w, h) end
+end
+
+function UI.Open(name, sub)
   buildFrame()
   frame:Show()
   selectTab(name or activeName or (tabs[1] and tabs[1].name))
+  if sub and name and hosts[name] and hosts[name].ctl then hosts[name].ctl.select(sub) end
+end
+
+-- ── sub-tabs: a real tab control, not a row of buttons. A bordered pane with the tabs sitting ON its
+--    top edge; the active tab shares the pane's fill and merges into it (border covered, tan accent on
+--    top); inactive tabs are dimmer, shorter and set behind. items = { { key=, label= }, ... }.
+--    Returns ctl with ctl.panes[key] (parent your content into these), ctl.select(key), ctl.active.
+function UI.Tabs(parent, items, top, sidePad, opts)
+  -- geometry: the strip sits 18px clear of the page subtitle; every tab is the SAME height so labels
+  -- never shift between states; tabs size to their label with 14px side padding and a 6px gap.
+  top = top or -96; sidePad = sidePad or 14; opts = opts or {}
+  local TAB_H, PAD, GAP = 26, 14, 6
+  local ctl = { panes = {}, tabs = {} }
+  local pane = UI.Panel(parent)
+  pane:SetPoint("TOPLEFT", sidePad, top); pane:SetPoint("BOTTOMRIGHT", -sidePad, 12)
+  ctl.host = pane
+  local x = 12
+  for _, it in ipairs(items) do
+    local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    b:SetPoint("BOTTOMLEFT", pane, "TOPLEFT", x, -1)          -- rests on the pane's top edge
+    b:SetFrameLevel((pane:GetFrameLevel() or 1) + 5)          -- draws over the pane border
+    b:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+    b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("TOPLEFT", 3, -3); b.accent:SetPoint("TOPRIGHT", -3, -3); b.accent:SetHeight(2)
+    b.join = b:CreateTexture(nil, "OVERLAY"); b.join:SetPoint("BOTTOMLEFT", 3, -3); b.join:SetPoint("BOTTOMRIGHT", -3, -3); b.join:SetHeight(6)
+    b.text = UI.FS(b, "GameFontNormalSmall")
+    if UI.TAB_FONT then b.text:SetFontObject(UI.TAB_FONT) end
+    b.text:SetPoint("CENTER", 0, 0); b.text:SetJustifyH("CENTER"); b.text:SetText(it.label:upper())
+    local w = math.max(84, math.floor((b.text:GetStringWidth() or 60) + PAD * 2 + 0.5))
+    b:SetSize(w, TAB_H)
+    b.key = it.key
+    b:SetScript("OnClick", function(tb) ctl.select(tb.key) end)
+    b:SetScript("OnEnter", function(tb) if ctl.active ~= tb.key then tb:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.18) end end)
+    b:SetScript("OnLeave", function() ctl.style() end)
+    -- shared mode: the tabs FILTER one content area instead of switching panes
+    if opts.shared then
+      if not ctl.content then
+        ctl.content = CreateFrame("Frame", nil, pane)
+        ctl.content:SetPoint("TOPLEFT", 10, -12); ctl.content:SetPoint("BOTTOMRIGHT", -10, 8)
+      end
+      ctl.panes[it.key] = ctl.content
+    else
+      local content = CreateFrame("Frame", nil, pane)
+      content:SetPoint("TOPLEFT", 10, -12); content:SetPoint("BOTTOMRIGHT", -10, 8); content:Hide()
+      ctl.panes[it.key] = content
+    end
+    ctl.tabs[#ctl.tabs + 1] = b
+    x = x + w + GAP
+  end
+  function ctl.style()
+    for _, b in ipairs(ctl.tabs) do
+      if b.key == ctl.active then
+        b:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92)      -- same fill as the pane: merges into it
+        b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.55)
+        b.accent:SetColorTexture(unpackc(C.gold))
+        b.join:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 1)     -- hides the pane border under the tab
+        b.text:SetTextColor(unpackc(C.gold))
+        b:SetAlpha(1)
+      else
+        b:SetBackdropColor(0, 0, 0, 0.35)
+        b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.22)
+        b.accent:SetColorTexture(0, 0, 0, 0)
+        b.join:SetColorTexture(0, 0, 0, 0)
+        b.text:SetTextColor(unpackc(C.dim))
+        b:SetAlpha(0.85)                                                  -- set back, not shrunk: labels stay aligned
+      end
+    end
+  end
+  function ctl.select(key)
+    ctl.active = key
+    if not opts.shared then
+      for k, pn in pairs(ctl.panes) do if k == key then pn:Show() else pn:Hide() end end
+    end
+    ctl.style()
+    if opts.onSelect then opts.onSelect(key) end
+  end
+  return ctl
+end
+
+-- Location is TWO columns everywhere: the place name (fmtPlace) and the coordinates (fmtCoords).
+-- Source (who / what) is a third, separate column. fmtLocation joins both for single-line prose only.
+-- day separator label for time-ordered lists: "Today", "Yesterday", else "Thursday, Sep 25"
+function UI.fmtDay(t, nowT)
+  t = tonumber(t) or 0
+  nowT = nowT or ((GetServerTime and GetServerTime()) or time())
+  local d, today, yday = date("%Y-%m-%d", t), date("%Y-%m-%d", nowT), date("%Y-%m-%d", nowT - 86400)
+  if d == today then return "Today" elseif d == yday then return "Yesterday" end
+  return date("%A, %b %d", t)
+end
+function UI.fmtPlace(zone, sub)
+  if sub and zone and sub ~= zone then return sub .. ", " .. zone end
+  return sub or zone or ""
+end
+function UI.fmtCoords(x, y)
+  if x and y then return ("%.1f, %.1f"):format(x * 100, y * 100) end
+  return ""
+end
+function UI.fmtLocation(zone, x, y, sub)
+  local place = sub or zone
+  if sub and zone and sub ~= zone then place = sub .. ", " .. zone end
+  if x and y then return (place and (place .. "  ") or "") .. ("(%.1f, %.1f)"):format(x * 100, y * 100) end
+  return place or ""
+end
+
+-- ── minimap button: the conventional launcher. Left-click opens, right-click opens Settings, drag
+--    moves it around the minimap edge (angle persisted). Built once on PLAYER_ENTERING_WORLD by Core.
+function UI.buildMinimapButton()
+  if not Minimap or UI.minimapBtn then return end
+  local b = CreateFrame("Button", "EverbuffMinimapButton", Minimap)
+  b:SetSize(31, 31); b:SetFrameStrata("MEDIUM"); b:SetFrameLevel(8)
+  b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+  local ring = b:CreateTexture(nil, "OVERLAY"); ring:SetSize(53, 53); ring:SetPoint("TOPLEFT")
+  ring:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+  local icon = b:CreateTexture(nil, "BACKGROUND"); icon:SetSize(20, 20); icon:SetPoint("TOPLEFT", 7, -6)
+  icon:SetTexture("Interface\\AddOns\\EverbuffJournal\\media\\mark")
+  local function place()
+    local angle = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.minimapAngle)) or 220
+    local r = ((Minimap:GetWidth() or 140) / 2) + 5
+    b:ClearAllPoints()
+    b:SetPoint("CENTER", Minimap, "CENTER", r * math.cos(math.rad(angle)), r * math.sin(math.rad(angle)))
+  end
+  b:RegisterForDrag("LeftButton")
+  b:SetScript("OnDragStart", function(btn)
+    btn:SetScript("OnUpdate", function()
+      local mx, my = Minimap:GetCenter(); local cx, cy = GetCursorPosition()
+      local sc = UIParent:GetEffectiveScale() or 1
+      if mx and cx then
+        local angle = math.deg(math.atan2((cy / sc) - my, (cx / sc) - mx))
+        if ns.DB and ns.DB.settings then ns.DB.settings.minimapAngle = angle end
+        place()
+      end
+    end)
+  end)
+  b:SetScript("OnDragStop", function(btn) btn:SetScript("OnUpdate", nil) end)
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  b:SetScript("OnClick", function(_, which) if which == "RightButton" then UI.Open("Settings") else UI.Toggle() end end)
+  b:SetScript("OnEnter", function(btn)
+    GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
+    GameTooltip:AddLine("everbuff.gg")
+    GameTooltip:AddLine("Left-click: open   Right-click: settings   Drag: move", 0.7, 0.7, 0.7)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  place()
+  UI.minimapBtn = b
+end
+
+-- any tab whose build or refresh threw (for the Sync tab's UI-health line and the test suite)
+function UI.tabErrors()
+  local out = {}
+  for _, t in ipairs(tabs) do
+    if t.buildError then out[#out + 1] = t.name .. ": " .. t.buildError end
+    if t.showError then out[#out + 1] = t.name .. " (refresh): " .. t.showError end
+  end
+  return out
+end
+
+function UI.SetWindowScale(sc)
+  if frame and sc then frame:SetScale(sc) end
 end
 
 function UI.Toggle()
@@ -292,3 +655,7 @@ function UI.groupChannel()
   if IsInRaid() then return "RAID" elseif IsInGroup() then return "PARTY" end
   return nil
 end
+
+-- test exports
+ns._test = ns._test or {}
+ns._test.tabs = tabs

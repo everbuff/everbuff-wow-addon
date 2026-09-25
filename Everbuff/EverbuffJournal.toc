@@ -1,0 +1,27 @@
+## Interface: 120100, 120105
+## X-Expansion: MAINLINE
+## Title: Everbuff.GG
+## Notes: Gameplay recording for data nerds. Captures your fights, loot, deaths and journey for everbuff.gg.
+## Author: Everbuff.GG
+## Version: 0.8.0
+## SavedVariables: EverbuffDB, EverbuffTest, EverbuffAck
+## X-Website: https://everbuff.gg
+## X-Category: Combat
+
+# Interface/X-Expansion mirror the client. Note: the WoW Forever beta does not persist ANY addon's
+# SavedVariables across a full restart (confirmed Blizzard bug, not this addon). Editing .lua files
+# while the game runs is fine (they load on /reload); new files need a full restart.
+Logging.lua
+Segments.lua
+Fights.lua
+UI.lua
+Debug.lua
+Recording.lua
+Economy.lua
+Progress.lua
+Journey.lua
+Dungeons.lua
+Deaths.lua
+Sync.lua
+Emitter.lua
+Core.lua

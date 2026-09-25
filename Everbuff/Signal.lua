@@ -1,14 +1,14 @@
--- Everbuff · Signal.lua — the visual event channel (addon → desktop, via the recording itself).
+-- Everbuff · Signal.lua - the visual event channel (addon → desktop, via the recording itself).
 --
 -- WHY: addons cannot talk to the desktop in real time (SavedVariables only flush on /reload‑logout,
 -- and no sockets/files exist in the sandbox). But the desktop ALREADY watches the screen through the
--- libobs game capture — so the screen IS the channel. On the few events the combat log cannot see
+-- libobs game capture - so the screen IS the channel. On the few events the combat log cannot see
 -- (quest accepted / turned in, world-enter, level-up) we render a tiny STATIC strip of colored cells
 -- in the top-left corner for a few seconds; the desktop's frame sampler decodes it and files a
 -- timestamped event into the session package. Encounter anchors double as exact video↔log sync marks.
 --
 -- STRICTLY sanctioned surface: pure rendering + normal event registration. No hooks, no IO, nothing
--- that touches the process — see the desktop's "only OBS touches WoW" rule.
+-- that touches the process - see the desktop's "only OBS touches WoW" rule.
 --
 -- VISUAL CONTRACT (decoder in everbuff-desktop/recorder/src/main.rs must match):
 --   • 10 square cells in one row at ABSOLUTE top-left (0,0), each CELL px (UI units) wide.
