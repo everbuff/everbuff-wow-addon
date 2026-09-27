@@ -46,5 +46,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.EVERBUFF_GH_PAT }}
           claude_args: "--max-turns 80"
+          show_full_output: true
           settings: |
             {"env": {"GIT_AUTHOR_NAME": "jsam", "GIT_AUTHOR_EMAIL": "samhart.inbox@gmail.com", "GIT_COMMITTER_NAME": "jsam", "GIT_COMMITTER_EMAIL": "samhart.inbox@gmail.com"}}
