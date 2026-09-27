@@ -193,6 +193,26 @@ M.fire("CHAT_MSG_LOOT", "You receive loot: |cffffffff|Hitem:2934::::::::12:::::|
 local skin = ns.DB.loot.log[#ns.DB.loot.log]
 check("skinned corpse keeps the readable name", skin and skin.src == "Mottled Boar", skin and skin.src)
 M.units.target = nil
+-- loot quality: hex link colors, 11.0+ named quality colors (Forever), API fallback, and the login backfill (#9)
+M.fire("CHAT_MSG_LOOT", "You receive loot: |cnIQ2:|Hitem:3010::::::::12:::::|h[Green Thing]|h|r.")
+local qgreen = ns.DB.loot.log[#ns.DB.loot.log]
+check("named quality color |cnIQ2: parsed as uncommon", qgreen and qgreen.q == "ff1eff00", qgreen and qgreen.q)
+M.fire("CHAT_MSG_LOOT", "You receive loot: |cffa335ee|Hitem:3011::::::::12:::::|h[Purple Thing]|h|r.")
+local qpurple = ns.DB.loot.log[#ns.DB.loot.log]
+check("hex link color still parsed as epic", qpurple and qpurple.q == "ffa335ee", qpurple and qpurple.q)
+M.itemQuality[3012] = 3
+M.fire("CHAT_MSG_LOOT", "You receive loot: |Hitem:3012::::::::12:::::|h[Blue Thing]|h|r.")
+local qblue = ns.DB.loot.log[#ns.DB.loot.log]
+check("no link color: quality from C_Item.GetItemQualityByID", qblue and qblue.q == "ff0070dd", qblue and qblue.q)
+M.fire("CHAT_MSG_LOOT", "You receive loot: |Hitem:3013::::::::12:::::|h[Unknown Thing]|h|r.")
+local qunknown = ns.DB.loot.log[#ns.DB.loot.log]
+check("no color and no API answer stays white", qunknown and qunknown.q == "ffffffff", qunknown and qunknown.q)
+ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = 1, item = "Old Row", count = 1, q = "ffffffff", id = 3014, src = "Creature", s = ns.DB.active }
+M.itemQuality[3014] = 4
+local fixedRows = ns.Emitter.backfillLootQuality()
+local old = ns.DB.loot.log[#ns.DB.loot.log]
+check("backfill resolves old white rows by item id", fixedRows >= 1 and old.q == "ffa335ee", old.q)
+check("backfill leaves a true white row white", qunknown.q == "ffffffff", qunknown.q)
 -- ── aura timelines (player + enemy) through the REAL recorder ──
 M.auras.player = { HELPFUL = { { name = "Power Word: Fortitude", icon = 135987, spellId = 1243 } }, HARMFUL = {} }
 M.units.target = { name = "Kobold Miner", hostile = true, guid = "Creature-0-1-1-1-6-000D" }

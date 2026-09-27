@@ -93,6 +93,9 @@ _G.TakeInboxMoney = function(i) M.mailTook = (M.mailTook or 0) + 1 end
 _G.TakeInboxItem = function(i, j) M.mailTook = (M.mailTook or 0) + 1 end
 _G.AutoLootMailItem = function(i) M.mailTook = (M.mailTook or 0) + 1 end
 _G.WOW_PROJECT_ID, _G.WOW_PROJECT_MAINLINE, _G.WOW_PROJECT_CLASSIC = 1, 1, 2
+_G.C_Item = _G.C_Item or {}
+M.itemQuality = {}
+_G.C_Item.GetItemQualityByID = function(id) return M.itemQuality[id] end
 _G.GetLocale = function() return "enUS" end
 _G.GetBuildInfo = function() return "12.0.1", "60000", "Jan 1 2026", 120001 end
 _G.GetCVar = function(k) return M.cvars[k] end

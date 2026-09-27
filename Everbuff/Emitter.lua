@@ -555,6 +555,37 @@ local function mailSource(index)
   if sender then return "Mail from " .. sender, m end
   return "Mail", m
 end
+local LOOT_Q_HEX = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000", "ffe6cc80", "ffe6cc80" }
+-- Quality of a looted item as the 8-hex color the Loot pane keys on. Three sources, in order: the link's
+-- literal color (|cffRRGGBB, pre-11.0 clients), the link's named quality color (|cnIQ<n>:, 11.0+ and Forever,
+-- which is why every row used to fall back to white), and the client's item quality API by item id.
+function Emitter.linkQuality(msg, id)
+  local hex = msg and msg:match("|c(%x%x%x%x%x%x%x%x)|Hitem")
+  if hex then return hex:lower() end
+  local named = msg and msg:match("|cnIQ(%d+):|Hitem")
+  if named then return LOOT_Q_HEX[tonumber(named)] or "ffffffff" end
+  if id then
+    local qn
+    if C_Item and C_Item.GetItemQualityByID then qn = plainNum(C_Item.GetItemQualityByID(id)) end
+    if not qn and GetItemInfo then qn = plainNum(select(3, GetItemInfo(id))) end
+    if qn then return LOOT_Q_HEX[qn] or "ffffffff" end
+  end
+  return "ffffffff"
+end
+-- Rows recorded before this fix are white with an item id; resolve them once per login while the client can.
+function Emitter.backfillLootQuality()
+  local log = ns.DB and ns.DB.loot and ns.DB.loot.log
+  if not log or not (C_Item and C_Item.GetItemQualityByID) then return 0 end
+  local fixed = 0
+  for i = #log, math.max(1, #log - 2000), -1 do
+    local r = log[i]
+    if r and r.id and (r.q == nil or r.q == "ffffffff") then
+      local qn = plainNum(C_Item.GetItemQualityByID(r.id))
+      if qn and qn ~= 1 then r.q = LOOT_Q_HEX[qn] or r.q; fixed = fixed + 1 end
+    end
+  end
+  return fixed
+end
 local function pushLoot(entry)
   entry.s = entry.s or (ns.DB and ns.DB.active)
   if entry.item and ns.Recorder and ns.Recorder.bump then ns.Recorder.bump("items") end
@@ -870,6 +901,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
     end
   elseif event == "PLAYER_ENTERING_WORLD" then
+    Emitter.backfillLootQuality()
     refreshClassColor(); paintFlag()
     place()   -- settings are loaded now, so move the flag to the corner the user saved last time
     Emitter.applyFlagPrefs()
@@ -1132,9 +1164,8 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if item and not isSelfLoot(msg) then return end
     if item then
       local count = tonumber(msg:match("x(%d+)")) or 1
-      local color = msg:match("|c(%x%x%x%x%x%x%x%x)|Hitem")
-      local q = (color or "ffffffff"):lower()
       local id = tonumber(msg:match("|Hitem:(%d+)"))
+      local q = Emitter.linkQuality(msg, id)
       local icon
       if id then
         if GetItemIcon then icon = GetItemIcon(id) end
