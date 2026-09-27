@@ -192,4 +192,21 @@ _G.IsShiftKeyDown = function() return M.shift end
 _G.GetItemInfo = function(id) return "Item " .. tostring(id), ("|cffffffff|Hitem:%d::::::::1:::::::|h[Item %d]|h|r"):format(id, id) end
 _G.ChatEdit_InsertLink = function(link) M.inserted = link; return true end
 _G.CreateFont = function() return mkframe() end
+
+-- auction house (Mainline shapes) and tradeskill window, for Market.lua
+M.locations = {}   -- fake ItemLocation -> { name, id, icon, count }
+_G.C_Item = _G.C_Item or {}
+_G.C_Item.GetItemLink = function(loc) local it = M.locations[loc]; return it and ("|cffffffff|Hitem:%d::::::::1:::::::|h[%s]|h|r"):format(it.id, it.name) end
+_G.C_Item.GetItemID = function(loc) local it = M.locations[loc]; return it and it.id end
+_G.C_Item.GetItemName = function(loc) local it = M.locations[loc]; return it and it.name end
+_G.C_Item.GetItemIcon = function(loc) local it = M.locations[loc]; return it and it.icon end
+_G.C_Item.GetStackCount = function(loc) local it = M.locations[loc]; return it and it.count end
+_G.C_Item.GetItemNameByID = function(id) return M.itemNames and M.itemNames[id] end
+_G.C_AuctionHouse = {
+  PostItem = function() end, PostCommodity = function() end, PlaceBid = function() end,
+  StartCommoditiesPurchase = function() end, ConfirmCommoditiesPurchase = function() end, CancelAuction = function() end,
+}
+M.tradeSkillName = nil
+_G.C_TradeSkillUI = _G.C_TradeSkillUI or {}
+_G.C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = M.tradeSkillName } end
 return M

@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Logging", "Signal", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
+for _, f in ipairs({ "Logging", "Signal", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
@@ -1108,5 +1108,60 @@ do
   check("no hardcoded version string left in Lua", (function() for _, f in ipairs({ "Core", "UI", "Sync", "Debug" }) do local h = io.open("Everbuff/" .. f .. ".lua"); local src = h:read("*a"); h:close(); if src:find('ns.VERSION = "%d') then return false end end return true end)())
 end
 check("no errors thrown inside event handlers", #M.errors == 0, #M.errors > 0 and table.concat(M.errors, " || ") or nil)
+
+-- ── Market.lua: crafting, recipes and the auction house (#8) ──
+check("Market loaded", ns.Market ~= nil and ns.Market.craft ~= nil)
+M.tradeSkillName = "Tailoring"; M.fire("TRADE_SKILL_SHOW")
+M.fire("CHAT_MSG_LOOT", "You create: |cffffffff|Hitem:2996::::::::12:::::|h[Bolt of Linen Cloth]|h|rx2.")
+local craft = ns.DB.character.crafts and ns.DB.character.crafts[#ns.DB.character.crafts]
+check("craft row recorded with count, id and the open profession", craft and craft.item == "Bolt of Linen Cloth" and craft.count == 2 and craft.id == 2996 and craft.prof == "Tailoring", craft and craft.prof)
+check("craft row carries the session id and a place", craft and craft.s == ns.DB.active and craft.zone ~= nil)
+check("craft line still not logged as loot", count(ns.DB.loot.log, function(e) return e.item == "Bolt of Linen Cloth" end) == 0)
+M.fire("TRADE_SKILL_CLOSE")
+M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: Heavy Linen Bandage.")
+local rec = ns.DB.character.recipes and ns.DB.character.recipes[#ns.DB.character.recipes]
+check("recipe learned from the system line (Classic path)", rec and rec.name == "Heavy Linen Bandage", rec and rec.name)
+-- postings through the Mainline API hooks
+M.locations["loc1"] = { name = "Bolt of Linen Cloth", id = 2996, icon = 132889, count = 20 }
+C_AuctionHouse.PostCommodity("loc1", 2, 20, 150)
+local posted = ns.DB.loot.ah.posted[#ns.DB.loot.ah.posted]
+check("commodity posting recorded with unit price, total and hours", posted and posted.item == "Bolt of Linen Cloth" and posted.count == 20 and posted.unit == 150 and posted.buyout == 3000 and posted.hours == 24, posted and posted.buyout)
+M.locations["loc2"] = { name = "Cruel Barb", id = 5191, icon = 135651, count = 1 }
+C_AuctionHouse.PostItem("loc2", 3, 1, 50000, 90000)
+posted = ns.DB.loot.ah.posted[#ns.DB.loot.ah.posted]
+check("item posting recorded with bid, buyout and 48 hours", posted and posted.item == "Cruel Barb" and posted.bid == 50000 and posted.buyout == 90000 and posted.hours == 48, posted and posted.hours)
+-- purchases: a bid on an item, and a commodity purchase with the price event
+C_AuctionHouse.PlaceBid(9001, 12345)
+local bought = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought]
+check("bid recorded with auction id and price", bought and bought.auctionId == 9001 and bought.price == 12345, bought and bought.price)
+M.itemNames = { [2770] = "Copper Ore" }
+C_AuctionHouse.StartCommoditiesPurchase(2770, 20); M.fire("COMMODITY_PRICE_UPDATED", 12, 240); M.fire("COMMODITY_PURCHASE_SUCCEEDED")
+bought = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought]
+check("commodity purchase recorded with item, count and total", bought and bought.item == "Copper Ore" and bought.count == 20 and bought.price == 240 and bought.kind == "commodity", bought and bought.price)
+-- mail: a seller invoice becomes a sale with the house cut; an expired mail becomes a return; a won mail completes the bid
+M.money = 6234; M.fire("PLAYER_MONEY")
+M.inbox = {
+  { sender = "Auction House", subject = "Auction successful: Cruel Barb", money = 85500, invoice = { "seller", "Cruel Barb", "Buyerguy", 50000, 90000, 500, 4500 } },
+  { sender = "Auction House", subject = "Auction expired: Wool Cloth", money = 0, items = { { name = "Wool Cloth", id = 2592, count = 8, quality = 1 } } },
+  { sender = "Auction House", subject = "Auction won: Rough Stone", money = 0, invoice = { "buyer", "Rough Stone", "Sellerguy" }, items = { { name = "Rough Stone", id = 2835, count = 5, quality = 1 } } },
+}
+M.fire("MAIL_SHOW")
+TakeInboxMoney(1); M.money = M.money + 85500; M.fire("PLAYER_MONEY")
+local sold = ns.DB.loot.ah.sold[#ns.DB.loot.ah.sold]
+check("sale recorded from the seller invoice: net, buyout, deposit, house cut, buyer", sold and sold.item == "Cruel Barb" and sold.net == 85500 and sold.buyout == 90000 and sold.deposit == 500 and sold.cut == 4500 and sold.buyer == "Buyerguy", sold and sold.cut)
+TakeInboxItem(2, 1)
+local ret = ns.DB.loot.ah.returned[#ns.DB.loot.ah.returned]
+check("expired auction recorded as a return", ret and ret.item == "Wool Cloth" and ret.count == 8 and ret.reason == "expired", ret and ret.reason)
+TakeInboxItem(3, 1)
+local won = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought - 1]
+check("won mail completes the earlier bid with the item and seller", won and won.item == "Rough Stone" and won.seller == "Sellerguy" and won.auctionId == 9001, won and tostring(won.item))
+M.fire("MAIL_CLOSED")
+local arows, asum = ns.Market.buildAuctions()
+check("auctions pane rows and sums", #arows >= 5 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 12345 + 240, asum.spent)
+local crows, csum = ns.Market.buildCrafts()
+check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
+check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.DB.character.crafts, ns.DB.character.recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
+check("no errors from the market wiring", #M.errors == 0, M.errors[1])
+
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

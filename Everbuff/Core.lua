@@ -49,7 +49,7 @@ function ns.migrateDB(db)
     db.loot.gold = db.gold or db.loot.gold; db.gold = nil
     db.story.events = db.eventlog or db.story.events; db.eventlog = nil
     db.story.inInstance = db._inInstance; db._inInstance = nil
-    for _, k in ipairs({ "xp", "played", "playedAtLevel", "professions", "reputation", "durability", "ilvl", "seenZones", "itemUses", "flightTime" }) do
+    for _, k in ipairs({ "xp", "played", "playedAtLevel", "professions", "reputation", "durability", "ilvl", "seenZones", "itemUses", "crafts", "recipes", "flightTime" }) do
       if db[k] ~= nil then db.character[k] = db[k]; db[k] = nil end
     end
     db.session = nil; db.runs = nil; db.consent = nil   -- superseded (sessions carry the pace counters) / never built

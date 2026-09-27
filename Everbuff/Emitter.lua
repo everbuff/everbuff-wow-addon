@@ -536,8 +536,9 @@ local function mailSource(index)
   if not ok then return "Mail", nil end
   sender, subject = safeStr(sender), safeStr(subject)
   local m = { sender = sender, subject = subject, cod = plainNum(cod) }
-  local invOk, invType, itemName, playerName = pcall(GetInboxInvoiceInfo or function() end, index)
+  local invOk, invType, itemName, playerName, invBid, invBuyout, invDeposit, invCut = pcall(GetInboxInvoiceInfo or function() end, index)
   invType = invOk and safeStr(invType) or nil
+  if invOk then m.bid, m.buyout, m.deposit, m.cut = plainNum(invBid), plainNum(invBuyout), plainNum(invDeposit), plainNum(invCut) end
   if invType == "seller" or invType == "seller_temp_invoice" then
     m.item, m.buyer = safeStr(itemName), safeStr(playerName); return "Auction sale", m
   elseif invType == "buyer" then
@@ -621,6 +622,7 @@ local function logMailItem(index, itemIndex)
   local tnow = (GetServerTime and GetServerTime()) or time()
   pushLoot({ t = tnow, item = name, count = plainNum(count) or 1, q = q, icon = icon, src = src, mail = meta, id = id,
              x = loc.x, y = loc.y, zone = loc.zone })
+  if ns.Market then pcall(ns.Market.mailItem, src, name, id, plainNum(count) or 1, meta) end
   mailTaken[name] = GetTime()
   Emitter.event("LOOT", { name = name, count = plainNum(count) or 1 }, lootQuiet(q))
 end
@@ -673,7 +675,8 @@ local function onMoney()
       -- coin taken out of a mail: auction proceeds or gold a player sent us
       local src, meta = (GetTime() < mailMoneyUntil) and mailMoneySrc or "Mail", (GetTime() < mailMoneyUntil) and mailMoneyMeta or nil
       mailMoneyUntil = 0
-      if src == "Auction sale" then g.auctionSales = (g.auctionSales or 0) + delta else g.mail = (g.mail or 0) + delta end
+      if src == "Auction sale" then g.auctionSales = (g.auctionSales or 0) + delta; if ns.Market then pcall(ns.Market.sold, mailMoneyMeta, delta) end
+      else g.mail = (g.mail or 0) + delta end
       local loc = locStamp()
       pushLoot({ t = (GetServerTime and GetServerTime()) or time(), money = delta, src = src, mail = meta,
                  x = loc.x, y = loc.y, zone = loc.zone })
@@ -1067,6 +1070,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     local nm
     if a1 and C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, a1); nm = ok and info and safeStr(info.name) end
     Emitter.event("RECIPE", { name = nm or "a new recipe" })
+    if ns.Market then pcall(ns.Market.recipe, nm) end
   elseif event == "PLAYER_EQUIPMENT_CHANGED" then
     -- journey-level gear progression: equipped item level going UP (checked out of combat only)
     if not (InCombatLockdown and InCombatLockdown()) and GetAverageItemLevel and ns.DB then
@@ -1157,6 +1161,11 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local made = tonumber(msg:match("x(%d+)")) or 1
       craftCount[item] = (craftCount[item] or 0) + made
       lastCraft = { item = item, count = craftCount[item], at = GetTime() }
+      if ns.Market then
+        local cid = tonumber(msg:match("|Hitem:(%d+)"))
+        local cicon = cid and ((GetItemIcon and GetItemIcon(cid)) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(cid))) or nil
+        pcall(ns.Market.craft, item, made, cid, cicon)
+      end
       return   -- not loot; don't log or toast
     end
     -- an item we just took out of a mail was logged by the inbox hook; retail also prints a chat line for it

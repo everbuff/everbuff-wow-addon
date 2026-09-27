@@ -15,8 +15,8 @@ Five tabs, one question each. No tab is named after a data type.
 | --- | --- | --- |
 | **Home** | How is my run going? | Level, XP per hour and time to level, gold per hour, time played, the story of this session, and one row per play session with XP and gold bars |
 | **Combat** | What happened when I fought? | Dungeon runs boss by boss, every fight with a scrubber that shows your buffs, your group's buffs, the monsters' buffs, gear and items used at any second, and every death with the corpse run and gear lost |
-| **Loot** | What did I get? | Every pickup with its source (the mob, the node, the object, the mail, the auction) and the map coordinates, a by-item view, and gold in and out down to repairs, flights and postage |
-| **Character** | How is my character growing? | Quests done and in progress with where you did them, standing with every faction, professions with skill bars and milestones |
+| **Loot** | What did I get? | Every pickup with its source (the mob, the node, the object, the mail, the auction) and the map coordinates, a by-item view, gold in and out down to repairs, flights and postage, and your auctions: what you posted at what price, what sold and for how much after the house cut, what you bought, what came back |
+| **Character** | How is my character growing? | Quests done and in progress with where you did them, standing with every faction, professions with skill bars and milestones, and crafting: every item you made with the profession and where you made it, every recipe learned |
 | **Settings** | | The on-screen flag, notifications, capture health, disconnect protection, stored data |
 
 The **flag** in the corner is the part the everbuff desktop app reads: it marks the moments in your video
