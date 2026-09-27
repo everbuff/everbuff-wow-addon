@@ -62,7 +62,6 @@ function R.start()
   ns.DB.sessions[sess.id] = sess
   ns.DB.active = sess.id
   S.session, S.seq = sess, 0
-  if ns.Signal then pcall(ns.Signal.Session, sess.id) end
 
   row("SESSION_START", string.format("%s\t%s\t%s\tlvl=%d", sess.player or "?", sess.realm or "?", context, sess.level))
   local aclOn, combatOn = ns.Logging.enforce()

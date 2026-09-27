@@ -633,7 +633,6 @@ local function beginFight()
     cur.schema = 1
     cur.startLocal = time()
     cur.startLocalHi = CAL_EPOCH + (cur.startMono - CAL_MONO)   -- fractional local clock (video anchor)
-    if ns.Signal then ns.Signal.FightStart((ns.DB and ns.DB.combat and ns.DB.combat.fightSeq or 0) + 1) end
     cur.player = safeKey(try(UnitName, "player"))
     cur.realm = try(GetRealmName)
     local sess = ns.Recorder and ns.Recorder.active and ns.Recorder.active()
@@ -760,7 +759,6 @@ local function endFight()
     -- exactly what has already been uploaded to the backend (upload-driven cleanup, TBD).
     ns.DB.combat.fightSeq = (ns.DB.combat.fightSeq or 0) + 1
     cur.id = ns.DB.combat.fightSeq
-    if ns.Signal then pcall(ns.Signal.FightEnd, cur.outcome) end
     cur.uploaded = false      -- flipped true by the desktop uploader once shipped; prune on next load
     -- store a SANITIZED copy so a stray secret/NaN/inf value can never corrupt the SavedVariables file
     ns.DB.combat.fights[#ns.DB.combat.fights + 1] = sanitize(cur)

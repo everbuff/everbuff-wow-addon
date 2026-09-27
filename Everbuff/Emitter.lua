@@ -9,10 +9,10 @@
 --   2. feeds the same events to the timeline (story events in the save file) with the session id, the
 --      time, the zone and the coordinates, which is what the desktop and the backend read.
 --
--- The desktop does NOT read text off the screen. The machine channel from the game to the desktop is
--- the Signal strip (Signal.lua, a row of colored cells the frame sampler decodes) plus the save file
--- written on /reload and logout. The short "machine" line built below is kept only as the compact label
--- for the event kind in the panel and the timeline; nothing parses it.
+-- Founder rule: nothing is ever drawn on screen for a machine to read except the flag itself. No color
+-- strips, no encoded cells. The desktop's real-time channel is OCR of the flag's text; how the flag's
+-- machine line is rendered for that is decided in everbuff-wow-addon issue #10 before it is built. The
+-- short "machine" line built below is the compact label for the event kind in the panel and the timeline.
 
 local ADDON, ns = ...
 
@@ -294,7 +294,6 @@ end)
 -- ── public entry: build the human form per kind. `quiet` = record only (Loot tab), no toast. ──
 function Emitter.event(kind, d, quiet)
   d = d or {}
-  if ns.Signal and ns.Signal.Story then pcall(ns.Signal.Story, kind, d) end
   local zone = d.zone or GetRealZoneText() or "World"
   local lvl = d.level or (UnitLevel and UnitLevel("player")) or 0
   local name = safeStr(d.name or d.title) or ""   -- never let a secret string reach compare/concat/format below
@@ -1176,7 +1175,6 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local count = tonumber(msg:match("x(%d+)")) or 1
       local id = tonumber(msg:match("|Hitem:(%d+)"))
       local q = Emitter.linkQuality(msg, id)
-      if ns.Signal and ns.Signal.Loot then pcall(ns.Signal.Loot, q) end
       local icon
       if id then
         if GetItemIcon then icon = GetItemIcon(id) end

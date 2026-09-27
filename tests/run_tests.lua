@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Logging", "Signal", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
+for _, f in ipairs({ "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
@@ -88,26 +88,6 @@ M.now = M.now + 12
 M.units.target = nil; M.inCombat = false
 local before = #ns.DB.combat.fights
 M.fire("PLAYER_REGEN_ENABLED")
--- Signal strip (Signal.lua now loaded): fight start and end markers, level-up, checksum, decodability (#7)
-check("Signal loaded", ns.Signal ~= nil and ns.Signal.Emit ~= nil)
-local sigTypes = {}
-for _, h in ipairs(ns.Signal.history) do sigTypes[#sigTypes + 1] = h.etype end
-check("fight start marker (type 7) emitted", count(ns.Signal.history, function(h) return h.etype == 7 end) >= 1, table.concat(sigTypes, ","))
-check("fight end marker (type 8) emitted with outcome", ns.Signal.last and ns.Signal.last.etype == 8 and ns.Signal.last.payload >= 1, ns.Signal.last and ns.Signal.last.etype)
-local sig = ns.Signal.Emit(7, 5)
-check("signal checksum = (type + seq + payload) % 16", sig.check == (7 + sig.seq + 5) % 16)
-local function decodeStrip(p) local n = function(a, b) return p[a] * 4 + p[b] end
-  if p[1] ~= 2 or p[2] ~= 3 then return nil end
-  local et, sq, pl, ck = n(3, 4), n(5, 6), n(7, 8), n(9, 10)
-  if (et + sq + pl) % 16 ~= ck then return nil end
-  return et, sq, pl end
-local det, dsq, dpl = decodeStrip(sig.pattern)
-check("strip decodes like the desktop decoder", det == 7 and dsq == sig.seq and dpl == 5, tostring(det))
-M.fire("PLAYER_LEVEL_UP", 24)
-check("level-up marker (type 6) payload level % 16", ns.Signal.last.etype == 6 and ns.Signal.last.payload == 24 % 16, ns.Signal.last.payload)
-check("rare loot marker only for rare and better", ns.Signal.Loot("ff0070dd") ~= nil and ns.Signal.Loot("ff1eff00") == nil)
-check("session marker carries the id's last hex digit", ns.Signal.Session("260927143017-918f").payload == 15)
-check("no errors from the signal wiring", #M.errors == 0, M.errors[1])
 check("fight stored on combat end", #ns.DB.combat.fights == before + 1)
 local f = ns.DB.combat.fights[#ns.DB.combat.fights]
 check("fight inferred kill (faced foe, lived)", f and f.outcome == "kill", f and f.outcome)
