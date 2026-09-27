@@ -65,6 +65,10 @@ _G.C_Timer = {
   NewTicker = function(_, fn) local tk = { fn = fn }; tk.Cancel = function(s) s.cancelled = true end; M.tickers[#M.tickers + 1] = tk; return tk end,
 }
 _G.GetTime = function() return M.now end
+-- Secret Values (12.0): the real client throws on compare, arithmetic and table keys; the stub cannot
+-- make a plain Lua string throw, so tests mark values secret here and the guards must ask first.
+M.secrets = {}
+_G.issecretvalue = function(v) return M.secrets[v] == true end
 _G.GetServerTime = function() return M.epoch end
 _G.time, _G.date = os.time, os.date
 _G.tinsert, _G.wipe, _G.format = table.insert, function(t) for k in pairs(t) do t[k] = nil end return t end, string.format

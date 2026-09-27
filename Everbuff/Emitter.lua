@@ -111,9 +111,13 @@ local function paintFlag() end   -- class color isn't used for the icon in this 
 -- an ENEMY unit's NAME is a Secret Value on this client; comparing or concatenating it throws. safeStr
 -- returns the value only if it is an ordinary usable string, else nil, so foe handling can degrade to
 -- a generic label instead of crashing. (Enemy names are recovered from the combat-log FILE desktop-side.)
-local function cat0(v) return v .. "" end
+-- Probe order matters: on the 12.0 client a secret string CONCATENATES without error (the result is
+-- itself secret) and only throws on COMPARISON; the old concat-only probe let a secret foe name through
+-- to `name ~= ""` (dungeon kill, 0.9.1). So: ask the client (issecretvalue), then compare, then concat.
+local function cat0(v) return v == "" or (v .. "") end
 local function safeStr(v)
   if type(v) ~= "string" then return nil end
+  if issecretvalue and issecretvalue(v) then return nil end
   local ok = pcall(cat0, v)                   -- no closure allocation (runs on every event/loot line)
   return ok and v or nil
 end
@@ -304,7 +308,7 @@ function Emitter.event(kind, d, quiet)
   elseif kind == "QUESTACCEPT" then machine = "QUESTACCEPT " .. name; human = "Quest:  " .. name
   elseif kind == "QUESTDONE" then machine = "QUESTDONE " .. name; human = "Complete:  " .. name
   elseif kind == "BOSS" then machine = "BOSS " .. name; human = "Pull:  " .. name
-  elseif kind == "KILL" then machine = "KILL " .. name; human = name .. " down!"
+  elseif kind == "KILL" then machine = "KILL " .. (name ~= "" and name or "an enemy"); human = (name ~= "" and name or "an enemy") .. " down!"
   elseif kind == "WIPE" then machine = "WIPE " .. name; human = "Wiped:  " .. name
   elseif kind == "DEATH" then machine = ("DEATH %d %s"):format(lvl, zone); human = ("You died  ·  Level %d"):format(lvl)
   elseif kind == "ALIVE" then machine = "ALIVE " .. zone; human = "Back on your feet"
@@ -492,6 +496,7 @@ end
 -- guard defensively. Totals feed the Journey/Economy tabs; gold looted also shows in the Loot tab.
 local function plainNum(v)
   if type(v) ~= "number" then return nil end
+  if issecretvalue and issecretvalue(v) then return nil end
   local ok = pcall(function() return v + 0 end); return ok and v or nil
 end
 local function rd(fn, ...) if not fn then return nil end local ok, a, b = pcall(fn, ...); if ok then return a, b end end
@@ -1606,6 +1611,7 @@ if ns.UI and ns.UI.registerTab then
     end
   end)
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
+  ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 
   -- ── Loot tab: everything you've picked up (items + coin), newest first ─────────
   local function qrgb(q)

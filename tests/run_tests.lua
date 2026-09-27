@@ -806,6 +806,21 @@ do
   check("quest item from a world object is sourced to that object", key and key.item == "Cage Key" and key.src == "Kobold Cage", key and key.src)
   check("quest items are flagged", key and key.quest == true)
   M.now = M.now + 30
+
+-- ── secret foe name (0.9.1 dungeon error: Emitter.lua:363 compare on a secret string) ──
+do
+  M.secrets["Bruuz"] = true
+  check("safeStr refuses a value the client marks secret", T.safeStr("Bruuz") == nil)
+  check("safeStr keeps a plain string", T.safeStr("Defias Trapper") == "Defias Trapper")
+  check("plainNum refuses a secret number", (function() M.secrets[4242] = true; local r = T.plainNum(4242); M.secrets[4242] = nil; return r end)() == nil)
+  local before = #ns.DB.story.events
+  local ok, err = pcall(ns.Emitter.event, "KILL", { name = "Bruuz" }, false)
+  check("KILL with a secret name does not error", ok, err)
+  local last = ns.DB.story.events[#ns.DB.story.events]
+  check("KILL with a secret name is recorded as an enemy", #ns.DB.story.events == before + 1 and last and last.text == "an enemy down!", last and last.text)
+  M.secrets["Bruuz"] = nil
+end
+
   ns.Emitter.event("KILL", { name = "Defias Trapper" }, true)
   M.fire("CHAT_MSG_LOOT", "You receive item: |cffffffff|Hitem:1234::::::::1:::::::|h[Red Leather Bandana]|h|r.")
   local drop = ns.DB.loot.log[#ns.DB.loot.log]

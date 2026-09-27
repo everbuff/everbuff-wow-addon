@@ -154,6 +154,7 @@ local keyScratch = {}
 local function setKey(t, k) t[k] = true; t[k] = nil end
 local function safeKey(v)
   if v == nil then return nil end
+  if issecretvalue and issecretvalue(v) then return nil end
   local ok = pcall(setKey, keyScratch, v)   -- hot path: no closure or table allocation per call
   return ok and v or nil
 end
@@ -414,6 +415,7 @@ local RESI = { { "Arcane", 6 }, { "Fire", 2 }, { "Frost", 4 }, { "Nature", 3 }, 
 local function add0(v) return v + 0 end
 local function plain(v)
   if type(v) ~= "number" then return nil end
+  if issecretvalue and issecretvalue(v) then return nil end
   local ok = pcall(add0, v)                   -- no closure allocation (called ~30x per stat tick)
   return ok and v or nil
 end

@@ -25,8 +25,18 @@ local C = UI and UI.C or {}
 local Market = { tradeSkill = nil }
 ns.Market = Market
 
-local function plainNum(v) if type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge then return v end return nil end
-local function safeStr(v) if type(v) == "string" then local ok = pcall(string.len, v); if ok then return v end end return nil end
+local function isFinite(v) return v == v and v ~= math.huge and v ~= -math.huge end
+local function plainNum(v)
+  if type(v) ~= "number" or (issecretvalue and issecretvalue(v)) then return nil end
+  local ok, fin = pcall(isFinite, v)   -- a secret number throws on compare
+  return (ok and fin) and v or nil
+end
+local function cmp0(v) return v == "" or (v .. "") end
+local function safeStr(v)
+  if type(v) ~= "string" or (issecretvalue and issecretvalue(v)) then return nil end
+  local ok = pcall(cmp0, v)            -- a secret string throws on compare (concat alone does not, 12.0)
+  return ok and v or nil
+end
 local function nowEpoch() return (GetServerTime and GetServerTime()) or time() end
 local function sid() return ns.DB and ns.DB.active end
 local function loc()
