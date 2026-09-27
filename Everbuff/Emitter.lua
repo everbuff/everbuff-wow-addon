@@ -1,18 +1,18 @@
--- Everbuff.GG · Emitter.lua - the real-time event channel the DESKTOP reads by OCR.
+-- Everbuff.GG · Emitter.lua - the in-game notification flag and the real-time event feed.
 --
--- WHY: the desktop needs to react to log-invisible / too-slow-in-the-log moments (level-up, zone,
--- quest, dungeon, death) in real time. Addons can't open sockets or write files, and SavedVariables
--- only flush on logout. So we keep a small everbuff.gg FLAG in a screen corner that the recorder
--- captures; the desktop OCRs a fixed crop and files the event. No color strip, no chat spam.
+-- WHY: some moments are invisible or late in the combat log (level-up, zone change, quest accepted or
+-- turned in, dungeon enter and leave, death and release). This file watches for them and does two things:
+--   1. shows the player a FLAG: the Everbuff.GG mark, which tints RED while in combat, with a panel that
+--      unfurls beside it carrying a human line colored by event kind (tan level-up, lagoon travel and
+--      quests, ember death and wipe, green kill, tan loot). The flag sits in one of four corners
+--      (settings.emitCorner) and can be dragged, scaled, dimmed or hidden;
+--   2. feeds the same events to the timeline (story events in the save file) with the session id, the
+--      time, the zone and the coordinates, which is what the desktop and the backend read.
 --
--- The flag is ONE unit:
---   • the Everbuff.GG mark, which tints RED while you are in combat (the combat indicator); and
---   • an event PANEL that unfurls beside the mark when something happens, with a human line for the
---     player (styled, colored by event) and a small machine line the OCR reads:
---         LEVELUP 40 Duskwood     ZONE Stranglethorn Vale     DEATH 41 Duskwood
---   No sentinel prefix: the crop is fixed + dedicated, so OCR already knows the text is ours. Free
---   text (zone/boss/quest) goes LAST so its spaces don't break parsing; keywords are case-insensitive
---   and zones snap to the known list downstream; digits read cleanly.
+-- The desktop does NOT read text off the screen. The machine channel from the game to the desktop is
+-- the Signal strip (Signal.lua, a row of colored cells the frame sampler decodes) plus the save file
+-- written on /reload and logout. The short "machine" line built below is kept only as the compact label
+-- for the event kind in the panel and the timeline; nothing parses it.
 
 local ADDON, ns = ...
 
