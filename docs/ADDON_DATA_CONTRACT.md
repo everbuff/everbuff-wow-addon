@@ -117,3 +117,27 @@ Two inbound paths, both consumed by `ns.applyAck` on the addon side:
 
 `combat.lastAck` records the last applied ack; Settings > Capture shows "Desktop sync: last synced ...".
 Ack on `fight.uid` (globally unique), never on `fight.id`.
+
+## Signal strip (video-side markers, `Signal.lua`, loaded since 0.8.3)
+
+Ten square cells at the absolute top-left of the screen, 16 UI units each, shown for 12 seconds per event,
+never blinking. Two bits per cell (black 00, white 01, magenta 10, cyan 11): cells 1 to 2 are the sentinel
+magenta, cyan (they also give the decoder the cell size), then type, sequence, payload and checksum as four
+nibbles, checksum = (type + sequence + payload) % 16. The desktop's frame sampler (`recorder/src/main.rs`,
+`decode_signal`) writes each new (type, sequence) as a `CVEVENT` with the capture time; that time is the
+video-side anchor of the moment (architecture 5.2). Payload is 4 bits, a marker, not a data channel.
+
+| Type | Moment | Payload |
+| --- | --- | --- |
+| 1 | world enter | 0 |
+| 2 | quest accepted | quest id % 16 |
+| 3 | quest turned in | quest id % 16 |
+| 4 | encounter start | encounter id % 16 |
+| 5 | encounter end | encounter id % 16 |
+| 6 | level up | level % 16 |
+| 7 | fight start (every fight, not only encounters) | fight seq % 16 (`combat.fights[].id`) |
+| 8 | fight end | 1 kill, 2 wipe, 3 death, 4 fled |
+| 9 | player death | level % 16 |
+| 10 | rare or better pickup | quality rank 3 to 6 |
+| 11 | zone change | 0 |
+| 12 | addon session record started | last hex digit of the session id |

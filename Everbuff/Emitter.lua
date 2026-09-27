@@ -294,6 +294,7 @@ end)
 -- ── public entry: build the human form per kind. `quiet` = record only (Loot tab), no toast. ──
 function Emitter.event(kind, d, quiet)
   d = d or {}
+  if ns.Signal and ns.Signal.Story then pcall(ns.Signal.Story, kind, d) end
   local zone = d.zone or GetRealZoneText() or "World"
   local lvl = d.level or (UnitLevel and UnitLevel("player")) or 0
   local name = safeStr(d.name or d.title) or ""   -- never let a secret string reach compare/concat/format below
@@ -1166,6 +1167,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local count = tonumber(msg:match("x(%d+)")) or 1
       local id = tonumber(msg:match("|Hitem:(%d+)"))
       local q = Emitter.linkQuality(msg, id)
+      if ns.Signal and ns.Signal.Loot then pcall(ns.Signal.Loot, q) end
       local icon
       if id then
         if GetItemIcon then icon = GetItemIcon(id) end

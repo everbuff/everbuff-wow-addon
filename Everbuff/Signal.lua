@@ -19,9 +19,13 @@
 --   • Shown STATIC for SHOW_SECS then hidden. Never blinks (photosensitivity rule): one steady
 --     pattern per event, nothing otherwise.
 --
--- Event types (keep in sync with the desktop):
+-- Event types (keep in sync with the desktop, recorder/src/main.rs decode_signal and the CVEVENT consumer):
 --   1 WORLD_ENTER · 2 QUEST_ACCEPT · 3 QUEST_COMPLETE · 4 ENCOUNTER_START · 5 ENCOUNTER_END
---   6 LEVEL_UP
+--   6 LEVEL_UP (payload level % 16) · 7 FIGHT_START (payload fightSeq % 16) · 8 FIGHT_END (payload outcome:
+--   1 kill, 2 wipe, 3 death, 4 fled) · 9 DEATH (payload level % 16) · 10 RARE_LOOT (payload quality rank 3..6)
+--   11 ZONE_CHANGE (payload 0) · 12 SESSION_START (payload last hex digit of the addon session id)
+-- Payload is 4 bits: a marker on the master clock, not a data channel. Ids come from the save file, which the
+-- desktop joins by time (architecture 5.2).
 
 local ADDON, ns = ...
 
@@ -34,7 +38,7 @@ local COLORS = {       -- bit pair → r,g,b
   [3] = { 0, 1, 1 },   -- 11 cyan
 }
 
-local Signal = { seq = 0, last = nil }
+local Signal = { seq = 0, last = nil, history = {} }
 ns.Signal = Signal
 
 -- ── the strip ─────────────────────────────────────────────────────────────────
@@ -77,7 +81,9 @@ function Signal.Emit(etype, payload)
     local rgb = COLORS[pattern[i]]
     cells[i]:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
   end
-  Signal.last = { etype = etype, seq = seq, payload = payload, check = check, pattern = pattern }
+  Signal.last = { etype = etype, seq = seq, payload = payload, check = check, pattern = pattern, at = GetTime() }
+  Signal.history[#Signal.history + 1] = Signal.last
+  while #Signal.history > 32 do table.remove(Signal.history, 1) end
   strip:Show()
   hideAt = GetTime() + SHOW_SECS
   return Signal.last
@@ -108,3 +114,33 @@ f:SetScript("OnEvent", function(_, event, a1, a2)
     Signal.Emit(5, a1 or 0)
   end
 end)
+
+-- ── moments the other files report (story events, loot, fights, sessions) ─────
+local STORY = { DEATH = 9, ZONE = 11 }
+local OUTCOME = { kill = 1, wipe = 2, death = 3, fled = 4 }
+local Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 }
+
+--- Emitter.event calls this for every story kind; only the mapped kinds draw a marker.
+function Signal.Story(kind, d)
+  local etype = STORY[kind]
+  if not etype then return nil end
+  local lvl = (d and tonumber(d.level)) or (UnitLevel and tonumber(UnitLevel("player"))) or 0
+  return Signal.Emit(etype, etype == 9 and (lvl % 16) or 0)
+end
+
+--- Fights.lua: a fight began (seq is the running fight counter) or ended with an outcome word.
+function Signal.FightStart(seq) return Signal.Emit(7, (tonumber(seq) or 0) % 16) end
+function Signal.FightEnd(outcome) return Signal.Emit(8, OUTCOME[outcome] or 0) end
+
+--- Emitter loot path: rare and better pickups get a marker, keyed by the 8-hex quality color.
+function Signal.Loot(qhex)
+  local rank = Q_RANK[(qhex or ""):lower()]
+  if rank and rank >= 3 then return Signal.Emit(10, rank) end
+  return nil
+end
+
+--- Segments.lua: a new addon session record started; the last hex digit of its id rides along.
+function Signal.Session(id)
+  local tail = id and tonumber(tostring(id):sub(-1), 16) or 0
+  return Signal.Emit(12, tail)
+end
