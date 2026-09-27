@@ -1,0 +1,46 @@
+name: claude
+# Cloud tier of the everbuff GitHub listener. Triggered by "@claude" in an issue, issue comment or review
+# comment. Handles repository work on GitHub-hosted runners; the local service handles everything else.
+# Secrets (organization level): CLAUDE_CODE_OAUTH_TOKEN, EVERBUFF_GH_PAT. See everbuff-claude/listener/README.md.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned, labeled]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check out the operating manual next to the repository
+        uses: actions/checkout@v4
+        with:
+          repository: everbuff/everbuff-claude
+          path: ../everbuff-claude
+          token: ${{ secrets.EVERBUFF_GH_PAT }}
+      - name: Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.EVERBUFF_GH_PAT }}
+          claude_args: "--max-turns 80"
+          settings: |
+            {"env": {"GIT_AUTHOR_NAME": "jsam", "GIT_AUTHOR_EMAIL": "samhart.inbox@gmail.com", "GIT_COMMITTER_NAME": "jsam", "GIT_COMMITTER_EMAIL": "samhart.inbox@gmail.com"}}
