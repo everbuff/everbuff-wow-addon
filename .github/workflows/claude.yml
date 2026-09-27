@@ -30,12 +30,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check out the operating manual next to the repository
+      - name: Check out the operating manual
         uses: actions/checkout@v4
         with:
           repository: everbuff/everbuff-claude
-          path: ../everbuff-claude
+          path: .everbuff-claude
           token: ${{ secrets.EVERBUFF_GH_PAT }}
+      - name: Place the manual next to the repository, where CLAUDE.md imports it
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE/.everbuff-claude" "$GITHUB_WORKSPACE/../everbuff-claude"
+          echo ".everbuff-claude/" >> .git/info/exclude
       - name: Claude Code
         uses: anthropics/claude-code-action@v1
         with:
