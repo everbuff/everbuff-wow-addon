@@ -170,8 +170,12 @@ check("flagMuted: other groups untouched", T.flagMuted("KILL") == false and T.fl
 check("flagMuted: level-up/death/wipe never mute", T.flagMuted("LEVELUP") == false and T.flagMuted("DEATH") == false and T.flagMuted("WIPE") == false)
 M.zone = "Westfall"; M.fire("ZONE_CHANGED_NEW_AREA")
 check("muted event is still RECORDED in the timeline", count(ns.DB.story.events, function(e) return e.kind == "ZONE" and e.text == "Westfall" end) == 1)
+check("a muted notification has no show time", count(ns.DB.story.events, function(e) return e.kind == "ZONE" and e.text == "Westfall" and e.shown == nil end) == 1)
 ns.DB.settings.flagMute = nil
 check("flagMuted: default is unmuted", T.flagMuted("ZONE") == false)
+M.now = M.now + 30   -- let any notification on screen expire
+M.zone = "Duskwood"; M.fire("ZONE_CHANGED_NEW_AREA")
+check("a shown notification records when it reached the screen", count(ns.DB.story.events, function(e) return e.kind == "ZONE" and e.text == "Duskwood" and e.shown == math.floor(M.now * 1000 + 0.5) / 1000 end) == 1)
 -- ── gathering loot attribution ──
 M.units.target = nil
 M.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 2575)          -- Mining

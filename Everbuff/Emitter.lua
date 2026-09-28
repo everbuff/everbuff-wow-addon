@@ -273,8 +273,11 @@ end
 local hideAt = 0
 local queue = {}
 local TOAST_PRIORITY = { LEVELUP = true, DEATH = true, WIPE = true, BOSS = true, ACHIEV = true }
-local function show(kind, human)
+local function show(kind, human, rec)
   if Emitter.flagHidden() then return end      -- hidden flag: nothing on screen (still recorded)
+  -- the moment it reaches the screen, on the client's own clock: the desktop sees the same notification in
+  -- the video, so the pair is an alignment anchor (everbuff-desktop #72). Data only; nothing on screen changes.
+  if rec then rec.shown = math.floor(GetTime() * 1000 + 0.5) / 1000 end
   local col = COLORS[kind] or GOLD
   accent:SetColorTexture(col[1], col[2], col[3], 1)
   hero:SetTextColor(col[1], col[2], col[3]); hero:SetText(human or kind)
@@ -287,7 +290,7 @@ local function show(kind, human)
 end
 local function showNext()
   local item = table.remove(queue, 1)
-  if item then show(item.kind, item.human) end
+  if item then show(item.kind, item.human, item.rec) end
 end
 panel:SetScript("OnUpdate", function()
   if hideAt > 0 and GetTime() >= hideAt then
@@ -342,10 +345,11 @@ function Emitter.event(kind, d, quiet)
   if kind == "LOOT" and quiet then return end
   -- RECORD tier: every kill/event lands in the timeline (Events tab) + session (Combat Log tab),
   -- correlated by timestamp with the combat-log file and video. This is the complete stats record.
+  local rec
   if ns.DB then
     ns.DB.story.events = ns.DB.story.events or {}
     local L = locStamp()
-    ns.DB.story.events[#ns.DB.story.events + 1] = {
+    rec = {
       t = (GetServerTime and GetServerTime()) or time(), kind = kind, text = human, s = ns.DB.active,
       combat = inCombat or nil, foe = d.foe or (inCombat and combatFoe) or nil,
       -- profession skill-ups carry what was crafted + how many times, in which profession (= name)
@@ -355,6 +359,7 @@ function Emitter.event(kind, d, quiet)
       -- location, for map correlation on the desktop
       zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y,
     }
+    ns.DB.story.events[#ns.DB.story.events + 1] = rec
     while #ns.DB.story.events > 500 do table.remove(ns.DB.story.events, 1) end
     if ns.Recorder and ns.Recorder.bump then
       if kind == "KILL" then ns.Recorder.bump("kills") elseif kind == "DEATH" then ns.Recorder.bump("deaths") elseif kind == "DUNGEON" then ns.Recorder.bump("dungeons") end
@@ -381,12 +386,12 @@ function Emitter.event(kind, d, quiet)
       if q.kind == kind then same = same + 1 end
     end
     if same >= 3 and not TOAST_PRIORITY[kind] then return end
-    if TOAST_PRIORITY[kind] then table.insert(queue, 1, { kind = kind, human = human })
-    else queue[#queue + 1] = { kind = kind, human = human } end
+    if TOAST_PRIORITY[kind] then table.insert(queue, 1, { kind = kind, human = human, rec = rec })
+    else queue[#queue + 1] = { kind = kind, human = human, rec = rec } end
     while #queue > 12 do table.remove(queue) end   -- drop the newest low-priority tail, never the front
   else
     -- the toast is presentation: a rendering error must never break event recording above
-    pcall(show, kind, human)
+    pcall(show, kind, human, rec)
   end
 end
 
