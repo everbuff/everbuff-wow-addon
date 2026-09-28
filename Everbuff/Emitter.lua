@@ -673,6 +673,9 @@ local function onMoney()
         x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
       }
       while #ns.DB.loot.log > 2000 do table.remove(ns.DB.loot.log, 1) end
+    elseif Emitter._questMoney and GetTime() - Emitter._questMoney.at < 3 then
+      g.quests = (g.quests or 0) + delta                   -- a quest's money reward (QUEST_TURNED_IN just said so)
+      Emitter._questMoney = nil
     elseif merchantOpen then
       g.sold = (g.sold or 0) + delta                       -- vendoring items is income too
     elseif GetTime() < mailMoneyUntil or mailOpen then
@@ -684,6 +687,8 @@ local function onMoney()
       local loc = locStamp()
       pushLoot({ t = (GetServerTime and GetServerTime()) or time(), money = delta, src = src, mail = meta,
                  x = loc.x, y = loc.y, zone = loc.zone })
+    else
+      Emitter._openGain = { amount = delta, at = GetTime() }   -- no category yet: a quest turn-in may claim it
     end
   else
     local spent = -delta
@@ -696,6 +701,19 @@ local function onMoney()
     elseif mailOpen then g.mailSpent = (g.mailSpent or 0) + spent      -- COD payments, postage
     else g.other = (g.other or 0) + spent end
   end
+end
+
+-- A quest's money reward (#11, G-2). The client may change the money before or after QUEST_TURNED_IN: a gain
+-- of exactly the reward in the 3 s before is claimed now, otherwise the next gain within 3 s is filed as quests.
+function Emitter.questMoney(amount)
+  if not amount or amount <= 0 or not ns.DB then return end
+  local o = Emitter._openGain
+  if o and o.amount == amount and GetTime() - o.at < 3 then
+    local g = goldDB(); g.quests = (g.quests or 0) + amount
+    Emitter._openGain = nil
+    return
+  end
+  Emitter._questMoney = { amount = amount, at = GetTime() }
 end
 
 -- ── durability: aggregate gear health + a milestone when something breaks ──
@@ -980,6 +998,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "QUEST_TURNED_IN" then
     pushed.turnIn = GetTime()
     Emitter.event("QUESTDONE", { name = questTitle(a1, nil) })
+    Emitter.questMoney(plainNum(a3))
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
     if qxp and qxp > 0 and ns.DB then ns.DB.character.xp = ns.DB.character.xp or {}; ns.DB.character.xp.fromQuests = (ns.DB.character.xp.fromQuests or 0) + qxp end
   elseif event == "ENCOUNTER_START" then
@@ -1087,15 +1106,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
     end
   elseif event == "PLAYER_CONTROL_LOST" then
-    if UnitOnTaxi and UnitOnTaxi("player") then flightStart = { t = GetTime(), zone = (GetRealZoneText and GetRealZoneText()) or "?" } end
+    Emitter.boardFlight(false)
   elseif event == "PLAYER_CONTROL_GAINED" then
-    if flightStart then
-      local dur = math.max(0, GetTime() - flightStart.t)
-      local to = (GetRealZoneText and GetRealZoneText()) or "?"
-      if ns.DB then ns.DB.character.flightTime = (ns.DB.character.flightTime or 0) + dur end
-      Emitter.event("FLIGHTTRIP", { name = ("%s to %s (%dm %ds)"):format(flightStart.zone, to, math.floor(dur / 60), math.floor(dur % 60)), duration = dur }, true)
-      flightStart = nil
-    end
+    Emitter.landFlight()
   elseif event == "NEW_MOUNT_ADDED" then
     local nm = a1 and C_MountJournal and C_MountJournal.GetMountInfoByID and safeStr((C_MountJournal.GetMountInfoByID(a1)))
     Emitter.event("COLLECT", { name = nm or "a new mount" })
@@ -1214,13 +1227,69 @@ end)
 
 -- Which quest reward the player PICKED: GetQuestReward(choiceIndex) fires when they confirm a choice
 -- reward. Read the chosen item's name at that moment (QUEST_TURNED_IN doesn't carry it).
+-- Flights (#11, T-2, T-5). Boarding is control lost while on a taxi, or a TakeTaxiNode call followed by the
+-- taxi flag within 10 s (a client that raises the flag after PLAYER_CONTROL_LOST recorded no trip before);
+-- landing is control regained or the flag clearing, whichever comes first, and records the trip once.
+function Emitter.boardFlight(fromHook)
+  if flightStart and flightStart.boarded then return end
+  local zone = (GetRealZoneText and GetRealZoneText()) or "?"
+  if UnitOnTaxi and UnitOnTaxi("player") then
+    flightStart = { t = flightStart and flightStart.t or GetTime(), zone = flightStart and flightStart.zone or zone, boarded = true }
+  elseif fromHook then
+    flightStart = { t = GetTime(), zone = zone, boarded = false }
+  end
+end
+function Emitter.landFlight()
+  if not flightStart or not flightStart.boarded then return end
+  local dur = math.max(0, GetTime() - flightStart.t)
+  local to = (GetRealZoneText and GetRealZoneText()) or "?"
+  if ns.DB then ns.DB.character.flightTime = (ns.DB.character.flightTime or 0) + dur end
+  local from = flightStart.zone
+  flightStart = nil
+  Emitter.event("FLIGHTTRIP", { name = ("%s to %s (%dm %ds)"):format(from, to, math.floor(dur / 60), math.floor(dur % 60)), duration = dur }, true)
+end
+if TakeTaxiNode and hooksecurefunc then
+  hooksecurefunc("TakeTaxiNode", function()
+    pcall(Emitter.boardFlight, true)
+    if not (C_Timer and C_Timer.NewTicker) then return end
+    local waited, tk = 0, nil
+    tk = C_Timer.NewTicker(1, function()
+      waited = waited + 1
+      if not flightStart then if tk then tk:Cancel() end; return end
+      local onTaxi = UnitOnTaxi and UnitOnTaxi("player")
+      if not flightStart.boarded then
+        if onTaxi then Emitter.boardFlight(false)
+        elseif waited > 10 then flightStart = nil; if tk then tk:Cancel() end end   -- the taxi never left
+      elseif not onTaxi then Emitter.landFlight(); if tk then tk:Cancel() end end
+    end)
+  end)
+end
+
+-- The hook runs after the reward is taken, when the panel can already be gone and the choice reads empty
+-- (#11: no REWARD in the Forever save files), so the choices are also read when the panel opens.
+local function choiceName(i)
+  local name
+  if GetQuestItemLink then local ok, l = pcall(GetQuestItemLink, "choice", i); if ok and type(l) == "string" then name = l:match("%[(.-)%]") end end
+  if (not name or name == "") and GetQuestItemInfo then local ok, nm = pcall(GetQuestItemInfo, "choice", i); if ok and type(nm) == "string" then name = nm end end
+  return (name and name ~= "") and name or nil
+end
+Emitter._rewardChoices = {}
+do
+  local qf = CreateFrame("Frame")
+  qf:RegisterEvent("QUEST_COMPLETE")
+  qf:SetScript("OnEvent", function()
+    local t, n = {}, 0
+    if GetNumQuestChoices then local ok, c = pcall(GetNumQuestChoices); n = (ok and type(c) == "number") and c or 0 end
+    for i = 1, n do t[i] = choiceName(i) end
+    Emitter._rewardChoices = t
+  end)
+end
 if GetQuestReward and hooksecurefunc then
   hooksecurefunc("GetQuestReward", function(choice)
-    if not choice or choice == 0 then return end
-    local name
-    if GetQuestItemLink then local l = GetQuestItemLink("choice", choice); if l then name = l:match("%[(.-)%]") end end
-    if (not name or name == "") and GetQuestItemInfo then name = GetQuestItemInfo("choice", choice) end
-    if name and name ~= "" then Emitter.event("REWARD", { name = name }) end
+    if type(choice) ~= "number" or choice == 0 then return end
+    local name = choiceName(choice) or Emitter._rewardChoices[choice]
+    Emitter._rewardChoices = {}
+    if name then Emitter.event("REWARD", { name = name }) end
   end)
 end
 

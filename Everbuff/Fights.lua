@@ -169,14 +169,28 @@ local SLOTS = {
 -- structured item info for a slot: name + icon + quality (NEVER the raw link - its pipe escapes are
 -- stripped by sanitize() on this client and render as garbage, and can't show an icon). id lets the
 -- desktop resolve the exact item; quality drives the name color; icon renders inline in the UI.
+-- The link's item string is id:enchant:gem1:gem2:gem3:gem4:...; a 0 or empty field is none (#11, CB-1).
+local function linkExtras(link)
+  local fields = link:match("Hitem:([%-%d:]+)")
+  if not fields then return nil, nil end
+  local parts, i = {}, 0
+  for f in (fields .. ":"):gmatch("([^:]*):") do i = i + 1; parts[i] = f end
+  local enchant = tonumber(parts[2] or "")
+  local gems = {}
+  for k = 3, 6 do local g = tonumber(parts[k] or ""); if g and g > 0 then gems[#gems + 1] = g end end
+  return (enchant and enchant > 0) and enchant or nil, (#gems > 0) and gems or nil
+end
+F.linkExtras = linkExtras   -- tests
 local function itemAt(slot)
   local link = try(GetInventoryItemLink, "player", slot)
   if not link then return nil end
+  local enchant, gems = linkExtras(link)
   return {
     name = link:match("%[(.-)%]"),
     id = tonumber(link:match("Hitem:(%d+)")),
     icon = try(GetInventoryItemTexture, "player", slot),
     quality = try(GetInventoryItemQuality, "player", slot),
+    enchant = enchant, gems = gems,
   }
 end
 local function snapshotGear()
@@ -541,15 +555,23 @@ local lastEnemySweep = 0
 -- Party deaths. UnitIsDeadOrGhost is a plain boolean even on the Secret-Values client (no arithmetic),
 -- so a groupmate's death is safe to read. Checked on UNIT_HEALTH / UNIT_FLAGS for that unit and on the
 -- sample tick as a fallback. Each member's deadT (seconds into the fight) is stored on the group entry.
+-- A member resurrected and killed again in the same fight dies twice: `deadT` keeps the first second (schema
+-- unchanged) and `deaths` every one (#11, WD-1). `_downNow` is runtime state, stripped before the fight is saved.
 local function checkMemberDeath(unit)
   if not cur or not cur._memberByUnit then return end
   local m = cur._memberByUnit[unit]
-  if not m or m.me or m.deadT then return end
+  if not m or m.me then return end
   local ok, dead = pcall(UnitIsDeadOrGhost, unit)
-  if ok and dead then
-    m.deadT = mono() - cur.startMono
+  if not ok then return end
+  cur._downNow = cur._downNow or {}
+  if dead and not cur._downNow[unit] then
+    local t = mono() - cur.startMono
+    m.deadT = m.deadT or t
+    m.deaths = m.deaths or {}
+    m.deaths[#m.deaths + 1] = t
     cur.memberDeaths = (cur.memberDeaths or 0) + 1
   end
+  cur._downNow[unit] = dead and true or nil
 end
 local function checkMemberDeaths()
   if not cur or not cur.group then return end
@@ -572,6 +594,8 @@ local function noteItemUse(sid)
   if not name and C_Spell and C_Spell.GetSpellName then name = safeKey(try(C_Spell.GetSpellName, sid)) end
   if not icon and C_Spell and C_Spell.GetSpellTexture then icon = safeKey(try(C_Spell.GetSpellTexture, sid)) end
   if not name then return end
+  -- internal effects the client casts on the player (LOGINEFFECT at every login) are not item uses
+  if name:match("^[%u%d_]+$") then return end
   if ns.DB then
     ns.DB.character.itemUses = ns.DB.character.itemUses or {}
     ns.DB.character.itemUses[name] = (ns.DB.character.itemUses[name] or 0) + 1
@@ -618,6 +642,65 @@ local function addFoe(name)
   cur.foes[#cur.foes + 1] = name
 end
 
+-- Spec and talent build at the pull. Retail and Midnight: the specialization and the loadout import string.
+-- Classic trees: the tab with most points and the split "31/20/0". A client that defines GetSpecialization but
+-- answers nothing (the classic clients can) falls through to the trees; before #11 it recorded neither.
+-- GetTalentTabInfo answers (name, icon, points) on Era, (id, name, description, icon, points) on the later
+-- classic clients, or a table; points missing means summing the ranks of GetTalentInfo (rank is the 5th).
+local function tabPoints(tab)
+  local r = { pcall(GetTalentTabInfo, tab) }
+  if not r[1] then return nil, nil end
+  local nm, pts
+  if type(r[2]) == "table" then nm, pts = r[2].name, r[2].pointsSpent
+  elseif type(r[2]) == "number" and type(r[3]) == "string" then nm, pts = r[3], r[6]
+  else nm, pts = r[2], r[4] end
+  pts = plain(pts)
+  if type(pts) ~= "number" and GetNumTalents and GetTalentInfo then
+    local okN, n = pcall(GetNumTalents, tab)
+    n = okN and plain(n)
+    if type(n) == "number" then
+      pts = 0
+      for i = 1, n do
+        local t = { pcall(GetTalentInfo, tab, i) }
+        pts = pts + ((t[1] and plain(t[6])) or 0)
+      end
+    end
+  end
+  return safeKey(nm), pts
+end
+local function specAndTalents()
+  local spec, talents
+  if GetSpecialization and GetSpecializationInfo then
+    local ok, i = pcall(GetSpecialization)
+    i = ok and plain(i)
+    if type(i) == "number" and i > 0 then
+      local ok2, _, name = pcall(GetSpecializationInfo, i)
+      if ok2 then spec = safeKey(name) end
+    end
+    if C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GenerateImportString then
+      local cfg = try(C_ClassTalents.GetActiveConfigID)
+      local str = cfg and try(C_Traits.GenerateImportString, cfg)
+      if type(str) == "string" and #str > 0 and #str < 400 then talents = str end
+    end
+  end
+  if not spec and not talents and GetNumTalentTabs and GetTalentTabInfo then
+    local okT, tabs = pcall(GetNumTalentTabs)
+    tabs = okT and plain(tabs)
+    if type(tabs) == "number" and tabs > 0 then
+      local best, bestPts, split = nil, 0, {}
+      for tab = 1, tabs do
+        local nm, pts = tabPoints(tab)
+        if nm and pts and pts > bestPts then best, bestPts = nm, pts end
+        split[#split + 1] = tostring(pts or 0)
+      end
+      spec = best                                         -- nil while no point is spent
+      talents = table.concat(split, "/")                  -- "31/20/0": the build at the pull
+    end
+  end
+  return spec, talents
+end
+F.specAndTalents = specAndTalents   -- tests
+
 local function beginFight()
   if cur then return end
   cur = {
@@ -631,6 +714,7 @@ local function beginFight()
   -- are lost, so each fight gets a globally unique uid; we also stamp WHO fought (SV is account-wide),
   -- the client LOCAL wall-clock (the combat-log FILE is stamped in local time, not server time), and the
   -- instance/difficulty so a fight joins cleanly to its slice of the log.
+  pcall(function() cur.spec, cur.talents = specAndTalents() end)
   pcall(function()
     cur.schema = 1
     cur.startLocal = time()
@@ -653,28 +737,6 @@ local function beginFight()
           if plain(px) and plain(py) then cur.x, cur.y = math.floor(px * 1e4) / 1e4, math.floor(py * 1e4) / 1e4 end
         end
       end
-    end
-    -- spec / talent build at the pull (retail: specialization; Classic: the tab with most points)
-    if GetSpecialization and GetSpecializationInfo then
-      local i = GetSpecialization()
-      if i then local _, nm = GetSpecializationInfo(i); cur.spec = safeKey(nm) end
-      -- retail / Midnight: the full talent build as the game's own import string (loadout code)
-      if C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GenerateImportString then
-        local cfg = try(C_ClassTalents.GetActiveConfigID)
-        local str = cfg and try(C_Traits.GenerateImportString, cfg)
-        if type(str) == "string" and #str > 0 and #str < 400 then cur.talents = str end
-      end
-    elseif GetNumTalentTabs and GetTalentTabInfo then
-      local best, bestPts, split = nil, nil, {}
-      for i = 1, GetNumTalentTabs() do
-        local nm, _, pts = GetTalentTabInfo(i)
-        if type(nm) == "table" then nm, pts = nm.name, nm.pointsSpent end   -- some clients return a table
-        pts = plain(pts)
-        if nm and pts and (not bestPts or pts > bestPts) then best, bestPts = nm, pts end
-        split[#split + 1] = tostring(pts or 0)
-      end
-      cur.spec = safeKey(best)
-      if #split > 0 then cur.talents = table.concat(split, "/") end   -- "31/20/0": the build at the pull
     end
   end)
   -- pull-time captures are protected: if any read throws, the fight still exists and endFight stores it
@@ -755,6 +817,7 @@ local function endFight()
   cur._es = nil
   cur._worn = nil
   cur._memberByUnit = nil
+  cur._downNow = nil
   if ns.DB then
     ns.DB.combat.fights = ns.DB.combat.fights or {}
     -- persistent, monotonic id across sessions: the key the desktop will ack so we can prune

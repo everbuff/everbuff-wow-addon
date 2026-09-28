@@ -82,6 +82,13 @@ _G.hooksecurefunc = function(a, b, c)
   local orig = tbl[name]; if type(orig) ~= "function" then return end
   tbl[name] = function(...) local r = { orig(...) }; fn(...); return unpack(r) end
 end
+-- quest reward panel: M.questChoices = { "Item", ... } while it is open; GetQuestReward closes it first,
+-- the way the client can, so the hook reads nothing live
+_G.GetNumQuestChoices = function() return M.questChoices and #M.questChoices or 0 end
+_G.GetQuestItemLink = function(kind, i) local nm = kind == "choice" and M.questChoices and M.questChoices[i]; if nm then return ("|cff1eff00|Hitem:%d::::::::|h[%s]|h|r"):format(9000 + i, nm) end end
+_G.GetQuestItemInfo = function(kind, i) return kind == "choice" and M.questChoices and M.questChoices[i] or nil end
+_G.GetQuestReward = function() M.questChoices = nil end
+_G.TakeTaxiNode = function() end
 -- mailbox: M.inbox = { { sender, subject, money, cod, invoice = { type, item, player }, items = { { name, id, count, quality } } } }
 M.inbox = {}
 _G.ATTACHMENTS_MAX_RECEIVE = 16

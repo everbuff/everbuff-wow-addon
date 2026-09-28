@@ -349,6 +349,16 @@ check("flight trip recorded with route + duration", count(ns.DB.story.events, fu
 check("total flight time accumulated", ns.DB.character.flightTime == 200, ns.DB.character.flightTime)
 M.fire("PLAYER_CONTROL_GAINED")
 check("control regained without a flight is ignored", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 1)
+-- #11: the taxi flag raised after control is lost (or no control events at all): the TakeTaxiNode watch
+M.zone = "Westfall"; M.onTaxi = false; TakeTaxiNode(3); M.fire("PLAYER_CONTROL_LOST")
+M.now = M.now + 1; M.onTaxi = true; M.tick()
+M.now = M.now + 89; M.zone = "Duskwood"; M.onTaxi = false; M.tick()
+check("#11 flight recorded from the taxi flag", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and (e.text or ""):find("Westfall to Duskwood %(1m 30s%)") ~= nil end) == 1)
+M.fire("PLAYER_CONTROL_GAINED"); M.tick()
+check("#11 the same flight is not recorded twice", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2 and ns.DB.character.flightTime == 290, ns.DB.character.flightTime)
+TakeTaxiNode(4); for _ = 1, 12 do M.now = M.now + 1; M.tick() end
+M.fire("PLAYER_CONTROL_LOST"); M.now = M.now + 4; M.fire("PLAYER_CONTROL_GAINED")
+check("#11 a taxi that never left, then a stun, is no flight", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2)
 -- ── spec snapshot on a fight ──
 M.inCombat = true; M.now = M.now + 5; M.fire("PLAYER_REGEN_DISABLED"); M.now = M.now + 2; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
 check("fight records the spec", ns.DB.combat.fights[#ns.DB.combat.fights].spec == "Arms", ns.DB.combat.fights[#ns.DB.combat.fights].spec)
@@ -752,6 +762,100 @@ do
   check("uses stored on the fight", suf and suf.uses and #suf.uses == 1 and suf.uses[1].sid == 17534)
   local okU, errU = pcall(ns.OpenFightDetail, suf)
   check("fight detail renders the items-used section and landmark", okU and #M.errors == 0, errU)
+end
+-- ── capture gaps the question catalog needs (#11) ──
+do
+  local FX = ns.Fights
+  -- gear: enchant and gems from the item string
+  local e1, g1 = FX.linkExtras("|cff1eff00|Hitem:2140:1897:0:0:0:0:0:0:20|h[Carving Knife]|h|r")
+  check("#11 enchant read from the item link", e1 == 1897 and g1 == nil, tostring(e1))
+  local e2, g2 = FX.linkExtras("|cffa335ee|Hitem:28484:2564:24027:24030::::::70|h[Bulwark]|h|r")
+  check("#11 gems read from the item link, empty fields skipped", e2 == 2564 and g2 and #g2 == 2 and g2[1] == 24027 and g2[2] == 24030)
+  local e3, g3 = FX.linkExtras("|cffffffff|Hitem:6948::::::::|h[Hearthstone]|h|r")
+  check("#11 a plain item has neither", e3 == nil and g3 == nil)
+  check("#11 a link without an item string is harmless", FX.linkExtras("[Broken]") == nil)
+  local savedGear = M.gear
+  M.gear = { [16] = "|cff1eff00|Hitem:2140:1897:0:0:0:0:0:0:20|h[Carving Knife]|h|r" }
+  M.inCombat = true; M.now = M.now + 40; M.fire("PLAYER_REGEN_DISABLED")
+  local gf = T.currentFight()
+  check("#11 gear at the pull carries the enchant", gf and gf.gear.initial and gf.gear.initial[16] and gf.gear.initial[16].enchant == 1897, gf and gf.gear.initial and gf.gear.initial[16] and gf.gear.initial[16].enchant)
+  -- party deaths: a member resurrected and killed again dies twice
+  M.units.party1 = { name = "Dave", class = "PRIEST" }; M.groupN = 2
+  M.fire("GROUP_ROSTER_UPDATE")
+  M.now = M.now + 5; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
+  M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED")
+  local df = T.currentFight()
+  M.now = M.now + 4; M.units.party1.dead = true; M.fire("UNIT_HEALTH", "party1")
+  M.now = M.now + 1; M.fire("UNIT_HEALTH", "party1")
+  M.now = M.now + 5; M.units.party1.dead = false; M.fire("UNIT_HEALTH", "party1")
+  M.now = M.now + 6; M.units.party1.dead = true; M.fire("UNIT_HEALTH", "party1")
+  local dm; if df and df.group then for _, m in ipairs(df.group) do if m.name == "Dave" then dm = m end end end
+  check("#11 every party death kept with its second", dm and dm.deaths and #dm.deaths == 2 and math.abs(dm.deaths[1] - 4) < 0.01 and math.abs(dm.deaths[2] - 16) < 0.01, dm and dm.deaths and #dm.deaths)
+  check("#11 deadT stays the first death", dm and math.abs((dm.deadT or -1) - 4) < 0.01)
+  check("#11 member deaths count both", df and df.memberDeaths == 2, df and df.memberDeaths)
+  M.now = M.now + 3; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
+  local sdf = ns.DB.combat.fights[#ns.DB.combat.fights]
+  check("#11 the dead-now working set is not saved", sdf and sdf._downNow == nil and sdf.memberDeaths == 2)
+  M.units.party1 = nil; M.groupN = 1; M.gear = savedGear
+  -- item uses: the client's internal effects are not item uses
+  local savedInfo = _G.GetSpellInfo
+  _G.GetSpellInfo = function(id) if id == 836 then return "LOGINEFFECT" end return savedInfo(id) end
+  local before = ns.DB.character.itemUses and ns.DB.character.itemUses.LOGINEFFECT
+  M.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-login", 836)
+  check("#11 LOGINEFFECT is not counted as an item use", (ns.DB.character.itemUses and ns.DB.character.itemUses.LOGINEFFECT) == before)
+  _G.GetSpellInfo = savedInfo
+  -- quest money: filed under quests whichever event comes first
+  local g = ns.DB.loot.gold; local q0 = g.quests or 0
+  M.money = GetMoney(); M.fire("PLAYER_MONEY")
+  M.now = M.now + 10; M.fire("QUEST_TURNED_IN", 300, 450, 2500)
+  M.money = M.money + 2500; M.fire("PLAYER_MONEY")
+  check("#11 quest money after the turn-in is filed as quests", (g.quests or 0) == q0 + 2500, g.quests)
+  M.now = M.now + 10; M.money = M.money + 900; M.fire("PLAYER_MONEY")
+  M.fire("QUEST_TURNED_IN", 301, 300, 900)
+  check("#11 quest money before the turn-in is claimed by it", (g.quests or 0) == q0 + 3400, g.quests)
+  M.now = M.now + 10; M.fire("QUEST_TURNED_IN", 302, 300, 700)
+  M.now = M.now + 5; M.money = M.money + 700; M.fire("PLAYER_MONEY")
+  check("#11 money long after a turn-in is not the quest's", (g.quests or 0) == q0 + 3400, g.quests)
+  M.now = M.now + 10; M.money = M.money + 50; M.fire("PLAYER_MONEY")
+  M.fire("QUEST_TURNED_IN", 303, 300, 60)
+  check("#11 a gain of another amount is not claimed", (g.quests or 0) == q0 + 3400, g.quests)
+  ns.Emitter._questMoney, ns.Emitter._openGain = nil, nil
+  -- quest reward choice: read when the panel opens, recorded when the choice is confirmed
+  M.questChoices = { "Worn Shortsword", "Frayed Robe" }; M.fire("QUEST_COMPLETE")
+  GetQuestReward(2)
+  check("#11 the chosen reward is recorded after the panel closed", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Frayed Robe") ~= nil end) == 1)
+  M.questChoices = { "Other Blade" }; M.fire("QUEST_COMPLETE"); GetQuestReward(0)
+  check("#11 a quest without a choice records no reward", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Other Blade") ~= nil end) == 0)
+  M.questChoices = nil; M.fire("QUEST_COMPLETE"); GetQuestReward(1)
+  check("#11 a stale choice from an earlier quest is not reused", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Other Blade") ~= nil end) == 0)
+  M.runTimers()
+  -- spec and talents: a client with GetSpecialization that answers nothing falls through to the talent trees
+  local sS, sI = _G.GetSpecialization, _G.GetSpecializationInfo
+  _G.GetSpecialization = function() return nil end
+  _G.GetNumTalentTabs = function() return 3 end
+  _G.GetTalentTabInfo = function(i) local T3 = { { "Holy", 5 }, { "Protection", 0 }, { "Retribution", 12 } }; return T3[i][1], nil, T3[i][2] end
+  local sp, tl = FX.specAndTalents()
+  check("#11 empty specialization falls through to the trees", sp == "Retribution" and tl == "5/0/12", tostring(sp) .. " " .. tostring(tl))
+  _G.GetTalentTabInfo = function(i) if i == 1 then return 161, "Arms", "", "icon", 8 end return 164, "Fury", "", "icon", 0 end
+  _G.GetNumTalentTabs = function() return 2 end
+  sp, tl = FX.specAndTalents()
+  check("#11 id-first GetTalentTabInfo shape", sp == "Arms" and tl == "8/0", tostring(sp) .. " " .. tostring(tl))
+  _G.GetTalentTabInfo = function(i) return ({ "Fire", "Frost" })[i] end
+  _G.GetNumTalents = function() return 2 end
+  _G.GetTalentInfo = function(tab, i) if tab == 2 then return "Talent", nil, 1, i, 3, 5 end return "Talent", nil, 1, i, 0, 5 end
+  sp, tl = FX.specAndTalents()
+  check("#11 points summed from talent ranks when the tab has none", sp == "Frost" and tl == "0/6", tostring(sp) .. " " .. tostring(tl))
+  _G.GetTalentTabInfo = function() error("blocked") end
+  local okS = pcall(FX.specAndTalents)
+  check("#11 a throwing talent API does not break the pull", okS)
+  _G.GetTalentTabInfo = function(i) return ({ "Holy", "Shadow" })[i], nil, 0 end
+  _G.GetNumTalents, _G.GetTalentInfo = nil, nil
+  sp, tl = FX.specAndTalents()
+  check("#11 no points spent: no spec, split recorded", sp == nil and tl == "0/0", tostring(sp) .. " " .. tostring(tl))
+  _G.GetSpecialization, _G.GetSpecializationInfo = sS, sI
+  _G.GetNumTalentTabs, _G.GetTalentTabInfo = nil, nil
+  sp = FX.specAndTalents()
+  check("#11 mainline specialization still read", sp == "Arms", tostring(sp))
 end
 -- ── Progress tab builders (pure) ──
 do
