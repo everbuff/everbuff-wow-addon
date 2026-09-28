@@ -891,6 +891,21 @@ do
   local pr, ps = T.buildProfessions()
   check("professions: highest skill first with rank/max", pr[1] and pr[1].name == "Mining" and pr[1].rank == 78 and pr[1].max == 150, pr[1] and pr[1].name)
   check("professions: milestones and skill-ups per profession", pr[1].tiers >= 1 and pr[1].skillups >= 1 and ps.recipes >= 1, pr[1].tiers .. "/" .. pr[1].skillups)
+  -- a gathered skill-up has no prof field: its profession comes from the text
+  L[#L + 1] = { kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
+  L[#L + 1] = { kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
+  local pr2 = T.buildProfessions()
+  local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
+  check("professions: a skill-up without a prof field still counts", fa and fa.skillups == 1, fa and fa.skillups)
+  local hist = T.buildSkillups()
+  check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
+  check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
+  check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  ns.UI.Open("Character", "professions"); M.tick()
+  local chr = host("Character")
+  local pp = chr and chr.paneByKey.professions
+  check("Professions pane with its history builds and renders cleanly", pp and pp.built and pp.buildError == nil and pp.showError == nil, pp and (pp.buildError or pp.showError))
+  check("timeline: the Professions filter", T.eventMatches({ kind = "SKILLUP" }, "professions") and T.eventMatches({ kind = "RECIPE" }, "professions") and not T.eventMatches({ kind = "LOOT" }, "professions"))
   ns.UI.Open("Home"); M.tick()
   local home = host("Home")
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))

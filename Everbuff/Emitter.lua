@@ -1521,6 +1521,7 @@ if ns.UI and ns.UI.registerTab then
     combat  = { BOSS = true, KILL = true, WIPE = true, DEATH = true, ALIVE = true, ROSTERJOIN = true, ROSTERLEAVE = true },
     travel  = { ZONE = true, DUNGEON = true, DUNGEONLEAVE = true, DISCOVERY = true, FLIGHT = true, FIRSTZONE = true, FLIGHTTRIP = true },
     loot    = { LOOT = true },
+    professions = { SKILLUP = true, PROFTIER = true, RECIPE = true },
   }
   -- an optional time window (a fight's span) set by ns.OpenTimelineWindow; cleared from the banner
   local window = nil   -- { t0, t1, label }
@@ -1560,7 +1561,7 @@ if ns.UI and ns.UI.registerTab then
     local filter = "all"
     local tabs = ns.UI.Tabs(content, {
       { key = "all", label = "All" }, { key = "journey", label = "Journey" }, { key = "combat", label = "Combat" },
-      { key = "travel", label = "Travel" }, { key = "loot", label = "Loot" },
+      { key = "travel", label = "Travel" }, { key = "loot", label = "Loot" }, { key = "professions", label = "Professions" },
     }, -30, 2, { shared = true, onSelect = function(key) filter = key; if eventsRebuild then eventsRebuild() end end })
     content.tabs = tabs
     local pane = tabs.content

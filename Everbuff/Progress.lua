@@ -60,6 +60,7 @@ local function buildReputation()
 end
 
 -- professions: the snapshot (name -> rank/max) plus milestone and recipe counts from the timeline
+local skillOf   -- defined below; buildProfessions counts every skill-up, crafted or gathered
 local function buildProfessions()
   local snap = (ns.DB and ns.DB.character.professions) or {}
   local log = (ns.DB and ns.DB.story.events) or {}
@@ -69,7 +70,8 @@ local function buildProfessions()
       local nm = (e.text or ""):match("Skill milestone:%s*(.-)%s+%d+$")
       if nm then tiers[nm] = (tiers[nm] or 0) + 1 end
     elseif e.kind == "SKILLUP" then
-      if e.prof then skillups[e.prof] = (skillups[e.prof] or 0) + 1; if e.crafted then crafted[e.prof] = math.max(crafted[e.prof] or 0, tonumber(e.crafted) or 0) end end
+      local p = skillOf(e)
+      if p then skillups[p] = (skillups[p] or 0) + 1; if e.crafted then crafted[p] = math.max(crafted[p] or 0, tonumber(e.crafted) or 0) end end
     elseif e.kind == "RECIPE" then recipes = recipes + 1 end
   end
   local rows = {}
@@ -78,6 +80,34 @@ local function buildProfessions()
   end
   table.sort(rows, function(a, b) if a.rank ~= b.rank then return a.rank > b.rank end return a.name < b.name end)
   return rows, { professions = #rows, recipes = recipes }
+end
+
+-- the profession and rank of a SKILLUP row: its own prof field (crafts), else its text ("Skill up:  Herbalism 7")
+function skillOf(e)
+  local text = stripPrefix(e.text or "", "Skill up:")
+  local nm, rank = text:match("^(.-)%s+(%d+)")
+  return e.prof or nm, tonumber(rank)
+end
+local GATHERING = { Herbalism = true, Mining = true, Skinning = true, Fishing = true }
+
+-- every skill-up of a profession you have, newest first; `only` limits it to one profession
+local function buildSkillups(only)
+  local snap = (ns.DB and ns.DB.character.professions) or {}
+  local log = (ns.DB and ns.DB.story.events) or {}
+  local rows = {}
+  for _, e in ipairs(log) do
+    if e.kind == "SKILLUP" then
+      local prof, rank = skillOf(e)
+      if prof and snap[prof] and (not only or only == prof) then
+        local source = ""
+        if e.craft then source = (tonumber(e.crafted) or 1) > 1 and ("%s x%d"):format(e.craft, e.crafted) or e.craft
+        elseif GATHERING[prof] then source = "Gathering" end
+        rows[#rows + 1] = { t = e.t or 0, prof = prof, rank = rank, source = source, zone = e.zone, sub = e.sub, x = e.x, y = e.y }
+      end
+    end
+  end
+  table.sort(rows, function(a, b) return a.t > b.t end)
+  return rows
 end
 
 -- ── view ──────────────────────────────────────────────────────────────────────────
@@ -153,11 +183,22 @@ local function renderRep()
     row.c.last:SetText(r.lastUp and date("%b %d, %H:%M", r.lastUp) or ""); row.c.last:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end, "No reputation snapshot yet. It is taken a few seconds after login.")
 end
+local profFilter, profHist, profHistFrame
 local function renderProf()
   if not prof then return end
   local rows, sum = buildProfessions()
-  prof.summary:SetText(("%d professions  ·  %d recipes learned"):format(sum.professions, sum.recipes))
+  prof.summary:SetText(("%d professions  ·  %d recipes learned  ·  click a profession to see how it leveled"):format(sum.professions, sum.recipes))
   prof.render(rows, function(row, p)
+    -- a profession row filters the history below; clicking the selected one shows all again
+    if not row.clickable then
+      row.clickable = true; row:EnableMouse(true)
+      row.hl = row:CreateTexture(nil, "BACKGROUND"); row.hl:SetAllPoints(); row.hl:SetColorTexture(0, 0, 0, 0)
+      row:SetScript("OnMouseUp", function(r) profFilter = (profFilter == r.prof) and nil or r.prof; renderProf() end)
+      row:SetScript("OnEnter", function(r) if profFilter ~= r.prof then r.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end end)
+      row:SetScript("OnLeave", function(r) if profFilter ~= r.prof then r.hl:SetColorTexture(0, 0, 0, 0) end end)
+    end
+    row.prof = p.name
+    if profFilter == p.name then row.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) else row.hl:SetColorTexture(0, 0, 0, 0) end
     row.c.name:SetText(p.name); row.c.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
     row.c.rank:SetText(("%d / %d"):format(p.rank, p.max)); row.c.rank:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
     row.c.bar:SetText("")
@@ -167,6 +208,24 @@ local function renderProf()
     row.c.tiers:SetText(p.tiers > 0 and tostring(p.tiers) or "-"); row.c.tiers:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
     row.c.ups:SetText(p.skillups > 0 and tostring(p.skillups) or "-"); row.c.ups:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end, "No professions found. Learn one and it shows up here.")
+  -- the history sits right under the professions, however many there are
+  if profHistFrame then
+    profHistFrame:ClearAllPoints()
+    profHistFrame:SetPoint("TOPLEFT", prof.pane, "TOPLEFT", 0, -(46 + 18 * math.max(1, #rows) + 16))
+    profHistFrame:SetPoint("BOTTOMRIGHT", prof.pane, "BOTTOMRIGHT", 0, 0)
+  end
+  if profHist then
+    local hist = buildSkillups(profFilter)
+    profHist.summary:SetText(profFilter and ("How %s leveled  ·  %d skill-ups"):format(profFilter, #hist) or ("How your professions leveled  ·  %d skill-ups"):format(#hist))
+    profHist.render(hist, function(row, h)
+      row.c.time:SetText(date("%b %d, %H:%M", h.t)); row.c.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.prof:SetText(h.prof); row.c.prof:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+      row.c.rank:SetText(h.rank and tostring(h.rank) or ""); row.c.rank:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+      row.c.source:SetText(h.source); row.c.source:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub)); row.c.loc:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.coords:SetText(UI.fmtCoords(h.x, h.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+    end, profFilter and ("No skill-ups for %s recorded yet."):format(profFilter) or "No skill-ups recorded yet. Gather or craft and each point shows up here.")
+  end
 end
 UI.registerPane("Character", 1, "Quests", function(content)
   quests = makeList(content, {
@@ -181,9 +240,16 @@ end, renderRep)
 UI.registerPane("Character", 3, "Professions", function(content)
   prof = makeList(content, {
     { "name", 0, 200, "Profession" }, { "rank", 206, 90, "Skill" }, { "bar", 302, 160, "" }, { "tiers", 468, 90, "Milestones" }, { "ups", 564, 90, "Skill-ups" },
-  }); renderProf()
+  })
+  prof.pane = content
+  profHistFrame = CreateFrame("Frame", nil, content)
+  profHist = makeList(profHistFrame, {
+    { "time", 0, 96, "Time" }, { "prof", 100, 100, "Profession" }, { "rank", 204, 44, "Skill" }, { "source", 252, 170, "Source" }, { "loc", 426, 150, "Location" }, { "coords", 580, 70, "Coordinates" },
+  })
+  renderProf()
 end, renderProf)
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}
 ns._test.buildQuests, ns._test.buildReputation, ns._test.buildProfessions = buildQuests, buildReputation, buildProfessions
+ns._test.buildSkillups = buildSkillups
