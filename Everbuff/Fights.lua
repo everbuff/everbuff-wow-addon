@@ -97,7 +97,7 @@ local function buildModal()
   save:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9); save:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
   local savefs = ns.UI.FS(save, "GameFontNormal")
   savefs:SetPoint("CENTER"); savefs:SetText("Reload & save"); savefs:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-  save:HookScript("OnEnter", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.22) end)
+  save:HookScript("OnEnter", function(s) s:SetBackdropColor(C.hover[1], C.hover[2], C.hover[3], 1); s:SetBackdropBorderColor(C.hover[1], C.hover[2], C.hover[3], 1) end)
   save:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9) end)
   local later = UI.Button(f, "Later", 100, 28, function() lastModalShown = GetTime(); modalInterrupted = false; f:Hide() end)
   f.later = later

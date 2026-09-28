@@ -140,7 +140,7 @@ local function buildDetail(content)
       b.tm = ns.UI.FS(b, "GameFontDisableSmall"); b.tm:SetPoint("LEFT", 0, 0); b.tm:SetWidth(64)
       b.nm = ns.UI.FS(b, "GameFontHighlightSmall"); b.nm:SetPoint("LEFT", 70, 0); b.nm:SetWidth(360); b.nm:SetJustifyH("LEFT")
       b.re = ns.UI.FS(b, "GameFontHighlightSmall"); b.re:SetPoint("LEFT", 440, 0); b.re:SetWidth(120); b.re:SetJustifyH("LEFT")
-      b:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 0.6) end)
+      b:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
       b:SetScript("OnLeave", function(s) s.hl:SetColorTexture(0, 0, 0, 0) end)
       b:SetScript("OnClick", function(s) if ns.OpenFightDetail and s.fight then ns.OpenFightDetail(s.fight) end end)
       child.btn[bn] = b
@@ -283,7 +283,7 @@ local function buildList(content)
       if not row then
         row = CreateFrame("Button", nil, child, "BackdropTemplate"); row:SetHeight(20); row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
         row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" }); row:SetBackdropColor(0, 0, 0, 0)
-        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.6) end)
+        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
         row:SetScript("OnLeave", function(s) s:SetBackdropColor(0, 0, 0, 0) end)
         row:SetScript("OnClick", function(s) if s.run then openRun(s.run) end end)
         row.cells = {}

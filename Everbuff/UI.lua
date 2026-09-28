@@ -18,6 +18,7 @@ UI.C = {
   edge    = { 0.180, 0.180, 0.200 },   -- n5, the 1 px frame edge
   edgeHi  = { 0.431, 0.451, 0.478 },   -- n7 #6E737A, a hovered or focused edge
   hover   = { 0.165, 0.165, 0.180 },   -- n4 #2A2A2E, hover one step up from raised
+  data    = { 0.357, 0.608, 0.941 },   -- data blue #5B9BF0, for kinds of events (never the accent)
   ink     = { 0.953, 0.957, 0.961 },   -- n10 #F3F4F5 text
   dim     = { 0.549, 0.569, 0.592 },   -- n8 #8C9197 secondary text
   gold    = { 0.780, 0.792, 0.804 },   -- n9 #C7CACD, headings (was tan)
@@ -289,7 +290,7 @@ local function buildFrame()
     b:SetPoint(point, rel or strip, point, ox, oy)
     b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" })
     b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("TOPLEFT"); b.accent:SetPoint("BOTTOMLEFT"); b.accent:SetWidth(3)
-    b:SetScript("OnEnter", function(s) if activeName ~= t.name then s:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.12) end end)
+    b:SetScript("OnEnter", function(s) if activeName ~= t.name then s:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 1); s.text:SetTextColor(unpackc(C.ink)) end end)
     b:SetScript("OnLeave", function(s) styleTabButton(t, activeName == t.name) end)
     local ic = TAB_ICONS[t.name]
     local tx = 10

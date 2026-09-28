@@ -268,12 +268,12 @@ local function buildDetail(content)
       if dur > 0 then tick((math.max(0, math.min(t or 0, dur)) / dur) * W, color, label, t) end
     end
     if f.outcome == "death" or f.outcome == "wipe" then place(dur, C.red, f.outcome == "death" and "Your death" or "Wipe") end
-    if f.gear and f.gear.swaps then for _, sw in ipairs(f.gear.swaps) do place(sw.t, C.cyan, "Swap: " .. (sw.name or "?")) end end
+    if f.gear and f.gear.swaps then for _, sw in ipairs(f.gear.swaps) do place(sw.t, C.data, "Swap: " .. (sw.name or "?")) end end
     if f.uses then for _, u in ipairs(f.uses) do place(u.t, C.gold, "Used: " .. (u.name or "?")) end end
     if f.enemies then for _, e in ipairs(f.enemies) do if (e.firstT or 0) > 0.5 then place(e.firstT, C.dim, (e.name or "?") .. " joins") end end end
     for j = tickN + 1, #v.ticks do v.ticks[j]:Hide() end
   end
-  v.timeFS = UI.FS(v, "GameFontHighlightSmall", C.cyan); v.timeFS:SetPoint("TOPLEFT", 16, -92); v.timeFS:SetWidth(560); v.timeFS:SetJustifyH("LEFT")
+  v.timeFS = UI.FS(v, "GameFontHighlightSmall", C.gold); v.timeFS:SetPoint("TOPLEFT", 16, -92); v.timeFS:SetWidth(560); v.timeFS:SetJustifyH("LEFT")
 
   local sf, child = UI.ScrollChild(v)
   sf:SetPoint("TOPLEFT", 12, -112); sf:SetPoint("BOTTOMRIGHT", -28, 12)
@@ -317,7 +317,7 @@ local function buildDetail(content)
       btn = CreateFrame("Button", nil, child)
       btn.hl = btn:CreateTexture(nil, "BACKGROUND"); btn.hl:SetAllPoints(); btn.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 0)
       btn.fs = ns.UI.FS(btn, "GameFontHighlightSmall"); btn.fs:SetPoint("LEFT", 0, 0)
-      btn:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 0.7) end)
+      btn:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
       btn:SetScript("OnLeave", function(s) s.hl:SetColorTexture(0, 0, 0, 0) end)
       btn:SetScript("OnClick", function(s) if openMember and s.member then openMember(v.fight, s.member) end end)
       child.mbtn[mbn] = btn
@@ -560,7 +560,7 @@ local function buildDetail(content)
       cell(8, y, WIDTH - 8, "Swaps during the fight", C.dim, "LEFT", GameFontNormalSmall); y = y + 17
       for _, sw in ipairs(f.gear.swaps) do
         local done = (sw.t or 0) <= T + 1e-6
-        cell(8, y + 1, 72, fmtOff(sw.t), done and C.cyan or C.dim)
+        cell(8, y + 1, 72, fmtOff(sw.t), done and C.ink or C.dim)
         cell(88, y + 1, WIDTH - 88, ("%s:  %s  ->  %s"):format(sw.name or "?", itemName(sw.from), itemName(sw.to)), done and C.ink or C.dim)
         y = y + 18
       end

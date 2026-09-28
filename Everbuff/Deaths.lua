@@ -82,7 +82,7 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
       if not row then
         row = CreateFrame("Button", nil, child, "BackdropTemplate"); row:SetHeight(20); row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
         row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" }); row:SetBackdropColor(0, 0, 0, 0)
-        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.6) end)
+        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
         row:SetScript("OnLeave", function(s) s:SetBackdropColor(0, 0, 0, 0) end)
         row:SetScript("OnClick", function(s) if s.fight and ns.OpenFightDetail then ns.OpenFightDetail(s.fight) end end)
         row.tm = ns.UI.FS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(112)

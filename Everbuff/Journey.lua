@@ -35,8 +35,8 @@ end
 
 -- milestone kinds worth surfacing on the ribbon, with a color
 local MILE = {
-  LEVELUP = C.gold, DEATH = C.red, ACHIEV = C.gold, DISCOVERY = C.cyan,
-  FLIGHT = C.cyan, REP = C.gold, SPELL = C.cyan, WIPE = C.red, FIRSTZONE = C.cyan, BROKEN = C.red, COLLECT = C.gold, PROFTIER = C.gold, RECIPE = C.gold, UPGRADE = C.gold,
+  LEVELUP = C.gold, DEATH = C.red, ACHIEV = C.gold, DISCOVERY = C.data,
+  FLIGHT = C.data, REP = C.gold, SPELL = C.data, WIPE = C.red, FIRSTZONE = C.data, BROKEN = C.red, COLLECT = C.gold, PROFTIER = C.gold, RECIPE = C.gold, UPGRADE = C.gold,
 }
 
 local build, refresh
@@ -64,7 +64,7 @@ build = function(content)
   ob.okBtn = obOk
   content.onboard = ob
   if ns.DB and ns.DB.settings and ns.DB.settings.onboarded then ob:Hide() end
-  content.welcome = UI.FS(content, "GameFontHighlightSmall", C.cyan); content.welcome:SetPoint("BOTTOMLEFT", 4, 4); content.welcome:SetWidth(660); content.welcome:SetJustifyH("LEFT")
+  content.welcome = UI.FS(content, "GameFontHighlightSmall", C.dim); content.welcome:SetPoint("BOTTOMLEFT", 4, 4); content.welcome:SetWidth(660); content.welcome:SetJustifyH("LEFT")
   content.welcome:SetText("Play, and this page fills in. The flag on screen is what the desktop app reads.")
 
   -- a stat card: dim title, big value, small sub. Returned with .value/.sub to update on refresh.
@@ -74,8 +74,8 @@ build = function(content)
     if goto then
       p:EnableMouse(true)
       p:SetScript("OnMouseUp", function() UI.Open(goto[1], goto[2]) end)
-      p:SetScript("OnEnter", function(f) f:SetBackdropBorderColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.8) end)
-      p:SetScript("OnLeave", function(f) f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
+      p:SetScript("OnEnter", function(f) f:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1); f:SetBackdropBorderColor(C.edgeHi[1], C.edgeHi[2], C.edgeHi[3], 1) end)
+      p:SetScript("OnLeave", function(f) f:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
       p.more = UI.FS(p, "GameFontDisableSmall", C.dim); p.more:SetPoint("TOPRIGHT", -10, -9); p.more:SetText("›")
     end
     p.title = UI.FS(p, "GameFontNormalSmall", C.dim); p.title:SetPoint("TOPLEFT", 12, -9)
