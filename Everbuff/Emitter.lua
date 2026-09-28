@@ -673,7 +673,7 @@ local function onMoney()
         x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
       }
       while #ns.DB.loot.log > 2000 do table.remove(ns.DB.loot.log, 1) end
-    elseif Emitter._questMoney and GetTime() - Emitter._questMoney.at < 3 then
+    elseif Emitter._questMoney and Emitter._questMoney.amount == delta and GetTime() - Emitter._questMoney.at < 3 then
       g.quests = (g.quests or 0) + delta                   -- a quest's money reward (QUEST_TURNED_IN just said so)
       Emitter._questMoney = nil
     elseif merchantOpen then
@@ -704,7 +704,7 @@ local function onMoney()
 end
 
 -- A quest's money reward (#11, G-2). The client may change the money before or after QUEST_TURNED_IN: a gain
--- of exactly the reward in the 3 s before is claimed now, otherwise the next gain within 3 s is filed as quests.
+-- of exactly the reward in the 3 s before is claimed now, otherwise the next gain of exactly the reward within 3 s.
 function Emitter.questMoney(amount)
   if not amount or amount <= 0 or not ns.DB then return end
   local o = Emitter._openGain

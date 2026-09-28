@@ -816,9 +816,14 @@ do
   M.now = M.now + 10; M.fire("QUEST_TURNED_IN", 302, 300, 700)
   M.now = M.now + 5; M.money = M.money + 700; M.fire("PLAYER_MONEY")
   check("#11 money long after a turn-in is not the quest's", (g.quests or 0) == q0 + 3400, g.quests)
+  M.now = M.now + 10; M.fire("QUEST_TURNED_IN", 304, 300, 400)
+  M.money = M.money + 75; M.fire("PLAYER_MONEY")
+  check("#11 a vendor sale right after a turn-in is not the quest's", (g.quests or 0) == q0 + 3400, g.quests)
+  M.money = M.money + 400; M.fire("PLAYER_MONEY")
+  check("#11 the reward that follows the sale still is", (g.quests or 0) == q0 + 3800, g.quests)
   M.now = M.now + 10; M.money = M.money + 50; M.fire("PLAYER_MONEY")
   M.fire("QUEST_TURNED_IN", 303, 300, 60)
-  check("#11 a gain of another amount is not claimed", (g.quests or 0) == q0 + 3400, g.quests)
+  check("#11 a gain of another amount is not claimed", (g.quests or 0) == q0 + 3800, g.quests)
   ns.Emitter._questMoney, ns.Emitter._openGain = nil, nil
   -- quest reward choice: read when the panel opens, recorded when the choice is confirmed
   M.questChoices = { "Worn Shortsword", "Frayed Robe" }; M.fire("QUEST_COMPLETE")
