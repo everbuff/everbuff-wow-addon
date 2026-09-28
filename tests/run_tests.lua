@@ -1086,6 +1086,28 @@ do
   check("a bad code does not crash and leaves data alone", #M.errors == 0 and ns.DB.combat.lastAck.source == "paste")
   ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
 end
+-- ── the desktop's EverbuffAck.lua, byte for byte as everbuff-desktop ack::render writes it (desktop #38) ──
+do
+  local keepF, keepL, keepE, keepS = ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions
+  ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events = {}, {}, {}
+  ns.DB.sessions = { [ns.DB.active] = keepS[ns.DB.active] }
+  local F = ns.DB.combat.fights
+  local base = M.epoch + 950000
+  F[#F + 1] = { uid = "Hart-Classic Beta PvE-" .. base .. "-a1b2", id = 9101, startEpoch = base + 500, duration = 5, outcome = "kill", foes = { "A" } }
+  F[#F + 1] = { uid = "Hart-Classic Beta PvE-" .. (base + 900) .. "-c3d4", id = 9102, startEpoch = base + 900, duration = 5, outcome = "kill", foes = { "B" } }
+  local text = "\nEverbuffAck = {\n[\"uids\"] = {\n[\"Hart-Classic Beta PvE-" .. base .. "-a1b2\"] = true,\n},\n[\"through\"] = " .. (base + 100) .. ",\n}\n"
+  local chunk = assert((loadstring or load)(text))
+  local env = {}
+  if setfenv then setfenv(chunk, env) end
+  chunk()
+  local ack = (setfenv and env or _G).EverbuffAck
+  check("the desktop's ack file loads as the EverbuffAck table", type(ack) == "table" and ack.through == base + 100 and ack.uids["Hart-Classic Beta PvE-" .. base .. "-a1b2"] == true)
+  local marked = ns.applyAck(ack, "file")
+  local function has(n) for _, f in ipairs(F) do if f.id == n then return true end end return false end
+  check("an acked uid with spaces in the realm prunes its fight, the later unacked one stays", marked == 1 and not has(9101) and has(9102), tostring(marked))
+  check("the file is stamped applied, which the desktop reads to drop its pending ack", type(ack.applied) == "number" and next(ack.uids) == nil)
+  ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
+end
 -- ── death killer from the combat log (Classic) ──
 do
   local ef = ns._test.emitterFrame; ef:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
