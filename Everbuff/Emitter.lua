@@ -44,7 +44,7 @@ local COLORS = {
 local CORNERS = {
   TOPLEFT = "TOPLEFT", TOPRIGHT = "TOPRIGHT", BOTTOMLEFT = "BOTTOMLEFT", BOTTOMRIGHT = "BOTTOMRIGHT",
 }
-local MARK = "Interface\\AddOns\\EverbuffJournal\\media\\mark"   -- full-color brand emblem
+local MARK = "Interface\\AddOns\\EverbuffJournal\\media\\mark"   -- the white everbuff.gg mark, both chevrons cut out (0.9.11)
 
 -- class color (not a Secret Value - safe to read). Falls back to gold before login.
 local classR, classG, classB = GOLD[1], GOLD[2], GOLD[3]

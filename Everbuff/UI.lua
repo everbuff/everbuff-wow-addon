@@ -79,7 +79,7 @@ function UI.Panel(parent, r, g, b, a)
     insets = { left = 1, right = 1, top = 1, bottom = 1 },
   })
   p:SetBackdropColor(r or C.panel[1], g or C.panel[2], b or C.panel[3], a or 0.92)
-  p:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)   -- tan metal trim, kept quiet
+  p:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)   -- the hairline edge
   return p
 end
 
