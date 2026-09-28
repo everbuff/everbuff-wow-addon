@@ -110,6 +110,26 @@ local function buildSkillups(only)
   return rows
 end
 
+-- every reputation gain and every new standing, newest first; `only` limits it to one faction
+local function buildRepHistory(only)
+  local rows = {}
+  for _, g in ipairs((ns.DB and ns.DB.story.rep) or {}) do
+    if not only or only == g.faction then
+      rows[#rows + 1] = { t = g.t or 0, faction = g.faction, change = ("+%d"):format(g.amount or 0), source = g.src or "", zone = g.zone, sub = g.sub, x = g.x, y = g.y }
+    end
+  end
+  for _, e in ipairs((ns.DB and ns.DB.story.events) or {}) do
+    if e.kind == "REP" then
+      local nm = (e.text or ""):match("^(.-):%s") or e.text
+      if nm and (not only or only == nm) then
+        rows[#rows + 1] = { t = e.t or 0, faction = nm, change = e.standing and ("Now " .. e.standing) or "New standing", source = "", zone = e.zone, sub = e.sub, x = e.x, y = e.y, milestone = true }
+      end
+    end
+  end
+  table.sort(rows, function(a, b) return a.t > b.t end)
+  return rows
+end
+
 -- ── view ──────────────────────────────────────────────────────────────────────────
 local STANDING_COLOR = {   -- reaction id 1..8: hated .. exalted
   [1] = { 0.80, 0.13, 0.13 }, [2] = { 0.80, 0.13, 0.13 }, [3] = { 0.93, 0.40, 0.13 }, [4] = C.dim or { 0.6, 0.6, 0.6 },
@@ -172,16 +192,48 @@ local function renderQuests()
     row.c.coords:SetText(UI.fmtCoords(q.x, q.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end, "No quests recorded yet. Accept or turn in a quest and it shows up here.")
 end
+local repFilter, repHist, repHistFrame
 local function renderRep()
   if not rep then return end
   local rows, sum = buildReputation()
-  rep.summary:SetText(("%d factions known  ·  %d standing gains recorded"):format(sum.factions, sum.ups))
+  rep.summary:SetText(("%d factions known  ·  %d standing gains  ·  click a faction to see how you earned it"):format(sum.factions, sum.ups))
   rep.render(rows, function(row, r)
+    if not row.clickable then
+      row.clickable = true; row:EnableMouse(true)
+      row.hl = row:CreateTexture(nil, "BACKGROUND"); row.hl:SetAllPoints(); row.hl:SetColorTexture(0, 0, 0, 0)
+      row:SetScript("OnMouseUp", function(x) repFilter = (repFilter == x.faction) and nil or x.faction; renderRep() end)
+      row:SetScript("OnEnter", function(x) if repFilter ~= x.faction then x.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end end)
+      row:SetScript("OnLeave", function(x) if repFilter ~= x.faction then x.hl:SetColorTexture(0, 0, 0, 0) end end)
+    end
+    row.faction = r.name
+    if repFilter == r.name then row.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) else row.hl:SetColorTexture(0, 0, 0, 0) end
     row.c.name:SetText(r.name); row.c.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
     local col = STANDING_COLOR[r.standing] or C.dim
     row.c.standing:SetText(r.label); row.c.standing:SetTextColor(col[1], col[2], col[3])
     row.c.last:SetText(r.lastUp and date("%b %d, %H:%M", r.lastUp) or ""); row.c.last:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end, "No reputation snapshot yet. It is taken a few seconds after login.")
+  -- the history sits right under the factions (the list scrolls when there are many)
+  if repHistFrame then
+    local shown = math.min(#rows, 8)
+    repHistFrame:ClearAllPoints()
+    repHistFrame:SetPoint("TOPLEFT", rep.pane, "TOPLEFT", 0, -(46 + 18 * math.max(1, shown) + 16))
+    repHistFrame:SetPoint("BOTTOMRIGHT", rep.pane, "BOTTOMRIGHT", 0, 0)
+  end
+  if repHist then
+    local hist = buildRepHistory(repFilter)
+    local total = 0
+    for _, h in ipairs(hist) do if not h.milestone then total = total + (tonumber((h.change or ""):match("%d+")) or 0) end end
+    repHist.summary:SetText(repFilter and ("How you earned %s  ·  +%d reputation"):format(repFilter, total) or ("How you earned your reputation  ·  +%d in %d gains"):format(total, #hist))
+    repHist.render(hist, function(row, h)
+      row.c.time:SetText(date("%b %d, %H:%M", h.t)); row.c.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.faction:SetText(h.faction); row.c.faction:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+      row.c.change:SetText(h.change)
+      if h.milestone then row.c.change:SetTextColor(C.green[1], C.green[2], C.green[3]) else row.c.change:SetTextColor(C.ink[1], C.ink[2], C.ink[3]) end
+      row.c.source:SetText(h.source); row.c.source:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub)); row.c.loc:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.coords:SetText(UI.fmtCoords(h.x, h.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+    end, repFilter and ("No gains for %s recorded yet."):format(repFilter) or "No reputation gains recorded yet. Turn in a quest or defeat an enemy that gives reputation.")
+  end
 end
 local profFilter, profHist, profHistFrame
 local function renderProf()
@@ -235,7 +287,13 @@ end, renderQuests)
 UI.registerPane("Character", 2, "Reputation", function(content)
   rep = makeList(content, {
     { "name", 0, 300, "Faction" }, { "standing", 306, 120, "Standing" }, { "last", 432, 200, "Last standing gain" },
-  }); renderRep()
+  })
+  rep.pane = content
+  repHistFrame = CreateFrame("Frame", nil, content)
+  repHist = makeList(repHistFrame, {
+    { "time", 0, 96, "Time" }, { "faction", 100, 150, "Faction" }, { "change", 254, 90, "Gain" }, { "source", 348, 150, "Source" }, { "loc", 502, 100, "Location" }, { "coords", 606, 60, "Coordinates" },
+  })
+  renderRep()
 end, renderRep)
 UI.registerPane("Character", 3, "Professions", function(content)
   prof = makeList(content, {
@@ -253,3 +311,4 @@ end, renderProf)
 ns._test = ns._test or {}
 ns._test.buildQuests, ns._test.buildReputation, ns._test.buildProfessions = buildQuests, buildReputation, buildProfessions
 ns._test.buildSkillups = buildSkillups
+ns._test.buildRepHistory = buildRepHistory

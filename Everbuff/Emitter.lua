@@ -881,6 +881,32 @@ local function scanProfessions(fire)
   profSeeded = true
 end
 
+-- every reputation gain, not just tier-ups: faction, amount and what caused it (a quest turned in or a kill a
+-- moment before), with the place. Kept in story.rep (capped 2000) so a mob-grinding session never pushes the
+-- rest of the timeline out of story.events. Record only: nothing on screen changes.
+Emitter.REPGAIN_PAT = fmtToPattern(FACTION_STANDING_INCREASED or "Reputation with %s increased by %d.")
+function Emitter.repGain(msg)
+  if not ns.DB then return end
+  local faction, amount = (msg or ""):match(Emitter.REPGAIN_PAT)
+  faction, amount = safeStr(faction), tonumber(amount)
+  if not faction or faction == "" or not amount then return end
+  local now = (GetServerTime and GetServerTime()) or time()
+  local src
+  local log = ns.DB.story.events or {}
+  local last = log[#log]
+  if last and last.kind == "QUESTDONE" and (now - (last.t or 0)) <= 5 then
+    src = "Quest: " .. (((last.text or ""):gsub("^Complete:%s*", "")))
+  elseif lastKillName and (GetTime() - (lastKillAt or 0)) < 5 then
+    src = "Kill: " .. lastKillName
+  end
+  local L = locStamp()
+  ns.DB.story.rep = ns.DB.story.rep or {}
+  local rep = ns.DB.story.rep
+  rep[#rep + 1] = { t = now, s = ns.DB.active, faction = faction, amount = amount, src = src,
+    zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y }
+  while #rep > 2000 do table.remove(rep, 1) end
+end
+
 local repStanding, repSeeded = {}, false
 local function scanRep(fire)
   local snap = {}
@@ -1065,6 +1091,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       Emitter.event("FLIGHT", { name = (sub ~= "" and sub) or (GetRealZoneText and GetRealZoneText()) or "a new location" })
     end
   elseif event == "CHAT_MSG_COMBAT_FACTION_CHANGE" then
+    Emitter.repGain(a1)                   -- every gain, with its source (story.rep)
     if repSeeded then scanRep(true) end   -- a rep gain just happened: re-scan and emit only genuine tier-ups
   elseif event == "GROUP_ROSTER_UPDATE" then
     diffRoster(rosterSeeded)

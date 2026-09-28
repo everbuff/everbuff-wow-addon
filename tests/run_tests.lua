@@ -901,6 +901,22 @@ do
   check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
   check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
   check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  -- every reputation gain is recorded with its source; the history merges gains and new standings
+  L[#L + 1] = { kind = "QUESTDONE", t = M.epoch, text = "Complete:  Wanted: Hogger" }
+  local repBefore = #(ns.DB.story.rep or {})
+  M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "Reputation with Stormwind increased by 250.")
+  local g = ns.DB.story.rep and ns.DB.story.rep[#ns.DB.story.rep]
+  check("reputation gain recorded with faction, amount and the quest that gave it", g and g.faction == "Stormwind" and g.amount == 250 and g.src == "Quest: Wanted: Hogger", g and tostring(g.src))
+  M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "You are exalted with nobody.")
+  check("an unrelated faction line records nothing", #ns.DB.story.rep == repBefore + 1)
+  local rh = T.buildRepHistory()
+  local sw; for _, r in ipairs(rh) do if r.faction == "Stormwind" and r.change == "+250" then sw = r end end
+  local sorted = true; for i = 2, #rh do if rh[i].t > rh[i - 1].t then sorted = false end end
+  check("reputation history: gains and new standings, newest first", #rh >= 2 and sw ~= nil and sorted, #rh)
+  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 1 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
+  ns.UI.Open("Character", "reputation"); M.tick()
+  local rp = host("Character").paneByKey.reputation
+  check("Reputation pane with its history builds and renders cleanly", rp and rp.built and rp.buildError == nil and rp.showError == nil, rp and (rp.buildError or rp.showError))
   ns.UI.Open("Character", "professions"); M.tick()
   local chr = host("Character")
   local pp = chr and chr.paneByKey.professions
