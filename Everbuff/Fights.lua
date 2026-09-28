@@ -13,10 +13,12 @@ local ADDON, ns = ...
 local F = {}
 ns.Fights = F
 
--- FIGHT_CAP is a safety backstop only. Real cleanup will be upload-driven: once the desktop client
--- has read a fight and shipped it to the backend, it acks (by fight id) and the addon prunes it. Until
--- that handshake exists, the cap keeps SavedVariables from growing without bound if the desktop never runs.
-local FIGHT_CAP = 250
+-- FIGHT_CAP is a safety backstop only. Cleanup is upload-driven: once the desktop client has read a
+-- fight and shipped it to the backend, it acks (by fight id) and the addon prunes it. The cap keeps
+-- SavedVariables from growing without bound if the desktop never runs. At the cap a fight the desktop
+-- already has goes first; a fight it does not have goes only when nothing else can, and never silently
+-- (everbuff-business #38, A1: 1000 fights, D18).
+local FIGHT_CAP = 1000
 local AURA_CAP = 150        -- per-fight aura timeline cap (each unit)
 local DEFAULT_SAMPLE = 1    -- seconds between stat snapshots (fixed; identical snapshots are deduped)
 local SAMPLE_MIN, SAMPLE_MAX = 1, 10
@@ -828,7 +830,7 @@ local function endFight()
     -- store a SANITIZED copy so a stray secret/NaN/inf value can never corrupt the SavedVariables file
     ns.DB.combat.fights[#ns.DB.combat.fights + 1] = sanitize(cur)
     if ns.Recorder and ns.Recorder.bump then ns.Recorder.bump("fights") end
-    while #ns.DB.combat.fights > FIGHT_CAP do table.remove(ns.DB.combat.fights, 1) end
+    F.trim(ns.DB.combat.fights)
     -- until the desktop ack channel exists nothing ever gets pruned by upload, so warn ONCE per session
     -- before the oldest un-acked fights start rolling off the cap (silent data loss otherwise)
     if not F._capWarned and #ns.DB.combat.fights >= FIGHT_CAP - 25 and ns.msg then
@@ -851,6 +853,24 @@ end
 
 function F.list() return (ns.DB and ns.DB.combat.fights) or {} end
 function F.capInfo() return #F.list(), FIGHT_CAP end
+
+-- Bring the list back to FIGHT_CAP: the oldest fight the desktop already has (uploaded) goes first; only when none
+-- is left does the oldest un-uploaded one go, and each such loss is counted and said in chat (A1, #38).
+function F.trim(list)
+  while #list > FIGHT_CAP do
+    local drop = 1
+    for i = 1, #list - 1 do
+      if list[i].uploaded == true then drop = i; break end
+    end
+    local gone = table.remove(list, drop)
+    if gone and gone.uploaded ~= true then
+      F.lost = (F.lost or 0) + 1
+      if ns.msg then
+        ns.msg(("fight history is full (%d): the oldest fight the desktop app has not read yet was dropped (%d this session). Start the everbuff.gg app to keep them."):format(FIGHT_CAP, F.lost))
+      end
+    end
+  end
+end
 
 -- Upload-driven cleanup hook (run at load): drop fights the desktop client has already shipped to the
 -- backend. The desktop signals this either per-fight (fight.uploaded = true) or via a high-water mark

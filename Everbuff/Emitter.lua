@@ -1464,7 +1464,7 @@ if ns.UI and ns.UI.registerTab then
     local function refreshData()
       local db = ns.DB or { combat = {}, loot = {}, story = {} }
       local nF = #(db.combat.fights or {})
-      local capF = 250
+      local capF = 1000
       if ns.Fights and ns.Fights.capInfo then nF, capF = ns.Fights.capInfo() end
       local pending = 0
       for _, f in ipairs(db.combat.fights or {}) do if f.uploaded ~= true then pending = pending + 1 end end

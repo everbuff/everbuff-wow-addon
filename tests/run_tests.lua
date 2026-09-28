@@ -367,7 +367,25 @@ check("#11 a taxi that never left, then a stun, is no flight", count(ns.DB.story
 M.inCombat = true; M.now = M.now + 5; M.fire("PLAYER_REGEN_DISABLED"); M.now = M.now + 2; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
 check("fight records the spec", ns.DB.combat.fights[#ns.DB.combat.fights].spec == "Arms", ns.DB.combat.fights[#ns.DB.combat.fights].spec)
 local nF, capF = ns.Fights.capInfo()
-check("capInfo reports count + cap", nF == #ns.DB.combat.fights and capF == 250)
+check("capInfo reports count + cap", nF == #ns.DB.combat.fights and capF == 1000)
+
+-- A1 (#38): at the cap an uploaded fight goes first; an un-uploaded one only when nothing else can, and not silently
+do
+  local said = {}
+  local oldMsg = ns.msg
+  ns.msg = function(m) said[#said + 1] = m end
+  local list = {}
+  for i = 1, 1000 do list[i] = { id = i, uploaded = (i == 500) } end
+  list[#list + 1] = { id = 1001, uploaded = false }
+  ns.Fights.trim(list)
+  local has500 = false
+  for _, f in ipairs(list) do if f.id == 500 then has500 = true end end
+  check("A1: at the cap the uploaded fight goes first", #list == 1000 and not has500 and list[1].id == 1 and #said == 0)
+  list[#list + 1] = { id = 1002, uploaded = false }
+  ns.Fights.trim(list)
+  check("A1: then the oldest un-uploaded fight goes, and chat says so", #list == 1000 and list[1].id == 2 and #said == 1 and said[1]:find("not read yet") ~= nil)
+  ns.msg = oldMsg
+end
 -- ── DATA CONTRACT: the shape the desktop parses (see docs/ADDON_DATA_CONTRACT.md) ──
 for _, k in ipairs({ "schema", "settings", "sessions", "combat", "loot", "character", "story" }) do
   check("contract: top-level key " .. k, ns.DB[k] ~= nil, "missing")
