@@ -75,7 +75,7 @@ build = function(content)
       p:EnableMouse(true)
       p:SetScript("OnMouseUp", function() UI.Open(goto[1], goto[2]) end)
       p:SetScript("OnEnter", function(f) f:SetBackdropBorderColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.8) end)
-      p:SetScript("OnLeave", function(f) f:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5) end)
+      p:SetScript("OnLeave", function(f) f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
       p.more = UI.FS(p, "GameFontDisableSmall", C.dim); p.more:SetPoint("TOPRIGHT", -10, -9); p.more:SetText("›")
     end
     p.title = UI.FS(p, "GameFontNormalSmall", C.dim); p.title:SetPoint("TOPLEFT", 12, -9)
@@ -100,7 +100,7 @@ build = function(content)
   local track = UI.Panel(ov, C.bg[1], C.bg[2], C.bg[3]); track:SetHeight(14)
   track:SetPoint("TOPLEFT", X0, barY); track:SetPoint("TOPRIGHT", ov, "TOPLEFT", col[3] + CW, barY)
   local fill = track:CreateTexture(nil, "ARTWORK"); fill:SetPoint("TOPLEFT", 1, -1); fill:SetPoint("BOTTOMLEFT", 1, 1)
-  fill:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.85)
+  fill:SetColorTexture(0.031, 0.651, 0.482, 1)   -- progress is the accent, pressed shade so the white label reads on it
   content.xpFill, content.xpTrack = fill, track
   content.xpText = UI.FS(ov, "GameFontHighlightSmall", C.ink); content.xpText:SetPoint("LEFT", track, "LEFT", 8, 0)
 

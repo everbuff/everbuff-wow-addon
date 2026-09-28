@@ -8,24 +8,26 @@ local UI = {}
 ns.UI = UI
 
 -- ── palette (RGB 0..1) ────────────────────────────────────────────────────────
--- everbuff.gg brand kit: deep ink ground, tan metal, lagoon accent, ember for danger, bone text.
+-- Quiet Precision (everbuff-business #36): charcoal surfaces, one mint accent, neutral text. Tan and ember
+-- left the interface; the keys stay so every screen keeps working. Values mirror everbuff-claude design/tokens.json.
 UI.C = {
-  bg      = { 0.047, 0.102, 0.133 },   -- ink #0C1A22
-  panel   = { 0.035, 0.075, 0.098 },   -- deeper ink: inset cards
-  panel2  = { 0.090, 0.165, 0.205 },   -- raised / hover
-  line    = { 0.235, 0.300, 0.330 },   -- hairline
-  ink     = { 0.957, 0.941, 0.922 },   -- bone #F4F0EB (text)
-  dim     = { 0.560, 0.630, 0.660 },
-  gold    = { 0.790, 0.680, 0.510 },   -- tan #C9AD82
-  cyan    = { 0.120, 0.640, 0.780 },   -- lagoon #1FA3C6
-  green   = { 0.350, 0.780, 0.500 },
-  red     = { 0.990, 0.440, 0.300 },   -- ember #FE704D
+  bg      = { 0.067, 0.067, 0.067 },   -- n1 #111111 canvas
+  panel   = { 0.098, 0.098, 0.106 },   -- n2 #19191B panels and cards
+  panel2  = { 0.133, 0.133, 0.145 },   -- n3 #222225 raised and hover
+  line    = { 0.180, 0.180, 0.200 },   -- n5 #2E2E33 hairline
+  edge    = { 0.180, 0.180, 0.200 },   -- n5, the 1 px frame edge
+  edgeHi  = { 0.431, 0.451, 0.478 },   -- n7 #6E737A, a hovered or focused edge
+  ink     = { 0.953, 0.957, 0.961 },   -- n10 #F3F4F5 text
+  dim     = { 0.549, 0.569, 0.592 },   -- n8 #8C9197 secondary text
+  gold    = { 0.780, 0.792, 0.804 },   -- n9 #C7CACD, headings (was tan)
+  cyan    = { 0.047, 0.824, 0.616 },   -- mint #0CD29D, the accent (was lagoon)
+  green   = { 0.298, 0.765, 0.541 },   -- success #4CC38A
+  red     = { 1.000, 0.420, 0.435 },   -- danger #FF6B6F (was ember)
 }
 local C = UI.C
 -- ── type kit ──────────────────────────────────────────────────────────────────
--- The desktop app's whole UI is set in Chakra Petch (its --disp / --sans / --mono all resolve to it),
--- so the addon uses the same face for everything except the page title, which keeps WoW's Morpheus as
--- the one deliberate "game voice" note. Bundled as TTF in media/fonts (SIL OFL); native fallback.
+-- The addon's faces until the in-game legibility pass for Inter (everbuff-business #36, phase B): Chakra
+-- Petch, bundled. Morpheus left with the tan palette. Bundled as TTF in media/fonts (SIL OFL); native fallback.
 local FONT_DIR = "Interface\\AddOns\\EverbuffJournal\\media\\fonts\\"
 local NATIVE_FALLBACK = "Fonts\\ARIALN.TTF"
 local function mkfont(name, file, size, flags, color, shadow)
@@ -37,7 +39,7 @@ local function mkfont(name, file, size, flags, color, shadow)
   if shadow then f:SetShadowColor(0, 0, 0, 0.9); f:SetShadowOffset(1, -1) end
   return f
 end
-UI.TITLE_FONT = mkfont("EverbuffTitleFont", "Fonts\\MORPHEUS.ttf", 20, "", C.gold, true)
+UI.TITLE_FONT = mkfont("EverbuffTitleFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 18, "", C.ink, true)
 UI.VALUE_FONT = mkfont("EverbuffValueFont", FONT_DIR .. "ChakraPetch-Bold.ttf", 18, "", C.ink, true)
 UI.HEAD_FONT  = mkfont("EverbuffHeadFont",  FONT_DIR .. "ChakraPetch-SemiBold.ttf", 13, "", C.gold, true)
 UI.LABEL_FONT = mkfont("EverbuffLabelFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 10, "", C.dim, false)
@@ -69,12 +71,12 @@ local function unpackc(c, a) return c[1], c[2], c[3], a or 1 end
 function UI.Panel(parent, r, g, b, a)
   local p = CreateFrame("Frame", nil, parent, "BackdropTemplate")
   p:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
+    insets = { left = 1, right = 1, top = 1, bottom = 1 },
   })
   p:SetBackdropColor(r or C.panel[1], g or C.panel[2], b or C.panel[3], a or 0.92)
-  p:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.55)   -- tan metal trim, kept quiet
+  p:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)   -- tan metal trim, kept quiet
   return p
 end
 
@@ -90,17 +92,17 @@ function UI.Button(parent, text, w, h, onClick)
   local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
   b:SetSize(w or 100, h or 22)
   b:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10,
-    insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
+    insets = { left = 1, right = 1, top = 1, bottom = 1 },
   })
   b:SetBackdropColor(unpackc(C.panel2, 0.9))
-  b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5)
+  b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
   local fs = ns.UI.FS(b, "GameFontNormal")
   fs:SetPoint("CENTER"); fs:SetText(text); fs:SetTextColor(unpackc(C.gold))
   b.text = fs
-  b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(unpackc(C.gold)); s:SetBackdropColor(unpackc(C.cyan, 0.22)) end)
-  b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5); s:SetBackdropColor(unpackc(C.panel2, 0.9)) end)
+  b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(unpackc(C.edgeHi)); s:SetBackdropColor(unpackc(C.cyan, 0.22)) end)
+  b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(unpackc(C.panel2, 0.9)) end)
   if onClick then b:SetScript("OnClick", onClick) end
   return b
 end
@@ -108,12 +110,12 @@ end
 function UI.EditBox(parent, w, h)
   local e = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
   e:SetSize(w or 200, h or 22)
-  e:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
-  e:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.95); e:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5)
+  e:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
+  e:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.95); e:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
   e:SetFontObject(UI.BODY_SM or "GameFontHighlight")
-  e:SetScript("OnEditFocusGained", function(x) x:SetBackdropBorderColor(unpackc(C.gold)) end)
-  e:SetScript("OnEditFocusLost", function(x) x:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.5) end)
+  e:SetScript("OnEditFocusGained", function(x) x:SetBackdropBorderColor(unpackc(C.edgeHi)) end)
+  e:SetScript("OnEditFocusLost", function(x) x:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
   e:SetTextInsets(6, 6, 0, 0)
   e:SetAutoFocus(false)
   e:SetScript("OnEscapePressed", e.ClearFocus)
@@ -198,12 +200,12 @@ local function buildFrame()
   else f:SetPoint("CENTER") end
   f:SetFrameStrata("HIGH")
   f:SetBackdrop({
-    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", edgeSize = 32,
-    insets = { left = 11, right = 11, top = 11, bottom = 11 },
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
+    insets = { left = 1, right = 1, top = 1, bottom = 1 },
   })
-  f:SetBackdropColor(1, 1, 1, 1)
-  f:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 1)
+  f:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 1)
+  f:SetBackdropBorderColor(0, 0, 0, 1)
   f:EnableMouse(true); f:SetMovable(true); f:SetClampedToScreen(true)
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", f.StartMoving)
@@ -235,7 +237,7 @@ local function buildFrame()
   bar:SetPoint("TOPLEFT", 12, -12); bar:SetPoint("TOPRIGHT", -12, -12); bar:SetHeight(40)
   local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 0.80)
   local barRule = bar:CreateTexture(nil, "ARTWORK"); barRule:SetPoint("BOTTOMLEFT"); barRule:SetPoint("BOTTOMRIGHT"); barRule:SetHeight(1)
-  barRule:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.55)
+  barRule:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
   local mark = bar:CreateTexture(nil, "ARTWORK")
   mark:SetSize(26, 26); mark:SetPoint("LEFT", 10, 0)
   mark:SetTexture("Interface\\AddOns\\EverbuffJournal\\media\\mark")
@@ -259,7 +261,7 @@ local function buildFrame()
   strip:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -1); strip:SetPoint("BOTTOMLEFT", 12, 12); strip:SetWidth(142)
   local stripBg = strip:CreateTexture(nil, "BACKGROUND"); stripBg:SetAllPoints(); stripBg:SetColorTexture(0, 0, 0, 0.35)
   local stripRule = strip:CreateTexture(nil, "ARTWORK"); stripRule:SetPoint("TOPRIGHT"); stripRule:SetPoint("BOTTOMRIGHT"); stripRule:SetWidth(1)
-  stripRule:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.30)
+  stripRule:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
   f.strip = strip
 
   -- content host
@@ -466,8 +468,8 @@ function UI.Tabs(parent, items, top, sidePad, opts)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
     b:SetPoint("BOTTOMLEFT", pane, "TOPLEFT", x, -1)          -- rests on the pane's top edge
     b:SetFrameLevel((pane:GetFrameLevel() or 1) + 5)          -- draws over the pane border
-    b:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
+      edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
     b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("TOPLEFT", 3, -3); b.accent:SetPoint("TOPRIGHT", -3, -3); b.accent:SetHeight(2)
     b.join = b:CreateTexture(nil, "OVERLAY"); b.join:SetPoint("BOTTOMLEFT", 3, -3); b.join:SetPoint("BOTTOMRIGHT", -3, -3); b.join:SetHeight(6)
     b.text = UI.FS(b, "GameFontNormalSmall")
@@ -498,14 +500,14 @@ function UI.Tabs(parent, items, top, sidePad, opts)
     for _, b in ipairs(ctl.tabs) do
       if b.key == ctl.active then
         b:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92)      -- same fill as the pane: merges into it
-        b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.55)
+        b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
         b.accent:SetColorTexture(unpackc(C.gold))
         b.join:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 1)     -- hides the pane border under the tab
         b.text:SetTextColor(unpackc(C.gold))
         b:SetAlpha(1)
       else
         b:SetBackdropColor(0, 0, 0, 0.35)
-        b:SetBackdropBorderColor(C.gold[1], C.gold[2], C.gold[3], 0.22)
+        b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
         b.accent:SetColorTexture(0, 0, 0, 0)
         b.join:SetColorTexture(0, 0, 0, 0)
         b.text:SetTextColor(unpackc(C.dim))

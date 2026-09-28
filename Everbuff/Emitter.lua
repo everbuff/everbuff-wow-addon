@@ -25,13 +25,13 @@ local sessionLoot = {}
 
 local SHOW_SECS = 2.6
 -- everbuff.gg brand kit (tokens.json)
-local INK  = { 0.047, 0.102, 0.133 }   -- #0C1A22
-local GOLD = { 0.79, 0.68, 0.51 }      -- tan #C9AD82
-local LAGOON = { 0.12, 0.64, 0.78 }    -- #1FA3C6
-local EMBER = { 0.99, 0.44, 0.30 }     -- #FE704D
-local GREEN = { 0.35, 0.78, 0.50 }
-local RED = { 0.93, 0.35, 0.30 }
-local BONE = { 0.957, 0.941, 0.922 }   -- #F4F0EB
+local INK  = { 0.067, 0.067, 0.067 }   -- n1 #111111 charcoal
+local GOLD = { 1.00, 0.82, 0.00 }      -- coin gold #FFD100 (tan left the interface)
+local LAGOON = { 0.357, 0.608, 0.941 } -- data blue #5B9BF0
+local EMBER = { 0.898, 0.282, 0.302 } -- danger #E5484D (ember left the interface)
+local GREEN = { 0.298, 0.765, 0.541 } -- success #4CC38A
+local RED = { 1.00, 0.42, 0.435 }      -- danger #FF6B6F
+local BONE = { 0.953, 0.957, 0.961 }   -- n10 #F3F4F5
 local STEEL = { 0.55, 0.62, 0.74 }
 local COLORS = {
   LEVELUP = GOLD, ZONE = LAGOON, DUNGEON = STEEL, DUNGEONLEAVE = STEEL,
@@ -167,7 +167,7 @@ flag:SetScript("OnEnter", function(self)
   elseif key == "BOTTOMLEFT" then GameTooltip:SetPoint("BOTTOMLEFT", self, "TOPLEFT", 0, 6)
   elseif key == "BOTTOMRIGHT" then GameTooltip:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", 0, 6)
   else GameTooltip:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -6) end
-  GameTooltip:AddLine("Everbuff.GG")
+  GameTooltip:AddLine("everbuff.gg")
   GameTooltip:AddLine("Left-click  ·  open Everbuff", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Drag  ·  move anywhere", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Right-click  ·  snap to a corner", 0.8, 0.8, 0.8)
@@ -180,10 +180,11 @@ local panel = CreateFrame("Frame", "EverbuffToast", UIParent)
 panel:SetSize(320, 40); panel:SetFrameStrata("FULLSCREEN_DIALOG"); panel:SetFrameLevel(9999)
 local bg = panel:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints()
 bg:SetColorTexture(INK[1], INK[2], INK[3], 0.88)
-local sheen = panel:CreateTexture(nil, "BORDER"); sheen:SetAllPoints(); sheen:SetColorTexture(1, 1, 1, 0.03)
+local sheen = panel:CreateTexture(nil, "BORDER"); sheen:SetAllPoints(); sheen:SetColorTexture(1, 1, 1, 0)   -- no sheen (#36)
 local accent = panel:CreateTexture(nil, "ARTWORK"); accent:SetWidth(3)  -- flag-side color tick
 local hero = panel:CreateFontString(nil, "OVERLAY")
-hero:SetFont("Fonts\\MORPHEUS.TTF", 16, "OUTLINE")     -- WoW's elegant quest-title font
+hero:SetFont("Interface\\AddOns\\EverbuffJournal\\media\\fonts\\ChakraPetch-SemiBold.ttf", 15, "")   -- no serif, no outline (#36)
+hero:SetShadowColor(0, 0, 0, 0.8); hero:SetShadowOffset(1, -1)
 panel:Hide()
 
 local ICON_INSET = 44   -- keep text clear of the corner icon
@@ -280,7 +281,7 @@ local function show(kind, human, rec)
   if rec then rec.shown = math.floor(GetTime() * 1000 + 0.5) / 1000 end
   local col = COLORS[kind] or GOLD
   accent:SetColorTexture(col[1], col[2], col[3], 1)
-  hero:SetTextColor(col[1], col[2], col[3]); hero:SetText(human or kind)
+  hero:SetTextColor(BONE[1], BONE[2], BONE[3]); hero:SetText(human or kind)   -- the kind's color is the tick only
   panel:SetWidth(math.min(600, (hero:GetStringWidth() or 0) + ICON_INSET + 16)); panel:SetHeight(40)
   place()
   panel:SetAlpha(0); panel:Show()

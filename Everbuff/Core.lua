@@ -16,9 +16,9 @@ do
   local ok, v = pcall(function() return meta and meta(ADDON, "Version") end)
   ns.VERSION = (ok and type(v) == "string" and v ~= "" and v) or "dev"
 end
-ns.GOLD = "|cffc9a63c"
+ns.GOLD = "|cff0cd29d"   -- the chat prefix in the accent (tan left the interface, #36)
 ns.CYAN = "|cff00afd7"
-function ns.msg(text) print(ns.GOLD .. "Everbuff.GG|r: " .. text) end
+function ns.msg(text) print(ns.GOLD .. "everbuff.gg|r: " .. text) end
 
 EverbuffDB = EverbuffDB or nil -- materialized on ADDON_LOADED
 
