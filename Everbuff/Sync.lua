@@ -21,7 +21,7 @@ refresh = function()
   local R = c.rows
   R.recording:SetText(sess
     and (dot(GREEN) .. " |cff59c77fCapturing|r  " .. (sess.context or "") .. "  (session beacon + combat log)")
-    or (dot(GRAY) .. " |cff8fa1a8Standing by|r"))
+    or (dot(GRAY) .. " |cff8c9197Standing by|r"))
   R.combat:SetText((combatOn and aclOn) and (dot(GREEN) .. " on, full detail")
     or (combatOn and (dot(YELLOW) .. " on, basic detail (advanced logging is off)")
     or (dot(YELLOW) .. " off, re-asserts when combat starts")))

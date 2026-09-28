@@ -17,6 +17,7 @@ UI.C = {
   line    = { 0.180, 0.180, 0.200 },   -- n5 #2E2E33 hairline
   edge    = { 0.180, 0.180, 0.200 },   -- n5, the 1 px frame edge
   edgeHi  = { 0.431, 0.451, 0.478 },   -- n7 #6E737A, a hovered or focused edge
+  hover   = { 0.165, 0.165, 0.180 },   -- n4 #2A2A2E, hover one step up from raised
   ink     = { 0.953, 0.957, 0.961 },   -- n10 #F3F4F5 text
   dim     = { 0.549, 0.569, 0.592 },   -- n8 #8C9197 secondary text
   gold    = { 0.780, 0.792, 0.804 },   -- n9 #C7CACD, headings (was tan)
@@ -26,8 +27,9 @@ UI.C = {
 }
 local C = UI.C
 -- ── type kit ──────────────────────────────────────────────────────────────────
--- The addon's faces until the in-game legibility pass for Inter (everbuff-business #36, phase B): Chakra
--- Petch, bundled. Morpheus left with the tan palette. Bundled as TTF in media/fonts (SIL OFL); native fallback.
+-- The faces of the desktop app (everbuff-business #36): Inter Medium and SemiBold for everything read (Medium,
+-- not Regular: WoW's rasterizer draws Inter 400 thin at small sizes), Chakra Petch for the wordmark and the
+-- big numbers. Static TTF instances in media/fonts (SIL OFL). Bundled as TTF in media/fonts (SIL OFL); native fallback.
 local FONT_DIR = "Interface\\AddOns\\EverbuffJournal\\media\\fonts\\"
 local NATIVE_FALLBACK = "Fonts\\ARIALN.TTF"
 local function mkfont(name, file, size, flags, color, shadow)
@@ -39,14 +41,14 @@ local function mkfont(name, file, size, flags, color, shadow)
   if shadow then f:SetShadowColor(0, 0, 0, 0.9); f:SetShadowOffset(1, -1) end
   return f
 end
-UI.TITLE_FONT = mkfont("EverbuffTitleFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 18, "", C.ink, true)
+UI.TITLE_FONT = mkfont("EverbuffTitleFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 15, "", C.ink, true)
 UI.VALUE_FONT = mkfont("EverbuffValueFont", FONT_DIR .. "ChakraPetch-Bold.ttf", 18, "", C.ink, true)
-UI.HEAD_FONT  = mkfont("EverbuffHeadFont",  FONT_DIR .. "ChakraPetch-SemiBold.ttf", 13, "", C.gold, true)
-UI.LABEL_FONT = mkfont("EverbuffLabelFont", FONT_DIR .. "ChakraPetch-SemiBold.ttf", 10, "", C.dim, false)
-UI.TAB_FONT   = mkfont("EverbuffTabFont",   FONT_DIR .. "ChakraPetch-SemiBold.ttf", 11, "", C.dim, true)
-UI.BODY_FONT  = mkfont("EverbuffBodyFont",  FONT_DIR .. "ChakraPetch-Regular.ttf", 12, "", C.ink, false)
-UI.BODY_SM    = mkfont("EverbuffBodySmall", FONT_DIR .. "ChakraPetch-Regular.ttf", 11, "", C.ink, false)
-UI.DIM_SM     = mkfont("EverbuffDimSmall",  FONT_DIR .. "ChakraPetch-Regular.ttf", 11, "", C.dim, false)
+UI.HEAD_FONT  = mkfont("EverbuffHeadFont",  FONT_DIR .. "Inter-SemiBold.ttf", 13, "", C.ink, true)
+UI.LABEL_FONT = mkfont("EverbuffLabelFont", FONT_DIR .. "Inter-SemiBold.ttf", 11, "", C.dim, false)
+UI.TAB_FONT   = mkfont("EverbuffTabFont",   FONT_DIR .. "Inter-SemiBold.ttf", 12, "", C.dim, true)
+UI.BODY_FONT  = mkfont("EverbuffBodyFont",  FONT_DIR .. "Inter-Medium.ttf", 12, "", C.ink, false)
+UI.BODY_SM    = mkfont("EverbuffBodySmall", FONT_DIR .. "Inter-Medium.ttf", 11, "", C.ink, false)
+UI.DIM_SM     = mkfont("EverbuffDimSmall",  FONT_DIR .. "Inter-Medium.ttf", 11, "", C.dim, false)
 -- map a Blizzard template (name or font object) to the brand font that plays its role
 local FONT_ROLE = {
   GameFontNormalLarge = "TITLE_FONT", GameFontNormal = "HEAD_FONT", GameFontNormalSmall = "LABEL_FONT",
@@ -96,13 +98,13 @@ function UI.Button(parent, text, w, h, onClick)
     edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1,
     insets = { left = 1, right = 1, top = 1, bottom = 1 },
   })
-  b:SetBackdropColor(unpackc(C.panel2, 0.9))
-  b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
+  b:SetBackdropColor(unpackc(C.panel2, 1))
+  b:SetBackdropBorderColor(unpackc(C.panel2, 1))
   local fs = ns.UI.FS(b, "GameFontNormal")
-  fs:SetPoint("CENTER"); fs:SetText(text); fs:SetTextColor(unpackc(C.gold))
+  fs:SetPoint("CENTER"); fs:SetText(text); fs:SetTextColor(unpackc(C.ink))
   b.text = fs
-  b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(unpackc(C.edgeHi)); s:SetBackdropColor(unpackc(C.cyan, 0.22)) end)
-  b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(unpackc(C.panel2, 0.9)) end)
+  b:SetScript("OnEnter", function(s) s:SetBackdropColor(unpackc(C.hover, 1)); s:SetBackdropBorderColor(unpackc(C.hover, 1)) end)
+  b:SetScript("OnLeave", function(s) s:SetBackdropColor(unpackc(C.panel2, 1)); s:SetBackdropBorderColor(unpackc(C.panel2, 1)) end)
   if onClick then b:SetScript("OnClick", onClick) end
   return b
 end
@@ -148,8 +150,8 @@ local function styleTabButton(t, active)
   local b = t.btn
   if active then
     b:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.95)
-    if b.accent then b.accent:SetColorTexture(unpackc(C.gold)) end
-    b.text:SetTextColor(unpackc(C.gold))
+    if b.accent then b.accent:SetColorTexture(unpackc(C.cyan)) end
+    b.text:SetTextColor(unpackc(C.ink))
     if b.icon then b.icon:SetVertexColor(1, 1, 1) end
   else
     b:SetBackdropColor(0, 0, 0, 0)
@@ -235,7 +237,7 @@ local function buildFrame()
   -- title bar
   local bar = CreateFrame("Frame", nil, f)
   bar:SetPoint("TOPLEFT", 12, -12); bar:SetPoint("TOPRIGHT", -12, -12); bar:SetHeight(40)
-  local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 0.80)
+  local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(0.043, 0.043, 0.047, 1)   -- n0, the desktop top bar
   local barRule = bar:CreateTexture(nil, "ARTWORK"); barRule:SetPoint("BOTTOMLEFT"); barRule:SetPoint("BOTTOMRIGHT"); barRule:SetHeight(1)
   barRule:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
   local mark = bar:CreateTexture(nil, "ARTWORK")
@@ -356,15 +358,15 @@ function UI.refreshStatus()
   -- combat-log file) is live. It cannot see the desktop app, so video "recording" is never claimed here.
   local state
   if sess and combatOn and aclOn then
-    state = ICO:format(IND_GREEN) .. " |cff59c77fCAPTURING|r  |cff1fa3c6" .. (sess.context or "?") .. "|r"
+    state = ICO:format(IND_GREEN) .. " |cff59c77fCAPTURING|r  |cff0cd29d" .. (sess.context or "?") .. "|r"
   elseif sess and combatOn then
-    state = ICO:format(IND_YELLOW) .. " |cffc9ad82CAPTURING (basic log)|r"
+    state = ICO:format(IND_YELLOW) .. " |cffc7cacdCAPTURING (basic log)|r"
   elseif sess then
-    state = ICO:format(IND_YELLOW) .. " |cffc9ad82CAPTURING, COMBAT LOG OFF|r"
+    state = ICO:format(IND_YELLOW) .. " |cffc7cacdCAPTURING, COMBAT LOG OFF|r"
   elseif IsInInstance() then
-    state = ICO:format(IND_YELLOW) .. " |cffc9ad82STARTING|r"
+    state = ICO:format(IND_YELLOW) .. " |cffc7cacdSTARTING|r"
   else
-    state = ICO:format(IND_GRAY) .. " |cff8fa1a8STANDING BY|r"
+    state = ICO:format(IND_GRAY) .. " |cff8c9197STANDING BY|r"
   end
   frame.recFS:SetText(state)
 end
@@ -470,16 +472,16 @@ function UI.Tabs(parent, items, top, sidePad, opts)
     b:SetFrameLevel((pane:GetFrameLevel() or 1) + 5)          -- draws over the pane border
     b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8",
       edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
-    b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("TOPLEFT", 3, -3); b.accent:SetPoint("TOPRIGHT", -3, -3); b.accent:SetHeight(2)
+    b.accent = b:CreateTexture(nil, "OVERLAY"); b.accent:SetPoint("BOTTOMLEFT", 0, 0); b.accent:SetPoint("BOTTOMRIGHT", 0, 0); b.accent:SetHeight(2)
     b.join = b:CreateTexture(nil, "OVERLAY"); b.join:SetPoint("BOTTOMLEFT", 3, -3); b.join:SetPoint("BOTTOMRIGHT", -3, -3); b.join:SetHeight(6)
     b.text = UI.FS(b, "GameFontNormalSmall")
     if UI.TAB_FONT then b.text:SetFontObject(UI.TAB_FONT) end
-    b.text:SetPoint("CENTER", 0, 0); b.text:SetJustifyH("CENTER"); b.text:SetText(it.label:upper())
+    b.text:SetPoint("CENTER", 0, 0); b.text:SetJustifyH("CENTER"); b.text:SetText(it.label)   -- sentence case (#36)
     local w = math.max(84, math.floor((b.text:GetStringWidth() or 60) + PAD * 2 + 0.5))
     b:SetSize(w, TAB_H)
     b.key = it.key
     b:SetScript("OnClick", function(tb) ctl.select(tb.key) end)
-    b:SetScript("OnEnter", function(tb) if ctl.active ~= tb.key then tb:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 0.18) end end)
+    b:SetScript("OnEnter", function(tb) if ctl.active ~= tb.key then tb.text:SetTextColor(unpackc(C.ink)) end end)
     b:SetScript("OnLeave", function() ctl.style() end)
     -- shared mode: the tabs FILTER one content area instead of switching panes
     if opts.shared then
@@ -498,20 +500,16 @@ function UI.Tabs(parent, items, top, sidePad, opts)
   end
   function ctl.style()
     for _, b in ipairs(ctl.tabs) do
+      -- no box around a tab: the label alone, as on the desktop; the frame stays so layout and clicks are unchanged
+      b:SetBackdropColor(0, 0, 0, 0); b:SetBackdropBorderColor(0, 0, 0, 0)
+      b.join:SetColorTexture(0, 0, 0, 0)
+      b:SetAlpha(1)
       if b.key == ctl.active then
-        b:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92)      -- same fill as the pane: merges into it
-        b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
-        b.accent:SetColorTexture(unpackc(C.gold))
-        b.join:SetColorTexture(C.panel[1], C.panel[2], C.panel[3], 1)     -- hides the pane border under the tab
-        b.text:SetTextColor(unpackc(C.gold))
-        b:SetAlpha(1)
+        b.accent:SetColorTexture(unpackc(C.cyan))
+        b.text:SetTextColor(unpackc(C.ink))
       else
-        b:SetBackdropColor(0, 0, 0, 0.35)
-        b:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
         b.accent:SetColorTexture(0, 0, 0, 0)
-        b.join:SetColorTexture(0, 0, 0, 0)
         b.text:SetTextColor(unpackc(C.dim))
-        b:SetAlpha(0.85)                                                  -- set back, not shrunk: labels stay aligned
       end
     end
   end

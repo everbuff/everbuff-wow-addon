@@ -324,7 +324,7 @@ local function buildDetail(content)
     end
     btn:SetSize(w, 16); btn:ClearAllPoints(); btn:SetPoint("TOPLEFT", x, -y)
     btn.fs:SetWidth(w - 4); btn.fs:SetJustifyH("LEFT")
-    btn.fs:SetText((name or "?") .. "   |cff8a96a6>|r"); btn.fs:SetTextColor(r, g, b)
+    btn.fs:SetText((name or "?") .. "   |cff8c9197>|r"); btn.fs:SetTextColor(r, g, b)
     btn.member = member; btn:Show()
     return btn
   end
@@ -453,7 +453,7 @@ local function buildDetail(content)
     fn, tn, mbn, an = 0, 0, 0, 0
     local dur = math.max(f.duration or 0, 0)
     local T = math.min(v.curT or dur, dur)
-    v.timeFS:SetText(("Showing the fight at |cff00afd7+%.1fs|r of %s   ·   drag to scrub"):format(T, fmtDur(dur)))
+    v.timeFS:SetText(("Showing the fight at |cff35eebb+%.1fs|r of %s   ·   drag to scrub"):format(T, fmtDur(dur)))
     local y = 0
     local playerLog, bridged = repaired(f.auras, dur)
     if (f.auraBlind or 0) > 0 or bridged > 0 then
@@ -480,7 +480,7 @@ local function buildDetail(content)
       for _, m in ipairs(f.group) do
         local r, g, b = UI.ClassColor(m.class)
         local log = m.me and playerLog or repaired(f.memberAuras and f.memberAuras[m.name], dur)
-        local deadTag = (m.deadT and m.deadT <= T + 1e-6) and ("  |cffFE704Ddied at +%.0fs|r"):format(m.deadT) or ""
+        local deadTag = (m.deadT and m.deadT <= T + 1e-6) and ("  |cffe5484ddied at +%.0fs|r"):format(m.deadT) or ""
         y = combatantRow(y, (m.name or "?") .. (m.me and "  (you)" or "") .. deadTag, r, g, b, activeAuras(log, T),
           (not m.me) and m or nil)   -- other members are clickable -> their aura timeline
       end
@@ -787,7 +787,7 @@ local function buildList(content)
               local rfs = child.days[dn]
               if not rfs then rfs = UI.FS(child, "GameFontNormalSmall", C.gold); rfs:SetJustifyH("LEFT"); child.days[dn] = rfs end
               rfs:ClearAllPoints(); rfs:SetPoint("TOPLEFT", 14, -(y + 3))
-              rfs:SetText(("|cff1fa3c6%s|r  ·  %s  ·  %d boss%s down  ·  %d death%s"):format(run.name or "Dungeon", date("%H:%M", run.startT or 0),
+              rfs:SetText(("|cff0cd29d%s|r  ·  %s  ·  %d boss%s down  ·  %d death%s"):format(run.name or "Dungeon", date("%H:%M", run.startT or 0),
                 run.bossesDown or 0, (run.bossesDown or 0) == 1 and "" or "es", run.deaths or 0, (run.deaths or 0) == 1 and "" or "s"))
               rfs:Show(); y = y + 18
             end
@@ -828,13 +828,13 @@ local function buildList(content)
         row:SetPoint("TOPLEFT", 0, -y); row:Show()
         row.tm:SetText(date("%m/%d %H:%M", f.startEpoch or 0)); row.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
         local gn = (f.group and #f.group) or 0
-        row.fo:SetText(foesText(f) .. (gn > 1 and ("  |cff8c9aa3%d-player|r"):format(gn) or "")); row.fo:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+        row.fo:SetText(foesText(f) .. (gn > 1 and ("  |cff8c9197%d-player|r"):format(gn) or "")); row.fo:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
         row.lo:SetText(f.zone or ""); row.lo:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
         row.co:SetText(UI.fmtCoords(f.x, f.y)); row.co:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
         row.du:SetText(fmtDur(f.duration)); row.du:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
         local rc = RESULT[f.outcome] or RESULT.fled
         local md = tonumber(f.memberDeaths) or 0
-        row.re:SetText((GLYPH[f.outcome] or GLYPH.fled) .. rc[1] .. (md > 0 and ("  |cffFE704D%d died|r"):format(md) or "")); row.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
+        row.re:SetText((GLYPH[f.outcome] or GLYPH.fled) .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); row.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
         y = y + 20
       end
     end

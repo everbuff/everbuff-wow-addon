@@ -99,10 +99,10 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
       row.zo:SetText(d.zone or "-")
       row.co:SetText(UI.fmtCoords(d.x, d.y)); row.co:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); row.zo:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
       local by = d.killer or "unknown"
-      row.by:SetText(by .. (d.fight and "   |cff8a96a6>|r" or "")); row.by:SetTextColor(C.red[1], C.red[2], C.red[3])
+      row.by:SetText(by .. (d.fight and "   |cff8c9197>|r" or "")); row.by:SetTextColor(C.red[1], C.red[2], C.red[3])
       local dn = d.downtime
       local dnText = dn and (dn >= 60 and ("%dm %02ds"):format(math.floor(dn / 60), dn % 60) or (dn .. "s")) or ""
-      if d.durLoss and d.durLoss > 0 then dnText = dnText .. ("  |cffFE704D-%d%% gear|r"):format(d.durLoss) end
+      if d.durLoss and d.durLoss > 0 then dnText = dnText .. ("  |cffe5484d-%d%% gear|r"):format(d.durLoss) end
       row.dn:SetText(dnText); row.dn:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
       y = y + 20
     end

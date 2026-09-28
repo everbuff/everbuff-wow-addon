@@ -1501,7 +1501,7 @@ if ns.UI and ns.UI.registerTab then
       if ack then
         local marked = ns.applyAck(ack, "paste"); ackBox:SetText(""); refreshData(); refreshAck()
         if ns.msg then ns.msg(("desktop sync applied: %d fight%s acked"):format(marked, marked == 1 and "" or "s")) end
-      else ackInfo:SetText("|cffFE704DThat is not a sync code.|r It looks like EB-ACK-<number>, shown by the desktop app after an upload.") end
+      else ackInfo:SetText("|cffe5484dThat is not a sync code.|r It looks like EB-ACK-<number>, shown by the desktop app after an upload.") end
     end)
     ackBtn:SetPoint("LEFT", ackBox, "RIGHT", 8, 0)
     content.ackBox, content.ackBtn = ackBox, ackBtn
@@ -1657,7 +1657,7 @@ if ns.UI and ns.UI.registerTab then
           row.ty:SetText(LABELS[e.kind] or e.kind or "?")
           local col = COLORS[e.kind] or C.dim
           row.ty:SetTextColor(col[1], col[2], col[3])
-          row.tx:SetText((e.text or e.kind or "?") .. (row.clickable and "  |cff8c9aa3>|r" or "")); row.tx:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+          row.tx:SetText((e.text or e.kind or "?") .. (row.clickable and "  |cff8c9197>|r" or "")); row.tx:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
           row.wh:SetText(ns.UI.fmtPlace(e.zone, e.sub)); row.wh:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
           row.co:SetText(ns.UI.fmtCoords(e.x, e.y)); row.co:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
           if e.combat then row.fo:SetText(e.foe or "in combat"); row.fo:SetTextColor(EMBER[1], EMBER[2], EMBER[3]) else row.fo:SetText("") end
@@ -1875,7 +1875,7 @@ if ns.UI and ns.UI.registerTab then
           row.qt:SetText("")
         else
           row.ic:SetTexture(e.icon or FALLBACK)
-          row.nm:SetText((e.item or "?") .. (e.quest and "  |cff8c9aa3quest|r" or "")); row.nm:SetTextColor(qrgb(e.q))
+          row.nm:SetText((e.item or "?") .. (e.quest and "  |cff8c9197quest|r" or "")); row.nm:SetTextColor(qrgb(e.q))
           row.qt:SetText("x" .. (e.count or 1)); row.qt:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
         end
         -- legacy rows embedded " at (x, y)" in the source; split it out so old data still reads right

@@ -148,7 +148,7 @@ local function buildDetail(content)
     b:SetSize(WIDTH, 16); b:ClearAllPoints(); b:SetPoint("TOPLEFT", 0, -y)
     b.tm:SetText(date("%H:%M:%S", f.startEpoch or 0)); b.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
     local nm = f.bossName or ((f.foes and f.foes[1]) or "fight")
-    b.nm:SetText(nm .. "   |cff8a96a6>|r"); b.nm:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+    b.nm:SetText(nm .. "   |cff8c9197>|r"); b.nm:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
     local rc = RESULT[f.outcome] or RESULT.fled
     b.re:SetText(rc[1]); b.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
     b.fight = f; b:Show()
@@ -248,14 +248,14 @@ local function buildList(content)
   v.lockFS = lock
   local function lockText()
     local L = (ns.DB and ns.DB.character and ns.DB.character.lockouts) or {}
-    if #L == 0 then return "|cff8c9aa3Not saved to any instance.|r" end
+    if #L == 0 then return "|cff8c9197Not saved to any instance.|r" end
     local nowT = (GetServerTime and GetServerTime()) or time()
     local bits = {}
     for _, l in ipairs(L) do
       local left = math.max(0, (l.resetAt or nowT) - nowT)
       local when = left >= 86400 and ("%dd %dh"):format(math.floor(left / 86400), math.floor((left % 86400) / 3600)) or ("%dh %dm"):format(math.floor(left / 3600), math.floor((left % 3600) / 60))
       local prog = (l.bosses and l.down) and (" %d/%d"):format(l.down, l.bosses) or ""
-      bits[#bits + 1] = ("%s%s |cff8c9aa3resets in %s|r"):format(l.name or "?", prog, when)
+      bits[#bits + 1] = ("%s%s |cff8c9197resets in %s|r"):format(l.name or "?", prog, when)
     end
     return "Saved to:  " .. table.concat(bits, "   ·   ")
   end

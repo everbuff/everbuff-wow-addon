@@ -17,7 +17,7 @@ do
   ns.VERSION = (ok and type(v) == "string" and v ~= "" and v) or "dev"
 end
 ns.GOLD = "|cff0cd29d"   -- the chat prefix in the accent (tan left the interface, #36)
-ns.CYAN = "|cff00afd7"
+ns.CYAN = "|cff35eebb"
 function ns.msg(text) print(ns.GOLD .. "everbuff.gg|r: " .. text) end
 
 EverbuffDB = EverbuffDB or nil -- materialized on ADDON_LOADED
