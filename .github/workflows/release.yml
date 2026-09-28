@@ -1,0 +1,42 @@
+name: release
+# Push a tag v<version> (the TOC's ## Version) to publish the addon (everbuff-wow-addon #3): the LuaJIT suite must
+# pass, tools/package.py builds EverbuffJournal-<version>.zip (the TOC, only the files it loads, media/) and refuses
+# a tag that differs from the TOC version, and the zip is attached to a GitHub release. The desktop's addon
+# installer reads releases/latest of this repository.
+#
+# CurseForge and Wago uploads join this job once their projects exist: X-Curse-Project-ID and X-Wago-ID in the TOC,
+# CF_API_KEY and WAGO_API_TOKEN as secrets (#3).
+on:
+  push:
+    tags: ["v*"]
+  # a manual run builds and tests the zip and keeps it as a workflow artifact, without publishing
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends luajit
+      - name: Test suite
+        run: luajit tests/run_tests.lua
+      - name: Package
+        id: pkg
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            python3 tools/package.py --tag "${{ github.ref_name }}" --out dist
+          else
+            python3 tools/package.py --out dist
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: addon-zip
+          path: ${{ steps.pkg.outputs.zip }}
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" "${{ steps.pkg.outputs.zip }}" --title "EverbuffJournal ${{ steps.pkg.outputs.version }}" --generate-notes
