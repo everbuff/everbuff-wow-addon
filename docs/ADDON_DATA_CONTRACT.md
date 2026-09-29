@@ -81,7 +81,7 @@ carried across those windows rather than recorded as lost. `t` is seconds since 
 REWARD BOSS KILL WIPE DEATH ALIVE SKILLUP DISCOVERY FLIGHT FLIGHTTRIP LOOT ACHIEV SPELL REP ROSTERJOIN
 ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE`. Only rare+ LOOT lands here (all loot is in `loot.log`).
 
-### Approved, not yet built (everbuff-business #39, approved 2026-09-29)
+### Town visits and the chat log (everbuff-business #39, approved 2026-09-29, shipped in 0.9.13)
 
 - Visit events: one row per visit, written when the window closes: `{ t (opened), s, kind, closed, zone, sub?, map?, x?, y? }` plus
   `AUCTION` (`searches`, `posts`, `bids`, `buys`; the trades stay in `loot.ah`), `MAIL` (`items`, `money`; the rows stay in `loot`),

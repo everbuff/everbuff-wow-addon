@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
+for _, f in ipairs({ "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
@@ -1341,6 +1341,60 @@ local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
 check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.DB.character.crafts, ns.DB.character.recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
 check("no errors from the market wiring", #M.errors == 0, M.errors[1])
+
+-- ── chat logging guardian (everbuff-business #39) ──
+check("chat logging is on after world entry", M.chatLogging == true and ns.Logging._chat == true)
+local calls = M.chatCalls
+for _ = 1, 5 do M.tick() end
+check("the chat log is not re-enabled on every tick (no chat spam)", M.chatCalls == calls, M.chatCalls - calls)
+LoggingChat(false)
+check("something turning the chat log off is undone at once", M.chatLogging == true and (ns.Logging.chatRepairs or 0) >= 1)
+
+-- ── Visits.lua: town visits are play (everbuff-business #39) ──
+check("Visits loaded", ns.Visits ~= nil and ns.Visits.finish ~= nil)
+local function lastVisit(kind) local log = ns.DB.story.events; for i = #log, 1, -1 do if log[i].kind == kind then return log[i] end end end
+local nBefore = #ns.DB.story.events
+M.fire("AUCTION_HOUSE_SHOW")
+check("nothing is written while the window is open", #ns.DB.story.events == nBefore)
+if C_AuctionHouse.SendBrowseQuery then C_AuctionHouse.SendBrowseQuery({}) end
+QueryAuctionItems("Linen"); QueryAuctionItems("Wool")
+M.locations["loc3"] = { name = "Wool Cloth", id = 2592, icon = 132911, count = 20 }
+C_AuctionHouse.PostItem("loc3", 1, 1, 400, 800)
+C_AuctionHouse.PlaceBid(9002, 700)
+M.fire("AUCTION_HOUSE_CLOSED")
+local av = lastVisit("AUCTION")
+local searches = C_AuctionHouse.SendBrowseQuery and 3 or 2
+check("an AH visit where you look and post is one AUCTION event", av and av.searches == searches and av.posts == 1 and av.bids == 1 and av.buys == 0, av and ("%s %s %s %s"):format(av.searches, av.posts, av.bids, av.buys))
+check("the visit carries the session, both times, the place and words", av and av.s == ns.DB.active and type(av.t) == "number" and av.closed >= av.t and av.zone ~= nil and av.text:find("^Auction house: ") ~= nil, av and av.text)
+M.fire("AUCTION_HOUSE_SHOW"); M.fire("AUCTION_HOUSE_CLOSED")
+local look = lastVisit("AUCTION")
+check("a look-only visit is still recorded", look and look ~= av and look.searches == 0 and look.text == "Auction house", look and look.text)
+-- mailbox: items and money taken
+M.inbox = { { sender = "Friend", subject = "hi", money = 500, items = { { name = "Linen Cloth", id = 2589, count = 5, quality = 1 } } } }
+M.fire("MAIL_SHOW"); TakeInboxItem(1, 1); M.money = M.money + 500; M.fire("PLAYER_MONEY"); M.fire("MAIL_CLOSED")
+local mv = lastVisit("MAIL")
+check("mail visit counts items and money taken", mv and mv.items == 1 and mv.money == 500, mv and ("%s %s"):format(mv.items, mv.money))
+-- merchant: bought, sold, repaired
+M.repairCost = 1234
+M.fire("MERCHANT_SHOW"); BuyMerchantItem(1, 1); UseContainerItem(0, 1); UseContainerItem(0, 2); RepairAllItems(); M.fire("MERCHANT_CLOSED")
+local vv = lastVisit("VENDOR")
+check("merchant visit counts sold, bought and the repair cost", vv and vv.sold == 2 and vv.bought == 1 and vv.repair == 1234, vv and ("%s %s %s"):format(vv.sold, vv.bought, vv.repair))
+BuyMerchantItem(1, 1)
+check("a purchase outside a visit changes nothing", lastVisit("VENDOR") == vv and vv.bought == 1)
+-- bank and trainer
+M.fire("BANKFRAME_OPENED"); M.fire("BANKFRAME_CLOSED")
+check("bank visit recorded", lastVisit("BANK") ~= nil and lastVisit("BANK").text == "Bank")
+M.fire("TRAINER_SHOW"); BuyTrainerService(1); M.fire("TRAINER_CLOSED")
+check("trainer visit counts skills learned", lastVisit("TRAINER") and lastVisit("TRAINER").learned == 1)
+-- a window open at logout is closed before WoW writes the save file; a second window replaces the first
+M.fire("MERCHANT_SHOW"); M.fire("MAIL_SHOW")
+check("opening another window closes the first", lastVisit("VENDOR") ~= vv)
+local n2 = #ns.DB.story.events
+M.fire("PLAYER_LOGOUT")
+check("a visit still open at logout is written", #ns.DB.story.events == n2 + 1 and ns.DB.story.events[#ns.DB.story.events].kind == "MAIL")
+M.fire("PLAYER_LOGOUT")
+check("nothing is written twice", #ns.DB.story.events == n2 + 1)
+check("no errors from the visit wiring", #M.errors == 0, M.errors[1])
 
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

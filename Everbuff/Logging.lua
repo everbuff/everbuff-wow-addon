@@ -60,6 +60,22 @@ function L.enforce()
   return aclOn, L._combat, changed
 end
 
+-- The chat log (everbuff-business #39, approved 2026-09-29): WoW writes Logs/WoWChatLog.txt continuously while it
+-- is on, and its system lines (loot, money, XP, quests, levels) let the backend rebuild what an Alt+F4 kept out of
+-- the save file. The desktop uploads only those system lines; conversations never leave the PC. Like combat
+-- logging it is never queried with no argument; it is turned on at world entry and again whenever something turns
+-- it off (the tamper guard), not on every tick, so it can never print a line every ten seconds.
+L._chat = false
+local reentrantChat = false -- set while enforceChat runs, so its own call is not taken for tampering
+function L.enforceChat()
+  if type(LoggingChat) ~= "function" then return false end
+  reentrantChat = true
+  pcall(LoggingChat, true)
+  reentrantChat = false
+  L._chat = true
+  return true
+end
+
 -- Provided for completeness, but the addon never calls this: logging is always-on by design.
 function L.stop() LoggingCombat(false); L._combat = false end
 
@@ -134,6 +150,14 @@ function L.installTamperGuards()
   hooksecurefunc("LoggingCombat", function(state)
     if not reentrant and (state == false or state == nil) then onTamper("combat logging") end
   end)
+  if type(LoggingChat) == "function" then
+    hooksecurefunc("LoggingChat", function(state)
+      if not reentrantChat and not reentrant and state == false then
+        L.enforceChat()
+        L.chatRepairs = (L.chatRepairs or 0) + 1
+      end
+    end)
+  end
   hooksecurefunc("SetCVar", function(cvar, value)
     if not reentrant and cvar == "advancedCombatLogging" and tostring(value) == "0" then
       onTamper("advanced combat logging")
@@ -164,6 +188,7 @@ function L.startGuardian()
     started = true
   end
   tick() -- enforce immediately on first world-enter
+  L.enforceChat()
   -- Re-enforce every 3s: WoW (or another addon) can drop combat logging; a fast poll keeps any gap
   -- tiny instead of the ~10s flicker the old interval caused. Nagging self-throttles (NAG_PERIOD).
   L._guardian = C_Timer.NewTicker(10, tick)

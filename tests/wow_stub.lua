@@ -111,6 +111,8 @@ _G.GetLocale = function() return "enUS" end
 _G.GetBuildInfo = function() return "12.0.1", "60000", "Jan 1 2026", 120001 end
 _G.GetCVar = function(k) return M.cvars[k] end
 _G.SetCVar = function(k, v) M.cvars[k] = v end
+M.chatCalls = 0
+_G.LoggingChat = function(v) if v ~= nil then M.chatLogging = v; M.chatCalls = M.chatCalls + 1 end return M.chatLogging end
 _G.LoggingCombat = function(v) if v ~= nil then M.logging = v end return M.logging end
 _G.GetRealmName, _G.GetGuildInfo = function() return "Realm" end, function() return nil end
 _G.UnitFactionGroup = function() return "Alliance" end
@@ -213,6 +215,14 @@ _G.C_Item.GetItemName = function(loc) local it = M.locations[loc]; return it and
 _G.C_Item.GetItemIcon = function(loc) local it = M.locations[loc]; return it and it.icon end
 _G.C_Item.GetStackCount = function(loc) local it = M.locations[loc]; return it and it.count end
 _G.C_Item.GetItemNameByID = function(id) return M.itemNames and M.itemNames[id] end
+-- town services the visit hooks count (Visits.lua, everbuff-business #39)
+M.repairCost = 0
+_G.GetRepairAllCost = function() return M.repairCost, M.repairCost > 0 end
+_G.RepairAllItems = function() M.repairCost = 0 end
+_G.BuyMerchantItem = function() end
+_G.UseContainerItem = function() end
+_G.BuyTrainerService = function() end
+_G.QueryAuctionItems = function() end
 _G.C_AuctionHouse = {
   PostItem = function() end, PostCommodity = function() end, PlaceBid = function() end,
   StartCommoditiesPurchase = function() end, ConfirmCommoditiesPurchase = function() end, CancelAuction = function() end,
