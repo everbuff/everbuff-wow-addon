@@ -81,6 +81,14 @@ carried across those windows rather than recorded as lost. `t` is seconds since 
 REWARD BOSS KILL WIPE DEATH ALIVE SKILLUP DISCOVERY FLIGHT FLIGHTTRIP LOOT ACHIEV SPELL REP ROSTERJOIN
 ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE`. Only rare+ LOOT lands here (all loot is in `loot.log`).
 
+### Approved, not yet built (everbuff-business #39, approved 2026-09-29)
+
+- Visit events: one row per visit, written when the window closes: `{ t (opened), s, kind, closed, zone, sub?, map?, x?, y? }` plus
+  `AUCTION` (`searches`, `posts`, `bids`, `buys`; the trades stay in `loot.ah`), `MAIL` (`items`, `money`; the rows stay in `loot`),
+  `VENDOR` (`sold`, `bought`, `repair`), `BANK` (no extra fields) and `TRAINER` (`learned`). They count as gameplay for V5.
+- Chat logging guardian: the addon keeps `LoggingChat(true)` on, with the same guardian as advanced combat logging,
+  so WoW writes `Logs/WoWChatLog.txt` continuously. The desktop uploads only its system lines.
+
 ## Loot log entry
 
 Item: `{ t, s (session id), item, count, q (hex color), icon, src, guid?, quest?, x?, y?, zone? }`. `quest = true` marks a quest item (item class 12).
