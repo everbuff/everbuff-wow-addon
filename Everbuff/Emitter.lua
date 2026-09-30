@@ -145,6 +145,7 @@ end
 flag:EnableMouse(true)
 flag:SetScript("OnMouseUp", function(_, btn)
   if flag.dragging then return end
+  if ns.blockedInCombat() then return end
   if btn == "RightButton" then
     if ns.DB and ns.DB.settings and ns.DB.settings.flagPos then Emitter.setFlagPos(nil); return end   -- dragged: snap back first
     local order = { "TOPLEFT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMLEFT" }
@@ -205,17 +206,20 @@ local function applyFlagPrefs()
 end
 Emitter.applyFlagPrefs = applyFlagPrefs
 function Emitter.setFlagScale(v)
+  if ns.blockedInCombat() then return end
   v = tonumber(v) or 1
   if ns.DB and ns.DB.settings then ns.DB.settings.flagScale = math.floor(v * 20 + 0.5) / 20 end
   applyFlagPrefs()
 end
 function Emitter.setFlagAlpha(v)
+  if ns.blockedInCombat() then return end
   v = tonumber(v) or 1
   if v < 0.3 then v = 0.3 elseif v > 1 then v = 1 end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagAlpha = math.floor(v * 20 + 0.5) / 20 end
   applyFlagPrefs()
 end
 function Emitter.setFlagHidden(on)
+  if ns.blockedInCombat() then return end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagHidden = on and true or nil end
   applyFlagPrefs()
 end
@@ -253,8 +257,12 @@ place()
 -- free-drag: drag the flag anywhere; the toast panel travels with it. Right-click snaps back to a corner.
 panel:SetMovable(true); panel:SetClampedToScreen(true)
 flag:RegisterForDrag("LeftButton")
-flag:SetScript("OnDragStart", function() panel:StartMoving(); flag.dragging = true end)
+flag:SetScript("OnDragStart", function()
+  if ns.blockedInCombat() then return end
+  panel:StartMoving(); flag.dragging = true
+end)
 flag:SetScript("OnDragStop", function()
+  if not flag.dragging then return end   -- a drag refused in combat never started
   panel:StopMovingOrSizing(); flag.dragging = nil
   -- store the spot relative to the nearest screen corner so the text unfurls inward
   local cx, cy = panel:GetCenter(); local sw, sh = UIParent:GetWidth() or 0, UIParent:GetHeight() or 0
@@ -266,6 +274,7 @@ flag:SetScript("OnDragStop", function()
   Emitter.setFlagPos(point, x, y)
 end)
 function Emitter.setFlagPos(point, x, y)
+  if ns.blockedInCombat() then return end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagPos = point and { point = point, x = x or 0, y = y or 0 } or nil end
   place()
 end
@@ -399,6 +408,7 @@ end
 function Emitter.testCombat(on) setCombat(on and true or false) end
 
 function Emitter.setCorner(key)
+  if ns.blockedInCombat() then return false end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagPos = nil end   -- a corner choice ends free placement
   key = tostring(key or ""):upper():gsub("%s", "")
   if key == "TL" then key = "TOPLEFT" elseif key == "TR" then key = "TOPRIGHT"

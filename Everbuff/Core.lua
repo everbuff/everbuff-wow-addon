@@ -20,6 +20,15 @@ ns.GOLD = "|cff0cd29d"   -- the chat prefix in the accent (tan left the interfac
 ns.CYAN = "|cff35eebb"
 function ns.msg(text) print(ns.GOLD .. "everbuff.gg|r: " .. text) end
 
+-- Nothing is opened or changed in combat (founder, 2026-09-30): the flag is the desktop's combat signal, and
+-- moving, resizing or hiding it mid-fight loses a combat flip. Settings, /eb commands and every way of moving the
+-- flag wait until the fight is over. Returns true (and says so once) when the caller must stop.
+function ns.blockedInCombat()
+  local fighting = (InCombatLockdown and InCombatLockdown()) or (UnitAffectingCombat and UnitAffectingCombat("player"))
+  if fighting then ns.msg("not during combat. Try again after the fight.") end
+  return fighting and true or false
+end
+
 EverbuffDB = EverbuffDB or nil -- materialized on ADDON_LOADED
 
 local f = CreateFrame("Frame")
@@ -154,6 +163,7 @@ local handlers = {
 SLASH_EVERBUFF1 = "/eb"
 SLASH_EVERBUFF2 = "/everbuff"
 SlashCmdList.EVERBUFF = function(arg)
+  if ns.blockedInCombat() then return end
   arg = (arg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if arg == "" or arg == "show" or arg == "open" then
     if ns.UI then ns.UI.Toggle() else ns.msg("UI not loaded") end

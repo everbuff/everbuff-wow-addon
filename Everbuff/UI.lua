@@ -447,6 +447,7 @@ function UI.SetWindowSize(w, h)
 end
 
 function UI.Open(name, sub)
+  if ns.blockedInCombat and ns.blockedInCombat() then return end
   buildFrame()
   frame:Show()
   selectTab(name or activeName or (tabs[1] and tabs[1].name))

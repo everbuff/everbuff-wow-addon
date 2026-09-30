@@ -927,6 +927,20 @@ do
   check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
   check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
   check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  -- founder 2026-09-30: nothing opens or moves in combat, so the desktop never loses the flag mid-fight
+  do
+    local corner0 = ns.DB.settings.emitCorner
+    M.inCombat = true
+    check("in combat: /eb corner does nothing", ns.Emitter.setCorner("tr") == false and ns.DB.settings.emitCorner == corner0)
+    SlashCmdList.EVERBUFF("corner bl")
+    check("in combat: the slash command is refused", ns.DB.settings.emitCorner == corner0)
+    local sc0 = ns.DB.settings.flagScale
+    ns.Emitter.setFlagScale(1.5); ns.Emitter.setFlagHidden(true)
+    check("in combat: scale and hide are refused", ns.DB.settings.flagScale == sc0 and not ns.DB.settings.flagHidden)
+    M.inCombat = false
+    check("out of combat: /eb corner works again", ns.Emitter.setCorner("tr") == true and ns.DB.settings.emitCorner == "TOPRIGHT")
+    ns.Emitter.setCorner(corner0 or "TOPLEFT")
+  end
   -- ADDON-2: at a cap the oldest rows of earlier sessions go first; the running session's rows only when nothing else is left
   do
     local saved = ns.DB.active
