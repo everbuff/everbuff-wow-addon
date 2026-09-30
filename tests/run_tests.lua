@@ -674,10 +674,16 @@ ns.DB.settings.lootToast = "off"
 check("off keeps everything quiet", T.lootQuiet("ffff8000") == true)
 ns.DB.settings.lootToast = nil
 -- ── disconnect-protection reminder: hidden by combat, back right after the fight ──
-M.inCombat = false; M.dead = false; M.now = M.now + 600      -- past the throttle and the settle period
+M.inCombat = false; M.dead = false; M.now = M.now + 1800     -- past the 30 min throttle and the settle period
 T.flushTick()
 local sm = T.saveModal()
 check("reminder shows when safe and unsaved data exists", sm and sm:IsShown())
+do  -- #16: the charcoal theme of the desktop, never the white box
+  local r, g, b = sm:GetBackdropColor()
+  check("reminder is charcoal, not white", r and r < 0.2 and g < 0.2 and b < 0.2, tostring(r))
+  local sr, sg, sb = sm.save:GetBackdropColor()
+  check("Reload & save is the mint primary button", sr and sg > 0.7 and sr < 0.2, tostring(sg))
+end
 M.inCombat = true; M.fire("PLAYER_REGEN_DISABLED")
 check("reminder hides the moment combat starts", sm and not sm:IsShown())
 M.inCombat = false; M.now = M.now + 2; M.fire("PLAYER_REGEN_ENABLED")
@@ -690,7 +696,9 @@ check("Later dismisses it", sm and not sm:IsShown())
 M.now = M.now + 30; T.flushTick()
 check("a dismissed reminder respects the throttle", sm and not sm:IsShown())
 M.now = M.now + 300; T.flushTick()
-check("and comes back once the throttle elapses", sm and sm:IsShown())
+check("5 min later it is still quiet (was every 4 min, #16)", sm and not sm:IsShown())
+M.now = M.now + 1500; T.flushTick()
+check("and comes back once the 30 min throttle elapses", sm and sm:IsShown())
 sm.later:GetScript("OnClick")(sm.later)
 -- ── aura scanner reuses entry tables across scans (allocation churn) ──
 M.auras.player = { HELPFUL = { { name = "Blessing of Might", icon = 5, spellId = 19740, auraInstanceID = 5001 },

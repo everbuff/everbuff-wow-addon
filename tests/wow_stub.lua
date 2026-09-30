@@ -29,6 +29,8 @@ frameMT.__index = function(t, k)
   if k == "GetFrameLevel" then return function() return 1 end end
   if k == "GetParent" then return function(self) return self.parentFrame end end
   if k == "GetLeft" or k == "GetRight" or k == "GetTop" or k == "GetBottom" or k == "GetNumPoints" then return function() return 0 end end
+  if k == "SetBackdropColor" then return function(self, r, g, b, al) self.bgc = { r, g, b, al }; return self end end
+  if k == "GetBackdropColor" then return function(self) local c = self.bgc or {}; return c[1], c[2], c[3], c[4] end end
   if k == "SetText" then return function(self, v) self.text = v; return self end end
   if k == "GetText" then return function(self) return self.text end end
   if k == "SetChecked" then return function(self, v) self.checked = v; return self end end

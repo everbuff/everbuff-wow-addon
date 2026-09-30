@@ -54,8 +54,12 @@ local flushTicker = nil
 -- API to force a mid-session flush. We do NOT auto-reload silently: reading secret aura/stat values
 -- taints the addon, and a background reload from tainted code is blocked (and just spams). Instead we
 -- show a periodic MODAL (Deathlog-style) - the player clicking "Reload & save" is a hardware event,
--- which is the reliable way to commit to disk. On by default; reappears every MODAL_SECS while unsaved.
-local MODAL_SECS = 240            -- how often the reminder modal reappears while data is unsaved
+-- which is the reliable way to commit to disk. On by default. It reappears every MODAL_SECS while unsaved,
+-- or sooner once REMIND_FIGHTS more fights are unsaved (founder, 2026-09-30, wow-addon #16: every 4 min was
+-- far too often; the desktop now streams the save file during play, so a reload protects much less).
+local MODAL_SECS = 1800           -- 30 min between reminders
+local REMIND_FIGHTS = 60          -- or once this many fights since the last reminder are unsaved
+local fightsAtReminder = 0        -- sessionCount when the reminder was last shown or dismissed
 
 local function autoSaveOn()
   local s = ns.DB and ns.DB.settings
@@ -79,13 +83,13 @@ local function buildModal()
   local f = CreateFrame("Frame", "EverbuffSaveModal", UIParent, "BackdropTemplate")
   f:SetSize(412, 176); f:SetPoint("TOP", 0, -160); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:SetToplevel(true)
   f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
-  f:SetBackdropColor(1, 1, 1, 0.98); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
+  f:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.98); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
   f:EnableMouse(true); f:SetMovable(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
   local mark = f:CreateTexture(nil, "ARTWORK"); mark:SetSize(24, 24); mark:SetPoint("TOPLEFT", 14, -14)
   mark:SetTexture("Interface\\AddOns\\EverbuffJournal\\media\\mark")
-  local title = UI.FS(f, "GameFontNormalLarge", C.gold); title:SetPoint("TOPLEFT", 46, -18); title:SetText("Disconnect protection")
-  local body = UI.FS(f, "GameFontHighlight"); body:SetPoint("TOPLEFT", 16, -54); body:SetWidth(380); body:SetJustifyH("LEFT")
+  local title = UI.FS(f, "GameFontNormalLarge", C.ink); title:SetPoint("TOPLEFT", 46, -18); title:SetText("Disconnect protection")
+  local body = UI.FS(f, "GameFontHighlight", C.dim); body:SetPoint("TOPLEFT", 16, -54); body:SetWidth(380); body:SetJustifyH("LEFT")
   f.body = body
   -- SECURE reload button: our addon is tainted (we read secret values), so a reload called from our
   -- Lua is blocked. A SecureActionButton runs "/reload" through WoW's protected path on your click,
@@ -96,12 +100,15 @@ local function buildModal()
   save:SetAttribute("macrotext", "/reload")
   save:RegisterForClicks("AnyUp", "AnyDown")
   save:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
-  save:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9); save:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
+  -- the primary action in the accent, as on the desktop: mint with dark text, a step lighter on hover
+  local HOVER = { 0.208, 0.933, 0.733 }   -- accent-fg #35EEBB
+  save:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 1); save:SetBackdropBorderColor(C.cyan[1], C.cyan[2], C.cyan[3], 1)
   local savefs = ns.UI.FS(save, "GameFontNormal")
-  savefs:SetPoint("CENTER"); savefs:SetText("Reload & save"); savefs:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-  save:HookScript("OnEnter", function(s) s:SetBackdropColor(C.hover[1], C.hover[2], C.hover[3], 1); s:SetBackdropBorderColor(C.hover[1], C.hover[2], C.hover[3], 1) end)
-  save:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9) end)
-  local later = UI.Button(f, "Later", 100, 28, function() lastModalShown = GetTime(); modalInterrupted = false; f:Hide() end)
+  savefs:SetPoint("CENTER"); savefs:SetText("Reload & save"); savefs:SetTextColor(C.bg[1], C.bg[2], C.bg[3])
+  save:HookScript("OnEnter", function(s) s:SetBackdropColor(HOVER[1], HOVER[2], HOVER[3], 1); s:SetBackdropBorderColor(HOVER[1], HOVER[2], HOVER[3], 1) end)
+  save:HookScript("OnLeave", function(s) s:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 1); s:SetBackdropBorderColor(C.cyan[1], C.cyan[2], C.cyan[3], 1) end)
+  f.save, f.savefs = save, savefs
+  local later = UI.Button(f, "Later", 100, 28, function() lastModalShown = GetTime(); fightsAtReminder = sessionCount; modalInterrupted = false; f:Hide() end)
   f.later = later
   later:SetPoint("BOTTOMRIGHT", -16, 16)
   f:Hide()
@@ -111,7 +118,7 @@ end
 local function showModal()
   local f = buildModal(); if not f then return end
   f.body:SetText("Reload now to protect this session from disconnect data loss.")
-  lastModalShown = GetTime(); modalInterrupted = false
+  lastModalShown = GetTime(); fightsAtReminder = sessionCount; modalInterrupted = false
   f:Show()
 end
 
@@ -135,7 +142,7 @@ local function flushTick()
   end
   if modal and modal:IsShown() then return end
   -- a reminder that combat interrupted comes straight back once it is safe; otherwise the throttle applies
-  if modalInterrupted or (GetTime() - lastModalShown) >= MODAL_SECS then showModal() end
+  if modalInterrupted or (GetTime() - lastModalShown) >= MODAL_SECS or (sessionCount - fightsAtReminder) >= REMIND_FIGHTS then showModal() end
 end
 
 -- ── small safe helpers ────────────────────────────────────────────────────────
