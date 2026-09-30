@@ -919,6 +919,20 @@ do
   check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
   check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
   check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  -- ADDON-2: at a cap the oldest rows of earlier sessions go first; the running session's rows only when nothing else is left
+  do
+    local saved = ns.DB.active
+    ns.DB.active = "now-1"
+    local list = {}
+    for k = 1, 3 do list[#list + 1] = { t = k, s = "old-1" } end
+    for k = 4, 6 do list[#list + 1] = { t = k, s = "now-1" } end
+    ns.trimToCap(list, 4)
+    check("cap drops earlier sessions' rows first", #list == 4 and list[1].t == 3 and list[2].t == 4 and list[4].t == 6, #list .. " rows, first t=" .. tostring(list[1] and list[1].t))
+    ns.trimToCap(list, 2)
+    check("cap then drops the running session's oldest rows", #list == 2 and list[1].t == 5 and list[2].t == 6, tostring(list[1] and list[1].t))
+    ns.trimToCap(nil, 2)
+    ns.DB.active = saved
+  end
   -- every reputation gain is recorded with its source; the history merges gains and new standings
   L[#L + 1] = { kind = "QUESTDONE", t = M.epoch, text = "Complete:  Wanted: Hogger" }
   local repBefore = #(ns.DB.story.rep or {})

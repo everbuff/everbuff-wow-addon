@@ -105,7 +105,7 @@ function Visits.finish()
   ns.DB.story.events = ns.DB.story.events or {}
   local log = ns.DB.story.events
   log[#log + 1] = rec
-  while #log > 500 do table.remove(log, 1) end
+  ns.trimToCap(log, 500)
   return rec
 end
 

@@ -361,7 +361,7 @@ function Emitter.event(kind, d, quiet)
       zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y,
     }
     ns.DB.story.events[#ns.DB.story.events + 1] = rec
-    while #ns.DB.story.events > 500 do table.remove(ns.DB.story.events, 1) end
+    ns.trimToCap(ns.DB.story.events, 500)
     if ns.Recorder and ns.Recorder.bump then
       if kind == "KILL" then ns.Recorder.bump("kills") elseif kind == "DEATH" then ns.Recorder.bump("deaths") elseif kind == "DUNGEON" then ns.Recorder.bump("dungeons") end
     end
@@ -606,7 +606,7 @@ local function pushLoot(entry)
   if ns.DB then
     ns.DB.loot.log = ns.DB.loot.log or {}
     ns.DB.loot.log[#ns.DB.loot.log + 1] = entry
-    while #ns.DB.loot.log > 2000 do table.remove(ns.DB.loot.log, 1) end
+    ns.trimToCap(ns.DB.loot.log, 2000)
   end
 end
 local function logMailItem(index, itemIndex)
@@ -678,7 +678,7 @@ local function onMoney()
         t = (GetServerTime and GetServerTime()) or time(), money = delta, src = lootSource, guid = lootSourceGUID, s = ns.DB.active,
         x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
       }
-      while #ns.DB.loot.log > 2000 do table.remove(ns.DB.loot.log, 1) end
+      ns.trimToCap(ns.DB.loot.log, 2000)
     elseif Emitter._questMoney and Emitter._questMoney.amount == delta and GetTime() - Emitter._questMoney.at < 3 then
       g.quests = (g.quests or 0) + delta                   -- a quest's money reward (QUEST_TURNED_IN just said so)
       Emitter._questMoney = nil
@@ -1249,7 +1249,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
           t = tnow, item = item, count = count, q = q, icon = icon, src = src, guid = srcGUID, s = ns.DB.active, quest = quest, id = id,
           x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
         }
-        while #ns.DB.loot.log > 2000 do table.remove(ns.DB.loot.log, 1) end
+        ns.trimToCap(ns.DB.loot.log, 2000)
       end
       -- drops at or above the loot-toast threshold get the on-screen flag; the rest stay off-screen
       if ns.Recorder and ns.Recorder.bump then ns.Recorder.bump("items") end

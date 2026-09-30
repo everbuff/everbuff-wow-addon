@@ -76,6 +76,23 @@ end
 --   B. a paste code from the desktop: EB-ACK-<epoch>[:<uid>,<uid>,...]  (/eb ack <code>, or Settings > Data)
 -- Effect: fights with an acked uid, or that started at or before `through`, are marked uploaded and pruned;
 -- loot rows, events and finished sessions at or before `through` are pruned. `combat.lastAck` records it.
+-- Keep a record list at `cap` rows (ADDON-2, everbuff-backend #68): drop the oldest row of an earlier session first,
+-- and the running session's own rows only when nothing else is left. Rows carry their session id in `s`. Acked rows
+-- are already gone (applyAck prunes them), so everything here still waits for an upload.
+function ns.trimToCap(list, cap)
+  if not list then return end
+  local active = ns.DB and ns.DB.active
+  while #list > cap do
+    local drop = 1
+    if active then
+      for i = 1, #list do
+        if list[i].s ~= active then drop = i; break end
+      end
+    end
+    table.remove(list, drop)
+  end
+end
+
 function ns.applyAck(ack, source)
   local db = ns.DB
   if not (db and type(ack) == "table") then return 0, 0 end
