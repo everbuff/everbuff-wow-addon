@@ -46,15 +46,20 @@ function L.state()
   return aclOn, L._combat
 end
 
--- Force logging ON; report whether we had to change anything.
-function L.enforce()
+-- Logging ON; report whether we had to change anything. Every LoggingCombat(true) writes a COMBAT_LOG_VERSION and a
+-- ZONE_CHANGE header into the log, so it is called only when logging is not known to be on, or with `force` (world
+-- entry and the slow safety re-check): called every 10 s it made 7 % of a log synthetic headers and broke its time
+-- order (#15). Something else turning it off is caught at once by the tamper guards.
+function L.enforce(force)
   local aclOn = GetCVar("advancedCombatLogging") == "1"
   local changed = false
   if not aclOn then
     changed = setACL(true) or changed
     aclOn = GetCVar("advancedCombatLogging") == "1"
   end
-  LoggingCombat(true) -- idempotent enable; safe when already on, and (unlike the no-arg form) never disables
+  if force or not L._combat then
+    LoggingCombat(true) -- explicit enable; unlike the no-argument form it never disables
+  end
   if not L._combat then changed = true end
   L._combat = true
   return aclOn, L._combat, changed
@@ -135,6 +140,7 @@ local function onTamper(what)
   if reentrant then return end
   local culprit = culpritFromStack()
   reentrant = true
+  L._combat = false -- it was turned off: our intent no longer matches the client
   L.enforce() -- turn it straight back on
   reentrant = false
   L.repairs = (L.repairs or 0) + 1
@@ -168,9 +174,11 @@ end
 function L.startGuardian()
   if L._guardian then return end
   L.installTamperGuards()
-  local started = false
+  local started, ticks = false, 0
   local function tick()
-    local acl, combat, changed = L.enforce()
+    ticks = ticks + 1
+    -- the first tick (world entry) and every 30th (5 min) re-assert logging; the others only check the cvar (#15)
+    local acl, combat, changed = L.enforce(ticks == 1 or ticks % 30 == 0)
     local off = not (acl and combat)
     if off then
       L.nag()
@@ -189,7 +197,7 @@ function L.startGuardian()
   end
   tick() -- enforce immediately on first world-enter
   L.enforceChat()
-  -- Re-enforce every 3s: WoW (or another addon) can drop combat logging; a fast poll keeps any gap
-  -- tiny instead of the ~10s flicker the old interval caused. Nagging self-throttles (NAG_PERIOD).
+  -- Every 10 s: the advanced logging cvar is checked and a nag goes out while logging is off (NAG_PERIOD throttles
+  -- it); combat logging itself is re-asserted only every 5 min, at world entry and when the tamper guards fire.
   L._guardian = C_Timer.NewTicker(10, tick)
 end

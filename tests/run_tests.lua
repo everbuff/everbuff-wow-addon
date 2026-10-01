@@ -1457,6 +1457,23 @@ check("a visit still open at logout is written", #ns.DB.story.events == n2 + 1 a
 M.fire("PLAYER_LOGOUT")
 check("nothing is written twice", #ns.DB.story.events == n2 + 1)
 check("no errors from the visit wiring", #M.errors == 0, M.errors[1])
+-- #15: combat logging is asserted at world entry and every 5 min, not on every 10 s tick, and a tamper is undone at once
+do
+  local real, enables = _G.LoggingCombat, 0
+  _G.LoggingCombat = function(v) if v == true then enables = enables + 1 end return real(v) end
+  M.fire("PLAYER_ENTERING_WORLD", false, false)
+  local atEntry = enables
+  for _ = 1, 10 do M.tick() end
+  check("world entry asserts combat logging once", atEntry >= 1, atEntry)
+  local afterTicks = enables
+  check("ten guardian ticks add no logging header while it is on", afterTicks - atEntry <= 1, afterTicks - atEntry)
+  for _ = 1, 30 do M.tick() end
+  check("the 5 min safety re-check asserts it again", enables - afterTicks >= 1, enables - afterTicks)
+  local before = enables
+  LoggingCombat(false)
+  check("something turning combat logging off is undone at once", M.logging == true and enables == before + 1, enables - before)
+  _G.LoggingCombat = real
+end
 
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

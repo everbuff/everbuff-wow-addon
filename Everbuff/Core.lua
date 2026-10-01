@@ -273,6 +273,7 @@ f:SetScript("OnEvent", function(_, event, ...)
       ns.msg("recovered an interrupted session (" .. orphan.id .. ")")
     end
     ns.Logging.startGuardian() -- keep combat logging on from login
+    ns.Logging.enforce(true)    -- and after every loading screen: one header per world entry (#15)
     if ns.UI and ns.UI.buildMinimapButton then pcall(ns.UI.buildMinimapButton) end
     if not ns.DB.settings.welcomed then
       ns.DB.settings.welcomed = true
