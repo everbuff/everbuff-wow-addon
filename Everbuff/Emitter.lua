@@ -25,6 +25,8 @@ local sessionLoot = {}
 
 local SHOW_SECS = 2.6
 -- everbuff.gg brand kit (tokens.json)
+-- The flag's colors are the desktop's screen-reading contract (it finds the flag and reads combat from its red),
+-- so they are fixed here on purpose and do not follow the design tokens (wow-addon #19).
 local INK  = { 0.067, 0.067, 0.067 }   -- n1 #111111 charcoal
 local GOLD = { 1.00, 0.82, 0.00 }      -- coin gold #FFD100 (tan left the interface)
 local LAGOON = { 0.357, 0.608, 0.941 } -- data blue #5B9BF0

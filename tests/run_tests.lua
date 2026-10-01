@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
+for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end

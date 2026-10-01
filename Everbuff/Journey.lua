@@ -100,7 +100,7 @@ build = function(content)
   local track = UI.Panel(ov, C.bg[1], C.bg[2], C.bg[3]); track:SetHeight(14)
   track:SetPoint("TOPLEFT", X0, barY); track:SetPoint("TOPRIGHT", ov, "TOPLEFT", col[3] + CW, barY)
   local fill = track:CreateTexture(nil, "ARTWORK"); fill:SetPoint("TOPLEFT", 1, -1); fill:SetPoint("BOTTOMLEFT", 1, 1)
-  fill:SetColorTexture(0.031, 0.651, 0.482, 1)   -- progress is the accent, pressed shade so the white label reads on it
+  fill:SetColorTexture(ns.UI.C.accentPressed[1], ns.UI.C.accentPressed[2], ns.UI.C.accentPressed[3], 1)   -- progress is the accent, pressed shade so the white label reads on it
   content.xpFill, content.xpTrack = fill, track
   content.xpText = UI.FS(ov, "GameFontHighlightSmall", C.ink); content.xpText:SetPoint("LEFT", track, "LEFT", 8, 0)
 

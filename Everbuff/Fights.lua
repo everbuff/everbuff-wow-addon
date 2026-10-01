@@ -101,7 +101,7 @@ local function buildModal()
   save:RegisterForClicks("AnyUp", "AnyDown")
   save:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
   -- the primary action in the accent, as on the desktop: mint with dark text, a step lighter on hover
-  local HOVER = { 0.208, 0.933, 0.733 }   -- accent-fg #35EEBB
+  local HOVER = C.accentFg   -- accent-fg #35EEBB
   save:SetBackdropColor(C.cyan[1], C.cyan[2], C.cyan[3], 1); save:SetBackdropBorderColor(C.cyan[1], C.cyan[2], C.cyan[3], 1)
   local savefs = ns.UI.FS(save, "GameFontNormal")
   savefs:SetPoint("CENTER"); savefs:SetText("Reload & save"); savefs:SetTextColor(C.bg[1], C.bg[2], C.bg[3])

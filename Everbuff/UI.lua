@@ -8,23 +8,29 @@ local UI = {}
 ns.UI = UI
 
 -- ── palette (RGB 0..1) ────────────────────────────────────────────────────────
--- Quiet Precision (everbuff-business #36): charcoal surfaces, one mint accent, neutral text. Tan and ember
--- left the interface; the keys stay so every screen keeps working. Values mirror everbuff-claude design/tokens.json.
+-- Quiet Precision (everbuff-business #36): charcoal surfaces, one mint accent, neutral text. The colors come from
+-- Theme.lua, generated from everbuff-claude design/tokens.json like the desktop's and the web's tokens.css, so one
+-- token change reaches all three (wow-addon #19). Tan and ember left the interface; the old keys stay so every
+-- screen keeps working.
+local T = ns.Theme.color
 UI.C = {
-  bg      = { 0.067, 0.067, 0.067 },   -- n1 #111111 canvas
-  panel   = { 0.098, 0.098, 0.106 },   -- n2 #19191B panels and cards
-  panel2  = { 0.133, 0.133, 0.145 },   -- n3 #222225 raised and hover
-  line    = { 0.180, 0.180, 0.200 },   -- n5 #2E2E33 hairline
-  edge    = { 0.180, 0.180, 0.200 },   -- n5, the 1 px frame edge
-  edgeHi  = { 0.431, 0.451, 0.478 },   -- n7 #6E737A, a hovered or focused edge
-  hover   = { 0.165, 0.165, 0.180 },   -- n4 #2A2A2E, hover one step up from raised
-  data    = { 0.357, 0.608, 0.941 },   -- data blue #5B9BF0, for kinds of events (never the accent)
-  ink     = { 0.953, 0.957, 0.961 },   -- n10 #F3F4F5 text
-  dim     = { 0.549, 0.569, 0.592 },   -- n8 #8C9197 secondary text
-  gold    = { 0.780, 0.792, 0.804 },   -- n9 #C7CACD, headings (was tan)
-  cyan    = { 0.047, 0.824, 0.616 },   -- mint #0CD29D, the accent (was lagoon)
-  green   = { 0.298, 0.765, 0.541 },   -- success #4CC38A
-  red     = { 1.000, 0.420, 0.435 },   -- danger #FF6B6F (was ember)
+  bg      = T["bg-canvas"],        -- n1 #111111 canvas
+  panel   = T["bg-panel"],         -- n2 #19191B panels and cards
+  panel2  = T["bg-raised"],        -- n3 #222225 raised and hover
+  line    = T["line"],             -- n5 #2E2E33 hairline
+  edge    = T["line"],             -- n5, the 1 px frame edge
+  edgeHi  = T["line-control"],     -- n7 #6E737A, a hovered or focused edge
+  hover   = T["bg-hover-raised"],  -- n4 #2A2A2E, hover one step up from raised
+  data    = { 0.357, 0.608, 0.941 },   -- data blue #5B9BF0, for kinds of events (never the accent); not a token
+  ink     = T["fg"],               -- n10 #F3F4F5 text
+  dim     = T["fg-muted"],         -- n8 #8C9197 secondary text
+  gold    = T["fg-subtle"],        -- n9 #C7CACD, headings (was tan)
+  cyan    = T["accent"],           -- mint #0CD29D, the accent (was lagoon)
+  green   = T["success-fg"],       -- success #4CC38A
+  red     = T["danger-fg"],        -- danger #FF6B6F (was ember)
+  sunken  = T["bg-sunken"],        -- n0 #0B0B0C, the top bar
+  accentFg = T["accent-fg"],       -- #35EEBB, the primary button's hover
+  accentPressed = T["accent-pressed"], -- #08A67B, progress fills
 }
 local C = UI.C
 -- ── type kit ──────────────────────────────────────────────────────────────────
@@ -238,7 +244,7 @@ local function buildFrame()
   -- title bar
   local bar = CreateFrame("Frame", nil, f)
   bar:SetPoint("TOPLEFT", 12, -12); bar:SetPoint("TOPRIGHT", -12, -12); bar:SetHeight(40)
-  local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(0.043, 0.043, 0.047, 1)   -- n0, the desktop top bar
+  local barBg = bar:CreateTexture(nil, "BACKGROUND"); barBg:SetAllPoints(); barBg:SetColorTexture(C.sunken[1], C.sunken[2], C.sunken[3], 1)   -- n0, the desktop top bar
   local barRule = bar:CreateTexture(nil, "ARTWORK"); barRule:SetPoint("BOTTOMLEFT"); barRule:SetPoint("BOTTOMRIGHT"); barRule:SetHeight(1)
   barRule:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
   local mark = bar:CreateTexture(nil, "ARTWORK")
