@@ -391,6 +391,19 @@ for _, k in ipairs({ "schema", "settings", "sessions", "combat", "loot", "charac
   check("contract: top-level key " .. k, ns.DB[k] ~= nil, "missing")
 end
 check("contract: schema 2", ns.DB.schema == 2, ns.DB.schema)
+-- everbuff-backend #85: the second name, only where the client shows surnames (elsewhere UnitName's second value is the realm)
+do
+  local saved = _G.C_PlayerInfo
+  _G.C_PlayerInfo = nil
+  check("surname: none without C_PlayerInfo.ShouldDisplaySurname (the realm is never taken for it)", ns.surname() == nil)
+  _G.C_PlayerInfo = { ShouldDisplaySurname = function() return false end }
+  check("surname: none when the client hides surnames", ns.surname() == nil)
+  _G.C_PlayerInfo = { ShouldDisplaySurname = function() return true end }
+  check("surname: UnitName's second value when surnames show", ns.surname() == "Realm", tostring(ns.surname()))
+  _G.C_PlayerInfo = { ShouldDisplaySurname = function() error("boom") end }
+  check("surname: an erroring client call is no surname", ns.surname() == nil)
+  _G.C_PlayerInfo = saved
+end
 check("contract: no v1 keys left at the top level", ns.DB.fights == nil and ns.DB.lootlog == nil and ns.DB.eventlog == nil and ns.DB.gold == nil and ns.DB.xp == nil)
 check("contract: combat / loot / character / story shapes", type(ns.DB.combat.fights) == "table" and type(ns.DB.loot.log) == "table" and type(ns.DB.loot.gold) == "table" and type(ns.DB.character.xp) == "table" and type(ns.DB.story.events) == "table")
 local cf2 = ns.DB.combat.fights[#ns.DB.combat.fights]

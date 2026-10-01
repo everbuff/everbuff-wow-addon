@@ -34,11 +34,24 @@ end
 R.row = row
 
 -- One session per play session (login → logout). Not per-instance: the log already delimits fights.
+
+-- The character's second name (everbuff-backend #85): WoW Forever characters have two names ("Hart Hammershield"),
+-- and there UnitName's second value is the surname. On other clients that value is the realm, so it counts only when
+-- the client says surnames are shown (probe in game, 2026-10-01). Nil when there is none.
+function ns.surname()
+  if not (C_PlayerInfo and C_PlayerInfo.ShouldDisplaySurname) then return nil end
+  local ok, show = pcall(C_PlayerInfo.ShouldDisplaySurname, "player")
+  if not ok or not show then return nil end
+  local _, sur = UnitName("player")
+  return (type(sur) == "string" and sur ~= "") and sur or nil
+end
+
 function R.start()
   if S.session then return end
   -- a /reload keeps the session: the record is still marked active and not ended, so resume it
   local prev = ns.DB and ns.DB.active and ns.DB.sessions[ns.DB.active]
   if prev and not prev.endedEpoch then
+    prev.surname = prev.surname or ns.surname()   -- a session started before 0.9.17 learns it on the next reload
     S.session, S.seq = prev, #(prev.segments or {})
     row("RESUME", "reload")
     return
@@ -49,7 +62,7 @@ function R.start()
     id = newId(), schema = 4,
     startedEpoch = GetServerTime(), startedMono = GetTime(),
     build = select(4, GetBuildInfo()), project = WOW_PROJECT_ID, flavor = ns.flavor, addonVersion = ns.VERSION,
-    player = UnitNameUnmodified("player"), realm = GetRealmName(),
+    player = UnitNameUnmodified("player"), surname = ns.surname(), realm = GetRealmName(),
     guid = (UnitGUID and UnitGUID("player")) or nil, startedLocal = time(),   -- integrity manifest: who + local clock
     guild = (GetGuildInfo("player")) or "", class = select(2, UnitClass("player")),
     level = playerLevel(), level0 = playerLevel(),
