@@ -948,8 +948,8 @@ do
     SlashCmdList.EVERBUFF("corner bl")
     check("in combat: the slash command is refused", ns.DB.settings.emitCorner == corner0)
     local sc0 = ns.DB.settings.flagScale
-    ns.Emitter.setFlagScale(1.5); ns.Emitter.setFlagHidden(true)
-    check("in combat: scale and hide are refused", ns.DB.settings.flagScale == sc0 and not ns.DB.settings.flagHidden)
+    ns.Emitter.setFlagScale(1.5)
+    check("in combat: a size change is refused", ns.DB.settings.flagScale == sc0)
     M.inCombat = false
     check("out of combat: /eb corner works again", ns.Emitter.setCorner("tr") == true and ns.DB.settings.emitCorner == "TOPRIGHT")
     ns.Emitter.setCorner(corner0 or "TOPLEFT")
@@ -1089,19 +1089,24 @@ do
   M.now = M.now + 60; M.fire("PLAYER_ALIVE")   -- drain state for later tests
   for i = #q, 1, -1 do q[i] = nil end
 end
--- ── flag size and hide toggle ──
+-- ── flag size, and the flag is always shown (desktop #90) ──
 do
   local fl = T.flagFrame()
   ns.Emitter.setFlagScale(1.25)
   check("flag scale persisted and stepped", ns.DB.settings.flagScale == 1.25, ns.DB.settings.flagScale)
-  ns.Emitter.setFlagHidden(true)
-  check("hidden flag is hidden and persisted", ns.DB.settings.flagHidden == true and fl.shown == false)
+  ns.Emitter.setFlagScale(0.7)
+  check("flag never smaller than 100% (smaller was never proven readable)", ns.DB.settings.flagScale == 1, ns.DB.settings.flagScale)
+  ns.Emitter.setFlagScale(3)
+  check("flag never larger than 150%", ns.DB.settings.flagScale == 1.5, ns.DB.settings.flagScale)
+  check("no way to hide the flag or fade it", ns.Emitter.setFlagHidden == nil and ns.Emitter.flagHidden == nil and ns.Emitter.setFlagAlpha == nil)
+  -- a save from an older version that had it hidden at 30 %: shown, at full opacity, and the old keys dropped
+  ns.DB.settings.flagHidden, ns.DB.settings.flagAlpha = true, 0.3
+  ns.Emitter.applyFlagPrefs()
+  check("an old hidden flag comes back", fl.shown == true and ns.DB.settings.flagHidden == nil and ns.DB.settings.flagAlpha == nil)
   M.now = M.now + 100
   local q0 = T.toastQueue(); for i = #q0, 1, -1 do q0[i] = nil end
   ns.Emitter.event("LEVELUP", {})
-  check("no toast while the flag is hidden, but the event is still recorded", not T.toastBusy() and ns.DB.story.events[#ns.DB.story.events].kind == "LEVELUP")
-  ns.Emitter.setFlagHidden(false)
-  check("flag comes back when unhidden", ns.DB.settings.flagHidden == nil and fl.shown == true)
+  check("a notification shows and the event is recorded", T.toastBusy() and ns.DB.story.events[#ns.DB.story.events].kind == "LEVELUP")
   ns.Emitter.setFlagScale(1)
 end
 -- ── Loot "By item" aggregation ──
@@ -1208,12 +1213,6 @@ do
   local byQ = ns._test.lootSort({ unpack(rows) }, "quality", false)
   check("sort by quality puts the rare first", byQ[1].item == "Blue Sword", byQ[1].item)
 end
--- ── flag opacity ──
-ns.Emitter.setFlagAlpha(0.6)
-check("flag opacity persisted and clamped to steps", ns.DB.settings.flagAlpha == 0.6, ns.DB.settings.flagAlpha)
-ns.Emitter.setFlagAlpha(0.1)
-check("flag opacity never below 30%", ns.DB.settings.flagAlpha == 0.3, ns.DB.settings.flagAlpha)
-ns.Emitter.setFlagAlpha(1)
 -- ── onboarding card ──
 do
   ns.UI.Open("Home", "overview"); M.tick()

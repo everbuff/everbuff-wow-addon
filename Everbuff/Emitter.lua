@@ -191,41 +191,31 @@ hero:SetShadowColor(0, 0, 0, 0.8); hero:SetShadowOffset(1, -1)
 panel:Hide()
 
 local ICON_INSET = 44   -- keep text clear of the corner icon
--- flag prefs: size (the desktop reads the flag, so a known size helps OCR) and a hide switch (which
--- also silences toasts: nothing to read means nothing to draw). Both persisted in settings.
+-- flag prefs: only the size, 100 to 150 %. The desktop reads the flag to align the recording, so it is always
+-- shown at full opacity (founder, 2026-10-01, desktop #90: without the flag the data cannot be aligned). Smaller
+-- sizes and lower opacity were never proven readable; the hide switch and the opacity slider are gone, and a saved
+-- `flagHidden` or `flagAlpha` from an older version is dropped.
+local FLAG_MIN, FLAG_MAX = 1.0, 1.5
 local function flagPrefs()
   local st = (ns.DB and ns.DB.settings) or {}
+  st.flagHidden, st.flagAlpha = nil, nil
   local sc = tonumber(st.flagScale) or 1
-  if sc < 0.7 then sc = 0.7 elseif sc > 1.5 then sc = 1.5 end
-  local al = tonumber(st.flagAlpha) or 1
-  if al < 0.3 then al = 0.3 elseif al > 1 then al = 1 end
-  return sc, st.flagHidden and true or false, al
+  if sc < FLAG_MIN then sc = FLAG_MIN elseif sc > FLAG_MAX then sc = FLAG_MAX end
+  return sc
 end
 local function applyFlagPrefs()
-  local sc, hidden, al = flagPrefs()
-  flag:SetScale(sc); panel:SetScale(sc); flag:SetAlpha(al)
-  if hidden then flag:Hide(); panel:Hide() else flag:Show() end
+  local sc = flagPrefs()
+  flag:SetScale(sc); panel:SetScale(sc); flag:SetAlpha(1)
+  flag:Show()
 end
 Emitter.applyFlagPrefs = applyFlagPrefs
 function Emitter.setFlagScale(v)
   if ns.blockedInCombat() then return end
   v = tonumber(v) or 1
+  if v < FLAG_MIN then v = FLAG_MIN elseif v > FLAG_MAX then v = FLAG_MAX end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagScale = math.floor(v * 20 + 0.5) / 20 end
   applyFlagPrefs()
 end
-function Emitter.setFlagAlpha(v)
-  if ns.blockedInCombat() then return end
-  v = tonumber(v) or 1
-  if v < 0.3 then v = 0.3 elseif v > 1 then v = 1 end
-  if ns.DB and ns.DB.settings then ns.DB.settings.flagAlpha = math.floor(v * 20 + 0.5) / 20 end
-  applyFlagPrefs()
-end
-function Emitter.setFlagHidden(on)
-  if ns.blockedInCombat() then return end
-  if ns.DB and ns.DB.settings then ns.DB.settings.flagHidden = on and true or nil end
-  applyFlagPrefs()
-end
-function Emitter.flagHidden() local _, h = flagPrefs(); return h end
 local function place()
   local key = (ns.DB and ns.DB.settings and ns.DB.settings.emitCorner) or "TOPLEFT"
   local corner = CORNERS[key] or "TOPLEFT"
@@ -286,7 +276,6 @@ local hideAt = 0
 local queue = {}
 local TOAST_PRIORITY = { LEVELUP = true, DEATH = true, WIPE = true, BOSS = true, ACHIEV = true }
 local function show(kind, human, rec)
-  if Emitter.flagHidden() then return end      -- hidden flag: nothing on screen (still recorded)
   -- the moment it reaches the screen, on the client's own clock: the desktop sees the same notification in
   -- the video, so the pair is an alignment anchor (everbuff-desktop #72). Data only; nothing on screen changes.
   if rec then rec.shown = math.floor(GetTime() * 1000 + 0.5) / 1000 end
@@ -1380,12 +1369,12 @@ if ns.UI and ns.UI.registerTab then
     end)
     preview:SetPoint("TOPLEFT", 14, y - 8)
 
-    -- flag size + hide
+    -- flag size (the flag is always shown: the desktop aligns the recording with it, desktop #90)
     local fsHdr = ns.UI.FS(general, "GameFontNormal", C.gold); fsHdr:SetPoint("TOPLEFT", 14, y - 48); fsHdr:SetText("Flag size")
     local fsl = CreateFrame("Slider", "EverbuffFlagScaleSlider", general, "OptionsSliderTemplate")
     fsl:SetOrientation("HORIZONTAL"); fsl:SetWidth(240); fsl:SetHeight(16); fsl:SetPoint("TOPLEFT", 18, y - 76)
-    fsl:SetMinMaxValues(0.7, 1.5); fsl:SetValueStep(0.05); fsl:SetObeyStepOnDrag(true)
-    if _G.EverbuffFlagScaleSliderLow then _G.EverbuffFlagScaleSliderLow:SetText("70%") end
+    fsl:SetMinMaxValues(FLAG_MIN, FLAG_MAX); fsl:SetValueStep(0.05); fsl:SetObeyStepOnDrag(true)
+    if _G.EverbuffFlagScaleSliderLow then _G.EverbuffFlagScaleSliderLow:SetText("100%") end
     if _G.EverbuffFlagScaleSliderHigh then _G.EverbuffFlagScaleSliderHigh:SetText("150%") end
     local curFs = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.flagScale)) or 1
     fsl:SetValue(curFs)
@@ -1394,30 +1383,12 @@ if ns.UI and ns.UI.registerTab then
       Emitter.setFlagScale(val)
       if _G.EverbuffFlagScaleSliderText then _G.EverbuffFlagScaleSliderText:SetText(math.floor(val * 100 + 0.5) .. "%") end
     end)
-    local faHdr = ns.UI.FS(general, "GameFontNormal", C.gold); faHdr:SetPoint("TOPLEFT", 14, y - 98); faHdr:SetText("Flag opacity")
-    local fal = CreateFrame("Slider", "EverbuffFlagAlphaSlider", general, "OptionsSliderTemplate")
-    fal:SetOrientation("HORIZONTAL"); fal:SetWidth(240); fal:SetHeight(16); fal:SetPoint("TOPLEFT", 18, y - 126)
-    fal:SetMinMaxValues(0.3, 1); fal:SetValueStep(0.05); fal:SetObeyStepOnDrag(true)
-    if _G.EverbuffFlagAlphaSliderLow then _G.EverbuffFlagAlphaSliderLow:SetText("30%") end
-    if _G.EverbuffFlagAlphaSliderHigh then _G.EverbuffFlagAlphaSliderHigh:SetText("100%") end
-    local curFa = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.flagAlpha)) or 1
-    fal:SetValue(curFa)
-    if _G.EverbuffFlagAlphaSliderText then _G.EverbuffFlagAlphaSliderText:SetText(math.floor(curFa * 100 + 0.5) .. "%") end
-    fal:SetScript("OnValueChanged", function(_, val)
-      Emitter.setFlagAlpha(val)
-      if _G.EverbuffFlagAlphaSliderText then _G.EverbuffFlagAlphaSliderText:SetText(math.floor(val * 100 + 0.5) .. "%") end
-    end)
-    local hideCb = CreateFrame("CheckButton", nil, general, "UICheckButtonTemplate"); hideCb:SetPoint("TOPLEFT", 14, y - 148); hideCb:SetSize(22, 22)
-    hideCb:SetChecked(ns.DB and ns.DB.settings and ns.DB.settings.flagHidden and true or false)
-    local hideLbl = ns.UI.FS(general, "GameFontHighlightSmall"); hideLbl:SetPoint("LEFT", hideCb, "RIGHT", 4, 0); hideLbl:SetWidth(290); hideLbl:SetJustifyH("LEFT")
-    hideLbl:SetText("Hide the flag and notifications")
-    local hideWarn = ns.UI.FS(general, "GameFontDisableSmall", C.dim); hideWarn:SetPoint("TOPLEFT", 40, y - 170); hideWarn:SetWidth(280); hideWarn:SetJustifyH("LEFT")
-    hideWarn:SetText("The desktop app reads the flag to mark moments in your recording. Hidden means no markers. Everything is still recorded here.")
-    hideCb:SetScript("OnClick", function(self) Emitter.setFlagHidden(self:GetChecked() and true or false) end)
+    local fsNote = ns.UI.FS(general, "GameFontDisableSmall", C.dim); fsNote:SetPoint("TOPLEFT", 14, y - 104); fsNote:SetWidth(300); fsNote:SetJustifyH("LEFT")
+    fsNote:SetText("The flag is always shown: the desktop app reads it to line up your recording with your data.")
 
-    local scHdr = ns.UI.FS(general, "GameFontNormal", C.gold); scHdr:SetPoint("TOPLEFT", 14, y - 210); scHdr:SetText("Window size")
+    local scHdr = ns.UI.FS(general, "GameFontNormal", C.gold); scHdr:SetPoint("TOPLEFT", 14, y - 140); scHdr:SetText("Window size")
     local sc = CreateFrame("Slider", "EverbuffScaleSlider", general, "OptionsSliderTemplate")
-    sc:SetOrientation("HORIZONTAL"); sc:SetWidth(240); sc:SetHeight(16); sc:SetPoint("TOPLEFT", 18, y - 238)
+    sc:SetOrientation("HORIZONTAL"); sc:SetWidth(240); sc:SetHeight(16); sc:SetPoint("TOPLEFT", 18, y - 168)
     sc:SetMinMaxValues(0.7, 1.3); sc:SetValueStep(0.05); sc:SetObeyStepOnDrag(true)
     if _G.EverbuffScaleSliderLow then _G.EverbuffScaleSliderLow:SetText("70%") end
     if _G.EverbuffScaleSliderHigh then _G.EverbuffScaleSliderHigh:SetText("130%") end

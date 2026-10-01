@@ -25,7 +25,7 @@ A v1 file (flat keys) is migrated in place on load (`Core.lua ns.migrateDB`); v1
 | key | type | notes |
 | --- | --- | --- |
 | `schema` | int | 2 |
-| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale, flagAlpha, flagHidden, flagPos{point,x,y}, onboarded, winSize{w,h}` |
+| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load |
 | `sessions` | map id -> session | HOME. One record per login -> logout (a `/reload` resumes it): identity (`player, realm, class, guild, build, flavor, addonVersion`), `surname?` (the second name of a WoW Forever character, "Hammershield" for Hart Hammershield; from 0.9.17, absent where the client shows no surname; everbuff-backend #85), `guid` (player GUID), `startedEpoch`, `startedLocal`, `endedEpoch?`, `endedLocal?`, `recovered?` (closed on the next login after a crash), `level0 -> level`, `context`, `logging`, TAB-delimited `segments[]` (Segments.lua beacon), and live counters `xp, gained, spent, kills, deaths, fights, items, dungeons` |
 | `active` | id or nil | the session in progress |
 | `combat` | object | COMBAT. `fights[]` (below; oldest first, capped at 250), `fightSeq`, `uploadedThrough?`, `lastAck? { at, through?, fights, source }` |
