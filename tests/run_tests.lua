@@ -634,6 +634,20 @@ M.money = M.money + 3000; M.fire("PLAYER_MONEY"); M.money = M.money - 1000; M.fi
 check("session gold in and out accumulate", ns.Recorder.current().gained == 3000 and ns.Recorder.current().spent == 1000)
 M.fire("PLAYER_ENTERING_WORLD", false, true)                        -- a /reload keeps the running session
 check("reload keeps the session", ns.Recorder.current().xp == sxp0 + 600 and ns.Recorder.current().fights ~= nil)
+-- #14: a /reload fires PLAYER_LOGOUT first; the save file then has the session ended, and the reload reopens it
+local sid14 = ns.DB.active
+M.fire("PLAYER_LOGOUT")
+check("logout writes the end into the save file", ns.DB.sessions[sid14].endedEpoch ~= nil and ns.DB.active == sid14)
+M.fire("PLAYER_ENTERING_WORLD", false, true)
+local s14 = ns.DB.sessions[sid14]
+check("a reload after its PLAYER_LOGOUT reopens the same session", ns.DB.active == sid14 and ns.Recorder.current() == s14 and s14.endedEpoch == nil and s14.xp == sxp0 + 600)
+local resumes = 0; for _, r in ipairs(s14.segments or {}) do if r.kind == "RESUME" or r[2] == "RESUME" or (type(r) == "string" and r:find("RESUME")) then resumes = resumes + 1 end end
+check("the reopened session carries a RESUME row", resumes >= 1, resumes)
+-- a real logout followed by a real login: the old session stays ended at the logout, not marked recovered
+M.fire("PLAYER_LOGOUT"); local ended14 = s14.endedEpoch
+M.now = M.now + 600
+M.fire("PLAYER_ENTERING_WORLD", true, false)
+check("a real login keeps the logged-out session ended at its logout", s14.endedEpoch == ended14 and not s14.recovered and ns.DB.active ~= sid14 and ns.Recorder.current() ~= s14)
 -- ── corpse run: downtime stamped on the death row ──
 M.fire("PLAYER_DEAD"); M.now = M.now + 95; M.dead = false; M.fire("PLAYER_UNGHOST")
 local lastDeath; for i = #ns.DB.story.events, 1, -1 do if ns.DB.story.events[i].kind == "DEATH" then lastDeath = ns.DB.story.events[i]; break end end

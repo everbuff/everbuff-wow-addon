@@ -48,9 +48,11 @@ end
 
 function R.start()
   if S.session then return end
-  -- a /reload keeps the session: the record is still marked active and not ended, so resume it
+  -- a /reload keeps the session (#14): the record is still the active one, either never ended or closed only by the
+  -- PLAYER_LOGOUT the reload itself fired, so it is reopened
   local prev = ns.DB and ns.DB.active and ns.DB.sessions[ns.DB.active]
-  if prev and not prev.endedEpoch then
+  if prev and (not prev.endedEpoch or (ns.reloadingUi and prev.endedBy == "logout")) then
+    prev.endedEpoch, prev.endedMono, prev.endedLocal, prev.endedBy = nil, nil, nil, nil
     prev.surname = prev.surname or ns.surname()   -- a session started before 0.9.17 learns it on the next reload
     S.session, S.seq = prev, #(prev.segments or {})
     row("RESUME", "reload")
@@ -81,6 +83,19 @@ function R.start()
   row("LOGGING", string.format("acl=%d\tcombat=%d", aclOn and 1 or 0, combatOn and 1 or 0))
   ns.msg(("recording %s%s|r · %ssession %s|r · the combat log is the record; this is just the beacon")
     :format(ns.CYAN, context, ns.CYAN, sess.id))
+end
+
+-- PLAYER_LOGOUT fires on a /reload as well as on a real logout (#14), and WoW writes the save file right after it. So
+-- the session is closed in the save file here, which keeps a logout or an exit that never comes back ended at the
+-- right time, but it stays the active record: the next PLAYER_ENTERING_WORLD reopens it on a /reload (R.start) or
+-- leaves it closed on a real login (Core). Nothing is printed: on a reload the chat is gone anyway.
+function R.pause(reason)
+  local sess = S.session
+  if not sess then return end
+  row("SESSION_END", reason or "")
+  sess.endedEpoch, sess.endedMono, sess.endedLocal = GetServerTime(), GetTime(), time()
+  sess.endedBy = reason
+  S.session = nil
 end
 
 function R.stop(reason)

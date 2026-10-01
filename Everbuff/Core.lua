@@ -256,10 +256,15 @@ f:SetScript("OnEvent", function(_, event, ...)
     ns.msg(("ready · %d fights · %d loot · flag %s"):format(
       #db.combat.fights, #db.loot.log, tostring(db.settings.emitCorner or "default")))
   elseif event == "PLAYER_ENTERING_WORLD" then
-    local isLogin = ...
+    local isLogin, isReload = ...
+    ns.reloadingUi = isReload and true or false   -- R.start reopens the session a reload's PLAYER_LOGOUT closed (#14)
     -- a REAL login with a session still marked active means the last session never closed (crash or
     -- disconnect): finalize it so it uploads. A /reload keeps the session (Recorder.start resumes it).
     if isLogin and ns.Recorder.active() then ns.Recorder.stop("relogin") end   -- a stale in-memory session (never in a real client, but be safe)
+    -- a real login after a clean logout: the last session ended at that logout and stays as it is (#14)
+    if isLogin and ns.DB.active and ns.DB.sessions[ns.DB.active] and ns.DB.sessions[ns.DB.active].endedBy == "logout" then
+      ns.DB.active = nil
+    end
     if isLogin and ns.DB.active and ns.DB.sessions[ns.DB.active] then
       local orphan = ns.DB.sessions[ns.DB.active]
       orphan.endedEpoch = orphan.endedEpoch or GetServerTime()
@@ -280,7 +285,7 @@ f:SetScript("OnEvent", function(_, event, ...)
     ns.Logging.enforce() -- zoning can drop combat logging; re-assert immediately
     checkContext()
   elseif event == "PLAYER_LOGOUT" then
-    if ns.Recorder.active() then ns.Recorder.stop("logout") end
+    if ns.Recorder.active() then ns.Recorder.pause("logout") end
   elseif handlers[event] then
     handlers[event](...)
   end
