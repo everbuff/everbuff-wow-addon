@@ -762,7 +762,9 @@ do  -- #16: the charcoal theme of the desktop, never the white box
 end
 M.inCombat = true; M.fire("PLAYER_REGEN_DISABLED")
 check("reminder hides the moment combat starts", sm and not sm:IsShown())
+local timers0 = #M.timers
 M.inCombat = false; M.now = M.now + 2; M.fire("PLAYER_REGEN_ENABLED")
+check("the end of combat schedules the settle re-check of the reminder", #M.timers == timers0 + 1, #M.timers - timers0)
 M.now = M.now + 3; T.flushTick()
 check("reminder stays hidden during the settle period", sm and not sm:IsShown())
 M.now = M.now + 10; T.flushTick()

@@ -914,10 +914,10 @@ ef:SetScript("OnEvent", function(_, event, ...)
     beginFight()
   elseif event == "PLAYER_REGEN_ENABLED" then
     endFight()
-  elseif event == "PLAYER_LOGOUT" then
-    if cur then endFight("logout") end                       -- a /reload or logout mid-fight (#18)
     -- re-check shortly after the settle period so an interrupted reminder returns promptly, not on the next 15s tick
     if C_Timer and C_Timer.After then C_Timer.After(SETTLE_SECS + 1, flushTick) end
+  elseif event == "PLAYER_LOGOUT" then
+    if cur then endFight("logout") end                       -- a /reload or logout mid-fight (#18)
   elseif event == "UNIT_AURA" then
     local u = ...
     if throttleOK(u) then                                    -- rate-limit the UNIT_AURA storm
