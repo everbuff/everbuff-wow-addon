@@ -46,6 +46,16 @@ function ns.surname()
   return (type(sur) == "string" and sur ~= "") and sur or nil
 end
 
+-- The session's gold ledger (everbuff-backend #46): the keys of the lifetime loot.gold except balance, in copper,
+-- all present from the start so a zero is a known zero. Emitter's money handler credits it.
+R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",
+  "flights", "auctions", "mailSpent", "other" }
+function R.newGoldLedger()
+  local g = {}
+  for _, k in ipairs(R.GOLD_KEYS) do g[k] = 0 end
+  return g
+end
+
 function R.start()
   if S.session then return end
   -- a /reload keeps the session (#14): the record is still the active one, either never ended or closed only by the
@@ -73,6 +83,7 @@ function R.start()
     segments = {},
     -- live counters (HOME's session cards and per-hour rates): bumped by the capture modules
     xp = 0, gained = 0, spent = 0, kills = 0, deaths = 0, fights = 0, items = 0, dungeons = 0,
+    gold = R.newGoldLedger(),   -- this session's own gold ledger, credited with the lifetime one (everbuff-backend #46)
   }
   ns.DB.sessions[sess.id] = sess
   ns.DB.active = sess.id

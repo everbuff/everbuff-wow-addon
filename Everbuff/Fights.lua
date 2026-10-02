@@ -677,20 +677,26 @@ local function tabPoints(tab)
   end
   return safeKey(nm), pts
 end
+-- WoW Forever (Midnight engine) has no global GetSpecialization: the specialization is C_SpecializationInfo's and the
+-- loadout is C_ClassTalents/C_Traits, as on retail. Reading only the globals left spec and talents empty on every
+-- Forever fight (409 of 409 in the founder's save file of 2026-10-02, a level 20 paladin).
 local function specAndTalents()
   local spec, talents
-  if GetSpecialization and GetSpecializationInfo then
-    local ok, i = pcall(GetSpecialization)
+  local CSI = C_SpecializationInfo
+  local getSpec = GetSpecialization or (CSI and CSI.GetSpecialization)
+  local getInfo = GetSpecializationInfo or (CSI and CSI.GetSpecializationInfo)
+  if getSpec and getInfo then
+    local ok, i = pcall(getSpec)
     i = ok and plain(i)
     if type(i) == "number" and i > 0 then
-      local ok2, _, name = pcall(GetSpecializationInfo, i)
+      local ok2, _, name = pcall(getInfo, i)
       if ok2 then spec = safeKey(name) end
     end
-    if C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GenerateImportString then
-      local cfg = try(C_ClassTalents.GetActiveConfigID)
-      local str = cfg and try(C_Traits.GenerateImportString, cfg)
-      if type(str) == "string" and #str > 0 and #str < 400 then talents = str end
-    end
+  end
+  if C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GenerateImportString then
+    local cfg = try(C_ClassTalents.GetActiveConfigID)
+    local str = cfg and try(C_Traits.GenerateImportString, cfg)
+    if type(str) == "string" and not (issecretvalue and issecretvalue(str)) and #str > 0 and #str < 400 then talents = str end
   end
   if not spec and not talents and GetNumTalentTabs and GetTalentTabInfo then
     local okT, tabs = pcall(GetNumTalentTabs)
@@ -785,7 +791,10 @@ local function beginFight()
   statTicker = C_Timer.NewTicker(F.sampleInterval(), sampleTick)
 end
 
-local function endFight()
+-- `interrupted` is the reason a fight was closed while combat still ran (a /reload or a logout: PLAYER_LOGOUT fires on
+-- both, right before WoW writes the save file). Such a fight is stored as far as it got, with `interrupted` set and no
+-- outcome unless a death, kill or wipe was already known (everbuff-wow-addon #18: it used to be lost whole).
+local function endFight(interrupted)
   if not cur then return end
   if statTicker then statTicker:Cancel(); statTicker = nil end
   -- CRITICAL: run the closing captures in a protected call. If any read throws (e.g. a secret value
@@ -813,7 +822,10 @@ local function endFight()
   cur.endLocalHi = CAL_EPOCH + (cur.endMono - CAL_MONO)
   -- resolve the result: PLAYER_DEAD / ENCOUNTER_END may have set it already; otherwise infer a kill
   -- when we faced something and lived, else leave "fled" (evade / disengage).
-  if cur.outcome == "fled" and #cur.foes > 0 then cur.outcome = "kill" end
+  if interrupted then
+    cur.interrupted = interrupted
+    if cur.outcome == "fled" then cur.outcome = nil end     -- not over: the result is unknown, not a flight
+  elseif cur.outcome == "fled" and #cur.foes > 0 then cur.outcome = "kill" end
   -- strip all working sets so they don't persist
   if cur.group then
     for _, m in ipairs(cur.group) do
@@ -901,6 +913,8 @@ ef:SetScript("OnEvent", function(_, event, ...)
     beginFight()
   elseif event == "PLAYER_REGEN_ENABLED" then
     endFight()
+  elseif event == "PLAYER_LOGOUT" then
+    if cur then endFight("logout") end                       -- a /reload or logout mid-fight (#18)
     -- re-check shortly after the settle period so an interrupted reminder returns promptly, not on the next 15s tick
     if C_Timer and C_Timer.After then C_Timer.After(SETTLE_SECS + 1, flushTick) end
   elseif event == "UNIT_AURA" then
@@ -962,6 +976,7 @@ for _, ev in ipairs({
   "ENCOUNTER_START", "ENCOUNTER_END", "PLAYER_DEAD",
   "UNIT_HEALTH", "UNIT_FLAGS",                     -- groupmate deaths (boolean read only, never health math)
   "UNIT_SPELLCAST_SUCCEEDED",                      -- item uses (casts that are not known spells)
+  "PLAYER_LOGOUT",                                 -- store a fight still running at /reload or logout (#18)
 }) do ef:RegisterEvent(ev) end
 
 -- auto-save watchdog: every 15s, flush unsaved fights to disk if it's a safe moment (see flushTick).

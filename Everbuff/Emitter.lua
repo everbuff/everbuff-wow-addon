@@ -662,6 +662,15 @@ end
 local sessionScratch = {}
 local function sessionDB() return (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or sessionScratch end
 
+-- One credit to the gold ledger: the lifetime total (loot.gold) and, from 0.9.23, the running session's own ledger
+-- (session.gold, everbuff-backend #46, approved 2026-09-29), same keys, at the same moment. A session that began
+-- before 0.9.23 has no ledger and keeps none, so a half-filled one is never mistaken for the whole session.
+local function credit(g, ses, key, n)
+  g[key] = (g[key] or 0) + n
+  local sg = ses.gold
+  if type(sg) == "table" then sg[key] = (sg[key] or 0) + n end
+end
+
 local function onMoney()
   if not ns.DB then return end
   local c = plainNum(rd(GetMoney)); if not c then return end
@@ -671,9 +680,9 @@ local function onMoney()
   local g = goldDB(); g.balance = c
   local ses = sessionDB()
   if delta > 0 then
-    g.gained = (g.gained or 0) + delta; ses.gained = (ses.gained or 0) + delta
+    credit(g, ses, "gained", delta); ses.gained = (ses.gained or 0) + delta
     if GetTime() < lootWindowUntil then                 -- gained while a loot window was open = looted coin
-      g.looted = (g.looted or 0) + delta
+      credit(g, ses, "looted", delta)
       ns.DB.loot.log = ns.DB.loot.log or {}
       ns.DB.loot.log[#ns.DB.loot.log + 1] = {
         t = (GetServerTime and GetServerTime()) or time(), money = delta, src = lootSource, guid = lootSourceGUID, s = ns.DB.active,
@@ -681,16 +690,16 @@ local function onMoney()
       }
       ns.trimToCap(ns.DB.loot.log, 2000)
     elseif Emitter._questMoney and Emitter._questMoney.amount == delta and GetTime() - Emitter._questMoney.at < 3 then
-      g.quests = (g.quests or 0) + delta                   -- a quest's money reward (QUEST_TURNED_IN just said so)
+      credit(g, ses, "quests", delta)                     -- a quest's money reward (QUEST_TURNED_IN just said so)
       Emitter._questMoney = nil
     elseif merchantOpen then
-      g.sold = (g.sold or 0) + delta                       -- vendoring items is income too
+      credit(g, ses, "sold", delta)                       -- vendoring items is income too
     elseif GetTime() < mailMoneyUntil or mailOpen then
       -- coin taken out of a mail: auction proceeds or gold a player sent us
       local src, meta = (GetTime() < mailMoneyUntil) and mailMoneySrc or "Mail", (GetTime() < mailMoneyUntil) and mailMoneyMeta or nil
       mailMoneyUntil = 0
-      if src == "Auction sale" then g.auctionSales = (g.auctionSales or 0) + delta; if ns.Market then pcall(ns.Market.sold, mailMoneyMeta, delta) end
-      else g.mail = (g.mail or 0) + delta end
+      if src == "Auction sale" then credit(g, ses, "auctionSales", delta); if ns.Market then pcall(ns.Market.sold, mailMoneyMeta, delta) end
+      else credit(g, ses, "mail", delta) end
       local loc = locStamp()
       pushLoot({ t = (GetServerTime and GetServerTime()) or time(), money = delta, src = src, mail = meta,
                  x = loc.x, y = loc.y, zone = loc.zone })
@@ -699,14 +708,14 @@ local function onMoney()
     end
   else
     local spent = -delta
-    g.spent = (g.spent or 0) + spent; ses.spent = (ses.spent or 0) + spent
-    if GetTime() < repairUntil then g.repairs = (g.repairs or 0) + spent; repairUntil = 0
-    elseif merchantOpen then g.vendor = (g.vendor or 0) + spent
-    elseif trainerOpen then g.training = (g.training or 0) + spent
-    elseif GetTime() < taxiUntil then g.flights = (g.flights or 0) + spent
-    elseif auctionOpen then g.auctions = (g.auctions or 0) + spent     -- bids, buyouts, deposits
-    elseif mailOpen then g.mailSpent = (g.mailSpent or 0) + spent      -- COD payments, postage
-    else g.other = (g.other or 0) + spent end
+    credit(g, ses, "spent", spent); ses.spent = (ses.spent or 0) + spent
+    if GetTime() < repairUntil then credit(g, ses, "repairs", spent); repairUntil = 0
+    elseif merchantOpen then credit(g, ses, "vendor", spent)
+    elseif trainerOpen then credit(g, ses, "training", spent)
+    elseif GetTime() < taxiUntil then credit(g, ses, "flights", spent)
+    elseif auctionOpen then credit(g, ses, "auctions", spent)     -- bids, buyouts, deposits
+    elseif mailOpen then credit(g, ses, "mailSpent", spent)      -- COD payments, postage
+    else credit(g, ses, "other", spent) end
   end
 end
 
@@ -716,7 +725,7 @@ function Emitter.questMoney(amount)
   if not amount or amount <= 0 or not ns.DB then return end
   local o = Emitter._openGain
   if o and o.amount == amount and GetTime() - o.at < 3 then
-    local g = goldDB(); g.quests = (g.quests or 0) + amount
+    credit(goldDB(), sessionDB(), "quests", amount)
     Emitter._openGain = nil
     return
   end

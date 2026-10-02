@@ -70,6 +70,9 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Scrubber-side repair so a hidden window never reads as a buff wipe-and-return
 - [x] Disconnect reminder never shows in combat and returns once safe (throttle not reset by combat)
 - [x] Header wording is honest: CAPTURING, never RECORDING (video state lives in the desktop)
+- [x] Spec and talents on WoW Forever, read from `C_SpecializationInfo` and the trait loadout (0.9.23; empty on every Forever fight before)
+- [x] A fight still running at /reload or logout is stored with `interrupted` (0.9.23, #18)
+- [x] Captured Lua errors keep their call stack; a repeat counts up instead of filling the buffer (0.9.23)
 
 ## Performance and SavedVariables size
 
@@ -96,6 +99,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Acked fights, loot rows and events are pruned; unacked data is never touched
 - [x] Finished sessions before the ack point are pruned; the live session never is
 - [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
+- [x] Per-session gold ledger `session.gold` (0.9.23, everbuff-backend #46); the backend ingest of it is still to build
 - [ ] Loot council data contract (*Later*)
 
 ## Fights tab

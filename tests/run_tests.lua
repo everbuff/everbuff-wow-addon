@@ -27,6 +27,16 @@ M.money = 5000; M.xp = 100
 M.fire("PLAYER_ENTERING_WORLD")
 M.runTimers()   -- rep seed, /played request, welcome line
 
+-- ── Debug.lua: captured Lua errors carry their stack; a repeat counts up instead of filling the buffer ──
+do
+  local h = geterrorhandler()
+  for _ = 1, 49 do h("Emitter.lua:1170: attempt to call a nil value") end
+  h("another error")
+  local errs = ns.DB.debug and ns.DB.debug.errors or {}
+  check("debug: 49 identical errors make one row with a count", #errs == 2 and errs[1].n == 49, #errs)
+  check("debug: the row carries the call stack", errs[1] and type(errs[1].stack) == "string" and errs[1].stack:find("Emitter.lua") ~= nil)
+  ns.Debug.command("clear")
+end
 -- ── localization pattern builder ──
 check("skillup pattern", select(1, ("Your skill in Mining has increased to 75."):match(T.SKILLUP_PAT)) == "Mining")
 check("skillup number", select(2, ("Your skill in Mining has increased to 75."):match(T.SKILLUP_PAT)) == "75")
@@ -417,6 +427,13 @@ check("contract: no pipe characters anywhere in a stored fight", (function()
 local le = ns.DB.story.events[#ns.DB.story.events]
 for _, k in ipairs({ "t", "kind", "text", "s" }) do check("contract: event field " .. k, le[k] ~= nil, "missing") end
 check("contract: fight and loot rows carry the session id", cf2.session ~= nil and ns.DB.loot.log[#ns.DB.loot.log].s ~= nil)
+check("contract: a session record carries its gold ledger with the lifetime keys (#46)", (function()
+  local sg = ns.DB.sessions[ns.DB.active] and ns.DB.sessions[ns.DB.active].gold
+  if type(sg) ~= "table" then return false end
+  for _, k in ipairs({ "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training", "flights", "auctions", "mailSpent", "other" }) do
+    if type(sg[k]) ~= "number" then return false end
+  end
+  return sg.balance == nil end)())
 -- v1 -> v2 migration of an old save file
 do
   local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
@@ -632,6 +649,30 @@ M.xp = 700; M.fire("PLAYER_XP_UPDATE")
 check("session XP accumulates", ns.Recorder.current().xp == sxp0 + 600, ns.Recorder.current().xp)
 M.money = M.money + 3000; M.fire("PLAYER_MONEY"); M.money = M.money - 1000; M.fire("PLAYER_MONEY")
 check("session gold in and out accumulate", ns.Recorder.current().gained == 3000 and ns.Recorder.current().spent == 1000)
+-- #46 (everbuff-backend): the session's own gold ledger, credited with the lifetime one, same keys
+do
+  local sg = ns.Recorder.current().gold
+  check("#46 a new session starts its gold ledger with every key at zero", type(sg) == "table" and sg.vendor == 0 and sg.repairs == 0 and sg.auctionSales == 0 and sg.balance == nil)
+  check("#46 session ledger gained and spent", sg and sg.gained == 3000 and sg.spent == 1000 and sg.other == 1000, sg and (tostring(sg.gained) .. " " .. tostring(sg.spent) .. " " .. tostring(sg.other)))
+  local life = ns.DB.loot.gold; local lv, lr = life.vendor or 0, life.repairs or 0
+  M.fire("MERCHANT_SHOW"); M.money = M.money - 200; M.fire("PLAYER_MONEY")      -- bought at a vendor
+  RepairAllItems(); M.money = M.money - 75; M.fire("PLAYER_MONEY")              -- repaired
+  M.money = M.money + 40; M.fire("PLAYER_MONEY"); M.fire("MERCHANT_CLOSED")      -- sold
+  check("#46 vendor spend in both ledgers", sg.vendor == 200 and life.vendor == lv + 200, sg.vendor)
+  check("#46 repairs in both ledgers", sg.repairs == 75 and life.repairs == lr + 75, sg.repairs)
+  check("#46 vendor sale in the session ledger", sg.sold == 40, sg.sold)
+  M.now = M.now + 10
+  ns.Emitter.questMoney(500); M.money = M.money + 500; M.fire("PLAYER_MONEY")   -- quest reward after the turn-in
+  M.now = M.now + 10; M.money = M.money + 650; M.fire("PLAYER_MONEY"); ns.Emitter.questMoney(650)   -- and before it
+  check("#46 quest money in the session ledger, either order", sg.quests == 1150, sg.quests)
+  check("#46 the lifetime ledger still has no session-only keys", life.balance ~= nil)
+  -- a session that began before the ledger existed keeps none, so a partial ledger is never sent as the whole
+  local cur = ns.Recorder.current(); local saved = cur.gold; cur.gold = nil
+  M.money = M.money - 10; M.fire("PLAYER_MONEY")
+  check("#46 an older session without a ledger is not given a partial one", cur.gold == nil)
+  cur.gold = saved
+  check("#46 the ledger is in the save file record", ns.DB.sessions[ns.DB.active].gold == saved)
+end
 M.fire("PLAYER_ENTERING_WORLD", false, true)                        -- a /reload keeps the running session
 check("reload keeps the session", ns.Recorder.current().xp == sxp0 + 600 and ns.Recorder.current().fights ~= nil)
 -- #14: a /reload fires PLAYER_LOGOUT first; the save file then has the session ended, and the reload reopens it
@@ -1206,7 +1247,46 @@ do
   local tf = T.currentFight()
   check("retail build stored as the game's import string", tf and tf.talents and tf.talents:sub(1, 3) == "BwQ", tf and tf.talents)
   M.now = M.now + 3; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
+  -- WoW Forever 1.60.1: no global GetSpecialization, no talent tabs; C_SpecializationInfo and the trait loadout instead
+  local gS, gI = _G.GetSpecialization, _G.GetSpecializationInfo
+  _G.GetSpecialization, _G.GetSpecializationInfo = nil, nil
+  _G.C_SpecializationInfo = { GetSpecialization = function() return 3 end,
+    GetSpecializationInfo = function(i) return i == 3 and 70 or nil, i == 3 and "Retribution" or nil end }
+  M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED")
+  M.now = M.now + 3; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
+  local ff = ns.DB.combat.fights[#ns.DB.combat.fights]
+  check("Forever: spec read from C_SpecializationInfo", ff and ff.spec == "Retribution", ff and tostring(ff.spec))
+  check("Forever: talents are the loadout import string", ff and ff.talents and ff.talents:sub(1, 3) == "BwQ", ff and tostring(ff.talents))
+  _G.C_SpecializationInfo.GetSpecialization = function() return 0 end   -- no spec chosen yet
+  local sp, tl = ns.Fights.specAndTalents()
+  check("Forever: no spec chosen still records the loadout", sp == nil and tl and tl:sub(1, 3) == "BwQ", tostring(sp) .. " " .. tostring(tl))
+  _G.C_SpecializationInfo.GetSpecialization = function() error("blocked") end
+  check("Forever: a throwing specialization API does not break the pull", (pcall(ns.Fights.specAndTalents)))
+  _G.C_SpecializationInfo = nil
+  _G.GetSpecialization, _G.GetSpecializationInfo = gS, gI
   _G.C_ClassTalents, _G.C_Traits = nil, nil
+end
+-- ── #18: a fight still running at /reload or logout is stored, not lost ──
+do
+  local n0, sid = #ns.DB.combat.fights, ns.DB.active
+  M.units.target = { name = "Deepmoss Venomspitter", hostile = true, guid = "Creature-0-1-1-1-4263-000C", cls = "normal" }
+  M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED"); M.fire("PLAYER_TARGET_CHANGED")
+  M.now = M.now + 4
+  M.fire("PLAYER_LOGOUT")                                      -- the /reload's PLAYER_LOGOUT, combat still on
+  local cut = ns.DB.combat.fights[#ns.DB.combat.fights]
+  check("#18 the running fight is stored at PLAYER_LOGOUT", #ns.DB.combat.fights == n0 + 1 and T.currentFight() == nil, #ns.DB.combat.fights - n0)
+  check("#18 it says it was interrupted and keeps its session and foes", cut and cut.interrupted == "logout" and cut.session == sid and cut.foes[1] == "Deepmoss Venomspitter" and cut.uid ~= nil, cut and tostring(cut.interrupted))
+  check("#18 an interrupted fight claims no outcome it does not know", cut and cut.outcome == nil and cut.duration and cut.duration >= 4, cut and tostring(cut.outcome))
+  M.fire("PLAYER_ENTERING_WORLD", false, true)                -- the reload comes back
+  M.fire("PLAYER_REGEN_ENABLED"); M.inCombat = false            -- combat ends after the reload: nothing half-made is stored
+  check("#18 the end of combat after the reload stores nothing extra", #ns.DB.combat.fights == n0 + 1, #ns.DB.combat.fights - n0)
+  -- a death already known before the logout keeps its outcome
+  M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED"); M.fire("PLAYER_DEAD")
+  M.fire("PLAYER_LOGOUT")
+  local died = ns.DB.combat.fights[#ns.DB.combat.fights]
+  check("#18 a known death survives the interruption", died and died.outcome == "death" and died.interrupted == "logout", died and tostring(died.outcome))
+  M.fire("PLAYER_ENTERING_WORLD", false, true); M.inCombat = false; M.dead = false; M.fire("PLAYER_ALIVE")
+  M.units.target = nil
 end
 -- ── Loot quality filter + sortable columns ──
 do

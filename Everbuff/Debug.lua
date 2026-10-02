@@ -13,11 +13,21 @@ local D = {}
 ns.Debug = D
 
 -- ── error capture (chains the existing handler so BugSack etc. still work) ─────
+-- Each row keeps the call stack: the 2026-10-02 save file held 49 "attempt to call a nil value" rows and nothing that
+-- said where. A repeat of the row before it only counts up (`n`, `last`), so one error firing on every combat event
+-- cannot push every other error out of the 50 kept.
 local errbuf = {}
 local orig = geterrorhandler and geterrorhandler()
 if seterrorhandler then
   seterrorhandler(function(err)
-    errbuf[#errbuf + 1] = { at = date("%m-%d %H:%M:%S"), err = tostring(err) }
+    local msg, at = tostring(err), date("%m-%d %H:%M:%S")
+    local prev = errbuf[#errbuf]
+    if prev and prev.err == msg then
+      prev.n, prev.last = (prev.n or 1) + 1, at
+    else
+      local stack = debugstack and debugstack(2, 8, 0) or nil
+      errbuf[#errbuf + 1] = { at = at, err = msg, stack = (type(stack) == "string" and stack ~= "") and stack:gsub("|", "/") or nil }
+    end
     while #errbuf > 50 do table.remove(errbuf, 1) end
     if ns.DB then ns.DB.debug = ns.DB.debug or {}; ns.DB.debug.errors = errbuf end
     if orig then return orig(err) end

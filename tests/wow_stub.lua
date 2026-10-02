@@ -78,6 +78,10 @@ _G.strupper, _G.strlower, _G.strtrim = string.upper, string.lower, function(s) r
 _G.strsplit = function(d, s) local out = {}; for p in (s .. d):gmatch("(.-)" .. d:gsub("%p", "%%%0")) do out[#out + 1] = p end return unpack(out) end
 _G.UISpecialFrames, _G.SlashCmdList = {}, {}
 _G.RequestTimePlayed = noop
+-- the global Lua error handler (Debug.lua chains it)
+_G.seterrorhandler = function(fn) M.errorHandler = fn end
+_G.geterrorhandler = function() return M.errorHandler end
+_G.debugstack = function() return "[Interface/AddOns/EverbuffJournal/Emitter.lua]:1170: in function <stub>" end
 _G.hooksecurefunc = function(a, b, c)
   local tbl, name, fn = _G, a, b
   if type(a) == "table" then tbl, name, fn = a, b, c end
