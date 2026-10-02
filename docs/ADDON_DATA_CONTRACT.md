@@ -151,9 +151,12 @@ Silent when `ok`. When it fails the player sees exactly one chat line (founder d
 
 Two inbound paths, both consumed by `ns.applyAck` on the addon side:
 
-1. **Companion SavedVariable, automatic.** While NO WoW client is running, the desktop writes
-   `WTF/Account/<account>/SavedVariables/EverbuffAck.lua` containing
-   `EverbuffAck = { uids = { ["<fight uid>"] = true, ... }, through = <server epoch> }`.
+1. **Companion SavedVariable, automatic.** While NO WoW client is running, the desktop replaces the top-level
+   `EverbuffAck` statement in the addon's own save file `WTF/Account/<account>/SavedVariables/EverbuffJournal.lua`
+   (WoW reads an addon's SavedVariables only from the file named after the addon; a separate `EverbuffAck.lua` is
+   never read, #5) with
+   `EverbuffAck = { uids = { ["<fight uid>"] = true, ... }, through = <server epoch> }`. The rest of the file is
+   kept byte for byte and keeps its write time.
    On the next `ADDON_LOADED` the addon marks fights with those uids, and every fight that started at or before
    `through`, as uploaded and prunes them; loot rows, events and finished sessions with `t <= through` are pruned
    too. The addon then empties `uids` and stamps `applied`, so the file never grows and is never applied twice.
