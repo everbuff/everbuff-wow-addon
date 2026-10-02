@@ -118,9 +118,9 @@ and answers false for plain values, and that none of its event frames holds an e
 | `addon` | string | the addon version that ran the check |
 | `at` | epoch | server time of the check |
 | `ok` | bool | true when `missing` and `forbidden` are empty and the check ran to the end |
-| `missing[]` | string | names that changed: a required dependency that is gone, a guarded one the previous record had, an event the client no longer knows, or `issecretvalue` |
+| `missing[]` | string | names that changed: a required dependency that is gone, a guarded one the previous record had (on another build, by the same addon version), an event the client no longer knows, or `issecretvalue` |
 | `forbidden[]` | string | forbidden events one of the addon's frames has registered |
-| `absent[]` | string | guarded dependencies this client lacks (the baseline for the next build; on the first record ever these are not failures) |
+| `absent[]` | string | guarded dependencies this client lacks (the baseline for the next build; on the first record ever, and on the first record of a new addon version, these are not failures) |
 | `secrets` | bool | `issecretvalue` exists and behaves |
 | `events` | string | `checked` (`C_EventUtils.IsEventValid`), or `unchecked` when the client cannot say |
 | `skipped?` | string | `classic`: a Classic client is not checked (WoW Forever only) |

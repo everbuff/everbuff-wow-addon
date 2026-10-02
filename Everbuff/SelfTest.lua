@@ -12,8 +12,9 @@
 -- OUTPUT (founder decision 3, option B): silent when everything passes; exactly one chat line when something fails.
 --
 -- missing: a "required" dependency that is gone, or a "guarded" one that the previous build had and this build has
--- not (the addon degrades without it). A guarded dependency already absent on the previous record, or on the first
--- record ever, is listed in `absent` only: it is how this client is, not a change. Classic clients are not checked
+-- not (the addon degrades without it). A guarded dependency already absent on the previous record, on the first
+-- record ever, or on the first record of a new addon version (whose list may hold items the previous record never
+-- checked), is listed in `absent` only: it is how this client is, not a change. Classic clients are not checked
 -- (WoW Forever only): their record says skipped = "classic".
 
 local ADDON, ns = ...
@@ -78,8 +79,12 @@ function ST.run()
   local ok, err = pcall(function()
     local seen = {}
     local function miss(name) if not seen[name] then seen[name] = true; res.missing[#res.missing + 1] = name end end
-    -- a baseline exists when the previous record checked a client (not the first record, not a Classic one)
+    -- a baseline exists when the previous record checked a client (not the first record, not a Classic one) with
+    -- the same dependency list (same addon version) on another build: only then is a guarded absence a change of the
+    -- client. A new addon version can list guarded items the previous record never checked, so it starts a new
+    -- baseline instead of raising a false alarm.
     local baseline = type(prev) == "table" and not prev.skipped and type(prev.absent) == "table"
+      and prev.addon == ns.VERSION and prev.build ~= build
     local wasAbsent = {}
     if baseline then for _, n in ipairs(prev.absent) do wasAbsent[n] = true end end
     local EU = rawget(_G, "C_EventUtils")

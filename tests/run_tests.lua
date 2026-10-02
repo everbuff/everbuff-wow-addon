@@ -1675,6 +1675,21 @@ do
   check("selftest: on the first record a guarded absence is baseline, not a failure", r.ok == true and r.absent[1] ~= nil)
   rawset(_G, "GetSpellInfo", gsi)
 
+  -- a new addon version on the same build lists a guarded item the previous record never checked: no false alarm
+  build = "1.60.2.70225"
+  r = ST.run()
+  check("selftest: baseline on build 70225", r.ok == true)
+  local realVersion = ns.VERSION
+  ns.VERSION = realVersion .. "-next"; rawset(_G, "GetSpellInfo", nil)
+  r, ran = ST.run()
+  check("selftest: a new addon version runs again on the same build", ran == true and r.addon == ns.VERSION)
+  check("selftest: a new addon version does not report a guarded absence as a build change", r.ok == true and #r.missing == 0 and ST.line(r) == nil, table.concat(r.missing, ","))
+  -- and the next build compares against that record: the guarded item stays absent, no change
+  build = "1.60.2.70226"
+  r = ST.run()
+  check("selftest: the next build after an addon update compares against the new record", r.ok == true, table.concat(r.missing, ","))
+  ns.VERSION = realVersion; rawset(_G, "GetSpellInfo", gsi)
+
   -- a forbidden event on one of the addon's frames; the line names it first
   build = "1.60.2.70230"
   local fr = ns.eventFrames[1]
