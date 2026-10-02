@@ -444,11 +444,16 @@ check("contract: a session record carries its gold ledger with the lifetime keys
   return sg.balance == nil end)())
 -- v1 -> v2 migration of an old save file
 do
-  local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
+  local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" }, { item = "y", s = "a" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
   ns.migrateDB(old)
   check("migration moves v1 keys into their areas", old.schema == 2 and #old.combat.fights == 1 and old.combat.fightSeq == 1 and #old.loot.log == 1 and old.loot.gold.balance == 5 and #old.story.events == 1 and old.character.xp.cur == 1 and old.character.seenZones.Elwynn == 1)
   check("migration drops the v1 slots", old.fights == nil and old.lootlog == nil and old.gold == nil and old.eventlog == nil and old.xp == nil and old.session == nil)
   check("migration keeps settings and sessions", old.settings.emitCorner == "TOPLEFT" and type(old.sessions) == "table")
+  -- #17: loot rows without a session id can never upload, so the load drops them (376 rows in the founder's file)
+  check("migration drops loot rows without a session id (#17)", #old.loot.log == 1 and old.loot.log[1].item == "y")
+  local v2 = { schema = 2, loot = { log = { { t = 1, item = "legacy" }, { t = 2, item = "kept", s = "a" }, { t = 3, item = "legacy2" } } } }
+  ns.migrateDB(v2)
+  check("a schema 2 file loses only its loot rows without a session id (#17)", #v2.loot.log == 1 and v2.loot.log[1].item == "kept", #v2.loot.log)
 end
 -- ── Settings absorbed Sync ──
 local names = {}
@@ -1751,6 +1756,46 @@ do
 
   ns.msg = oldMsg
   for k, s in pairs(saved) do rawset(_G, k, s.v) end
+end
+
+-- #17: /eb export and /eb wipe never leave rows that cannot upload
+do
+  local function lastLoot() return ns.DB.loot.log[#ns.DB.loot.log] end
+  M.inCombat = false
+  M.now = M.now + 10   -- past the mail window of the earlier tests: a pickup is a pickup
+  local before = ns.DB.active
+  check("export test: a session is running", before ~= nil and ns.Recorder.active() ~= nil)
+  SlashCmdList.EVERBUFF("export")
+  local after = ns.DB.active
+  check("export closes the session (#17)", ns.DB.sessions[before] and ns.DB.sessions[before].endedEpoch ~= nil)
+  check("export starts a new session at once (#17)", after ~= nil and after ~= before and ns.Recorder.active() ~= nil and ns.Recorder.active().id == after)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. LINK .. "x4.")
+  check("a row after export carries the new session id (#17)", lastLoot() and lastLoot().s == after, lastLoot() and tostring(lastLoot().s))
+  -- rows of the closed session, then wipe
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { id = 9001, uid = "wipe-test", session = before }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = 1, item = "old", s = before }
+  ns.DB.story.events[#ns.DB.story.events + 1] = { t = 1, kind = "ZONE", text = "old", s = before }
+  local gold0 = ns.DB.loot.gold.looted
+  SlashCmdList.EVERBUFF("wipe")
+  local fresh = ns.DB.active
+  check("wipe removes the stored sessions and starts a fresh one (#17)", fresh ~= nil and fresh ~= after and fresh ~= before and ns.DB.sessions[before] == nil and ns.DB.sessions[after] == nil and ns.DB.sessions[fresh] ~= nil)
+  check("the recorder writes into the fresh, saved session after wipe (#17)", ns.Recorder.active() == ns.DB.sessions[fresh])
+  local orphan = 0
+  for _, f in ipairs(ns.DB.combat.fights) do if not ns.DB.sessions[f.session or ""] then orphan = orphan + 1 end end
+  for _, r in ipairs(ns.DB.loot.log) do if not ns.DB.sessions[r.s or ""] then orphan = orphan + 1 end end
+  for _, e in ipairs(ns.DB.story.events) do if not ns.DB.sessions[e.s or ""] then orphan = orphan + 1 end end
+  check("wipe leaves no fight, loot row or event without its session (#17)", orphan == 0, orphan)
+  check("wipe keeps the lifetime gold totals", ns.DB.loot.gold.looted == gold0)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. LINK .. "x2.")
+  check("a row after wipe carries the fresh session id (#17)", lastLoot() and lastLoot().s == fresh, lastLoot() and tostring(lastLoot().s))
+  local seg = ns.DB.sessions[fresh].segments
+  check("the fresh session opens with SESSION_START (#17)", seg and seg[1] and seg[1]:find("SESSION_START", 1, true) ~= nil)
+  -- export with no running session changes nothing
+  ns.Recorder.stop("test")
+  SlashCmdList.EVERBUFF("export")
+  check("export with no session starts none (#17)", ns.Recorder.active() == nil and ns.DB.active == nil)
+  SlashCmdList.EVERBUFF("wipe")
+  check("wipe with no session starts none (#17)", ns.Recorder.active() == nil and ns.DB.active == nil and next(ns.DB.sessions) == nil and #ns.DB.loot.log == 0 and #ns.DB.combat.fights == 0)
 end
 
 print(("\n%d passed, %d failed"):format(passed, failed))

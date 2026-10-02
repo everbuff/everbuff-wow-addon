@@ -119,6 +119,12 @@ function R.stop(reason)
   ns.msg(("session ended (%s) · %d markers"):format(reason or "ended", #sess.segments))
 end
 
+-- /eb wipe (#17): the running record is gone from the save file, so the recorder forgets it without a SESSION_END
+-- row (a row would land in a table nothing saves). The caller starts a fresh session.
+function R.discard()
+  S.session, S.seq = nil, 0
+end
+
 function R.active() return S.session end
 -- the session record everything since login accrues to (nil before the first PLAYER_ENTERING_WORLD)
 function R.current() return S.session or (ns.DB and ns.DB.active and ns.DB.sessions[ns.DB.active]) or nil end

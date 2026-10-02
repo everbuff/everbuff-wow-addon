@@ -74,7 +74,29 @@ function ns.migrateDB(db)
   db.character.xp = db.character.xp or { gained = 0 }
   db.character.played = db.character.played or {}
   db.story.events = db.story.events or {}
+  -- loot rows from before schema 2 carry no session id (#17): the backend selects rows by session, so they can never
+  -- upload; drop them
+  for i = #db.loot.log, 1, -1 do
+    if type(db.loot.log[i]) ~= "table" or db.loot.log[i].s == nil then table.remove(db.loot.log, i) end
+  end
   return db
+end
+
+-- Drop the fights, loot rows and events whose session record is gone (#17): the backend selects all three by
+-- session id, so a row without its session never uploads. Returns the number of rows removed.
+function ns.dropOrphans(db)
+  local removed = 0
+  local function sweep(list, key)
+    if not list then return end
+    for i = #list, 1, -1 do
+      local id = list[i][key]
+      if id == nil or db.sessions[id] == nil then table.remove(list, i); removed = removed + 1 end
+    end
+  end
+  sweep(db.combat.fights, "session")
+  sweep(db.loot.log, "s")
+  sweep(db.story.events, "s")
+  return removed
 end
 
 -- ── upload ack channel (addon side) ─────────────────────────────────────────────
@@ -183,6 +205,8 @@ SlashCmdList.EVERBUFF = function(arg)
     if ns.Recorder.active() then
       ns.Recorder.stop("manual export")
       ns.msg("session closed")
+      -- what happens next belongs to a new session (#17): rows stamped with no session never upload
+      ns.Recorder.start()
     else ns.msg("no active session") end
   elseif arg == "status" then
     local sess = ns.Recorder.active()
@@ -203,8 +227,14 @@ SlashCmdList.EVERBUFF = function(arg)
   elseif arg == "debug" or arg:match("^debug ") then
     if ns.Debug then ns.Debug.command((arg:gsub("^debug%s*", ""))) else ns.msg("debug module not loaded") end
   elseif arg == "wipe" then
+    -- the sessions go with their fights, loot and events (#17), which could never upload without them; a running
+    -- session is replaced by a fresh one so what follows still uploads
+    local running = ns.Recorder.active() ~= nil
+    ns.Recorder.discard()
     ns.DB.sessions = {}; ns.DB.active = nil
+    ns.dropOrphans(ns.DB)
     ns.msg("stored sessions wiped")
+    if running then ns.Recorder.start() end
   elseif arg:match("^corner") then
     local where = arg:gsub("^corner%s*", "")
     if ns.Emitter and ns.Emitter.setCorner(where) then

@@ -21,6 +21,9 @@ The file mirrors the product structure: one area per tab. Facts are stored once;
 and the Home cards are derived at render time and never duplicated. Every fight, pickup and event
 carries `s`, the id of the session it happened in, so the backend can slice everything by play session.
 A v1 file (flat keys) is migrated in place on load (`Core.lua ns.migrateDB`); v1 slots are removed.
+A row without its session never uploads, so none is kept (#17): the load drops loot rows with no `s` (the rows
+from before schema 2), `/eb export` closes the session and opens a new one at once, and `/eb wipe` removes the
+fights, loot rows and events of the sessions it clears and opens a new session when one was running.
 
 | key | type | notes |
 | --- | --- | --- |
