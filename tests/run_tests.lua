@@ -1475,5 +1475,21 @@ do
   _G.LoggingCombat = real
 end
 
+-- the 1.60.1.70170 update reports WoW Forever as project 18: a client with Secret Values is still recognised as one, so
+-- COMBAT_LOG_EVENT_UNFILTERED is never registered (the client forbids it: "blocked from an action only available to
+-- the Blizzard UI", founder 2026-10-02)
+do
+  local pid = _G.WOW_PROJECT_ID
+  _G.WOW_PROJECT_ID = 18
+  local ns2 = {}
+  local ok, err = pcall(loadfile("Everbuff/Logging.lua"), "EverbuffJournal", ns2)
+  check("Forever as project 18 is a client with Secret Values", ok and ns2.hasSecretValues == true and ns2.flavor == "mainline", err)
+  local sv = _G.issecretvalue; _G.issecretvalue = nil
+  local ns3 = {}
+  pcall(loadfile("Everbuff/Logging.lua"), "EverbuffJournal", ns3)
+  check("a Classic client without Secret Values stays Classic", ns3.hasSecretValues == false and ns3.flavor == "classic")
+  _G.issecretvalue, _G.WOW_PROJECT_ID = sv, pid
+end
+
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

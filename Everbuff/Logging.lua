@@ -13,14 +13,56 @@
 --   LoggingCombat(bool) and LoggingCombat() (query).
 
 local ADDON, ns = ...
+
+-- What the client blocks (founder, 2026-10-02: "blocked from an action only available to the Blizzard UI"). This is the
+-- second file the TOC loads, so it listens before every other module runs: the addon and the protected function are
+-- printed in chat at once and kept (the last 10) in settings.blocked with the time, the call stack and whether we were
+-- in combat. Before the save file is loaded they wait in ns.blockedPending.
+ns.blockedPending = {}
+function ns.noteBlocked(kind, addon, func)
+  local inCombat = InCombatLockdown and InCombatLockdown() or false
+  local stack = debugstack and debugstack(3, 6, 0) or ""
+  print(("|cffd4af37everbuff.gg|r: |cffff4444%s|r %s tried %s%s"):format(kind, tostring(addon or "?"), tostring(func or "?"), inCombat and " (in combat)" or ""))
+  local row = { t = GetServerTime and GetServerTime() or 0, kind = kind, addon = addon, func = func, combat = inCombat, stack = stack }
+  local db = ns.DB and ns.DB.settings
+  if db then
+    db.blocked = db.blocked or {}
+    for _, r in ipairs(ns.blockedPending) do table.insert(db.blocked, r) end
+    ns.blockedPending = {}
+    table.insert(db.blocked, row)
+    while #db.blocked > 10 do table.remove(db.blocked, 1) end
+  else
+    table.insert(ns.blockedPending, row)
+  end
+end
+function ns.flushBlocked()
+  local db = ns.DB and ns.DB.settings
+  if not db or #ns.blockedPending == 0 then return end
+  db.blocked = db.blocked or {}
+  for _, r in ipairs(ns.blockedPending) do table.insert(db.blocked, r) end
+  ns.blockedPending = {}
+  while #db.blocked > 10 do table.remove(db.blocked, 1) end
+end
+do
+  local catcher = CreateFrame("Frame")
+  catcher:RegisterEvent("ADDON_ACTION_BLOCKED")
+  catcher:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+  catcher:SetScript("OnEvent", function(_, event, addon, func)
+    ns.noteBlocked(event == "ADDON_ACTION_FORBIDDEN" and "forbidden" or "blocked", addon, func)
+  end)
+end
 local L = {}
 ns.Logging = L
 
 -- ── client flavor (set once at load - Logging loads first, so all modules can read these) ──
 local MAINLINE = WOW_PROJECT_MAINLINE or 1
-ns.isMainline     = (WOW_PROJECT_ID == nil) or (WOW_PROJECT_ID == MAINLINE)
+-- A client with Secret Values (issecretvalue) is a Midnight-engine client, WoW Forever included, whatever project id it
+-- reports: the 1.60.1.70170 update of 2026-10-01 moved Forever from project 1 to 18, the addon took it for Classic,
+-- registered COMBAT_LOG_EVENT_UNFILTERED and the client blocked it ("blocked from an action only available to the
+-- Blizzard UI"). Capability first, project id second.
+ns.hasSecretValues = type(issecretvalue) == "function" or (WOW_PROJECT_ID == nil) or (WOW_PROJECT_ID == MAINLINE)
+ns.isMainline     = ns.hasSecretValues
 ns.isClassic      = not ns.isMainline
-ns.hasSecretValues = ns.isMainline                              -- Midnight blocks in-combat CLEU
 ns.hasChallengeMode = ns.isMainline and (C_ChallengeMode ~= nil) -- Mythic+ is retail-only
 ns.hasDamageMeter   = (C_DamageMeter ~= nil)                     -- Blizzard's 12.0 meter; nil on Classic
 ns.flavor          = ns.isMainline and "mainline" or "classic"

@@ -245,6 +245,7 @@ f:SetScript("OnEvent", function(_, event, ...)
     local db = EverbuffDB
     ns.migrateDB(db)
     ns.DB = db
+    if ns.flushBlocked then ns.flushBlocked() end   -- blocks seen before the save file loaded
     -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
     if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
       local marked, removed = ns.applyAck(EverbuffAck, "file")
