@@ -32,6 +32,7 @@ end
 EverbuffDB = EverbuffDB or nil -- materialized on ADDON_LOADED
 
 local f = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = f
 
 -- ── SavedVariables schema 2: the data mirrors the product structure ─────────────
 --   settings                      what the player configured

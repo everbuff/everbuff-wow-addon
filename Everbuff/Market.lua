@@ -207,6 +207,7 @@ end
 
 -- ── events ───────────────────────────────────────────────────────────────────
 local f = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = f
 for _, e in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE", "TRADE_SKILL_LIST_UPDATE", "CRAFT_SHOW", "CRAFT_CLOSE",
   "COMMODITY_PRICE_UPDATED", "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "CHAT_MSG_SYSTEM" }) do
   pcall(f.RegisterEvent, f, e)

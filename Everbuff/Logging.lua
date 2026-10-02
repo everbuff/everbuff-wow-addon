@@ -43,8 +43,12 @@ function ns.flushBlocked()
   ns.blockedPending = {}
   while #db.blocked > 10 do table.remove(db.blocked, 1) end
 end
+-- Every frame that registers events joins ns.eventFrames, so the self-test (SelfTest.lua) can see that none of them
+-- holds an event the client forbids.
+ns.eventFrames = ns.eventFrames or {}
 do
   local catcher = CreateFrame("Frame")
+  ns.eventFrames[#ns.eventFrames + 1] = catcher
   catcher:RegisterEvent("ADDON_ACTION_BLOCKED")
   catcher:RegisterEvent("ADDON_ACTION_FORBIDDEN")
   catcher:SetScript("OnEvent", function(_, event, addon, func)

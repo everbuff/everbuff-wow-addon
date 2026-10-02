@@ -138,6 +138,7 @@ function Visits.wire()
 end
 
 local f = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = f
 for ev in pairs(KINDS) do f:RegisterEvent(ev) end
 f:RegisterEvent("PLAYER_LOGOUT")
 f:RegisterEvent("PLAYER_LEAVING_WORLD")

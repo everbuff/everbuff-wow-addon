@@ -19,6 +19,7 @@ frameMT.__index = function(t, k)
   if k == "GetScript" then return function(self, n) return self.scripts[n] end end
   if k == "HookScript" then return function(self, n, fn) local p = self.scripts[n]; self.scripts[n] = function(...) if p then p(...) end fn(...) end; return self end end
   if k == "RegisterEvent" then return function(self, ev) self.events[ev] = true; return self end end
+  if k == "IsEventRegistered" then return function(self, ev) return self.events[ev] == true end end
   if k == "UnregisterEvent" then return function(self, ev) self.events[ev] = nil; return self end end
   if k == "Show" then return function(self) self.shown = true; local h = self.scripts.OnShow; if h then h(self) end; return self end end
   if k == "Hide" then return function(self) self.shown = false; local h = self.scripts.OnHide; if h then h(self) end; return self end end
@@ -236,4 +237,5 @@ _G.C_AuctionHouse = {
 M.tradeSkillName = nil
 _G.C_TradeSkillUI = _G.C_TradeSkillUI or {}
 _G.C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = M.tradeSkillName } end
+M.frames = frames
 return M

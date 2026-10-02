@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core" }) do
+for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core", "Deps", "SelfTest" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
@@ -26,6 +26,14 @@ check("db.gold/xp/played initialised", ns.DB and ns.DB.loot.gold and ns.DB.chara
 M.money = 5000; M.xp = 100
 M.fire("PLAYER_ENTERING_WORLD")
 M.runTimers()   -- rep seed, /played request, welcome line
+-- every frame that registers an event is known to the self-test
+do
+  local own = {}
+  for _, fr in ipairs(ns.eventFrames or {}) do own[fr] = true end
+  local stray = 0
+  for _, fr in ipairs(M.frames) do if next(fr.events) and not own[fr] then stray = stray + 1 end end
+  check("selftest: every event frame of the addon is in ns.eventFrames", stray == 0, stray)
+end
 
 -- ── Debug.lua: captured Lua errors carry their stack; a repeat counts up instead of filling the buffer ──
 do
@@ -1569,6 +1577,163 @@ do
   pcall(loadfile("Everbuff/Logging.lua"), "EverbuffJournal", ns3)
   check("a Classic client without Secret Values stays Classic", ns3.hasSecretValues == false and ns3.flavor == "classic")
   _G.issecretvalue, _G.WOW_PROJECT_ID = sv, pid
+end
+
+-- ── L5 self-test (everbuff-business #45, approved 2026-10-02) ──
+-- the list the self-test checks is generated from the source and must be current (the L1 API diff reads the same list)
+do
+  local gen = loadfile("tools/deps.lua")("deps")
+  local list, forbidden = gen.build()
+  local fh = io.open("Everbuff/Deps.lua", "rb"); local have = fh and fh:read("*a") or ""; if fh then fh:close() end
+  check("deps: Everbuff/Deps.lua is current (run luajit tools/deps.lua)", have:gsub("\r\n", "\n") == gen.render(list, forbidden))
+  local by = {}
+  for _, d in ipairs(ns.deps or {}) do by[d[2]] = d end
+  local function is(name, kind, need) local d = by[name]; return d ~= nil and d[1] == kind and d[3] == need end
+  check("deps: CreateFrame is a required function", is("CreateFrame", "function", "required"))
+  check("deps: C_Timer.After is a required function", is("C_Timer.After", "function", "required"))
+  check("deps: GetSpellInfo is guarded (every use is tested first)", is("GetSpellInfo", "function", "guarded"))
+  check("deps: GetCritChance is a guarded function (called through try)", is("GetCritChance", "function", "guarded"))
+  check("deps: a hooked C_AuctionHouse.PostItem is a guarded function", is("C_AuctionHouse.PostItem", "function", "guarded"))
+  check("deps: GetAddOnMetadata, the fallback after C_AddOns, is guarded", is("GetAddOnMetadata", "value", "guarded") or is("GetAddOnMetadata", "function", "guarded"))
+  check("deps: ADDON_LOADED is a required event", is("ADDON_LOADED", "event", "required"))
+  check("deps: an event registered through pcall is guarded", is("ACHIEVEMENT_EARNED", "event", "guarded"))
+  check("deps: the addon's own SavedVariables and globals are not listed", by.EverbuffDB == nil and by.EverbuffAck == nil and by.SLASH_EVERBUFF1 == nil and by.ns == nil)
+  check("deps: Lua itself is not listed", by.pairs == nil and by.string == nil and by["string.format"] == nil)
+  check("deps: COMBAT_LOG_EVENT_UNFILTERED is forbidden, never a dependency",
+    by.COMBAT_LOG_EVENT_UNFILTERED == nil and ns.depsForbidden and ns.depsForbidden[1] == "COMBAT_LOG_EVENT_UNFILTERED")
+  local json = io.popen and io.popen("luajit tools/deps.lua --json")
+  if json then
+    local out = json:read("*a"); json:close()
+    check("deps: --json lists the same entries for L1", select(2, out:gsub('"kind":', "")) == #ns.deps and out:find('"forbidden"', 1, true) ~= nil)
+  end
+end
+check("contract: settings.selftest written at the first world entry", type(ns.DB.settings.selftest) == "table"
+  and type(ns.DB.settings.selftest.build) == "string" and type(ns.DB.settings.selftest.at) == "number"
+  and type(ns.DB.settings.selftest.ok) == "boolean" and type(ns.DB.settings.selftest.missing) == "table"
+  and type(ns.DB.settings.selftest.forbidden) == "table")
+do
+  local ST = ns.SelfTest
+  ns._test.emitterFrame:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED")   -- the PARTY_KILL test above registered it on purpose
+  local saved = {}
+  local function setG(k, v) if saved[k] == nil then saved[k] = { v = rawget(_G, k) } end; rawset(_G, k, v) end
+  -- a client that has everything the addon takes, with every event valid
+  local validEvent = {}
+  setG("C_EventUtils", { IsEventValid = function(e) return validEvent[e] ~= false end })
+  for _, d in ipairs(ns.deps) do
+    if d[1] ~= "event" and ST.resolve(d[2]) == nil then
+      local parts = {}
+      for p in d[2]:gmatch("[^%.]+") do parts[#parts + 1] = p end
+      if #parts == 1 then setG(parts[1], d[1] == "function" and function() end or {})
+      else
+        local t = rawget(_G, parts[1])
+        if t == nil then t = {}; setG(parts[1], t) end
+        for i = 2, #parts - 1 do t[parts[i]] = t[parts[i]] or {}; t = t[parts[i]] end
+        t[parts[#parts]] = d[1] == "function" and function() end or {}
+      end
+    end
+  end
+  local build = "1.60.1.70170"
+  setG("GetBuildInfo", function() local v, b = build:match("^(.*)%.(%d+)$"); return v, b, "Oct 1 2026", 120105 end)
+  local said = {}
+  local oldMsg = ns.msg
+  ns.msg = function(t) said[#said + 1] = t end
+  ns.DB.settings.selftest = nil
+
+  local r, ran = ST.run()
+  check("selftest: runs at the first login on a build", ran == true)
+  check("selftest: a client with everything passes", r.ok == true and #r.missing == 0 and #r.forbidden == 0, table.concat(r.missing, ",") .. " / " .. table.concat(r.forbidden, ",") .. " / " .. tostring(r.error))
+  check("selftest: record carries build, interface, addon, at", r.build == "1.60.1.70170" and r.interface == 120105 and r.addon == ns.VERSION and r.at == M.epoch, tostring(r.build))
+  check("selftest: events are checked when the client can say", r.events == "checked" and r.secrets == true)
+  check("selftest: silent when everything passes", ST.line(r) == nil)
+  local _, again = ST.run()
+  check("selftest: the same build is not checked twice", again == false)
+
+  -- a patch removes a required function and a guarded one the last build had
+  build = "1.60.2.70200"
+  local fade, gsi = rawget(_G, "UIFrameFadeIn"), rawget(_G, "GetSpellInfo")
+  rawset(_G, "UIFrameFadeIn", nil); rawset(_G, "GetSpellInfo", nil)
+  r, ran = ST.run()
+  local has = {}
+  for _, n in ipairs(r.missing) do has[n] = true end
+  check("selftest: a new build runs again", ran == true and r.build == "1.60.2.70200")
+  check("selftest: a removed required function is missing", has.UIFrameFadeIn == true)
+  check("selftest: a guarded function the last build had is missing", has.GetSpellInfo == true)
+  check("selftest: and is absent for the next build's comparison", (function() for _, n in ipairs(r.absent) do if n == "GetSpellInfo" then return true end end end)() == true)
+  check("selftest: ok is false", r.ok == false)
+  check("selftest: the approved line", ST.line(r) == ("this WoW build changed %s (and 1 more); recording continues."):format(r.missing[1]), ST.line(r))
+
+  -- the next build still lacks the guarded one: no longer a change; the required one is back
+  build = "1.60.2.70210"; rawset(_G, "UIFrameFadeIn", fade)
+  r = ST.run()
+  check("selftest: a guarded function already absent on the last build is not a change", r.ok == true and #r.missing == 0, table.concat(r.missing, ","))
+  rawset(_G, "GetSpellInfo", gsi)
+
+  -- the first record ever on a client that lacks a guarded function: it is how this client is
+  ns.DB.settings.selftest = nil; build = "1.60.2.70220"
+  rawset(_G, "GetSpellInfo", nil)
+  r = ST.run()
+  check("selftest: on the first record a guarded absence is baseline, not a failure", r.ok == true and r.absent[1] ~= nil)
+  rawset(_G, "GetSpellInfo", gsi)
+
+  -- a forbidden event on one of the addon's frames; the line names it first
+  build = "1.60.2.70230"
+  local fr = ns.eventFrames[1]
+  fr:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+  validEvent.ENCOUNTER_START = false
+  r = ST.run()
+  check("selftest: a registered forbidden event fails", r.forbidden[1] == "COMBAT_LOG_EVENT_UNFILTERED" and r.ok == false)
+  check("selftest: an event the client no longer knows is missing", (function() for _, n in ipairs(r.missing) do if n == "ENCOUNTER_START" then return true end end end)() == true)
+  check("selftest: the line names the forbidden event first", ST.line(r) == "this WoW build changed COMBAT_LOG_EVENT_UNFILTERED (and 1 more); recording continues.", ST.line(r))
+  fr:UnregisterEvent("COMBAT_LOG_EVENT_UNFILTERED"); validEvent.ENCOUNTER_START = nil
+
+  -- issecretvalue gone, or answering true for a plain value
+  build = "1.60.2.70240"
+  local sv = rawget(_G, "issecretvalue")
+  rawset(_G, "issecretvalue", nil)
+  r = ST.run()
+  check("selftest: issecretvalue gone is missing", r.missing[1] == "issecretvalue" and r.secrets == false)
+  build = "1.60.2.70250"
+  rawset(_G, "issecretvalue", function() return true end)
+  r = ST.run()
+  check("selftest: issecretvalue calling a plain value secret is missing", r.missing[1] == "issecretvalue")
+  rawset(_G, "issecretvalue", sv)
+
+  -- without C_EventUtils the events are not checked, and nothing fails for it
+  build = "1.60.2.70260"
+  rawset(_G, "C_EventUtils", nil)
+  r = ST.run()
+  check("selftest: events unchecked without C_EventUtils", r.events == "unchecked" and r.ok == true)
+  rawset(_G, "C_EventUtils", { IsEventValid = function(e) return validEvent[e] ~= false end })
+
+  -- a Classic client is not checked (WoW Forever only)
+  build = "1.15.7.61000"
+  local hsv, pid = ns.hasSecretValues, rawget(_G, "WOW_PROJECT_ID")
+  ns.hasSecretValues = false; rawset(_G, "WOW_PROJECT_ID", rawget(_G, "WOW_PROJECT_CLASSIC"))
+  r = ST.run()
+  check("selftest: a Classic client is skipped", r.skipped == "classic" and r.ok == true and ST.line(r) == nil)
+  ns.hasSecretValues = hsv; rawset(_G, "WOW_PROJECT_ID", pid)
+
+  -- the login path: exactly one chat line when something fails, none when it passes
+  build = "1.60.3.70300"; rawset(_G, "UIFrameFadeIn", nil); rawset(_G, "GetSpellInfo", nil)
+  said = {}
+  ST.onEnteringWorld(nil); M.runTimers()
+  check("selftest: exactly one chat line when something fails", #said == 1 and said[1]:find("^this WoW build changed ") ~= nil and said[1]:find("; recording continues%.$") ~= nil, #said)
+  ST.onEnteringWorld(nil); M.runTimers()
+  check("selftest: no second line on the next login on the same build", #said == 1, #said)
+  rawset(_G, "UIFrameFadeIn", fade); rawset(_G, "GetSpellInfo", gsi)
+  build = "1.60.3.70310"; said = {}
+  ST.onEnteringWorld(nil); M.runTimers()
+  check("selftest: silent when everything passes at login", #said == 0, said[1])
+
+  -- the self-test never breaks the addon: a broken frame in the registry is recorded, not thrown
+  build = "1.60.3.70320"
+  ns.eventFrames[#ns.eventFrames + 1] = { IsEventRegistered = function() error("boom") end }
+  local okRun, rr = pcall(ST.run)
+  check("selftest: an erroring check does not throw", okRun and rr and rr.ok == true)
+  ns.eventFrames[#ns.eventFrames] = nil
+
+  ns.msg = oldMsg
+  for k, s in pairs(saved) do rawset(_G, k, s.v) end
 end
 
 print(("\n%d passed, %d failed"):format(passed, failed))

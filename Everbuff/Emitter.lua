@@ -811,6 +811,7 @@ local function diffRoster(fire)
 end
 
 local ef = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = ef
 for _, e in ipairs({
   "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "PLAYER_ENTERING_WORLD",
   "QUEST_ACCEPTED", "QUEST_TURNED_IN", "ENCOUNTER_START", "ENCOUNTER_END",
@@ -1319,6 +1320,7 @@ end
 Emitter._rewardChoices = {}
 do
   local qf = CreateFrame("Frame")
+  ns.eventFrames[#ns.eventFrames + 1] = qf
   qf:RegisterEvent("QUEST_COMPLETE")
   qf:SetScript("OnEvent", function()
     local t, n = {}, 0

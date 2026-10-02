@@ -41,6 +41,7 @@ end
 local sessionCount = 0            -- fights recorded since this load (unsaved until next flush)
 
 local ef = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = ef
 local cur = nil                   -- the in-progress fight, or nil when out of combat
 local sessionStart = GetTime()    -- when this UI load began (all fights since are unsaved)
 local lastCombatEnd = 0           -- when we last left combat (let the dust settle before reloading)

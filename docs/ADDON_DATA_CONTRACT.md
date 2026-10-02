@@ -25,7 +25,7 @@ A v1 file (flat keys) is migrated in place on load (`Core.lua ns.migrateDB`); v1
 | key | type | notes |
 | --- | --- | --- |
 | `schema` | int | 2 |
-| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load. Diagnostics, not settings: `blocked[]` (0.9.22, the last 10 `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` the client raised, `{ t, kind, addon, func, combat, stack }`) |
+| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load. Diagnostics, not settings: `blocked[]` (0.9.22, the last 10 `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` the client raised, `{ t, kind, addon, func, combat, stack }`) and `selftest` (0.9.24, the client self-test, below) |
 | `debug` | object or nil | diagnostics: `errors[]` (the last 50 Lua errors the client raised, any addon's, `{ at, err, stack?, n?, last? }`; from 0.9.23 a repeat of the row before it counts up in `n` and `last` instead of adding a row), `snapshot` (`/eb debug`) |
 | `sessions` | map id -> session | HOME. One record per login -> logout (a `/reload` resumes it: PLAYER_LOGOUT, which a reload also fires, writes `endedEpoch` and `endedBy = "logout"` into the save file, and the reload clears them again and adds a RESUME row; a real login leaves them; everbuff-wow-addon #14, 0.9.20): identity (`player, realm, class, guild, build, flavor, addonVersion`), `surname?` (the second name of a WoW Forever character, "Hammershield" for Hart Hammershield; from 0.9.17, absent where the client shows no surname; everbuff-backend #85), `guid` (player GUID), `startedEpoch`, `startedLocal`, `endedEpoch?`, `endedLocal?`, `recovered?` (closed on the next login after a crash), `level0 -> level`, `context`, `logging`, TAB-delimited `segments[]` (Segments.lua beacon), live counters `xp, gained, spent, kills, deaths, fights, items, dungeons`, and `gold?` (0.9.23, everbuff-backend #46): this session's own gold ledger in copper, `{ gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other }`, the keys of `loot.gold` without `balance`, every key present from the session's start and credited at the same moment as the lifetime totals. Absent on a session that began before 0.9.23 (a /reload into 0.9.23 does not add a partial one) |
 | `active` | id or nil | the session in progress |
@@ -102,6 +102,33 @@ Mailbox rows (2026-09-25): `src` is `"Auction sale"` (coin row), `"Auction won"`
 `"Mail from <sender>"`, with `mail = { sender, subject, item?, buyer?, seller?, cod? }`. Location is the mailbox.
 Classic prints no chat line for mail pickups, so these come from hooks on `TakeInboxItem` / `TakeInboxMoney` /
 `AutoLootMailItem`. Gold breakdown fields: `auctionSales`, `mail` (income); `auctions`, `mailSpent` (sinks).
+
+## Client self-test (`settings.selftest`, 0.9.24, everbuff-business #45 layer L5)
+
+At the first world entry on a client build or addon version it has not recorded, the addon checks everything it
+takes from the client: the functions, values and events in `Everbuff/Deps.lua` (generated from the source by
+`tools/deps.lua`; `luajit tools/deps.lua --json` prints the same list for the L1 API diff), that `issecretvalue` exists
+and answers false for plain values, and that none of its event frames holds an event the client forbids
+(`COMBAT_LOG_EVENT_UNFILTERED` on WoW Forever). One record, replaced on the next new build:
+
+| field | type | notes |
+| --- | --- | --- |
+| `build` | string | `GetBuildInfo` version and build, `"1.60.1.70170"` |
+| `interface` | int | the interface number `GetBuildInfo` reports |
+| `addon` | string | the addon version that ran the check |
+| `at` | epoch | server time of the check |
+| `ok` | bool | true when `missing` and `forbidden` are empty and the check ran to the end |
+| `missing[]` | string | names that changed: a required dependency that is gone, a guarded one the previous record had, an event the client no longer knows, or `issecretvalue` |
+| `forbidden[]` | string | forbidden events one of the addon's frames has registered |
+| `absent[]` | string | guarded dependencies this client lacks (the baseline for the next build; on the first record ever these are not failures) |
+| `secrets` | bool | `issecretvalue` exists and behaves |
+| `events` | string | `checked` (`C_EventUtils.IsEventValid`), or `unchecked` when the client cannot say |
+| `skipped?` | string | `classic`: a Classic client is not checked (WoW Forever only) |
+| `error?` | string | the check itself failed; `ok` is false and nothing is said in chat |
+
+Silent when `ok`. When it fails the player sees exactly one chat line (founder decision 3, option B):
+`everbuff.gg: this WoW build changed <first item> (and N more); recording continues.` The backend's live canary
+(L4) reads the record from the save file.
 
 ## Not available on this client, or different by design (#11)
 
