@@ -44,9 +44,6 @@ The **everbuff desktop app** installs and updates the addon for you. Manual inst
 
 Works on the Midnight beta, Anniversary and Classic Era clients. Open the panel with `/eb`, or click the flag.
 
-Known beta issue: the WoW Forever beta does not persist any addon's SavedVariables across a full restart
-(a Blizzard bug that affects every addon). `/reload` keeps your data warm; a restart loses it on that client only.
-
 ## Layout
 
 - `Everbuff/` is the addon source, packaged as `EverbuffJournal/` in a release.

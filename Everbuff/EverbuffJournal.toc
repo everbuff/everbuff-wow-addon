@@ -8,9 +8,8 @@
 ## X-Website: https://everbuff.gg
 ## X-Category: Combat
 
-# Interface/X-Expansion mirror the client. Note: the WoW Forever beta does not persist ANY addon's
-# SavedVariables across a full restart (confirmed Blizzard bug, not this addon). Editing .lua files
-# while the game runs is fine (they load on /reload); new files need a full restart.
+# Interface/X-Expansion mirror the client. WoW Forever persists SavedVariables across a full restart
+# (the 2026-09 beta bug is fixed). Install with the game closed; a TOC change or a new file needs a full restart.
 Theme.lua
 Logging.lua
 Segments.lua

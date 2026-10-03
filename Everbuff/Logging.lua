@@ -162,8 +162,8 @@ function L.nag(force)
   bigWarn("Everbuff.GG: " .. msg)
 end
 
--- The guardian runs for the WHOLE play session (not just in instances). It enforces logging every
--- NAG_PERIOD seconds, nags heavily while off, confirms once when it comes back, and records a
+-- The guardian runs for the WHOLE play session (not just in instances). It checks logging every 10 s
+-- and re-asserts it every 5 min (see startGuardian), nags heavily while off (NAG_PERIOD), confirms once when it comes back, and records a
 -- LOGGING_REPAIR landmark (via the recorder) whenever it had to fix a mid-session drop.
 -- How many times we've had to turn combat logging back on after startup (exposed for the UI).
 L.repairs = 0

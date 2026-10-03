@@ -4,7 +4,10 @@ Hard-won lessons from building the Everbuff addon against the Midnight beta clie
 (`_classic_beta_`, reports `WOW_PROJECT_MAINLINE`). Read this before touching the TOC,
 SavedVariables, or anything that reads Secret Values.
 
-> **UPDATE (2026-09-19): Section 1 turned out to be a CONFIRMED BETA CLIENT BUG, not our addon.**
+> **UPDATE (2026-09-28): fixed. WoW Forever now persists SavedVariables across full restarts; `EverbuffJournal.lua`
+> holds sessions across days and the backend ingests it. The note below is history.**
+>
+> **(2026-09-19) Section 1 turned out to be a CONFIRMED BETA CLIENT BUG, not our addon.**
 > The WoW Forever beta does not persist ANY addon's SavedVariables (verified against DialogueUI too;
 > Blizzard forum: https://eu.forums.blizzard.com/en/wow/t/wow-forever-game-not-save-any-addons-settings/629470).
 > Everything in section 1 below (fresh folders, X-Expansion, pipe stripping, AddOns.txt) was chasing a

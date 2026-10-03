@@ -10,9 +10,10 @@
 --      time, the zone and the coordinates, which is what the desktop and the backend read.
 --
 -- Founder rule: nothing is ever drawn on screen for a machine to read except the flag itself. No color
--- strips, no encoded cells. The desktop's real-time channel is OCR of the flag's text; how the flag's
--- machine line is rendered for that is decided in everbuff-wow-addon issue #10 before it is built. The
--- short "machine" line built below is the compact label for the event kind in the panel and the timeline.
+-- strips, no encoded cells. The desktop reads the flag as the player sees it (founder approval on
+-- everbuff-desktop #72, 2026-09-28): the mark's red and white combat tint and OCR of the human line beside
+-- it. No machine line is drawn (the proposal on everbuff-wow-addon #10 was closed as not needed). The short
+-- "machine" string built below is the compact label for the event kind in the timeline, never drawn.
 
 local ADDON, ns = ...
 
