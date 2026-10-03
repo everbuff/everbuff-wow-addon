@@ -80,7 +80,9 @@ carried across those windows rather than recorded as lost. `t` is seconds since 
 
 ## Event log entry
 
-`{ t (server epoch), s (session id), kind, text, combat?, foe?, prof?, craft?, crafted?, standing?, guid?, zone?, sub?, map?, x?, y?, downtime?, shown? }`
+`{ t (server epoch), s (session id), kind, text, combat?, foe?, prof?, craft?, crafted?, standing?, guid?, zone?, sub?, map?, x?, y?, downtime?, shown?, duration? }`
+(`duration`, 0.9.27: on FLIGHTTRIP, the seconds on the taxi to a tenth, the per-trip value behind the catalog's T-2 and T-5; the text keeps the rounded "(2m 38s)". `character.flightTime` is the lifetime sum.)
+(One row per fact, 0.9.27, #11: a recipe learned is one RECIPE row although WoW Forever both prints the system line and fires `NEW_RECIPE_LEARNED` for it, and a quest reward choice is one REWARD row per reward panel although the client can call `GetQuestReward` twice for one turn-in. Both were seen twice in the save file of 2026-10-02.)
 (`shown`, 0.9.5: the client's `GetTime()` in seconds with milliseconds when the notification for this row reached the screen; absent when it was quiet, muted, hidden or dropped from the queue. With the session's `startedMono` it is the addon side of an alignment anchor, matched to the desktop's OCR of the same notification, everbuff-desktop #72. `downtime` is stamped on a DEATH row once you are back on your feet: seconds from death to revive, the corpse run; `durLoss` is the gear durability percentage lost across that death.)
 (`x`,`y` are 0..1 map fractions.) Kinds: `LEVELUP ZONE FIRSTZONE DUNGEON DUNGEONLEAVE QUESTACCEPT QUESTDONE
 REWARD BOSS KILL WIPE DEATH ALIVE SKILLUP DISCOVERY FLIGHT FLIGHTTRIP LOOT ACHIEV SPELL REP ROSTERJOIN
@@ -141,6 +143,23 @@ Silent when `ok`. When it fails the player sees exactly one chat line (founder d
 | The kill count differs from the log's `PARTY_KILL` | By design: the addon counts kills the player's fights recorded; `PARTY_KILL` also counts every killing blow of party members and pets, and mobs killed outside a recorded fight. 26 Sep evening: addon 103, log 123 | G3 settled "kills from the addon" (catalog section 8 item 6); the log count is not shown as kills |
 | Enemy names and GUIDs, aura fields, combat stats on the Secret-Values clients | The client hides them (see Invariants) | Guarded reads; missing values show as not recorded |
 | The quest reward choice when the panel is closed before the hook runs | The client can close the reward panel before the `GetQuestReward` hook reads it | 0.9.3 reads the choices when the panel opens (QUEST_COMPLETE) and uses them when the choice is confirmed |
+
+## Kept for the addon's own panes, not read by the backend (ADDON-8, #11)
+
+These four lists back the addon's in-game panes and are uploaded with the save file like everything else, archived
+in `save_versions` (A20), but ingest does not read them. Nothing in the approved question catalog reads them: the web
+takes the same facts from rows it does ingest. Measured on the save file of 2026-10-02 (2,062,707 bytes as data):
+
+| List | Rows | Size | Pane in game | What the backend reads instead |
+| --- | ---: | ---: | --- | --- |
+| `story.rep` | 76 | 11.5 KB | Progress, reputation history per faction | `story.events` REP (tier reached) and `character.reputation` (standings, `character_snapshots.reputation`) |
+| `loot.ah` | 24 | 2.7 KB | Loot, Auctions | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
+| `character.crafts` | 0 | 0 KB | Character, Crafting | `story.events` SKILLUP with `craft` and `crafted` |
+| `character.recipes` | 2 | 0.1 KB | Character, Crafting | `story.events` RECIPE |
+
+Together 14.4 KB, 0.7 % of the file; the fights are 1.47 MB (71 %). Dropping them would remove in-game panes and save
+almost nothing, so they stay. Reading them on the backend (per-gain reputation, auction postings) needs a place in
+the data model and a catalog question first, and goes through a gate.
 
 ## Correlating to the combat-log file and video
 

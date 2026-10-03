@@ -378,6 +378,7 @@ M.now = M.now + 89; M.zone = "Duskwood"; M.onTaxi = false; M.tick()
 check("#11 flight recorded from the taxi flag", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and (e.text or ""):find("Westfall to Duskwood %(1m 30s%)") ~= nil end) == 1)
 M.fire("PLAYER_CONTROL_GAINED"); M.tick()
 check("#11 the same flight is not recorded twice", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2 and ns.DB.character.flightTime == 290, ns.DB.character.flightTime)
+check("#11 each trip carries its seconds as duration", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and type(e.duration) == "number" end) == 2 and count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and e.duration == 90 end) == 1)
 TakeTaxiNode(4); for _ = 1, 12 do M.now = M.now + 1; M.tick() end
 M.fire("PLAYER_CONTROL_LOST"); M.now = M.now + 4; M.fire("PLAYER_CONTROL_GAINED")
 check("#11 a taxi that never left, then a stun, is no flight", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2)
@@ -550,6 +551,24 @@ check("xp split accumulated", ns.DB.character.xp.fromKills == 45 and ns.DB.chara
 -- ── recipes ──
 M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:2318|h[Light Leather]|h|r.")
 check("recipe learned from the system line", count(ns.DB.story.events, function(e) return e.kind == "RECIPE" and (e.text or ""):find("Light Leather") ~= nil end) == 1)
+do -- #11: WoW Forever prints the line and fires NEW_RECIPE_LEARNED for the same recipe; one row, either order
+  local recipeRows = function(nm) return count(ns.DB.story.events, function(e) return e.kind == "RECIPE" and (e.text or ""):find(nm, 1, true) ~= nil end) end
+  local gri = C_TradeSkillUI.GetRecipeInfo
+  C_TradeSkillUI.GetRecipeInfo = function(id) return { name = id == 1 and "Tasty Raptor Bites" or "Smoked Bear Meat" } end
+  M.now = M.now + 30
+  M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:5479|h[Tasty Raptor Bites]|h|r.")
+  M.now = M.now + 1; M.fire("NEW_RECIPE_LEARNED", 1)
+  check("#11 a recipe the line and the event both report is one RECIPE row", recipeRows("Tasty Raptor Bites") == 1, recipeRows("Tasty Raptor Bites"))
+  M.now = M.now + 30; M.fire("NEW_RECIPE_LEARNED", 2)
+  M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:6890|h[Smoked Bear Meat]|h|r.")
+  check("#11 the event first, then the line: still one row", recipeRows("Smoked Bear Meat") == 1, recipeRows("Smoked Bear Meat"))
+  M.now = M.now + 6
+  M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:6890|h[Smoked Bear Meat]|h|r.")
+  check("#11 the same recipe again later is a new row", recipeRows("Smoked Bear Meat") == 2, recipeRows("Smoked Bear Meat"))
+  M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:2581|h[Heavy Linen Bandage]|h|r.")
+  check("#11 a different recipe in the same second is its own row", recipeRows("Heavy Linen Bandage") == 1)
+  C_TradeSkillUI.GetRecipeInfo = gri
+end
 -- ── gear upgrade milestone ──
 M.inCombat = false
 local ilvl0 = ns.DB.character.ilvl
@@ -946,6 +965,15 @@ do
   check("#11 a quest without a choice records no reward", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Other Blade") ~= nil end) == 0)
   M.questChoices = nil; M.fire("QUEST_COMPLETE"); GetQuestReward(1)
   check("#11 a stale choice from an earlier quest is not reused", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Other Blade") ~= nil end) == 0)
+  -- one REWARD per panel: the Forever save file of 2026-10-02 holds "Clear Crystal Rod" twice around one turn-in
+  M.questChoices = { "Clear Crystal Rod", "Hide Belt" }; M.fire("QUEST_COMPLETE")
+  local keep = M.questChoices; M.panelStays = true   -- the choice still reads on the second call, as on Forever
+  GetQuestReward(1); M.now = M.now + 4; GetQuestReward(1)
+  M.panelStays = nil
+  check("#11 a second GetQuestReward for the same panel records no second REWARD", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Clear Crystal Rod") ~= nil end) == 1)
+  M.questChoices = keep; M.fire("QUEST_COMPLETE"); GetQuestReward(1)
+  check("#11 the same item chosen on the next quest's panel is recorded again", count(ns.DB.story.events, function(e) return e.kind == "REWARD" and (e.text or ""):find("Clear Crystal Rod") ~= nil end) == 2)
+  M.questChoices = nil
   M.runTimers()
   -- spec and talents: a client with GetSpecialization that answers nothing falls through to the talent trees
   local sS, sI = _G.GetSpecialization, _G.GetSpecializationInfo

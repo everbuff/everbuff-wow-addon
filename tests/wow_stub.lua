@@ -94,7 +94,7 @@ end
 _G.GetNumQuestChoices = function() return M.questChoices and #M.questChoices or 0 end
 _G.GetQuestItemLink = function(kind, i) local nm = kind == "choice" and M.questChoices and M.questChoices[i]; if nm then return ("|cff1eff00|Hitem:%d::::::::|h[%s]|h|r"):format(9000 + i, nm) end end
 _G.GetQuestItemInfo = function(kind, i) return kind == "choice" and M.questChoices and M.questChoices[i] or nil end
-_G.GetQuestReward = function() M.questChoices = nil end
+_G.GetQuestReward = function() if not M.panelStays then M.questChoices = nil end end   -- M.panelStays: a client that keeps it readable
 _G.TakeTaxiNode = function() end
 -- mailbox: M.inbox = { { sender, subject, money, cod, invoice = { type, item, player }, items = { { name, id, count, quality } } } }
 M.inbox = {}

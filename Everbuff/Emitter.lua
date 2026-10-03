@@ -357,6 +357,8 @@ function Emitter.event(kind, d, quiet)
       -- profession skill-ups carry what was crafted + how many times, in which profession (= name)
       prof = (kind == "SKILLUP" and d.craft) and name or nil, craft = d.craft, crafted = d.crafted,
       standing = d.standing,  -- reputation tier reached (REP)
+      -- seconds on the taxi (FLIGHTTRIP, #11): the catalog's T-2 and T-5 read it per trip, not from the text
+      duration = (kind == "FLIGHTTRIP" and type(d.duration) == "number") and math.floor(d.duration * 10 + 0.5) / 10 or nil,
       guid = d.guid,          -- exact npc guid for a precise kill (PARTY_KILL) - desktop attribution
       -- location, for map correlation on the desktop
       zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y,
@@ -896,6 +898,17 @@ end
 -- every reputation gain, not just tier-ups: faction, amount and what caused it (a quest turned in or a kill a
 -- moment before), with the place. Kept in story.rep (capped 2000) so a mob-grinding session never pushes the
 -- rest of the timeline out of story.events. Record only: nothing on screen changes.
+-- A learned recipe, recorded once (#11): the WoW Forever client both prints the system line and fires
+-- NEW_RECIPE_LEARNED for the same recipe, which wrote two RECIPE rows and showed two notifications. A second
+-- report of the same recipe within 5 s, or an unnamed one within 5 s of any, is the same recipe.
+function Emitter.recipe(name)
+  local now, last = GetTime(), Emitter._lastRecipe
+  if last and (now - last.at) < 5 and (last.name == name or not name) then return false end
+  Emitter._lastRecipe = { name = name, at = now }
+  Emitter.event("RECIPE", { name = name or "a new recipe" })
+  return true
+end
+
 Emitter.REPGAIN_PAT = fmtToPattern(FACTION_STANDING_INCREASED or "Reputation with %s increased by %d.")
 function Emitter.repGain(msg)
   if not ns.DB then return end
@@ -1094,7 +1107,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     local area = msg:match(DISCOVER_XP_PAT) or msg:match(DISCOVER_PAT)
     local recipe = msg:match(RECIPE_PAT)
     if recipe then
-      Emitter.event("RECIPE", { name = recipe:match("%[(.-)%]") or recipe })
+      Emitter.recipe(recipe:match("%[(.-)%]") or recipe)
     elseif area then
       Emitter.event("DISCOVERY", { name = area })
     elseif ERR_NEWTAXIPATH and msg == ERR_NEWTAXIPATH then
@@ -1137,7 +1150,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "NEW_RECIPE_LEARNED" then
     local nm
     if a1 and C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, a1); nm = ok and info and safeStr(info.name) end
-    Emitter.event("RECIPE", { name = nm or "a new recipe" })
+    Emitter.recipe(nm)
     if ns.Market then pcall(ns.Market.recipe, nm) end
   elseif event == "PLAYER_EQUIPMENT_CHANGED" then
     -- journey-level gear progression: equipped item level going UP (checked out of combat only)
@@ -1328,6 +1341,7 @@ do
     if GetNumQuestChoices then local ok, c = pcall(GetNumQuestChoices); n = (ok and type(c) == "number") and c or 0 end
     for i = 1, n do t[i] = choiceName(i) end
     Emitter._rewardChoices = t
+    Emitter._rewardDone = nil
   end)
 end
 if GetQuestReward and hooksecurefunc then
@@ -1335,7 +1349,12 @@ if GetQuestReward and hooksecurefunc then
     if type(choice) ~= "number" or choice == 0 then return end
     local name = choiceName(choice) or Emitter._rewardChoices[choice]
     Emitter._rewardChoices = {}
-    if name then Emitter.event("REWARD", { name = name }) end
+    -- one REWARD per reward panel (#11): on WoW Forever GetQuestReward ran again 4 s after a turn-in and wrote the
+    -- choice twice; the same choice again before the next panel opens is the same reward
+    if name and name ~= Emitter._rewardDone then
+      Emitter._rewardDone = name
+      Emitter.event("REWARD", { name = name })
+    end
   end)
 end
 
