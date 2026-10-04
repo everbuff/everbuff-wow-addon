@@ -1,24 +1,39 @@
 name: claude
-# Cloud tier of the everbuff GitHub listener. Triggered by "@claude" in an issue, issue comment or review
-# comment. Handles repository work on GitHub-hosted runners; the local service handles everything else.
-# Secrets (organization level): CLAUDE_CODE_OAUTH_TOKEN, EVERBUFF_GH_PAT. See everbuff-claude/listener/README.md.
+# Cloud tier of the everbuff GitHub listener. Triggered by "@claude" in a comment, a review or the body of a new
+# issue that a person wrote. Handles repository work on GitHub-hosted runners; the local service handles the rest.
+# Secrets (organization level): CLAUDE_CODE_OAUTH_TOKEN, EVERBUFF_GH_PAT. See everbuff/listener README.md.
+#
+# Never self-triggered (everbuff/listener #4): Claude posts from the founder's account, so the job skips any text
+# that carries the marker "<!-- claude -->", any claude-code-action progress comment, any event a bot sent, and
+# every issue event other than opened (no labeled, assigned or edited runs). Keep this file identical in every
+# repository; the copy in everbuff/listener is the source.
 on:
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned, labeled]
+    types: [opened]
   pull_request_review:
     types: [submitted]
 
 jobs:
   claude:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      github.event.sender.type != 'Bot' && !endsWith(github.actor, '[bot]') && (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+          !contains(github.event.comment.body, '<!-- claude -->') &&
+          !contains(github.event.comment.body, 'Claude Code is working') &&
+          !contains(github.event.comment.body, 'Claude encountered an error') &&
+          !contains(github.event.comment.body, 'Claude finished')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') &&
+          !contains(github.event.comment.body, '<!-- claude -->')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') &&
+          !contains(github.event.review.body, '<!-- claude -->')) ||
+        (github.event_name == 'issues' && github.event.action == 'opened' &&
+          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+          !contains(github.event.issue.body, '<!-- claude -->'))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
