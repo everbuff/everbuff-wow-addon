@@ -1584,7 +1584,7 @@ if ns.UI and ns.UI.registerTab then
   local function fightAt(t)
     for _, f in ipairs((ns.Fights and ns.Fights.list and ns.Fights.list()) or {}) do
       local st = f.startEpoch or 0
-      if t >= st - 1 and t <= st + (f.duration or 0) + 2 then return f end
+      if t >= st - 1 and t <= st + (f.duration or 0) + 2 and ns.isMine(f) then return f end
     end
   end
   ns.UI.registerPane("Home", 2, "Timeline", function(content)
@@ -1640,8 +1640,9 @@ if ns.UI and ns.UI.registerTab then
     local sf, child = ns.UI.ScrollChild(pane)
     sf:SetPoint("TOPLEFT", 0, -50); sf:SetPoint("BOTTOMRIGHT", -22, 2)
     child.rows = {}
+    content.timelineRows = child.rows   -- exposed for the headless tests
     eventsRebuild = function()
-      local log = (ns.DB and ns.DB.story.events) or {}
+      local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's events only (#23)
       local q = search:GetText()
       if window then banner.text:SetText(("Showing: %s   ·   click to show everything"):format(window.label)); banner:Show() else banner:Hide() end
       local y, idx, dn, lastDay = 0, 0, 0, nil
@@ -1864,7 +1865,7 @@ if ns.UI and ns.UI.registerTab then
     content.lootRows = child.rows
     local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
     lootRebuild = function()
-      local loot = (ns.DB and ns.DB.loot.log) or {}   -- persisted; survives reloads
+      local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
       -- totals line: gold looted (running) + item pickups counted
       local items = 0
       for _, e in ipairs(loot) do if not e.money then items = items + 1 end end

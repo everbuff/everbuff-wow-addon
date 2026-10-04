@@ -212,7 +212,7 @@ refresh = function(content)
   end
   for i = #log, 1, -1 do
     local e = log[i]
-    if MILE[e.kind] and (sid == nil or e.s == nil or e.s == sid) then
+    if MILE[e.kind] and (sid == nil or e.s == nil or e.s == sid) and ns.isMine(e) then
       idx = idx + 1
       local row = mchild.rows[idx]
       if not row then
@@ -244,7 +244,7 @@ end
 local sessionsRebuild, sessionsView
 local function sessionRows()
   local out = {}
-  for id, sess in pairs((ns.DB and ns.DB.sessions) or {}) do out[#out + 1] = sess end
+  for id, sess in pairs((ns.DB and ns.DB.sessions) or {}) do if ns.isMySession(sess) then out[#out + 1] = sess end end   -- the logged-in character's (#23)
   -- the live session first, then newest first (ids break ties within the same second)
   table.sort(out, function(a, b)
     local la, lb = a.endedEpoch == nil, b.endedEpoch == nil

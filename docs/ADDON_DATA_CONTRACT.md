@@ -24,6 +24,9 @@ A v1 file (flat keys) is migrated in place on load (`Core.lua ns.migrateDB`); v1
 Data per character, always (#23): everything that belongs to one character lives in `characters[guid]`; the only
 account-wide areas are `settings`, `debug`, the session map and the session-stamped rows. A file written before
 0.9.30 keeps its old `character` block and `loot.gold` once, untouched, as `characterLegacy` (schema stays 2).
+The panel shows the logged-in character only (0.9.32): every pane lists the sessions whose `guid` is the player's
+GUID and the rows of those sessions (a fight names its session in `session`, every other row in `s`). This is a
+view: the file keeps every character's sessions and rows, and the desktop and the backend read all of them as before.
 A row without its session never uploads, so none is kept (#17): the load drops loot rows with no `s` (the rows
 from before schema 2), `/eb export` closes the session and opens a new one at once, and `/eb wipe` removes the
 fights, loot rows and events of the sessions it clears and opens a new session when one was running.

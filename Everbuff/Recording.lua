@@ -170,7 +170,7 @@ local function fightLoot(f)
   local e = s + (f.duration or 0) + LOOT_TAIL
   for _, l in ipairs((ns.DB and ns.DB.loot.log) or {}) do
     local t = l.t or 0
-    if t >= s and t <= e then out[#out + 1] = l end
+    if t >= s and t <= e and ns.isMine(l) then out[#out + 1] = l end
   end
   return out
 end
@@ -751,7 +751,7 @@ local function buildList(content)
   v.daysFn = function() return child.days end
 
   listRebuild = function()
-    local fights = ns.Fights and ns.Fights.list() or {}
+    local fights = ns.mine(ns.Fights and ns.Fights.list())   -- the logged-in character's fights only (#23)
     local kills, wipes, deaths, secs = 0, 0, 0, 0
     for _, f in ipairs(fights) do
       if f.outcome == "kill" then kills = kills + 1

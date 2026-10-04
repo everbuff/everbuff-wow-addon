@@ -42,7 +42,7 @@ end
 local function nowEpoch() return (GetServerTime and GetServerTime()) or time() end
 
 local function buildRuns()
-  local log = (ns.DB and ns.DB.story.events) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's runs only (#23)
   local runs, open = {}, nil
   for _, e in ipairs(log) do
     if e.kind == "DUNGEON" then
@@ -53,8 +53,8 @@ local function buildRuns()
     end
   end
   -- enrich each run window with fights, deaths, kills and loot
-  local fightsAll = (ns.Fights and ns.Fights.list and ns.Fights.list()) or {}
-  local lootAll = (ns.DB and ns.DB.loot.log) or {}
+  local fightsAll = ns.mine(ns.Fights and ns.Fights.list and ns.Fights.list())
+  local lootAll = ns.mine(ns.DB and ns.DB.loot.log)
   for _, run in ipairs(runs) do
     local endT = run.endT or nowEpoch()
     run.inProgress = (run.endT == nil)

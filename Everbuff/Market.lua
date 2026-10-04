@@ -294,7 +294,9 @@ end
 --- Rows for the Auctions pane, newest first, plus the summary numbers.
 function Market.buildAuctions()
   if not ns.DB then return {}, {} end
-  local a = ah(); local rows = {}
+  local all = ah(); local rows = {}
+  -- the logged-in character's trades only (#23); loot.ah itself keeps every character's rows
+  local a = { posted = ns.mine(all.posted), sold = ns.mine(all.sold), bought = ns.mine(all.bought), returned = ns.mine(all.returned) }
   local sum = { posted = #a.posted, sold = #a.sold, bought = #a.bought, returned = #a.returned, net = 0, spent = 0, cut = 0 }
   for _, r in ipairs(a.posted) do rows[#rows + 1] = { t = r.t, item = r.item, count = r.count, price = r.buyout or r.bid, what = "Posted", note = r.hours and (r.hours .. " h") or "" } end
   for _, r in ipairs(a.sold) do sum.net = sum.net + (r.net or 0); sum.cut = sum.cut + (r.cut or 0); rows[#rows + 1] = { t = r.t, item = r.item, count = 1, price = r.net, what = "Sold", note = r.buyer or "", good = true } end

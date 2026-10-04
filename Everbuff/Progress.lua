@@ -3,7 +3,8 @@
 -- The leveling vertical's "what did I actually get done" panes, the three panes of the CHARACTER host tab
 -- since 2026-09-25. All present data other modules already capture: quest events from the timeline, the
 -- reputation snapshot Emitter keeps, and the structured professions snapshot with its tier milestones.
--- Nothing here reads a game API at render time except the clock; it is a pure view over ns.DB.
+-- Nothing here reads a game API at render time except the clock; it is a pure view over ns.DB. Every list reads
+-- the logged-in character's rows only (ns.mine, #23).
 
 local ADDON, ns = ...
 local UI = ns.UI
@@ -18,7 +19,7 @@ end
 
 -- quests: every QUESTDONE row newest first; accepted-but-not-completed names listed as in progress
 local function buildQuests()
-  local log = (ns.DB and ns.DB.story.events) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)
   local done, accepted, doneSet, rewards = {}, {}, {}, 0
   for _, e in ipairs(log) do
     if e.kind == "QUESTDONE" then
@@ -42,7 +43,7 @@ end
 -- reputation: the snapshot (faction -> standing) sorted best standing first, with the last tier-up seen
 local function buildReputation()
   local snap = (ns.DB and ns.char().reputation) or {}
-  local log = (ns.DB and ns.DB.story.events) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)
   local lastUp, ups = {}, 0
   for _, e in ipairs(log) do
     if e.kind == "REP" then
@@ -63,7 +64,7 @@ end
 local skillOf   -- defined below; buildProfessions counts every skill-up, crafted or gathered
 local function buildProfessions()
   local snap = (ns.DB and ns.char().professions) or {}
-  local log = (ns.DB and ns.DB.story.events) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)
   local tiers, skillups, recipes, crafted = {}, {}, 0, {}
   for _, e in ipairs(log) do
     if e.kind == "PROFTIER" then
@@ -93,7 +94,7 @@ local GATHERING = { Herbalism = true, Mining = true, Skinning = true, Fishing = 
 -- every skill-up of a profession you have, newest first; `only` limits it to one profession
 local function buildSkillups(only)
   local snap = (ns.DB and ns.char().professions) or {}
-  local log = (ns.DB and ns.DB.story.events) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)
   local rows = {}
   for _, e in ipairs(log) do
     if e.kind == "SKILLUP" then
@@ -113,12 +114,12 @@ end
 -- every reputation gain and every new standing, newest first; `only` limits it to one faction
 local function buildRepHistory(only)
   local rows = {}
-  for _, g in ipairs((ns.DB and ns.DB.story.rep) or {}) do
+  for _, g in ipairs(ns.mine(ns.DB and ns.DB.story.rep)) do
     if not only or only == g.faction then
       rows[#rows + 1] = { t = g.t or 0, faction = g.faction, change = ("+%d"):format(g.amount or 0), source = g.src or "", zone = g.zone, sub = g.sub, x = g.x, y = g.y }
     end
   end
-  for _, e in ipairs((ns.DB and ns.DB.story.events) or {}) do
+  for _, e in ipairs(ns.mine(ns.DB and ns.DB.story.events)) do
     if e.kind == "REP" then
       local nm = (e.text or ""):match("^(.-):%s") or e.text
       if nm and (not only or only == nm) then

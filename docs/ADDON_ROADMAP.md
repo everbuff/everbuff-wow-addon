@@ -80,6 +80,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] A merchant visit counts each stack the server took once: a junk stack sold by hand after "sell all junk" was counted twice, a sale the merchant refused once (0.9.29, #22)
 - [x] Data per character, always: professions, xp, played, item level, gear health, reputation, lockouts, item uses, zones, flights, crafts and the gold totals live under the character's GUID (`characters[guid]`); the old account-wide block is kept once as `characterLegacy` (0.9.30, #23)
 - [x] Home shows the logged-in character: the GOLD card reads its own ledger (it showed 0 after 0.9.30), and the kill, death and fight counts leave out the other characters' sessions (0.9.31, #23)
+- [x] Every pane shows the logged-in character only: Timeline, Sessions, Items, Auctions, Fights, Dungeons, Deaths, Quests, Reputation and Professions list the rows of the sessions that carry its GUID; Home counted no fights in 0.9.31 because a fight names its session in `session`, which is read now. Stored and uploaded data unchanged (0.9.32, #23)
 
 ## Performance and SavedVariables size
 

@@ -138,8 +138,8 @@ check("run named", runs[1] and runs[1].name == "Deadmines", runs[1] and runs[1].
 check("run closed (not in progress)", runs[1] and runs[1].inProgress == false)
 
 -- ── Deaths matching (pure) ──
-ns.DB.story.events[#ns.DB.story.events + 1] = { kind = "DEATH", t = M.epoch, text = "You died  ·  Level 12", zone = "Elwynn Forest", foe = "Kobold Miner", x = 0.5, y = 0.25 }
-ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { outcome = "death", startEpoch = M.epoch - 5, duration = 4, level = 12, zone = "Elwynn Forest", foes = { "Kobold Miner" } }
+ns.DB.story.events[#ns.DB.story.events + 1] = { s = ns.DB.active, kind = "DEATH", t = M.epoch, text = "You died  ·  Level 12", zone = "Elwynn Forest", foe = "Kobold Miner", x = 0.5, y = 0.25 }
+ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { session = ns.DB.active, outcome = "death", startEpoch = M.epoch - 5, duration = 4, level = 12, zone = "Elwynn Forest", foes = { "Kobold Miner" } }
 local deaths = T.collectDeaths()
 check("death collected", #deaths == 1, #deaths)
 check("death linked to its fight", deaths[1] and deaths[1].fight ~= nil)
@@ -740,16 +740,16 @@ check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Lin
 do
   local t0 = M.epoch + 100000
   local L, Fz = ns.DB.story.events, ns.DB.combat.fights
-  L[#L + 1] = { kind = "DUNGEON", t = t0, text = "Ragefire Chasm" }
-  Fz[#Fz + 1] = { outcome = "kill", startEpoch = t0 + 60, duration = 20, foes = { "Ragefire Trogg" } }                      -- trash
-  Fz[#Fz + 1] = { outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  L[#L + 1] = { kind = "DEATH", t = t0 + 165, text = "You died", foe = "Taragaman the Hungerer", downtime = 80 }
-  Fz[#Fz + 1] = { outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = t0 + 354, money = 1500, src = "Taragaman the Hungerer" }
-  L[#L + 1] = { kind = "DUNGEONLEAVE", t = t0 + 600, text = "Ragefire Chasm" }
+  L[#L + 1] = { s = ns.DB.active, kind = "DUNGEON", t = t0, text = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 60, duration = 20, foes = { "Ragefire Trogg" } }                      -- trash
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
+  L[#L + 1] = { s = ns.DB.active, kind = "DEATH", t = t0 + 165, text = "You died", foe = "Taragaman the Hungerer", downtime = 80 }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 354, money = 1500, src = "Taragaman the Hungerer" }
+  L[#L + 1] = { s = ns.DB.active, kind = "DUNGEONLEAVE", t = t0 + 600, text = "Ragefire Chasm" }
   local runs = T.buildRuns(); local run = runs[#runs]
   check("run has two bosses in pull order", run and #run.bosses == 2 and run.bosses[1].name == "Taragaman the Hungerer", run and #run.bosses)
   local tara = run and run.bosses[1]
@@ -817,10 +817,10 @@ check("a new aura gets a fresh entry, the rest are reused", kept == 1 and fresh 
 M.auras = {}
 -- ── loot inline in the fight detail ──
 do
-  local f = { startEpoch = M.epoch + 200000, duration = 30, outcome = "kill", foes = { "Defias Thug" } }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = f.startEpoch + 10, item = "Linen Cloth", count = 2, q = "ffffffff", src = "Defias Thug" }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = f.startEpoch + 45, money = 340, src = "Defias Thug" }      -- looted 15s after the kill
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = f.startEpoch + 120, item = "Wool Cloth", count = 1, q = "ffffffff", src = "Other" }
+  local f = { session = ns.DB.active, startEpoch = M.epoch + 200000, duration = 30, outcome = "kill", foes = { "Defias Thug" } }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = f.startEpoch + 10, item = "Linen Cloth", count = 2, q = "ffffffff", src = "Defias Thug" }
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = f.startEpoch + 45, money = 340, src = "Defias Thug" }      -- looted 15s after the kill
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = f.startEpoch + 120, item = "Wool Cloth", count = 1, q = "ffffffff", src = "Other" }
   local fl = T.fightLoot(f)
   check("fight loot includes pickups during the fight and the looting window after", #fl == 2 and fl[1].item == "Linen Cloth" and fl[2].money == 340, #fl)
   ns.DB.combat.fights[#ns.DB.combat.fights + 1] = f
@@ -1007,10 +1007,10 @@ end
 -- ── Progress tab builders (pure) ──
 do
   local L = ns.DB.story.events; local t0 = M.epoch + 400000
-  L[#L + 1] = { kind = "QUESTACCEPT", t = t0, text = "Quest:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.5, y = 0.4 }
-  L[#L + 1] = { kind = "QUESTACCEPT", t = t0 + 10, text = "Quest:  Investigate Echo Ridge", zone = "Elwynn Forest" }
-  L[#L + 1] = { kind = "QUESTDONE", t = t0 + 300, text = "Complete:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.48, y = 0.41 }
-  L[#L + 1] = { kind = "REWARD", t = t0 + 301, text = "Chose:  Worn Shortsword" }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTACCEPT", t = t0, text = "Quest:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.5, y = 0.4 }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTACCEPT", t = t0 + 10, text = "Quest:  Investigate Echo Ridge", zone = "Elwynn Forest" }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 300, text = "Complete:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.48, y = 0.41 }
+  L[#L + 1] = { s = ns.DB.active, kind = "REWARD", t = t0 + 301, text = "Chose:  Worn Shortsword" }
   local rows, sum = T.buildQuests()
   check("quests: completed and open counted", sum.done >= 1 and sum.open >= 1 and sum.rewards >= 1, sum.done .. "/" .. sum.open)
   local top = rows[1]
@@ -1018,20 +1018,20 @@ do
   local openRow; for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then openRow = r end end
   check("quests: accepted but not completed is in progress", openRow and openRow.status == "accepted")
   ns.char().reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
-  L[#L + 1] = { kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
+  L[#L + 1] = { s = ns.DB.active, kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
   local rr, rs = T.buildReputation()
   check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[3].name == "Darnassus", rr[1] and rr[1].name)
   check("reputation: last standing gain matched to the faction", rr[1].lastUp == t0 + 500 and rs.ups >= 1)
   ns.char().professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
-  L[#L + 1] = { kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
-  L[#L + 1] = { kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
-  L[#L + 1] = { kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
+  L[#L + 1] = { s = ns.DB.active, kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
+  L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
+  L[#L + 1] = { s = ns.DB.active, kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
   local pr, ps = T.buildProfessions()
   check("professions: highest skill first with rank/max", pr[1] and pr[1].name == "Mining" and pr[1].rank == 78 and pr[1].max == 150, pr[1] and pr[1].name)
   check("professions: milestones and skill-ups per profession", pr[1].tiers >= 1 and pr[1].skillups >= 1 and ps.recipes >= 1, pr[1].tiers .. "/" .. pr[1].skillups)
   -- a gathered skill-up has no prof field: its profession comes from the text
-  L[#L + 1] = { kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
-  L[#L + 1] = { kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
+  L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
+  L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
   local pr2 = T.buildProfessions()
   local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
   check("professions: a skill-up without a prof field still counts", fa and fa.skillups == 1, fa and fa.skillups)
@@ -1382,7 +1382,7 @@ do
   local t0 = M.epoch + 700000
   local L = ns.DB.story.events
   L[#L + 1] = { kind = "DUNGEON", t = t0, text = "Wailing Caverns", s = ns.DB.active }
-  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
   L[#L + 1] = { kind = "DUNGEONLEAVE", t = t0 + 600, text = "Wailing Caverns", s = ns.DB.active }
   local dv = T.fightDetail(); if dv then dv:Hide() end          -- an earlier test left the replay open; the list only rebuilds when visible
   local fl = T.fightsList(); fl:Show()
@@ -1919,6 +1919,114 @@ do
   table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
   T.journeyRefresh()
   check("#23 Home is back to the first character's counts", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() == subBefore)
+end
+-- ── #23 every pane shows the logged-in character only: a two-character save (Hart and Undertaker) ──
+do
+  local realGUID = _G.UnitGUID
+  local HART, UT = "Player-1-000001", "Player-1-000002"
+  local hs = "hart-23"
+  ns.DB.sessions[hs] = { id = hs, guid = HART, player = "Hart", startedEpoch = M.epoch + 899000, endedEpoch = M.epoch + 899900, level = 20 }
+  check("#23 panes: Hart is logged in", ns.charGuid() == HART)
+  local function asUT() _G.UnitGUID = function(u) if u == "player" then return UT end return realGUID(u) end end
+  local function asHart() _G.UnitGUID = realGUID end
+  local t0 = M.epoch + 900000
+  local L, Fz, Lg = ns.DB.story.events, ns.DB.combat.fights, ns.DB.loot.log
+  ns.DB.story.rep = ns.DB.story.rep or {}
+  local R = ns.DB.story.rep
+  local ah = ns.DB.loot.ah or {}; ns.DB.loot.ah = ah
+  for _, k in ipairs({ "posted", "sold", "bought", "returned" }) do ah[k] = ah[k] or {} end
+  -- Hart's rows, then Undertaker's: his own session record, fights by `session`, every other row by `s`
+  L[#L + 1] = { s = hs, kind = "QUESTDONE", t = t0, text = "Complete:  Hart Errand" }
+  L[#L + 1] = { s = hs, kind = "KILL", t = t0 + 1, text = "Kill: Hart Wolf" }
+  Lg[#Lg + 1] = { s = hs, t = t0 + 2, item = "Hart Cloth", count = 1, q = "ffffffff", src = "Hart Wolf" }
+  local hartF = { uid = "hart-23-f1", session = hs, startEpoch = t0 + 1, duration = 5, outcome = "kill", foes = { "Hart Wolf" } }
+  Fz[#Fz + 1] = hartF
+  ns.DB.sessions["ut-23"] = { id = "ut-23", guid = UT, player = "Undertaker", startedEpoch = t0 + 1000, endedEpoch = t0 + 5000, level = 9, xp = 70, kills = 1, deaths = 1 }
+  local nL0, nF0, nLg0, nR0 = #L, #Fz, #Lg, #R
+  L[#L + 1] = { s = "ut-23", kind = "DUNGEON", t = t0 + 1100, text = "Shadowfang Keep" }
+  L[#L + 1] = { s = "ut-23", kind = "KILL", t = t0 + 1130, text = "Kill: Undertaker Rat" }
+  L[#L + 1] = { s = "ut-23", kind = "DEATH", t = t0 + 1200, text = "You died  ·  Level 9", foe = "Undertaker Bane", zone = "Silverpine Forest" }
+  L[#L + 1] = { s = "ut-23", kind = "QUESTDONE", t = t0 + 1300, text = "Complete:  Undertaker Errand" }
+  L[#L + 1] = { s = "ut-23", kind = "QUESTACCEPT", t = t0 + 1310, text = "Quest:  Undertaker Chore" }
+  L[#L + 1] = { s = "ut-23", kind = "REP", t = t0 + 1320, text = "Undercity:  now Friendly", standing = "Friendly" }
+  L[#L + 1] = { s = "ut-23", kind = "SKILLUP", t = t0 + 1330, text = "Skill up:  Mining 99" }
+  L[#L + 1] = { s = "ut-23", kind = "DUNGEONLEAVE", t = t0 + 1400, text = "Shadowfang Keep" }
+  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9 }
+  Fz[#Fz + 1] = utF
+  Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1195, item = "Undertaker Shroud", count = 1, q = "ff0070dd", src = "Undertaker Bane" }
+  Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1196, money = 777, src = "Undertaker Bane" }
+  R[#R + 1] = { s = "ut-23", t = t0 + 1321, faction = "Undercity", amount = 25, src = "Kill: Undertaker Rat" }
+  ah.sold[#ah.sold + 1] = { s = "ut-23", t = t0 + 1500, item = "Undertaker Linen", net = 900, cut = 50 }
+  local function has(list, pred) for _, x in ipairs(list or {}) do if pred(x) then return true end end return false end
+  local function isUT(text) return type(text) == "string" and text:find("Undertaker") ~= nil end
+  local function shownRows(rows) local out = {}; for _, r in ipairs(rows or {}) do if r.shown ~= false then out[#out + 1] = r end end return out end
+
+  -- logged in as Hart: none of Undertaker's rows in any pane
+  ns.UI.Open("Home", "timeline"); M.tick()
+  local tl = host("Home").paneByKey.timeline.content
+  local tlRows = shownRows(tl.timelineRows)
+  check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
+  ns.UI.Open("Loot", "items"); M.tick()
+  local lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
+  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.nm:GetText()) or r.nm:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.nm:GetText() == "Hart Cloth" end))
+  local dv = T.fightDetail(); if dv then dv:Hide() end
+  local fl = T.fightsList(); fl:Show()
+  ns.UI.Open("Combat", "fights"); M.tick()
+  local fr = shownRows(fl.rows)
+  check("#23 Hart: Combat / Fights shows his fight (named by `session`) and leaves out Undertaker's", has(fr, function(r) return r.fight == hartF end) and not has(fr, function(r) return r.fight == utF end), #fr)
+  check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.buildRuns(), function(r) return r.name == "Shadowfang Keep" end))
+  check("#23 Hart: Combat / Deaths leaves out Undertaker's death", not has(T.collectDeaths(), function(d) return d.killer == "Undertaker Bane" end))
+  local qRows = T.buildQuests()
+  check("#23 Hart: Character / Quests leaves out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
+  local _, repSum = T.buildReputation()
+  local repUps = repSum.ups
+  check("#23 Hart: reputation history leaves out Undertaker's gains", not has(T.buildRepHistory(), function(r) return r.faction == "Undercity" end))
+  local mineUps = #T.buildSkillups("Mining")
+  check("#23 Hart: profession history leaves out Undertaker's skill-ups", not has(T.buildSkillups("Mining"), function(r) return r.rank == 99 end))
+  check("#23 Hart: Loot / Auctions leaves out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
+  check("#23 Hart: Home / Sessions leaves out Undertaker's session", #T.sessionRows() > 0 and not has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end))
+  check("#23 Hart: a fight's loot leaves out another character's pickups", #T.fightLoot(utF) == 0)
+  check("#23 isMine reads a fight's `session` (Home counted none of the real fights in 0.9.31)", ns.isMine(hartF) and not ns.isMine(utF) and not ns.isMine({ session = "no-such-session" }))
+
+  -- logged in as Undertaker: only his rows
+  asUT()
+  ns.UI.Open("Home", "timeline"); M.tick()
+  tlRows = shownRows(tl.timelineRows)
+  check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
+  ns.UI.Open("Loot", "items"); M.tick()
+  lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
+  check("#23 Undertaker: Loot / Items shows only his item and coin", #lr == 2 and lr[1].nm:GetText() == T.fmtMoney(777) and lr[2].nm:GetText() == "Undertaker Shroud", #lr)
+  ns.UI.Open("Combat", "fights"); M.tick()
+  fr = shownRows(fl.rows)
+  check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
+  local runs = T.buildRuns()
+  check("#23 Undertaker: Combat / Dungeons shows only his run, with his fight, kill, death and loot", #runs == 1 and runs[1].name == "Shadowfang Keep" and #runs[1].fights == 1 and runs[1].kills == 1 and runs[1].deaths == 1 and runs[1].items == 1 and runs[1].gold == 777, #runs)
+  local ds = T.collectDeaths()
+  check("#23 Undertaker: Combat / Deaths shows only his death, linked to his fight", #ds == 1 and ds[1].killer == "Undertaker Bane" and ds[1].fight == utF, #ds)
+  qRows = T.buildQuests()
+  check("#23 Undertaker: Character / Quests shows only his quests", #qRows == 2 and isUT(qRows[1].name) and isUT(qRows[2].name), #qRows)
+  local _, utRep = T.buildReputation()
+  local rh = T.buildRepHistory()
+  check("#23 Undertaker: reputation shows only his gain and his new standing", utRep.ups == 1 and #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
+  check("#23 Undertaker: Loot / Auctions shows only his sale", #(ns.Market.buildAuctions()) == 1 and (ns.Market.buildAuctions())[1].item == "Undertaker Linen")
+  local sr = T.sessionRows()
+  check("#23 Undertaker: Home / Sessions shows only his session", #sr == 1 and sr[1].id == "ut-23", #sr)
+  check("#23 Undertaker: his fight's loot is his", #T.fightLoot(utF) == 2)
+
+  -- back on Hart: the same views as before; nothing stored was changed by the filtering
+  asHart()
+  local _, repBack = T.buildReputation()
+  check("#23 back on Hart: his reputation and profession counts are unchanged", repBack.ups == repUps and #T.buildSkillups("Mining") == mineUps)
+  check("#23 filtering changes nothing stored: every row is still in the save", #L == nL0 + 8 and #Fz == nF0 + 1 and #Lg == nLg0 + 2 and #R == nR0 + 1 and ns.DB.sessions["ut-23"] ~= nil)
+  -- no GUID yet: there is nothing to tell the characters apart by, so every row shows
+  _G.UnitGUID = function() return nil end
+  check("#23 no GUID: every character's rows show", has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end) and #ns.mine(Fz) == #Fz)
+  asHart()
+  ns.UI.Open("Home", "overview")
+  for _ = #L, nL0 + 1, -1 do table.remove(L) end
+  table.remove(Fz); table.remove(Lg); table.remove(Lg); table.remove(R); table.remove(ah.sold)
+  table.remove(Fz); table.remove(L); table.remove(L); table.remove(Lg)   -- Hart's marker rows
+  ns.DB.sessions["ut-23"] = nil; ns.DB.sessions[hs] = nil
 end
 -- #23 migration: the account-wide block of a schema 2 save is kept once as characterLegacy, never attributed
 do

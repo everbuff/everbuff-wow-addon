@@ -12,8 +12,8 @@ local C = ns.UI.C
 local listRebuild, view
 
 local function collectDeaths()
-  local log = (ns.DB and ns.DB.story.events) or {}
-  local fightsAll = (ns.Fights and ns.Fights.list and ns.Fights.list()) or {}
+  local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's only (#23)
+  local fightsAll = ns.mine(ns.Fights and ns.Fights.list and ns.Fights.list())
   local out = {}
   for _, e in ipairs(log) do
     if e.kind == "DEATH" then

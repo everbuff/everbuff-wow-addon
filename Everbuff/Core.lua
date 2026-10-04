@@ -118,13 +118,41 @@ function ns.char()
   return c
 end
 
--- Whether a session-stamped row (fight, loot row, event) is the logged-in character's (#23): its session record carries
--- the character's GUID. Before the GUID is known every row counts, since there is nothing to tell them apart by.
+-- Whether a session-stamped row (fight, loot row, event, trade) is the logged-in character's (#23): its session record
+-- carries the character's GUID. Fights name their session in `session`, every other row in `s`. Before the GUID is
+-- known every row counts, since there is nothing to tell them apart by.
+local function rowSession(row) return row and (row.s or row.session) end
 function ns.isMine(row)
   local g = ns.charGuid()
   if not g then return true end
-  local s = row and row.s and ns.DB and ns.DB.sessions and ns.DB.sessions[row.s]
+  local sid = rowSession(row)
+  local s = sid and ns.DB and ns.DB.sessions and ns.DB.sessions[sid]
   return s ~= nil and s.guid == g
+end
+-- Whether a session record is the logged-in character's (#23), by the same rule as ns.isMine.
+function ns.isMySession(sess)
+  local g = ns.charGuid()
+  if not g then return true end
+  return sess ~= nil and sess.guid == g
+end
+-- The rows of `list` that are the logged-in character's, in order (#23). Every pane lists through this so it shows
+-- one character; the stored lists stay as they are (the desktop and the backend read every character's rows).
+function ns.mine(list)
+  local out = {}
+  if not list then return out end
+  local g = ns.charGuid()
+  if not g then for i = 1, #list do out[i] = list[i] end return out end
+  local sessions = (ns.DB and ns.DB.sessions) or {}
+  local ok = {}   -- session id -> true/false, so a long list reads each session record once
+  for _, r in ipairs(list) do
+    local sid = rowSession(r)
+    if sid ~= nil then
+      local m = ok[sid]
+      if m == nil then local s = sessions[sid]; m = (s ~= nil and s.guid == g); ok[sid] = m end
+      if m then out[#out + 1] = r end
+    end
+  end
+  return out
 end
 
 -- Drop the fights, loot rows and events whose session record is gone (#17): the backend selects all three by
