@@ -118,6 +118,15 @@ function ns.char()
   return c
 end
 
+-- Whether a session-stamped row (fight, loot row, event) is the logged-in character's (#23): its session record carries
+-- the character's GUID. Before the GUID is known every row counts, since there is nothing to tell them apart by.
+function ns.isMine(row)
+  local g = ns.charGuid()
+  if not g then return true end
+  local s = row and row.s and ns.DB and ns.DB.sessions and ns.DB.sessions[row.s]
+  return s ~= nil and s.guid == g
+end
+
 -- Drop the fights, loot rows and events whose session record is gone (#17): the backend selects all three by
 -- session id, so a row without its session never uploads. Returns the number of rows removed.
 function ns.dropOrphans(db)

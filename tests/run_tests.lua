@@ -1897,6 +1897,28 @@ do
   M.secrets[secretG] = nil
   _G.UnitGUID = realGUID
   check("#23 back on the first character: its own block again", ns.char() == a)
+  -- Home: the GOLD card is the character's own ledger, and kills, deaths and fights count the character's sessions only
+  a.gold.balance = 123456
+  local ovc = T.journeyRefresh()
+  check("#23 Home GOLD shows the logged-in character's balance", ovc and ovc.cGold.value:GetText() == T.journeyMoney(123456), ovc and ovc.cGold.value:GetText())
+  local before = ovc.cKills.value:GetText()
+  ns.DB.sessions["other-23"] = { guid = "Player-1-000002", startedEpoch = 1 }
+  local ev = ns.DB.story.events
+  ev[#ev + 1] = { kind = "KILL", text = "Kill: Wolf", s = "other-23", t = 1 }
+  ev[#ev + 1] = { kind = "DEATH", s = "other-23", t = 2 }
+  local fl = ns.DB.combat.fights
+  fl[#fl + 1] = { uid = "other-23-f1", s = "other-23", startedEpoch = 1, duration = 1 }
+  T.journeyRefresh()
+  check("#23 Home kills, deaths and fights leave out another character's sessions", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() ~= nil, ovc.cKills.value:GetText())
+  check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
+  local subBefore = ovc.cKills.sub:GetText()
+  _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
+  T.journeyRefresh()
+  check("#23 on the other character Home counts its kill, death and fight", ovc.cKills.value:GetText() == "1 kills" and ovc.cKills.sub:GetText():find("^1 death ") ~= nil and ovc.cKills.sub:GetText():find("1 fights") ~= nil, tostring(ovc.cKills.value:GetText()) .. " | " .. tostring(ovc.cKills.sub:GetText()))
+  _G.UnitGUID = realGUID
+  table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
+  T.journeyRefresh()
+  check("#23 Home is back to the first character's counts", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() == subBefore)
 end
 -- #23 migration: the account-wide block of a schema 2 save is kept once as characterLegacy, never attributed
 do

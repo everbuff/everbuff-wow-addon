@@ -119,7 +119,7 @@ refresh = function(content)
   if not content or not content.cLevel then return end
   local D = ns.DB or {}
   local db = (ns.DB and ns.char()) or {}                  -- CHARACTER: xp, played, durability, ...
-  local story, lootNS = D.story or {}, D.loot or {}
+  local story = D.story or {}
   if content.welcome then
     local fresh = #(story.events or {}) == 0 and #((D.combat or {}).fights or {}) == 0
     if fresh and not (content.onboard and content.onboard:IsShown()) then content.welcome:Show() else content.welcome:Hide() end
@@ -161,16 +161,19 @@ refresh = function(content)
   content.cPlayed.sub:SetText(pl.level and ("this level: " .. fmtTime(pl.level)) or "play a bit to record")
 
   -- Gold
-  local gold = lootNS.gold or {}
+  local gold = db.gold or {}   -- the character's own ledger (#23); loot.gold is retired
   content.cGold.value:SetText(fmtMoney(gold.balance or 0)); content.cGold.value:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
   content.cGold.sub:SetText(("looted %s  ·  spent %s"):format(fmtMoney(gold.looted or 0), fmtMoney(gold.spent or 0)))
 
   -- Combat (from the event timeline: every kill/death lands there)
   local kills, deaths = 0, 0
-  for _, e in ipairs(story.events or {}) do
-    if e.kind == "KILL" then kills = kills + 1 elseif e.kind == "DEATH" then deaths = deaths + 1 end
+  for _, e in ipairs(story.events or {}) do   -- the logged-in character's only (#23)
+    if ns.isMine(e) then
+      if e.kind == "KILL" then kills = kills + 1 elseif e.kind == "DEATH" then deaths = deaths + 1 end
+    end
   end
-  local fights = (ns.Fights and ns.Fights.list and #ns.Fights.list()) or 0
+  local fights = 0
+  for _, fi in ipairs((ns.Fights and ns.Fights.list and ns.Fights.list()) or {}) do if ns.isMine(fi) then fights = fights + 1 end end
   content.cKills.value:SetText(commas(kills) .. " kills"); content.cKills.value:SetTextColor(C.green[1], C.green[2], C.green[3])
   content.cKills.sub:SetText(("%d death%s  ·  %d fights recorded"):format(deaths, deaths == 1 and "" or "s", fights))
 
@@ -381,3 +384,4 @@ UI.registerPane("Home", 3, "Sessions", buildSessions, function() if sessionsRebu
 ns._test = ns._test or {}
 ns._test.sessionRows = sessionRows
 ns._test.fmtTime, ns._test.commas, ns._test.journeyMoney = fmtTime, commas, fmtMoney
+ns._test.journeyRefresh = function() if view then refresh(view) end return view end
