@@ -118,7 +118,7 @@ end
 refresh = function(content)
   if not content or not content.cLevel then return end
   local D = ns.DB or {}
-  local db = D.character or {}                    -- CHARACTER: xp, played, durability, ...
+  local db = (ns.DB and ns.char()) or {}                  -- CHARACTER: xp, played, durability, ...
   local story, lootNS = D.story or {}, D.loot or {}
   if content.welcome then
     local fresh = #(story.events or {}) == 0 and #((D.combat or {}).fights or {}) == 0

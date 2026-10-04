@@ -247,7 +247,7 @@ local function buildList(content)
   local lock = UI.FS(v, "GameFontHighlightSmall", C.gold); lock:SetPoint("TOPLEFT", 2, -6); lock:SetWidth(660); lock:SetJustifyH("LEFT")
   v.lockFS = lock
   local function lockText()
-    local L = (ns.DB and ns.DB.character and ns.DB.character.lockouts) or {}
+    local L = (ns.DB and ns.char().lockouts) or {}
     if #L == 0 then return "|cff8c9197Not saved to any instance.|r" end
     local nowT = (GetServerTime and GetServerTime()) or time()
     local bits = {}

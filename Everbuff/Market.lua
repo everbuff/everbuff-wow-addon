@@ -63,9 +63,10 @@ local function ah()
   return a
 end
 local function ch()
-  ns.DB.character.crafts = ns.DB.character.crafts or {}
-  ns.DB.character.recipes = ns.DB.character.recipes or {}
-  return ns.DB.character
+  local c = ns.char()
+  c.crafts = c.crafts or {}
+  c.recipes = c.recipes or {}
+  return c
 end
 
 -- ── crafting ────────────────────────────────────────────────────────────────

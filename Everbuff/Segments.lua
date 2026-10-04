@@ -46,7 +46,7 @@ function ns.surname()
   return (type(sur) == "string" and sur ~= "") and sur or nil
 end
 
--- The session's gold ledger (everbuff-backend #46): the keys of the lifetime loot.gold except balance, in copper,
+-- The session's gold ledger (everbuff-backend #46): the keys of the character's lifetime gold ledger (characters[guid].gold) except balance, in copper,
 -- all present from the start so a zero is a known zero. Emitter's money handler credits it.
 R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",
   "flights", "auctions", "mailSpent", "other" }

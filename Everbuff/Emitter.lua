@@ -532,7 +532,7 @@ end
 -- gold SINK context: which window was open when the purse went down decides what the gold went to
 local merchantOpen, trainerOpen, taxiUntil, repairUntil = false, false, 0, 0
 if hooksecurefunc and RepairAllItems then hooksecurefunc("RepairAllItems", function() repairUntil = GetTime() + 2 end) end
-local function goldDB() ns.DB.loot.gold = ns.DB.loot.gold or { looted = 0, gained = 0, spent = 0 }; return ns.DB.loot.gold end
+local function goldDB() local c = ns.char(); c.gold = c.gold or { looted = 0, gained = 0, spent = 0 }; return c.gold end   -- the character's own ledger (#23)
 
 -- ── mailbox: auction proceeds, items and coin taken from the inbox ─────────────
 -- Classic prints NO chat line when you take an item or coin out of a mail, so the inbox API hooks are the
@@ -665,7 +665,7 @@ end
 local sessionScratch = {}
 local function sessionDB() return (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or sessionScratch end
 
--- One credit to the gold ledger: the lifetime total (loot.gold) and, from 0.9.23, the running session's own ledger
+-- One credit to the gold ledger: the character's lifetime total (characters[guid].gold, #23) and, from 0.9.23, the running session's own ledger
 -- (session.gold, everbuff-backend #46, approved 2026-09-29), same keys, at the same moment. A session that began
 -- before 0.9.23 has no ledger and keeps none, so a half-filled one is never mistaken for the whole session.
 local function credit(g, ses, key, n)
@@ -756,7 +756,7 @@ local function onDurability()
       end
     end
   end
-  if sumM > 0 then ns.DB.character.durability = { pct = math.floor(sumC / sumM * 100 + 0.5), at = (GetServerTime and GetServerTime()) or time() } end
+  if sumM > 0 then ns.char().durability = { pct = math.floor(sumC / sumM * 100 + 0.5), at = (GetServerTime and GetServerTime()) or time() } end
 end
 
 local function onXP()
@@ -764,7 +764,7 @@ local function onXP()
   local xp = plainNum(rd(UnitXP, "player"))
   local mx = plainNum(rd(UnitXPMax, "player"))
   if not xp or not mx then return end
-  local x = ns.DB.character.xp or { gained = 0 }; ns.DB.character.xp = x
+  local x = ns.char().xp or { gained = 0 }; ns.char().xp = x
   if x.last ~= nil and x.lastMax ~= nil then
     local d = xp - x.last
     if d < 0 then d = (x.lastMax - x.last) + xp end      -- crossed a level: remainder of old bar + new
@@ -777,14 +777,15 @@ end
 local function onPlayed(total, levelt)
   if not ns.DB then return end
   total = plainNum(total); if not total then return end
-  ns.DB.character.played = ns.DB.character.played or {}
-  ns.DB.character.played.total = total
-  ns.DB.character.played.level = plainNum(levelt)
-  ns.DB.character.played.atEpoch = (GetServerTime and GetServerTime()) or time()
+  local c = ns.char()
+  c.played = c.played or {}
+  c.played.total = total
+  c.played.level = plainNum(levelt)
+  c.played.atEpoch = (GetServerTime and GetServerTime()) or time()
   local lvl = plainNum(rd(UnitLevel, "player"))
   if lvl and lvl > 0 then
-    ns.DB.character.playedAtLevel = ns.DB.character.playedAtLevel or {}
-    ns.DB.character.playedAtLevel[lvl] = total          -- stamp real /played at each level for the pace chart
+    c.playedAtLevel = c.playedAtLevel or {}
+    c.playedAtLevel[lvl] = total          -- stamp real /played at each level for the pace chart
   end
 end
 
@@ -891,7 +892,7 @@ local function scanProfessions(fire)
     end
   end
   for name, pr in pairs(out) do profSeen[name] = pr.rank end
-  if ns.DB and next(out) then ns.DB.character.professions = out end
+  if ns.DB and next(out) then ns.char().professions = out end
   profSeeded = true
 end
 
@@ -962,7 +963,7 @@ local function scanRep(fire)
       end
     end
   end)
-  if ns.DB and next(snap) then ns.DB.character.reputation = snap end
+  if ns.DB and next(snap) then ns.char().reputation = snap end
 end
 
 ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
@@ -976,9 +977,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       Emitter.event("ZONE", { zone = z })
       -- the journey milestone is the FIRST time you set foot somewhere, not every re-entry
       if ns.DB then
-        ns.DB.character.seenZones = ns.DB.character.seenZones or {}
-        if not ns.DB.character.seenZones[z] then
-          ns.DB.character.seenZones[z] = (GetServerTime and GetServerTime()) or time()
+        ns.char().seenZones = ns.char().seenZones or {}
+        if not ns.char().seenZones[z] then
+          ns.char().seenZones[z] = (GetServerTime and GetServerTime()) or time()
           Emitter.event("FIRSTZONE", { zone = z })
         end
       end
@@ -999,26 +1000,26 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     local nowInst = (itype == "party" or itype == "raid")
     -- de-dup across reload/relog: wasInstance resets to false on every load, so we key the
     -- "already announced this dungeon" state on ns.DB (survives /reload) to avoid a duplicate DUNGEON.
-    local announced = ns.DB and ns.DB.story.inInstance
+    local announced = ns.DB and ns.char().inInstance   -- per character (#23): another character is not in this dungeon
     -- state FIRST, then the event/toast: if presentation ever throws, the dedupe state is still correct
     if nowInst and announced ~= iname then
-      if ns.DB then ns.DB.story.inInstance = iname end
+      if ns.DB then ns.char().inInstance = iname end
       Emitter.event("DUNGEON", { name = iname })
     elseif (not nowInst) and announced then
-      if ns.DB then ns.DB.story.inInstance = nil end
+      if ns.DB then ns.char().inInstance = nil end
       Emitter.event("DUNGEONLEAVE", { name = lastInstanceName or announced or "the dungeon" })
     end
     wasInstance = nowInst
     if nowInst then lastInstanceName = iname end
     lastZone = GetRealZoneText()
     if ns.DB and lastZone then   -- the zone you log into is "seen", not discovered
-      ns.DB.character.seenZones = ns.DB.character.seenZones or {}
-      ns.DB.character.seenZones[lastZone] = ns.DB.character.seenZones[lastZone] or ((GetServerTime and GetServerTime()) or time())
+      ns.char().seenZones = ns.char().seenZones or {}
+      ns.char().seenZones[lastZone] = ns.char().seenZones[lastZone] or ((GetServerTime and GetServerTime()) or time())
     end
     diffRoster(false)   -- seed the roster without announcing everyone on login
     onDurability()      -- seed gear health
     scanProfessions(false)   -- seed profession ranks without announcing
-    if GetAverageItemLevel and ns.DB then local _, eq = GetAverageItemLevel(); ns.DB.character.ilvl = plainNum(eq) or ns.DB.character.ilvl end
+    if GetAverageItemLevel and ns.DB then local _, eq = GetAverageItemLevel(); ns.char().ilvl = plainNum(eq) or ns.char().ilvl end
   elseif event == "PLAYER_REGEN_DISABLED" then
     setCombat(true)
   elseif event == "PLAYER_REGEN_ENABLED" then
@@ -1057,14 +1058,14 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     Emitter.event("QUESTDONE", { name = questTitle(a1, nil) })
     Emitter.questMoney(plainNum(a3))
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
-    if qxp and qxp > 0 and ns.DB then ns.DB.character.xp = ns.DB.character.xp or {}; ns.DB.character.xp.fromQuests = (ns.DB.character.xp.fromQuests or 0) + qxp end
+    if qxp and qxp > 0 and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromQuests = (ns.char().xp.fromQuests or 0) + qxp end
   elseif event == "ENCOUNTER_START" then
     Emitter.event("BOSS", { name = a2 or "boss" })
   elseif event == "ENCOUNTER_END" then
     Emitter.event(a5 == 1 and "KILL" or "WIPE", { name = a2 or "boss" })
   elseif event == "PLAYER_DEAD" then
     wasDead = true; deadAt = GetTime()
-    pushed.durBefore = ns.DB and ns.DB.character.durability and ns.DB.character.durability.pct or nil   -- gear health going in
+    pushed.durBefore = ns.DB and ns.char().durability and ns.char().durability.pct or nil   -- gear health going in
     local hit = pushed.lastHit
     Emitter.event("DEATH", { foe = (hit and hit.name and (GetTime() - hit.at) < 10) and hit.name or nil })
   elseif event == "PLAYER_UNGHOST" or event == "PLAYER_ALIVE" then
@@ -1075,7 +1076,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       -- stamp the downtime on the DEATH row so the Deaths tab can show how long the corpse run took
       if down and ns.DB and ns.DB.story.events then
         onDurability()   -- fresh read after the corpse run / spirit healer
-        local after = ns.DB.character.durability and ns.DB.character.durability.pct
+        local after = ns.char().durability and ns.char().durability.pct
         local loss = (pushed.durBefore and after) and math.max(0, pushed.durBefore - after) or nil
         for i = #ns.DB.story.events, 1, -1 do local e = ns.DB.story.events[i]; if e.kind == "DEATH" then e.downtime = math.floor(down); e.durLoss = loss; break end end
         pushed.durBefore = nil
@@ -1141,12 +1142,12 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
                             players = plainNum(maxPlayers), bosses = plainNum(numEnc), down = plainNum(progress), extended = extended and true or nil }
         end
       end
-      ns.DB.character.lockouts = out
+      ns.char().lockouts = out
     end
   elseif event == "SKILL_LINES_CHANGED" then scanProfessions(profSeeded)
   elseif event == "CHAT_MSG_COMBAT_XP_GAIN" then
     local kxp = killXpFrom(a1 or "")
-    if kxp and ns.DB then ns.DB.character.xp = ns.DB.character.xp or {}; ns.DB.character.xp.fromKills = (ns.DB.character.xp.fromKills or 0) + kxp end
+    if kxp and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromKills = (ns.char().xp.fromKills or 0) + kxp end
   elseif event == "NEW_RECIPE_LEARNED" then
     local nm
     if a1 and C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo then local ok, info = pcall(C_TradeSkillUI.GetRecipeInfo, a1); nm = ok and info and safeStr(info.name) end
@@ -1158,9 +1159,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local _, eq = GetAverageItemLevel()
       eq = plainNum(eq)
       if eq then
-        local prev = tonumber(ns.DB.character.ilvl)
+        local prev = tonumber(ns.char().ilvl)
         if prev and eq > prev + 0.05 then Emitter.event("UPGRADE", { level = math.floor(eq + 0.5) }) end
-        ns.DB.character.ilvl = eq
+        ns.char().ilvl = eq
       end
     end
   elseif event == "PLAYER_CONTROL_LOST" then
@@ -1301,7 +1302,7 @@ function Emitter.landFlight()
   if not flightStart or not flightStart.boarded then return end
   local dur = math.max(0, GetTime() - flightStart.t)
   local to = (GetRealZoneText and GetRealZoneText()) or "?"
-  if ns.DB then ns.DB.character.flightTime = (ns.DB.character.flightTime or 0) + dur end
+  if ns.DB then ns.char().flightTime = (ns.char().flightTime or 0) + dur end
   local from = flightStart.zone
   flightStart = nil
   Emitter.event("FLIGHTTRIP", { name = ("%s to %s (%dm %ds)"):format(from, to, math.floor(dur / 60), math.floor(dur % 60)), duration = dur }, true)
@@ -1504,7 +1505,7 @@ if ns.UI and ns.UI.registerTab then
       return b
     end
     clearBtn("Clear fights", 0, function() if ns.DB then ns.DB.combat.fights = {}; ns.DB.combat.fightSeq = 0 end end)
-    clearBtn("Clear loot", 140, function() if ns.DB then ns.DB.loot.log = {}; if ns.DB.loot.gold then ns.DB.loot.gold.looted = 0 end end end)
+    clearBtn("Clear loot", 140, function() if ns.DB then ns.DB.loot.log = {}; local g = ns.char().gold; if g then g.looted = 0 end end end)
     clearBtn("Clear events", 280, function() if ns.DB then ns.DB.story.events = {} end end)
 
     local sampHdr = ns.UI.FS(data, "GameFontNormal", C.gold); sampHdr:SetPoint("TOPLEFT", 14, -104); sampHdr:SetText("Fight stat sampling")
@@ -1867,7 +1868,7 @@ if ns.UI and ns.UI.registerTab then
       -- totals line: gold looted (running) + item pickups counted
       local items = 0
       for _, e in ipairs(loot) do if not e.money then items = items + 1 end end
-      local goldLooted = (ns.DB and ns.DB.loot.gold and ns.DB.loot.gold.looted) or 0
+      local goldLooted = (ns.DB and ns.char().gold and ns.char().gold.looted) or 0
       totals:SetText(("Looted:  %s  ·  %d item%s"):format(fmtMoney(goldLooted), items, items == 1 and "" or "s"))
       local y, idx = 0, 0
       local q = search:GetText()

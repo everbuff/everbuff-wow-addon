@@ -20,7 +20,7 @@ end
 
 local function refresh(c)
   if not c or not c.cBalance then return end
-  local g = (ns.DB and ns.DB.loot.gold) or {}
+  local g = (ns.DB and ns.char().gold) or {}
   c.cBalance.value:SetText(fmtMoney(g.balance or 0))
   c.cLooted.value:SetText(fmtMoney(g.looted or 0))
   c.cGained.value:SetText(fmtMoney(g.gained or 0))

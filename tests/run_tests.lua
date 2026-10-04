@@ -22,7 +22,8 @@ local T = ns._test or {}
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
 check("ADDON_LOADED creates ns.DB", type(ns.DB) == "table")
-check("db.gold/xp/played initialised", ns.DB and ns.DB.loot.gold and ns.DB.character.xp and ns.DB.character.played)
+check("db.gold/xp/played initialised", ns.DB and ns.char().gold and ns.char().xp and ns.char().played)
+check("#23 the character block lives under the player GUID", ns.DB.characters["Player-1-000001"] == ns.char() and ns.DB.character == nil and ns.DB.loot.gold == nil)
 M.money = 5000; M.xp = 100
 M.fire("PLAYER_ENTERING_WORLD")
 M.runTimers()   -- rep seed, /played request, welcome line
@@ -68,30 +69,30 @@ check("loot count parsed x3", ns.DB.loot.log[1] and ns.DB.loot.log[1].count == 3
 
 -- ── gold via the REAL PLAYER_MONEY handler ──
 M.money = 5250; M.fire("PLAYER_MONEY")                       -- +250, no loot window -> gained only
-check("gold gained", ns.DB.loot.gold.gained == 250, ns.DB.loot.gold.gained)
-check("gold not looted (no window)", (ns.DB.loot.gold.looted or 0) == 0, ns.DB.loot.gold.looted)
+check("gold gained", ns.char().gold.gained == 250, ns.char().gold.gained)
+check("gold not looted (no window)", (ns.char().gold.looted or 0) == 0, ns.char().gold.looted)
 M.units.target = { name = "Kobold Miner", hostile = true, dead = true, guid = "Creature-0-1-1-1-6-000A" }
 M.fire("LOOT_OPENED"); M.money = 5330; M.fire("PLAYER_MONEY")   -- +80 inside a loot window -> looted
-check("gold looted in loot window", ns.DB.loot.gold.looted == 80, ns.DB.loot.gold.looted)
+check("gold looted in loot window", ns.char().gold.looted == 80, ns.char().gold.looted)
 local coin = ns.DB.loot.log[#ns.DB.loot.log]
 check("coin row logged with source", coin and coin.money == 80 and coin.src == "Kobold Miner", coin and coin.src)
 M.money = 5000; M.fire("PLAYER_MONEY")                       -- -330 spent
-check("gold spent", ns.DB.loot.gold.spent == 330, ns.DB.loot.gold.spent)
-check("gold balance tracks", ns.DB.loot.gold.balance == 5000)
+check("gold spent", ns.char().gold.spent == 330, ns.char().gold.spent)
+check("gold balance tracks", ns.char().gold.balance == 5000)
 M.units.target = nil
 
 -- ── XP via PLAYER_XP_UPDATE (incl. crossing a level) ──
 M.xp = 100; M.fire("PLAYER_XP_UPDATE")           -- baseline
 M.xp = 400; M.fire("PLAYER_XP_UPDATE")           -- +300
-check("xp gained", ns.DB.character.xp.gained == 300, ns.DB.character.xp.gained)
+check("xp gained", ns.char().xp.gained == 300, ns.char().xp.gained)
 M.xp = 50; M.xpmax = 1200; M.fire("PLAYER_XP_UPDATE")   -- leveled: (1000-400) + 50 = 650 more
-check("xp level-cross accounted", ns.DB.character.xp.gained == 950, ns.DB.character.xp.gained)
-check("xp cur/max stored", ns.DB.character.xp.cur == 50 and ns.DB.character.xp.max == 1200)
+check("xp level-cross accounted", ns.char().xp.gained == 950, ns.char().xp.gained)
+check("xp cur/max stored", ns.char().xp.cur == 50 and ns.char().xp.max == 1200)
 
 -- ── /played ──
 M.fire("TIME_PLAYED_MSG", 90061, 3600)
-check("played total stored", ns.DB.character.played.total == 90061)
-check("played stamped at level", ns.DB.character.playedAtLevel and ns.DB.character.playedAtLevel[12] == 90061)
+check("played total stored", ns.char().played.total == 90061)
+check("played stamped at level", ns.char().playedAtLevel and ns.char().playedAtLevel[12] == 90061)
 
 -- ── fight lifecycle through the REAL recorder ──
 M.units.target = { name = "Kobold Miner", hostile = true, guid = "Creature-0-1-1-1-6-000B", cls = "normal" }
@@ -287,7 +288,7 @@ check("fight carries fractional local clock", lf and type(lf.startLocalHi) == "n
 check("anchor agrees with duration", lf and math.abs((lf.endLocalHi - lf.startLocalHi) - lf.duration) < 0.01)
 -- ── gold sink attribution (window open when the purse moved) ──
 M.money = 5000; M.fire("PLAYER_MONEY")                          -- re-baseline
-local g0 = ns.DB.loot.gold; local other0 = g0.other or 0   -- earlier tests already spent into "other"
+local g0 = ns.char().gold; local other0 = g0.other or 0   -- earlier tests already spent into "other"
 M.fire("MERCHANT_SHOW"); M.money = 4850; M.fire("PLAYER_MONEY")   -- bought something
 check("vendor spend attributed", g0.vendor == 150, g0.vendor)
 M.money = 4890; M.fire("PLAYER_MONEY")                           -- sold something
@@ -301,12 +302,12 @@ check("unattributed spend lands in other", g0.other == other0 + 65, g0.other)
 -- ── durability + broken gear ──
 M.dur = { [1] = { 50, 100 }, [16] = { 0, 100 } }
 M.fire("UPDATE_INVENTORY_DURABILITY")
-check("durability aggregated", ns.DB.character.durability and ns.DB.character.durability.pct == 25, ns.DB.character.durability and ns.DB.character.durability.pct)
+check("durability aggregated", ns.char().durability and ns.char().durability.pct == 25, ns.char().durability and ns.char().durability.pct)
 check("BROKEN milestone for the main hand", count(ns.DB.story.events, function(e) return e.kind == "BROKEN" and (e.text or ""):find("Main hand") ~= nil end) == 1)
 M.fire("UPDATE_INVENTORY_DURABILITY")
 check("BROKEN not repeated while still broken", count(ns.DB.story.events, function(e) return e.kind == "BROKEN" end) == 1)
 M.dur[16] = { 100, 100 }; M.fire("UPDATE_INVENTORY_DURABILITY")
-check("durability updates after repair", ns.DB.character.durability.pct == 75, ns.DB.character.durability.pct)
+check("durability updates after repair", ns.char().durability.pct == 75, ns.char().durability.pct)
 M.dur[16] = { 0, 100 }; M.fire("UPDATE_INVENTORY_DURABILITY")
 check("BROKEN fires again after a repair-then-break", count(ns.DB.story.events, function(e) return e.kind == "BROKEN" end) == 2)
 M.dur = {}
@@ -314,7 +315,7 @@ M.dur = {}
 M.fire("NEW_MOUNT_ADDED", 458)
 check("mount collected with name", count(ns.DB.story.events, function(e) return e.kind == "COLLECT" and (e.text or ""):find("Brown Horse") ~= nil end) == 1)
 M.profs[1] = { name = "Mining", rank = 70, max = 75 }; M.fire("SKILL_LINES_CHANGED")   -- first sight: seeds only
-check("profession snapshot stored", ns.DB.character.professions and ns.DB.character.professions.Mining and ns.DB.character.professions.Mining.rank == 70)
+check("profession snapshot stored", ns.char().professions and ns.char().professions.Mining and ns.char().professions.Mining.rank == 70)
 check("no tier event on first sight", count(ns.DB.story.events, function(e) return e.kind == "PROFTIER" end) == 0)
 M.profs[1].rank = 76; M.profs[1].max = 150; M.fire("SKILL_LINES_CHANGED")
 check("PROFTIER at 75", count(ns.DB.story.events, function(e) return e.kind == "PROFTIER" and (e.text or ""):find("Mining 75") ~= nil end) == 1)
@@ -368,7 +369,7 @@ check("minimap button built on entering world", _G.EverbuffMinimapButton ~= nil)
 M.zone = "Elwynn Forest"; M.onTaxi = true; M.fire("PLAYER_CONTROL_LOST")
 M.now = M.now + 200; M.zone = "Westfall"; M.onTaxi = false; M.fire("PLAYER_CONTROL_GAINED")
 check("flight trip recorded with route + duration", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and (e.text or ""):find("Elwynn Forest to Westfall %(3m 20s%)") ~= nil end) == 1)
-check("total flight time accumulated", ns.DB.character.flightTime == 200, ns.DB.character.flightTime)
+check("total flight time accumulated", ns.char().flightTime == 200, ns.char().flightTime)
 M.fire("PLAYER_CONTROL_GAINED")
 check("control regained without a flight is ignored", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 1)
 -- #11: the taxi flag raised after control is lost (or no control events at all): the TakeTaxiNode watch
@@ -377,7 +378,7 @@ M.now = M.now + 1; M.onTaxi = true; M.tick()
 M.now = M.now + 89; M.zone = "Duskwood"; M.onTaxi = false; M.tick()
 check("#11 flight recorded from the taxi flag", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and (e.text or ""):find("Westfall to Duskwood %(1m 30s%)") ~= nil end) == 1)
 M.fire("PLAYER_CONTROL_GAINED"); M.tick()
-check("#11 the same flight is not recorded twice", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2 and ns.DB.character.flightTime == 290, ns.DB.character.flightTime)
+check("#11 the same flight is not recorded twice", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" end) == 2 and ns.char().flightTime == 290, ns.char().flightTime)
 check("#11 each trip carries its seconds as duration", count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and type(e.duration) == "number" end) == 2 and count(ns.DB.story.events, function(e) return e.kind == "FLIGHTTRIP" and e.duration == 90 end) == 1)
 TakeTaxiNode(4); for _ = 1, 12 do M.now = M.now + 1; M.tick() end
 M.fire("PLAYER_CONTROL_LOST"); M.now = M.now + 4; M.fire("PLAYER_CONTROL_GAINED")
@@ -406,7 +407,7 @@ do
   ns.msg = oldMsg
 end
 -- ── DATA CONTRACT: the shape the desktop parses (see docs/ADDON_DATA_CONTRACT.md) ──
-for _, k in ipairs({ "schema", "settings", "sessions", "combat", "loot", "character", "story" }) do
+for _, k in ipairs({ "schema", "settings", "sessions", "combat", "loot", "characters", "story" }) do
   check("contract: top-level key " .. k, ns.DB[k] ~= nil, "missing")
 end
 check("contract: schema 2", ns.DB.schema == 2, ns.DB.schema)
@@ -424,7 +425,7 @@ do
   _G.C_PlayerInfo = saved
 end
 check("contract: no v1 keys left at the top level", ns.DB.fights == nil and ns.DB.lootlog == nil and ns.DB.eventlog == nil and ns.DB.gold == nil and ns.DB.xp == nil)
-check("contract: combat / loot / character / story shapes", type(ns.DB.combat.fights) == "table" and type(ns.DB.loot.log) == "table" and type(ns.DB.loot.gold) == "table" and type(ns.DB.character.xp) == "table" and type(ns.DB.story.events) == "table")
+check("contract: combat / loot / character / story shapes", type(ns.DB.combat.fights) == "table" and type(ns.DB.loot.log) == "table" and type(ns.DB.characters) == "table" and ns.DB.character == nil and ns.DB.loot.gold == nil and type(ns.DB.characters[ns.charGuid()].gold) == "table" and type(ns.DB.characters[ns.charGuid()].xp) == "table" and type(ns.DB.story.events) == "table")
 local cf2 = ns.DB.combat.fights[#ns.DB.combat.fights]
 for _, k in ipairs({ "id", "uid", "schema", "player", "realm", "startEpoch", "startLocal", "startLocalHi", "endEpoch", "endLocalHi", "duration", "zone", "foes", "outcome", "auras", "gear", "stats", "uploaded" }) do
   check("contract: fight field " .. k, cf2[k] ~= nil, "missing")
@@ -447,7 +448,7 @@ check("contract: a session record carries its gold ledger with the lifetime keys
 do
   local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" }, { item = "y", s = "a" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
   ns.migrateDB(old)
-  check("migration moves v1 keys into their areas", old.schema == 2 and #old.combat.fights == 1 and old.combat.fightSeq == 1 and #old.loot.log == 1 and old.loot.gold.balance == 5 and #old.story.events == 1 and old.character.xp.cur == 1 and old.character.seenZones.Elwynn == 1)
+  check("migration moves v1 keys into their areas", old.schema == 2 and #old.combat.fights == 1 and old.combat.fightSeq == 1 and #old.loot.log == 1 and old.characterLegacy.gold.balance == 5 and #old.story.events == 1 and old.characterLegacy.xp.cur == 1 and old.characterLegacy.seenZones.Elwynn == 1)
   check("migration drops the v1 slots", old.fights == nil and old.lootlog == nil and old.gold == nil and old.eventlog == nil and old.xp == nil and old.session == nil)
   check("migration keeps settings and sessions", old.settings.emitCorner == "TOPLEFT" and type(old.sessions) == "table")
   -- #17: loot rows without a session id can never upload, so the load drops them (376 rows in the founder's file)
@@ -547,7 +548,7 @@ check("kill xp parse (unnamed)", T.killXpFrom("You gain 12 experience.") == 12)
 check("kill xp parse rejects other lines", T.killXpFrom("You loot 5 Copper.") == nil)
 M.fire("CHAT_MSG_COMBAT_XP_GAIN", "Kobold Miner dies, you gain 45 experience.")
 M.fire("QUEST_TURNED_IN", 176, 850, 1200)
-check("xp split accumulated", ns.DB.character.xp.fromKills == 45 and ns.DB.character.xp.fromQuests == 850, tostring(ns.DB.character.xp.fromKills) .. "/" .. tostring(ns.DB.character.xp.fromQuests))
+check("xp split accumulated", ns.char().xp.fromKills == 45 and ns.char().xp.fromQuests == 850, tostring(ns.char().xp.fromKills) .. "/" .. tostring(ns.char().xp.fromQuests))
 -- ── recipes ──
 M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: |cffffffff|Hitem:2318|h[Light Leather]|h|r.")
 check("recipe learned from the system line", count(ns.DB.story.events, function(e) return e.kind == "RECIPE" and (e.text or ""):find("Light Leather") ~= nil end) == 1)
@@ -571,7 +572,7 @@ do -- #11: WoW Forever prints the line and fires NEW_RECIPE_LEARNED for the same
 end
 -- ── gear upgrade milestone ──
 M.inCombat = false
-local ilvl0 = ns.DB.character.ilvl
+local ilvl0 = ns.char().ilvl
 _G.GetAverageItemLevel = function() return 20, 18 end; M.fire("PLAYER_EQUIPMENT_CHANGED", 16)
 check("first equipped ilvl seeds without a milestone", count(ns.DB.story.events, function(e) return e.kind == "UPGRADE" end) == 0 or ilvl0 ~= nil)
 _G.GetAverageItemLevel = function() return 21, 19 end; M.fire("PLAYER_EQUIPMENT_CHANGED", 16)
@@ -580,7 +581,7 @@ _G.GetAverageItemLevel = function() return 21, 18.5 end; M.fire("PLAYER_EQUIPMEN
 check("no UPGRADE on a downgrade", count(ns.DB.story.events, function(e) return e.kind == "UPGRADE" end) == 1)
 -- ── reputation standings snapshot ──
 M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "Reputation with Stormwind increased by 25.")
-check("reputation snapshot stored", ns.DB.character.reputation and ns.DB.character.reputation.Stormwind and ns.DB.character.reputation.Stormwind.standing == 5 and ns.DB.character.reputation.Stormwind.label == "Friendly")
+check("reputation snapshot stored", ns.char().reputation and ns.char().reputation.Stormwind and ns.char().reputation.Stormwind.standing == 5 and ns.char().reputation.Stormwind.label == "Friendly")
 -- ── vanish guard: the client returns NO auras mid-combat for a living player (the 10:39 fight) ──
 M.auras.player = { HELPFUL = { { name = "Retribution Aura", icon = 1, spellId = 7294, auraInstanceID = 701 },
                                { name = "Seal of Righteousness", icon = 2, spellId = 21084, auraInstanceID = 702 },
@@ -650,7 +651,7 @@ local sale = ns.DB.loot.log[#ns.DB.loot.log]
 check("auction proceeds logged as coin from 'Auction sale'", sale and sale.money == 1234 and sale.src == "Auction sale", sale and sale.src)
 check("auction sale row carries the sold item and buyer", sale and sale.mail and sale.mail.item == "Linen Cloth" and sale.mail.buyer == "Buyerguy")
 check("auction sale row has its own location fields", sale and sale.zone == M.zone and sale.x == 0.421 and sale.y == 0.637, sale and tostring(sale.zone) .. " " .. tostring(sale.x))
-check("auction sales counted in the gold breakdown", (ns.DB.loot.gold.auctionSales or 0) == 1234, ns.DB.loot.gold.auctionSales)
+check("auction sales counted in the gold breakdown", (ns.char().gold.auctionSales or 0) == 1234, ns.char().gold.auctionSales)
 TakeInboxItem(2, 1)
 local gift = ns.DB.loot.log[#ns.DB.loot.log]
 check("mailed item logged with the sender as source", gift and gift.item == "Silk Cloth" and gift.count == 5 and gift.src == "Mail from Thrall", gift and gift.src)
@@ -666,11 +667,11 @@ check("expired auction return labeled 'Auction returned'", ret and ret.item == "
 TakeInboxMoney(5); M.money = 7011; M.fire("PLAYER_MONEY")
 local loan = ns.DB.loot.log[#ns.DB.loot.log]
 check("gold a player mailed is a coin row from that player", loan and loan.money == 777 and loan.src == "Mail from Sylvanas", loan and loan.src)
-check("mailed gold counted separately from auction sales", (ns.DB.loot.gold.mail or 0) == 777)
+check("mailed gold counted separately from auction sales", (ns.char().gold.mail or 0) == 777)
 M.money = 7001; M.fire("PLAYER_MONEY")                          -- postage while the mailbox is open
-check("postage / COD while mailbox open is a mail sink", (ns.DB.loot.gold.mailSpent or 0) == 10, ns.DB.loot.gold.mailSpent)
+check("postage / COD while mailbox open is a mail sink", (ns.char().gold.mailSpent or 0) == 10, ns.char().gold.mailSpent)
 M.fire("MAIL_CLOSED"); M.fire("AUCTION_HOUSE_SHOW"); M.money = 6501; M.fire("PLAYER_MONEY")
-check("gold spent at the auction house is attributed to auctions", (ns.DB.loot.gold.auctions or 0) == 500, ns.DB.loot.gold.auctions)
+check("gold spent at the auction house is attributed to auctions", (ns.char().gold.auctions or 0) == 500, ns.char().gold.auctions)
 M.fire("AUCTION_HOUSE_CLOSED"); M.inbox = {}
 -- ── session pace: XP and gold since login feed per-hour rates ──
 M.fire("PLAYER_ENTERING_WORLD", true, false)                        -- a real login resets the session
@@ -686,7 +687,7 @@ do
   local sg = ns.Recorder.current().gold
   check("#46 a new session starts its gold ledger with every key at zero", type(sg) == "table" and sg.vendor == 0 and sg.repairs == 0 and sg.auctionSales == 0 and sg.balance == nil)
   check("#46 session ledger gained and spent", sg and sg.gained == 3000 and sg.spent == 1000 and sg.other == 1000, sg and (tostring(sg.gained) .. " " .. tostring(sg.spent) .. " " .. tostring(sg.other)))
-  local life = ns.DB.loot.gold; local lv, lr = life.vendor or 0, life.repairs or 0
+  local life = ns.char().gold; local lv, lr = life.vendor or 0, life.repairs or 0
   M.fire("MERCHANT_SHOW"); M.money = M.money - 200; M.fire("PLAYER_MONEY")      -- bought at a vendor
   RepairAllItems(); M.money = M.money - 75; M.fire("PLAYER_MONEY")              -- repaired
   M.money = M.money + 40; M.fire("PLAYER_MONEY"); M.fire("MERCHANT_CLOSED")      -- sold
@@ -888,7 +889,7 @@ do
   M.fire("UNIT_SPELLCAST_SUCCEEDED", "party1", "cast-x", 17534)                       -- someone else's cast
   check("potion recorded as an item use with fight time", uf and uf.uses and #uf.uses == 1 and uf.uses[1].name == "Superior Healing Potion" and math.abs(uf.uses[1].t - 7) < 0.01, uf and uf.uses and #uf.uses)
   check("known spells and other units are not item uses", uf and #uf.uses == 1)
-  check("item use tally persisted", ns.DB.character.itemUses and ns.DB.character.itemUses["Superior Healing Potion"] >= 1)
+  check("item use tally persisted", ns.char().itemUses and ns.char().itemUses["Superior Healing Potion"] >= 1)
   M.now = M.now + 5; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
   local suf = ns.DB.combat.fights[#ns.DB.combat.fights]
   check("uses stored on the fight", suf and suf.uses and #suf.uses == 1 and suf.uses[1].sid == 17534)
@@ -932,12 +933,12 @@ do
   -- item uses: the client's internal effects are not item uses
   local savedInfo = _G.GetSpellInfo
   _G.GetSpellInfo = function(id) if id == 836 then return "LOGINEFFECT" end return savedInfo(id) end
-  local before = ns.DB.character.itemUses and ns.DB.character.itemUses.LOGINEFFECT
+  local before = ns.char().itemUses and ns.char().itemUses.LOGINEFFECT
   M.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-login", 836)
-  check("#11 LOGINEFFECT is not counted as an item use", (ns.DB.character.itemUses and ns.DB.character.itemUses.LOGINEFFECT) == before)
+  check("#11 LOGINEFFECT is not counted as an item use", (ns.char().itemUses and ns.char().itemUses.LOGINEFFECT) == before)
   _G.GetSpellInfo = savedInfo
   -- quest money: filed under quests whichever event comes first
-  local g = ns.DB.loot.gold; local q0 = g.quests or 0
+  local g = ns.char().gold; local q0 = g.quests or 0
   M.money = GetMoney(); M.fire("PLAYER_MONEY")
   M.now = M.now + 10; M.fire("QUEST_TURNED_IN", 300, 450, 2500)
   M.money = M.money + 2500; M.fire("PLAYER_MONEY")
@@ -1016,12 +1017,12 @@ do
   check("quests: newest first with a status", top and top.name == "Kobold Camp Cleanup" and top.status == "done", top and top.name)
   local openRow; for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then openRow = r end end
   check("quests: accepted but not completed is in progress", openRow and openRow.status == "accepted")
-  ns.DB.character.reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
+  ns.char().reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
   L[#L + 1] = { kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
   local rr, rs = T.buildReputation()
   check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[3].name == "Darnassus", rr[1] and rr[1].name)
   check("reputation: last standing gain matched to the faction", rr[1].lastUp == t0 + 500 and rs.ups >= 1)
-  ns.DB.character.professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
+  ns.char().professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
   L[#L + 1] = { kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
   L[#L + 1] = { kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
   L[#L + 1] = { kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
@@ -1260,7 +1261,7 @@ end
 -- ── durability lost across a death ──
 do
   M.dur = { [1] = { 100, 100 }, [5] = { 100, 100 } }; M.fire("UPDATE_INVENTORY_DURABILITY")
-  check("durability at 100% before dying", ns.DB.character.durability.pct == 100)
+  check("durability at 100% before dying", ns.char().durability.pct == 100)
   M.fire("PLAYER_DEAD"); M.now = M.now + 40
   M.dur = { [1] = { 90, 100 }, [5] = { 90, 100 } }          -- spirit healer took 10%
   M.dead = false; M.fire("PLAYER_UNGHOST")
@@ -1274,7 +1275,7 @@ end
 do
   M.saved = { { name = "Blackfathom Deeps", reset = 90000, bosses = 6, down = 4 }, { name = "Molten Core", raid = true, players = 40, reset = 3000, locked = false } }
   M.fire("UPDATE_INSTANCE_INFO")
-  local L = ns.DB.character.lockouts
+  local L = ns.char().lockouts
   check("locked instances captured with reset time and boss progress", L and #L == 1 and L[1].name == "Blackfathom Deeps" and L[1].down == 4 and L[1].bosses == 6 and L[1].resetAt == M.epoch + 90000, L and #L)
   ns.UI.Open("Combat", "dungeons"); M.tick()
   local dg = host("Combat").paneByKey.dungeons
@@ -1477,13 +1478,13 @@ check("no errors thrown inside event handlers", #M.errors == 0, #M.errors > 0 an
 check("Market loaded", ns.Market ~= nil and ns.Market.craft ~= nil)
 M.tradeSkillName = "Tailoring"; M.fire("TRADE_SKILL_SHOW")
 M.fire("CHAT_MSG_LOOT", "You create: |cffffffff|Hitem:2996::::::::12:::::|h[Bolt of Linen Cloth]|h|rx2.")
-local craft = ns.DB.character.crafts and ns.DB.character.crafts[#ns.DB.character.crafts]
+local craft = ns.char().crafts and ns.char().crafts[#ns.char().crafts]
 check("craft row recorded with count, id and the open profession", craft and craft.item == "Bolt of Linen Cloth" and craft.count == 2 and craft.id == 2996 and craft.prof == "Tailoring", craft and craft.prof)
 check("craft row carries the session id and a place", craft and craft.s == ns.DB.active and craft.zone ~= nil)
 check("craft line still not logged as loot", count(ns.DB.loot.log, function(e) return e.item == "Bolt of Linen Cloth" end) == 0)
 M.fire("TRADE_SKILL_CLOSE")
 M.fire("CHAT_MSG_SYSTEM", "You have learned how to create a new item: Heavy Linen Bandage.")
-local rec = ns.DB.character.recipes and ns.DB.character.recipes[#ns.DB.character.recipes]
+local rec = ns.char().recipes and ns.char().recipes[#ns.char().recipes]
 check("recipe learned from the system line (Classic path)", rec and rec.name == "Heavy Linen Bandage", rec and rec.name)
 -- postings through the Mainline API hooks
 M.locations["loc1"] = { name = "Bolt of Linen Cloth", id = 2996, icon = 132889, count = 20 }
@@ -1524,7 +1525,7 @@ local arows, asum = ns.Market.buildAuctions()
 check("auctions pane rows and sums", #arows >= 5 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 12345 + 240, asum.spent)
 local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
-check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.DB.character.crafts, ns.DB.character.recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
+check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.char().crafts, ns.char().recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
 check("no errors from the market wiring", #M.errors == 0, M.errors[1])
 
 -- ── chat logging guardian (everbuff-business #39) ──
@@ -1843,7 +1844,7 @@ do
   ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { id = 9001, uid = "wipe-test", session = before }
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { t = 1, item = "old", s = before }
   ns.DB.story.events[#ns.DB.story.events + 1] = { t = 1, kind = "ZONE", text = "old", s = before }
-  local gold0 = ns.DB.loot.gold.looted
+  local gold0 = ns.char().gold.looted
   SlashCmdList.EVERBUFF("wipe")
   local fresh = ns.DB.active
   check("wipe removes the stored sessions and starts a fresh one (#17)", fresh ~= nil and fresh ~= after and fresh ~= before and ns.DB.sessions[before] == nil and ns.DB.sessions[after] == nil and ns.DB.sessions[fresh] ~= nil)
@@ -1853,7 +1854,7 @@ do
   for _, r in ipairs(ns.DB.loot.log) do if not ns.DB.sessions[r.s or ""] then orphan = orphan + 1 end end
   for _, e in ipairs(ns.DB.story.events) do if not ns.DB.sessions[e.s or ""] then orphan = orphan + 1 end end
   check("wipe leaves no fight, loot row or event without its session (#17)", orphan == 0, orphan)
-  check("wipe keeps the lifetime gold totals", ns.DB.loot.gold.looted == gold0)
+  check("wipe keeps the lifetime gold totals", ns.char().gold.looted == gold0)
   M.fire("CHAT_MSG_LOOT", "You receive loot: " .. LINK .. "x2.")
   check("a row after wipe carries the fresh session id (#17)", lastLoot() and lastLoot().s == fresh, lastLoot() and tostring(lastLoot().s))
   local seg = ns.DB.sessions[fresh].segments
@@ -1864,6 +1865,57 @@ do
   check("export with no session starts none (#17)", ns.Recorder.active() == nil and ns.DB.active == nil)
   SlashCmdList.EVERBUFF("wipe")
   check("wipe with no session starts none (#17)", ns.Recorder.active() == nil and ns.DB.active == nil and next(ns.DB.sessions) == nil and #ns.DB.loot.log == 0 and #ns.DB.combat.fights == 0)
+end
+
+-- ── #23 data per character, always: each character's block lives under its GUID ──
+do
+  local realGUID = _G.UnitGUID
+  local A = ns.charGuid()
+  local a = ns.DB.characters[A]
+  local aPlayed, aMining = a.played.total, a.professions and a.professions.Mining and a.professions.Mining.rank
+  -- a second character on the same account (another login, same EverbuffDB)
+  _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
+  local b = ns.char()
+  check("#23 a second character gets its own block", b ~= a and ns.DB.characters["Player-1-000002"] == b)
+  check("#23 a new block starts empty: no other character's professions, xp or gold", b.professions == nil and b.xp.gained == 0 and b.gold.gained == 0 and b.playedAtLevel == nil)
+  check("#23 a new block names its character", b.name == UnitNameUnmodified("player") and b.realm == GetRealmName(), tostring(b.name))
+  M.fire("TIME_PLAYED_MSG", 4000, 600)
+  M.profs[1] = { name = "Herbalism", rank = 5, max = 75 }; M.fire("SKILL_LINES_CHANGED")
+  check("#23 the second character's /played and professions go into its block", b.played.total == 4000 and b.professions and b.professions.Herbalism ~= nil and b.professions.Mining == nil)
+  check("#23 the first character's block is untouched", a.played.total == aPlayed and (a.professions and a.professions.Mining and a.professions.Mining.rank) == aMining and a.professions.Herbalism == nil)
+  M.money = M.money + 100; M.fire("PLAYER_MONEY")
+  check("#23 gold goes to the logged-in character's ledger", (b.gold.gained or 0) >= 100 and b.gold.balance == M.money)
+  -- a GUID the client hides or has not given yet writes nothing into the save
+  _G.UnitGUID = function() return nil end
+  local n0 = 0; for _ in pairs(ns.DB.characters) do n0 = n0 + 1 end
+  local scratch = ns.char(); scratch.xp.gained = 99
+  local n1 = 0; for _ in pairs(ns.DB.characters) do n1 = n1 + 1 end
+  check("#23 no GUID: a scratch block that is never saved", n0 == n1 and scratch ~= a and scratch ~= b)
+  local secretG = "Player-1-SECRET"; M.secrets[secretG] = true
+  _G.UnitGUID = function(u) if u == "player" then return secretG end end
+  check("#23 a secret GUID is never used as a key", ns.charGuid() == nil and ns.DB.characters[secretG] == nil and ns.char() == scratch)
+  M.secrets[secretG] = nil
+  _G.UnitGUID = realGUID
+  check("#23 back on the first character: its own block again", ns.char() == a)
+end
+-- #23 migration: the account-wide block of a schema 2 save is kept once as characterLegacy, never attributed
+do
+  local v = { schema = 2, sessions = {}, loot = { log = {}, gold = { balance = 77, gained = 9 } },
+    character = { professions = { Mining = { rank = 131 } }, playedAtLevel = { [3] = 10, [20] = 999 }, xp = { fromKills = 5410 } } }
+  ns.migrateDB(v)
+  check("#23 migration keeps the old block whole as characterLegacy", v.characterLegacy and v.characterLegacy.professions.Mining.rank == 131 and v.characterLegacy.playedAtLevel[20] == 999 and v.characterLegacy.xp.fromKills == 5410)
+  check("#23 migration keeps the old gold ledger in characterLegacy.gold", v.characterLegacy.gold and v.characterLegacy.gold.balance == 77 and v.characterLegacy.gold.gained == 9)
+  check("#23 migration retires the account-wide slots", v.character == nil and v.loot.gold == nil and type(v.characters) == "table" and next(v.characters) == nil)
+  v.characters["Player-1-000009"] = { xp = { gained = 1 } }
+  local legacy = v.characterLegacy
+  ns.migrateDB(v)
+  check("#23 a second load changes nothing: legacy and the character blocks stay", v.characterLegacy == legacy and v.characters["Player-1-000009"].xp.gained == 1 and v.character == nil)
+  -- an account-wide block written by an older addon after the migration never overwrites the kept one
+  v.character = { xp = { gained = 5 } }
+  ns.migrateDB(v)
+  check("#23 a later account-wide block never replaces characterLegacy", v.characterLegacy == legacy and v.character == nil)
+  local fresh = ns.migrateDB({})
+  check("#23 a first install has no legacy block", fresh.characterLegacy == nil and type(fresh.characters) == "table")
 end
 
 print(("\n%d passed, %d failed"):format(passed, failed))

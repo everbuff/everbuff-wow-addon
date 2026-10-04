@@ -607,8 +607,8 @@ local function noteItemUse(sid)
   -- internal effects the client casts on the player (LOGINEFFECT at every login) are not item uses
   if name:match("^[%u%d_]+$") then return end
   if ns.DB then
-    ns.DB.character.itemUses = ns.DB.character.itemUses or {}
-    ns.DB.character.itemUses[name] = (ns.DB.character.itemUses[name] or 0) + 1
+    ns.char().itemUses = ns.char().itemUses or {}
+    ns.char().itemUses[name] = (ns.char().itemUses[name] or 0) + 1
   end
   if cur then
     cur.uses = cur.uses or {}

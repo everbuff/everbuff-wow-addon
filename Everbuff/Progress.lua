@@ -35,13 +35,13 @@ local function buildQuests()
   for _, o in ipairs(open) do rows[#rows + 1] = o end
   for _, d in ipairs(done) do rows[#rows + 1] = d end
   table.sort(rows, function(a, b) return a.t > b.t end)
-  local xp = (ns.DB and ns.DB.character.xp and tonumber(ns.DB.character.xp.fromQuests)) or 0
+  local xp = (ns.DB and ns.char().xp and tonumber(ns.char().xp.fromQuests)) or 0
   return rows, { accepted = #accepted, done = #done, open = #open, rewards = rewards, xp = xp }
 end
 
 -- reputation: the snapshot (faction -> standing) sorted best standing first, with the last tier-up seen
 local function buildReputation()
-  local snap = (ns.DB and ns.DB.character.reputation) or {}
+  local snap = (ns.DB and ns.char().reputation) or {}
   local log = (ns.DB and ns.DB.story.events) or {}
   local lastUp, ups = {}, 0
   for _, e in ipairs(log) do
@@ -62,7 +62,7 @@ end
 -- professions: the snapshot (name -> rank/max) plus milestone and recipe counts from the timeline
 local skillOf   -- defined below; buildProfessions counts every skill-up, crafted or gathered
 local function buildProfessions()
-  local snap = (ns.DB and ns.DB.character.professions) or {}
+  local snap = (ns.DB and ns.char().professions) or {}
   local log = (ns.DB and ns.DB.story.events) or {}
   local tiers, skillups, recipes, crafted = {}, {}, 0, {}
   for _, e in ipairs(log) do
@@ -92,7 +92,7 @@ local GATHERING = { Herbalism = true, Mining = true, Skinning = true, Fishing = 
 
 -- every skill-up of a profession you have, newest first; `only` limits it to one profession
 local function buildSkillups(only)
-  local snap = (ns.DB and ns.DB.character.professions) or {}
+  local snap = (ns.DB and ns.char().professions) or {}
   local log = (ns.DB and ns.DB.story.events) or {}
   local rows = {}
   for _, e in ipairs(log) do

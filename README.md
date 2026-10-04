@@ -58,7 +58,7 @@ Works on the Midnight beta, Anniversary and Classic Era clients. Open the panel 
   Secret-Value read.**
 
 SavedVariables: `EverbuffDB` (schema 2, mirrors the five tabs: `settings`, `sessions`, `combat`, `loot`,
-`character`, `story`), `EverbuffAck` (written by the desktop app while WoW is closed to ack uploads),
+`characters` (one block per character, keyed by GUID), `story`), `EverbuffAck` (written by the desktop app while WoW is closed to ack uploads),
 `EverbuffTest` (a load canary). The full shape is in [`docs/ADDON_DATA_CONTRACT.md`](docs/ADDON_DATA_CONTRACT.md).
 
 ## Client notes and gotchas

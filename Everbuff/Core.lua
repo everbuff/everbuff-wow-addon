@@ -39,8 +39,10 @@ ns.eventFrames[#ns.eventFrames + 1] = f
 --   sessions[id] (+ active)       HOME: one record per login -> logout, with live counters; every fight,
 --                                 pickup and event carries s = its session id
 --   combat.fights                 COMBAT: every fight (dungeon runs and deaths are derived views)
---   loot.log, loot.gold           LOOT: every pickup (item or coin row) + gold totals and sinks
---   character.*                   CHARACTER: xp, played, professions, reputation, durability, ...
+--   loot.log                      LOOT: every pickup (item or coin row)
+--   characters[guid]              CHARACTER, one block per character keyed by its GUID (#23): xp, played,
+--                                 professions, reputation, durability, gold totals and sinks, ...
+--   characterLegacy               the account-wide block from before #23, kept once and never written again
 --   story.events                  the feed (timeline) behind Home
 -- Facts are stored once; anything a tab shows that can be derived is derived at render time.
 function ns.migrateDB(db)
@@ -48,7 +50,6 @@ function ns.migrateDB(db)
   db.sessions = db.sessions or {}
   db.combat = db.combat or {}
   db.loot = db.loot or {}
-  db.character = db.character or {}
   db.story = db.story or {}
   if (tonumber(db.schema) or 1) < 2 then
     -- v1 kept everything at the top level; move each key into its area, then drop the old slot
@@ -58,9 +59,9 @@ function ns.migrateDB(db)
     db.loot.log = db.lootlog or db.loot.log; db.lootlog = nil
     db.loot.gold = db.gold or db.loot.gold; db.gold = nil
     db.story.events = db.eventlog or db.story.events; db.eventlog = nil
-    db.story.inInstance = db._inInstance; db._inInstance = nil
+    db._inInstance = nil
     for _, k in ipairs({ "xp", "played", "playedAtLevel", "professions", "reputation", "durability", "ilvl", "seenZones", "itemUses", "crafts", "recipes", "flightTime" }) do
-      if db[k] ~= nil then db.character[k] = db[k]; db[k] = nil end
+      if db[k] ~= nil then db.character = db.character or {}; db.character[k] = db[k]; db[k] = nil end
     end
     db.session = nil; db.runs = nil; db.consent = nil   -- superseded (sessions carry the pace counters) / never built
     db.schema = 2
@@ -68,11 +69,20 @@ function ns.migrateDB(db)
   db.combat.fights = db.combat.fights or {}
   db.combat.fightSeq = db.combat.fightSeq or 0
   db.loot.log = db.loot.log or {}
-  db.loot.gold = db.loot.gold or { looted = 0, gained = 0, spent = 0 }
   db.loot.history = db.loot.history or {}     -- raid loot council (Later)
   db.loot.reserves = db.loot.reserves or {}
-  db.character.xp = db.character.xp or { gained = 0 }
-  db.character.played = db.character.played or {}
+  -- Data per character, always (#23, approved 2026-10-04, option A): the account-wide `character` block and the
+  -- lifetime gold ledger mixed every character on the account and cannot be split safely, so both are kept once,
+  -- untouched, as `characterLegacy` (the ledger as its `gold`) and never written again. Each character then fills
+  -- its own block under its GUID.
+  if db.character ~= nil or db.loot.gold ~= nil then
+    local legacy = type(db.character) == "table" and db.character or {}
+    if legacy.gold == nil then legacy.gold = db.loot.gold end
+    if db.characterLegacy == nil then db.characterLegacy = legacy end
+    db.character, db.loot.gold = nil, nil
+  end
+  db.story.inInstance = nil   -- now per character (characters[guid].inInstance)
+  db.characters = db.characters or {}
   db.story.events = db.story.events or {}
   -- loot rows from before schema 2 carry no session id (#17): the backend selects rows by session, so they can never
   -- upload; drop them
@@ -80,6 +90,32 @@ function ns.migrateDB(db)
     if type(db.loot.log[i]) ~= "table" or db.loot.log[i].s == nil then table.remove(db.loot.log, i) end
   end
   return db
+end
+
+-- The logged-in character's block (#23): everything that belongs to one character lives under its GUID
+-- (`UnitGUID("player")`, the session records' `guid`). Before the GUID is known (or if the client ever hid it) the
+-- writes land in a scratch block that is never saved, so no character's data is written into another's.
+local charScratch
+function ns.newCharBlock() return { xp = { gained = 0 }, played = {}, gold = { looted = 0, gained = 0, spent = 0 } } end
+function ns.charGuid()
+  local g = UnitGUID and UnitGUID("player")
+  if type(g) ~= "string" or (issecretvalue and issecretvalue(g)) or g == "" then return nil end
+  return g
+end
+function ns.char()
+  local db, g = ns.DB, ns.charGuid()
+  if not (db and g) then charScratch = charScratch or ns.newCharBlock(); return charScratch end
+  db.characters = db.characters or {}
+  local c = db.characters[g]
+  if c == nil then
+    c = ns.newCharBlock()
+    c.name = UnitNameUnmodified and UnitNameUnmodified("player") or (UnitName and UnitName("player")) or nil
+    c.realm = GetRealmName and GetRealmName() or nil
+    if type(c.name) ~= "string" or (issecretvalue and issecretvalue(c.name)) then c.name = nil end
+    if type(c.realm) ~= "string" or (issecretvalue and issecretvalue(c.realm)) then c.realm = nil end
+    db.characters[g] = c
+  end
+  return c
 end
 
 -- Drop the fights, loot rows and events whose session record is gone (#17): the backend selects all three by
