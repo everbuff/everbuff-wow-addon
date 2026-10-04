@@ -76,65 +76,83 @@ local function words(v)
   return LABEL[v.kind] .. (#parts > 0 and (": " .. table.concat(parts, ", ")) or "")
 end
 
--- Junk stacks in the bags (poor quality, sellable), the count C_MerchantFrame.SellAllJunkItems sells; nil when the
--- client does not say.
-local function junkStacks()
+-- One bag slot as the client answers it, or nil.
+local function slotInfo(bag, slot)
+  if not (C_Container and C_Container.GetContainerItemInfo) then return nil end
+  local ok, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+  return (ok and type(info) == "table" and info.itemID) and info or nil
+end
+
+-- The junk stacks in the bags (poor quality, sellable), the ones C_MerchantFrame.SellAllJunkItems sells, as
+-- { ["bag:slot"] = itemID }; nil when the client does not say.
+local function junkSlots()
   if not (C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemInfo) then return nil end
-  local n = 0
+  local out = {}
   for bag = 0, (NUM_BAG_SLOTS or 4) do
     local ok, slots = pcall(C_Container.GetContainerNumSlots, bag)
     slots = ok and plainNum(slots) or 0
     for slot = 1, slots do
-      local ok2, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
-      if ok2 and type(info) == "table" and info.itemID and info.quality == 0 and not info.hasNoValue then n = n + 1 end
+      local info = slotInfo(bag, slot)
+      if info and info.quality == 0 and not info.hasNoValue then out[bag .. ":" .. slot] = info.itemID end
     end
   end
+  return out
+end
+function Visits.junkStacks()   -- tests
+  local s = junkSlots()
+  if not s then return nil end
+  local n = 0
+  for _ in pairs(s) do n = n + 1 end
   return n
 end
-Visits.junkStacks = junkStacks   -- tests
 
 -- Sales made before this frame's MERCHANT_SHOW runs: another addon's handler for the same event can sell first
 -- (EllesmereUIQoL sells the junk there, RXPGuides its list), and on the founder's save file of 2026-10-03 a vendor
 -- visit said 0 sold while 38 copper came in from sales (everbuff-wow-addon #22). A sale with no visit open is held
 -- for the frame it happened in and taken over by a merchant visit that opens in that same frame.
-local held = nil   -- { at = GetTime(), sold = n, junkPeak = n? }
+--
+-- The server sells after the call returns and drops sales past its rate limit, so a sale is not counted when it is
+-- asked for: the stack's slot goes on a watch list ({ ["bag:slot"] = itemID }) and the visit counts, when it closes,
+-- the watched slots that no longer hold that item. A stack sold by hand after a sell-all call, or asked for twice,
+-- is counted once; a sale the server refused is not counted. A hand sale whose slot the client cannot read counts
+-- at once, as before 0.9.28.
+local held = nil   -- { at = GetTime(), sold = n, watch = {} }
 local function frameTime() return GetTime and GetTime() or 0 end
 
 function Visits.begin(kind)
   if Visits.open then Visits.finish() end   -- a new window replaces one the client closed without an event
   Visits.open = { kind = kind, t = nowEpoch(), s = ns.DB and ns.DB.active, moneyAt = money(), where = where(),
     searches = 0, posts = 0, bids = 0, buys = 0, items = 0, money = 0, sold = 0, bought = 0, repair = 0, learned = 0,
-    repairCost = kind == "VENDOR" and GetRepairAllCost and plainNum((GetRepairAllCost())) or nil }
+    repairCost = kind == "VENDOR" and GetRepairAllCost and plainNum((GetRepairAllCost())) or nil, watch = {} }
   if kind == "VENDOR" and held and held.at == frameTime() then
-    Visits.open.sold, Visits.open.junkPeak = held.sold, held.junkPeak
+    Visits.open.sold, Visits.open.watch = held.sold, held.watch
   end
   held = nil
 end
 
--- one item stack sold to the merchant (a right click on it while the merchant is open)
-function Visits.sale()
+-- where a sale lands: the open merchant visit, a hold for this frame, or nowhere (another window is open)
+local function saleTarget()
   local v = Visits.open
-  if v then
-    if v.kind == "VENDOR" then v.sold = v.sold + 1 end
-    return
-  end
-  if not held or held.at ~= frameTime() then held = { at = frameTime(), sold = 0 } end
-  held.sold = held.sold + 1
+  if v then return v.kind == "VENDOR" and v or nil end
+  if not held or held.at ~= frameTime() then held = { at = frameTime(), sold = 0, watch = {} } end
+  return held
 end
 
--- "Sell all junk" (the merchant's button or an addon): the server sells the junk stacks after the call returns, so
--- the visit keeps the most junk seen at a call and counts what is gone from the bags when it closes. Callers repeat
--- the call while the server drops sales past its rate limit; the peak counts each stack once.
+-- one item stack sold to the merchant (a right click on it while the merchant is open)
+function Visits.sale(bag, slot)
+  local t = saleTarget()
+  if not t then return end
+  local info = plainNum(bag) and plainNum(slot) and slotInfo(bag, slot)
+  if info then t.watch[bag .. ":" .. slot] = info.itemID else t.sold = t.sold + 1 end
+end
+
+-- "Sell all junk" (the merchant's button or an addon, which repeats it while the server drops sales)
 function Visits.junkSale()
-  local n = junkStacks()
-  if not n then return end
-  local v = Visits.open
-  if v then
-    if v.kind == "VENDOR" then v.junkPeak = math.max(v.junkPeak or 0, n) end
-    return
-  end
-  if not held or held.at ~= frameTime() then held = { at = frameTime(), sold = 0 } end
-  held.junkPeak = math.max(held.junkPeak or 0, n)
+  local s = junkSlots()
+  if not s then return end
+  local t = saleTarget()
+  if not t then return end
+  for k, id in pairs(s) do t.watch[k] = id end
 end
 
 -- count something done during the open visit of `kind`
@@ -148,7 +166,13 @@ function Visits.finish()
   Visits.open = nil
   if not v or not ns.DB then return nil end
   if v.kind == "MAIL" then v.money = math.max(0, money() - v.moneyAt) end
-  if v.kind == "VENDOR" and v.junkPeak then v.sold = v.sold + math.max(0, v.junkPeak - (junkStacks() or v.junkPeak)) end
+  if v.kind == "VENDOR" then
+    for k, id in pairs(v.watch) do
+      local bag, slot = k:match("^(%d+):(%d+)$")
+      local info = slotInfo(tonumber(bag), tonumber(slot))
+      if not info or info.itemID ~= id then v.sold = v.sold + 1 end
+    end
+  end
   local L = v.where
   local rec = { t = v.t, s = v.s or ns.DB.active, kind = v.kind, closed = nowEpoch(), text = words(v),
     zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y }
@@ -182,8 +206,8 @@ function Visits.wire()
   hookG("TakeInboxItem", function() Visits.count("MAIL", "items") end)
   -- merchant
   hookG("BuyMerchantItem", function() Visits.count("VENDOR", "bought") end)
-  hook(C_Container, "UseContainerItem", function() Visits.sale() end)
-  hookG("UseContainerItem", function() Visits.sale() end)
+  hook(C_Container, "UseContainerItem", function(bag, slot) Visits.sale(bag, slot) end)
+  hookG("UseContainerItem", function(bag, slot) Visits.sale(bag, slot) end)
   hook(C_MerchantFrame, "SellAllJunkItems", function() Visits.junkSale() end)
   hookG("RepairAllItems", function()
     local v = Visits.open

@@ -93,7 +93,7 @@ ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE`. Only rare+ LOOT lands here 
 
 - Visit events: one row per visit, written when the window closes: `{ t (opened), s, kind, closed, zone, sub?, map?, x?, y? }` plus
   `AUCTION` (`searches`, `posts`, `bids`, `buys`; the trades stay in `loot.ah`), `MAIL` (`items`, `money`; the rows stay in `loot`),
-  `VENDOR` (`sold`, `bought`, `repair`; `sold` counts the stacks sold, by hand or by the client's "sell all junk" call, also when another addon makes the sale in its own MERCHANT_SHOW handler before the visit opens, 0.9.28, #22), `BANK` (no extra fields) and `TRAINER` (`learned`). They count as gameplay for V5.
+  `VENDOR` (`sold`, `bought`, `repair`; `sold` counts the stacks sold, by hand or by the client's "sell all junk" call, also when another addon makes the sale in its own MERCHANT_SHOW handler before the visit opens, 0.9.28, #22; from 0.9.29 a stack counts once the server has taken it from the bags, so a stack sold by hand after a sell-all call counts once and a refused sale not at all), `BANK` (no extra fields) and `TRAINER` (`learned`). They count as gameplay for V5.
 - Chat logging guardian: the addon keeps `LoggingChat(true)` on, with the same guardian as advanced combat logging,
   so WoW writes `Logs/WoWChatLog.txt` continuously. The desktop uploads only its system lines.
 

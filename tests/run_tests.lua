@@ -1577,6 +1577,7 @@ M.bags[0][1] = nil                               -- the server sold one, dropped
 M.now = M.now + 0.4; C_MerchantFrame.SellAllJunkItems()
 M.serverSellsJunk()
 C_Container.UseContainerItem(0, 4)               -- and the player sells the cloth by hand
+M.bags[0][4] = nil                               -- the server takes it
 M.fire("MERCHANT_CLOSED")
 local jv = lastVisit("VENDOR")
 check("junk sold by another addon before the visit opened counts, each stack once", jv and jv ~= vv and jv.sold == 4 and jv.text == "Merchant: 4 sold", jv and ("%s %s"):format(jv.sold, jv.text))
@@ -1584,6 +1585,19 @@ check("junk sold by another addon before the visit opened counts, each stack onc
 M.bags[0] = { { itemID = 3300, quality = 0 }, { itemID = 3301, quality = 0 } }
 M.fire("MERCHANT_SHOW"); C_MerchantFrame.SellAllJunkItems(); M.bags[0][2] = nil; M.fire("MERCHANT_CLOSED")
 check("junk the server did not sell is not counted", lastVisit("VENDOR").sold == 1, lastVisit("VENDOR").sold)
+-- a junk stack sold by hand after a sell-all call counts once, and a hand sale the server refused does not count
+M.bags[0] = { { itemID = 3300, quality = 0 }, { itemID = 3301, quality = 0 }, { itemID = 3302, quality = 0 },
+  { itemID = 6948, quality = 1, hasNoValue = true } }
+M.now = M.now + 5; M.fire("MERCHANT_SHOW"); C_MerchantFrame.SellAllJunkItems()
+M.bags[0][1] = nil                               -- the server sold one of three
+C_Container.UseContainerItem(0, 2); M.bags[0][2] = nil   -- the player sells a second by hand
+C_Container.UseContainerItem(0, 4)               -- the hearthstone: the merchant refuses it
+M.fire("MERCHANT_CLOSED")
+check("a junk stack sold by hand after sell-all counts once, a refused sale not at all", lastVisit("VENDOR").sold == 2, lastVisit("VENDOR").sold)
+-- a slot sold and then filled by a purchase of another item still counts as sold
+M.bags[0] = { { itemID = 2589, quality = 1 } }
+M.fire("MERCHANT_SHOW"); C_Container.UseContainerItem(0, 1); M.bags[0][1] = { itemID = 159, quality = 1 }; M.fire("MERCHANT_CLOSED")
+check("a sold slot refilled by a purchase counts as sold", lastVisit("VENDOR").sold == 1, lastVisit("VENDOR").sold)
 -- an item used away from any merchant is not a sale on a merchant visit opened later
 M.bags[0] = {}
 C_Container.UseContainerItem(0, 1)
