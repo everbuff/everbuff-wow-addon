@@ -8,7 +8,7 @@
 --   { t (opened), s, kind, closed, text, zone, sub?, map?, x?, y? } plus
 --   AUCTION { searches, posts, bids, buys }   (the trades themselves stay in loot.ah, written by Market)
 --   MAIL    { items, money }                   (the rows stay in loot, written by Emitter and Market)
---   VENDOR  { sold, bought, repair }
+--   VENDOR  { sold, bought, repair }        sold = stacks sold, by hand or by "sell all junk" (#22)
 --   BANK    {}
 --   TRAINER { learned }
 --
@@ -76,11 +76,65 @@ local function words(v)
   return LABEL[v.kind] .. (#parts > 0 and (": " .. table.concat(parts, ", ")) or "")
 end
 
+-- Junk stacks in the bags (poor quality, sellable), the count C_MerchantFrame.SellAllJunkItems sells; nil when the
+-- client does not say.
+local function junkStacks()
+  if not (C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemInfo) then return nil end
+  local n = 0
+  for bag = 0, (NUM_BAG_SLOTS or 4) do
+    local ok, slots = pcall(C_Container.GetContainerNumSlots, bag)
+    slots = ok and plainNum(slots) or 0
+    for slot = 1, slots do
+      local ok2, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+      if ok2 and type(info) == "table" and info.itemID and info.quality == 0 and not info.hasNoValue then n = n + 1 end
+    end
+  end
+  return n
+end
+Visits.junkStacks = junkStacks   -- tests
+
+-- Sales made before this frame's MERCHANT_SHOW runs: another addon's handler for the same event can sell first
+-- (EllesmereUIQoL sells the junk there, RXPGuides its list), and on the founder's save file of 2026-10-03 a vendor
+-- visit said 0 sold while 38 copper came in from sales (everbuff-wow-addon #22). A sale with no visit open is held
+-- for the frame it happened in and taken over by a merchant visit that opens in that same frame.
+local held = nil   -- { at = GetTime(), sold = n, junkPeak = n? }
+local function frameTime() return GetTime and GetTime() or 0 end
+
 function Visits.begin(kind)
   if Visits.open then Visits.finish() end   -- a new window replaces one the client closed without an event
   Visits.open = { kind = kind, t = nowEpoch(), s = ns.DB and ns.DB.active, moneyAt = money(), where = where(),
     searches = 0, posts = 0, bids = 0, buys = 0, items = 0, money = 0, sold = 0, bought = 0, repair = 0, learned = 0,
     repairCost = kind == "VENDOR" and GetRepairAllCost and plainNum((GetRepairAllCost())) or nil }
+  if kind == "VENDOR" and held and held.at == frameTime() then
+    Visits.open.sold, Visits.open.junkPeak = held.sold, held.junkPeak
+  end
+  held = nil
+end
+
+-- one item stack sold to the merchant (a right click on it while the merchant is open)
+function Visits.sale()
+  local v = Visits.open
+  if v then
+    if v.kind == "VENDOR" then v.sold = v.sold + 1 end
+    return
+  end
+  if not held or held.at ~= frameTime() then held = { at = frameTime(), sold = 0 } end
+  held.sold = held.sold + 1
+end
+
+-- "Sell all junk" (the merchant's button or an addon): the server sells the junk stacks after the call returns, so
+-- the visit keeps the most junk seen at a call and counts what is gone from the bags when it closes. Callers repeat
+-- the call while the server drops sales past its rate limit; the peak counts each stack once.
+function Visits.junkSale()
+  local n = junkStacks()
+  if not n then return end
+  local v = Visits.open
+  if v then
+    if v.kind == "VENDOR" then v.junkPeak = math.max(v.junkPeak or 0, n) end
+    return
+  end
+  if not held or held.at ~= frameTime() then held = { at = frameTime(), sold = 0 } end
+  held.junkPeak = math.max(held.junkPeak or 0, n)
 end
 
 -- count something done during the open visit of `kind`
@@ -94,6 +148,7 @@ function Visits.finish()
   Visits.open = nil
   if not v or not ns.DB then return nil end
   if v.kind == "MAIL" then v.money = math.max(0, money() - v.moneyAt) end
+  if v.kind == "VENDOR" and v.junkPeak then v.sold = v.sold + math.max(0, v.junkPeak - (junkStacks() or v.junkPeak)) end
   local L = v.where
   local rec = { t = v.t, s = v.s or ns.DB.active, kind = v.kind, closed = nowEpoch(), text = words(v),
     zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y }
@@ -127,8 +182,9 @@ function Visits.wire()
   hookG("TakeInboxItem", function() Visits.count("MAIL", "items") end)
   -- merchant
   hookG("BuyMerchantItem", function() Visits.count("VENDOR", "bought") end)
-  hook(C_Container, "UseContainerItem", function() Visits.count("VENDOR", "sold") end)
-  hookG("UseContainerItem", function() Visits.count("VENDOR", "sold") end)
+  hook(C_Container, "UseContainerItem", function() Visits.sale() end)
+  hookG("UseContainerItem", function() Visits.sale() end)
+  hook(C_MerchantFrame, "SellAllJunkItems", function() Visits.junkSale() end)
   hookG("RepairAllItems", function()
     local v = Visits.open
     if v and v.kind == "VENDOR" then v.repair = v.repairCost or 1 end

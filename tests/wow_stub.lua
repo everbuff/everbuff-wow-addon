@@ -228,6 +228,19 @@ _G.GetRepairAllCost = function() return M.repairCost, M.repairCost > 0 end
 _G.RepairAllItems = function() M.repairCost = 0 end
 _G.BuyMerchantItem = function() end
 _G.UseContainerItem = function() end
+-- bags as WoW Forever answers them: M.bags[bag][slot] = { itemID, quality, hasNoValue? }; selling all junk empties
+-- the junk slots only when the test says the server answered (M.sellJunkNow)
+M.bags = { [0] = {} }
+_G.C_Container = {
+  GetContainerNumSlots = function(bag) return M.bags[bag] and 16 or 0 end,
+  GetContainerItemInfo = function(bag, slot) return M.bags[bag] and M.bags[bag][slot] end,
+  UseContainerItem = function(bag, slot) end,
+}
+M.junkCalls = 0
+_G.C_MerchantFrame = { SellAllJunkItems = function() M.junkCalls = M.junkCalls + 1 end }
+function M.serverSellsJunk()
+  for _, b in pairs(M.bags) do for slot, it in pairs(b) do if it.quality == 0 and not it.hasNoValue then b[slot] = nil end end end
+end
 _G.BuyTrainerService = function() end
 _G.QueryAuctionItems = function() end
 _G.C_AuctionHouse = {

@@ -1566,6 +1566,32 @@ local vv = lastVisit("VENDOR")
 check("merchant visit counts sold, bought and the repair cost", vv and vv.sold == 2 and vv.bought == 1 and vv.repair == 1234, vv and ("%s %s %s"):format(vv.sold, vv.bought, vv.repair))
 BuyMerchantItem(1, 1)
 check("a purchase outside a visit changes nothing", lastVisit("VENDOR") == vv and vv.bought == 1)
+-- #22: another addon sells the junk in its own MERCHANT_SHOW handler, before this addon's runs (EllesmereUIQoL calls
+-- C_MerchantFrame.SellAllJunkItems there, and again while the server drops sales); the founder's visit said 0 sold
+M.bags[0] = { { itemID = 3300, quality = 0 }, { itemID = 3301, quality = 0 }, { itemID = 3302, quality = 0 },
+  { itemID = 2589, quality = 1 }, { itemID = 3303, quality = 0, hasNoValue = true } }
+check("junk stacks are the sellable poor ones", ns.Visits.junkStacks() == 3, ns.Visits.junkStacks())
+C_MerchantFrame.SellAllJunkItems()               -- the other addon, same frame, before MERCHANT_SHOW reaches us
+M.fire("MERCHANT_SHOW")
+M.bags[0][1] = nil                               -- the server sold one, dropped two past its rate limit
+M.now = M.now + 0.4; C_MerchantFrame.SellAllJunkItems()
+M.serverSellsJunk()
+C_Container.UseContainerItem(0, 4)               -- and the player sells the cloth by hand
+M.fire("MERCHANT_CLOSED")
+local jv = lastVisit("VENDOR")
+check("junk sold by another addon before the visit opened counts, each stack once", jv and jv ~= vv and jv.sold == 4 and jv.text == "Merchant: 4 sold", jv and ("%s %s"):format(jv.sold, jv.text))
+-- a sale the server never makes is not counted
+M.bags[0] = { { itemID = 3300, quality = 0 }, { itemID = 3301, quality = 0 } }
+M.fire("MERCHANT_SHOW"); C_MerchantFrame.SellAllJunkItems(); M.bags[0][2] = nil; M.fire("MERCHANT_CLOSED")
+check("junk the server did not sell is not counted", lastVisit("VENDOR").sold == 1, lastVisit("VENDOR").sold)
+-- an item used away from any merchant is not a sale on a merchant visit opened later
+M.bags[0] = {}
+C_Container.UseContainerItem(0, 1)
+M.now = M.now + 5; M.fire("MERCHANT_SHOW"); M.fire("MERCHANT_CLOSED")
+check("an item used earlier is not counted on the next merchant visit", lastVisit("VENDOR").sold == 0 and lastVisit("VENDOR").text == "Merchant", lastVisit("VENDOR").sold)
+-- a sale while the bank is open is not a vendor sale
+M.fire("BANKFRAME_OPENED"); C_Container.UseContainerItem(0, 1); M.fire("BANKFRAME_CLOSED")
+check("using an item at the bank counts nothing", lastVisit("BANK").sold == nil)
 -- bank and trainer
 M.fire("BANKFRAME_OPENED"); M.fire("BANKFRAME_CLOSED")
 check("bank visit recorded", lastVisit("BANK") ~= nil and lastVisit("BANK").text == "Bank")
