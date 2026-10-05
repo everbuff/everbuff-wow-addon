@@ -448,7 +448,8 @@ check("contract: a session record carries its gold ledger with the lifetime keys
 do
   local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" }, { item = "y", s = "a" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
   ns.migrateDB(old)
-  check("migration moves v1 keys into their areas", old.schema == 2 and #old.combat.fights == 1 and old.combat.fightSeq == 1 and #old.loot.log == 1 and old.characterLegacy.gold.balance == 5 and #old.story.events == 1 and old.characterLegacy.xp.cur == 1 and old.characterLegacy.seenZones.Elwynn == 1)
+  check("migration moves v1 keys into their areas", old.schema == 2 and #old.combat.fights == 1 and old.combat.fightSeq == 1 and #old.loot.log == 1 and #old.story.events == 1)
+  check("#23 a v1 save's account-wide character data and gold are discarded, never kept or attributed", old.character == nil and old.characterLegacy == nil and old.loot.gold == nil and old.seenZones == nil and next(old.characters) == nil)
   check("migration drops the v1 slots", old.fights == nil and old.lootlog == nil and old.gold == nil and old.eventlog == nil and old.xp == nil and old.session == nil)
   check("migration keeps settings and sessions", old.settings.emitCorner == "TOPLEFT" and type(old.sessions) == "table")
   -- #17: loot rows without a session id can never upload, so the load drops them (376 rows in the founder's file)
@@ -2028,25 +2029,33 @@ do
   table.remove(Fz); table.remove(L); table.remove(L); table.remove(Lg)   -- Hart's marker rows
   ns.DB.sessions["ut-23"] = nil; ns.DB.sessions[hs] = nil
 end
--- #23 migration: the account-wide block of a schema 2 save is kept once as characterLegacy, never attributed
+-- #23 migration (founder rule, 2026-10-05, everbuff-wow-addon #23): the account-wide block, the old loot.gold ledger and
+-- the characterLegacy copy mix every character, so the load deletes them; nothing is kept or attributed
 do
-  local v = { schema = 2, sessions = {}, loot = { log = {}, gold = { balance = 77, gained = 9 } },
-    character = { professions = { Mining = { rank = 131 } }, playedAtLevel = { [3] = 10, [20] = 999 }, xp = { fromKills = 5410 } } }
-  ns.migrateDB(v)
-  check("#23 migration keeps the old block whole as characterLegacy", v.characterLegacy and v.characterLegacy.professions.Mining.rank == 131 and v.characterLegacy.playedAtLevel[20] == 999 and v.characterLegacy.xp.fromKills == 5410)
-  check("#23 migration keeps the old gold ledger in characterLegacy.gold", v.characterLegacy.gold and v.characterLegacy.gold.balance == 77 and v.characterLegacy.gold.gained == 9)
-  check("#23 migration retires the account-wide slots", v.character == nil and v.loot.gold == nil and type(v.characters) == "table" and next(v.characters) == nil)
-  v.characters["Player-1-000009"] = { xp = { gained = 1 } }
-  local legacy = v.characterLegacy
-  ns.migrateDB(v)
-  check("#23 a second load changes nothing: legacy and the character blocks stay", v.characterLegacy == legacy and v.characters["Player-1-000009"].xp.gained == 1 and v.character == nil)
-  -- an account-wide block written by an older addon after the migration never overwrites the kept one
-  v.character = { xp = { gained = 5 } }
-  ns.migrateDB(v)
-  check("#23 a later account-wide block never replaces characterLegacy", v.characterLegacy == legacy and v.character == nil)
+  local OLDBLOCK = function() return { professions = { Mining = { rank = 131 } }, playedAtLevel = { [3] = 10, [20] = 999 }, xp = { fromKills = 5410 } } end
+  -- a save written by 0.9.29: one account-wide block and the account-wide gold ledger
+  local v29 = { schema = 2, sessions = { a = { guid = "Player-1-000009", addonVersion = "0.9.29" } }, loot = { log = {}, gold = { balance = 77, gained = 9 } }, character = OLDBLOCK() }
+  ns.migrateDB(v29)
+  check("#23 a 0.9.29 save ends without the account-wide block, the gold ledger and characterLegacy", v29.character == nil and v29.loot.gold == nil and v29.characterLegacy == nil)
+  check("#23 a 0.9.29 save attributes nothing to its session's character", type(v29.characters) == "table" and next(v29.characters) == nil and v29.sessions.a ~= nil)
+  -- a save written by 0.9.31: characterLegacy from the 0.9.30 migration and two characters' own blocks
+  local v31 = { schema = 2, sessions = {}, loot = { log = {} }, characterLegacy = OLDBLOCK(),
+    characters = { ["Player-1-000009"] = { name = "Hart", xp = { gained = 1 }, gold = { balance = 3 } }, ["Player-1-000010"] = { name = "Ut", xp = { gained = 2 } } } }
+  v31.characterLegacy.gold = { balance = 77 }
+  ns.migrateDB(v31)
+  check("#23 a 0.9.31 save ends without characterLegacy", v31.characterLegacy == nil and v31.character == nil and v31.loot.gold == nil)
+  check("#23 a two-character save keeps each character's own block as it was",
+    v31.characters["Player-1-000009"].xp.gained == 1 and v31.characters["Player-1-000009"].gold.balance == 3 and v31.characters["Player-1-000010"].xp.gained == 2
+    and v31.characters["Player-1-000009"].professions == nil and v31.characters["Player-1-000010"].playedAtLevel == nil)
+  -- an account-wide block written by an older addon after the migration is deleted again on the next load
+  v31.character = { xp = { gained = 5 } }; v31.loot.gold = { balance = 1 }
+  ns.migrateDB(v31)
+  check("#23 a later account-wide block is deleted, not kept", v31.character == nil and v31.loot.gold == nil and v31.characterLegacy == nil and v31.characters["Player-1-000009"].xp.gained == 1)
   local fresh = ns.migrateDB({})
-  check("#23 a first install has no legacy block", fresh.characterLegacy == nil and type(fresh.characters) == "table")
+  check("#23 a first install has no legacy keys", fresh.characterLegacy == nil and fresh.character == nil and fresh.loot.gold == nil and type(fresh.characters) == "table")
 end
+-- the live save after every test above: no code path wrote an account-wide key
+check("#23 nothing writes the account-wide keys during play", ns.DB.character == nil and ns.DB.characterLegacy == nil and ns.DB.loot.gold == nil)
 
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

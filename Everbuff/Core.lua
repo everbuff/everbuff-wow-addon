@@ -42,7 +42,6 @@ ns.eventFrames[#ns.eventFrames + 1] = f
 --   loot.log                      LOOT: every pickup (item or coin row)
 --   characters[guid]              CHARACTER, one block per character keyed by its GUID (#23): xp, played,
 --                                 professions, reputation, durability, gold totals and sinks, ...
---   characterLegacy               the account-wide block from before #23, kept once and never written again
 --   story.events                  the feed (timeline) behind Home
 -- Facts are stored once; anything a tab shows that can be derived is derived at render time.
 function ns.migrateDB(db)
@@ -57,11 +56,11 @@ function ns.migrateDB(db)
     db.combat.fightSeq = db.fightSeq or db.combat.fightSeq; db.fightSeq = nil
     db.combat.uploadedThrough = db.uploadedThrough or db.combat.uploadedThrough; db.uploadedThrough = nil
     db.loot.log = db.lootlog or db.loot.log; db.lootlog = nil
-    db.loot.gold = db.gold or db.loot.gold; db.gold = nil
+    db.gold = nil   -- the account-wide gold ledger mixed every character: discarded (#23)
     db.story.events = db.eventlog or db.story.events; db.eventlog = nil
     db._inInstance = nil
     for _, k in ipairs({ "xp", "played", "playedAtLevel", "professions", "reputation", "durability", "ilvl", "seenZones", "itemUses", "crafts", "recipes", "flightTime" }) do
-      if db[k] ~= nil then db.character = db.character or {}; db.character[k] = db[k]; db[k] = nil end
+      db[k] = nil   -- account-wide character data mixed every character: discarded (#23)
     end
     db.session = nil; db.runs = nil; db.consent = nil   -- superseded (sessions carry the pace counters) / never built
     db.schema = 2
@@ -71,16 +70,12 @@ function ns.migrateDB(db)
   db.loot.log = db.loot.log or {}
   db.loot.history = db.loot.history or {}     -- raid loot council (Later)
   db.loot.reserves = db.loot.reserves or {}
-  -- Data per character, always (#23, approved 2026-10-04, option A): the account-wide `character` block and the
-  -- lifetime gold ledger mixed every character on the account and cannot be split safely, so both are kept once,
-  -- untouched, as `characterLegacy` (the ledger as its `gold`) and never written again. Each character then fills
-  -- its own block under its GUID.
-  if db.character ~= nil or db.loot.gold ~= nil then
-    local legacy = type(db.character) == "table" and db.character or {}
-    if legacy.gold == nil then legacy.gold = db.loot.gold end
-    if db.characterLegacy == nil then db.characterLegacy = legacy end
-    db.character, db.loot.gold = nil, nil
-  end
+  -- Data per character, always (#23, approved 2026-10-04, option A). The account-wide `character` block, the
+  -- lifetime `loot.gold` ledger and the `characterLegacy` copy of both (0.9.30 and 0.9.31) mixed every character on
+  -- the account, so they are invalid and deleted on load, never read and never attributed (founder rule,
+  -- 2026-10-05: data that does not fit the current system is discarded). Each character's block starts from what
+  -- that character writes.
+  db.character, db.loot.gold, db.characterLegacy = nil, nil, nil
   db.story.inInstance = nil   -- now per character (characters[guid].inInstance)
   db.characters = db.characters or {}
   db.story.events = db.story.events or {}

@@ -78,9 +78,10 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] One RECIPE row per recipe and one REWARD row per reward panel on WoW Forever, where both were written twice; FLIGHTTRIP rows carry `duration` (0.9.27, #11)
 - [x] A merchant visit counts the junk sold by "sell all junk" and the sales another addon makes before the visit opens; it said 0 sold on the founder's save file of 2026-10-03 (0.9.28, #22)
 - [x] A merchant visit counts each stack the server took once: a junk stack sold by hand after "sell all junk" was counted twice, a sale the merchant refused once (0.9.29, #22)
-- [x] Data per character, always: professions, xp, played, item level, gear health, reputation, lockouts, item uses, zones, flights, crafts and the gold totals live under the character's GUID (`characters[guid]`); the old account-wide block is kept once as `characterLegacy` (0.9.30, #23)
+- [x] Data per character, always: professions, xp, played, item level, gear health, reputation, lockouts, item uses, zones, flights, crafts and the gold totals live under the character's GUID (`characters[guid]`) (0.9.30, #23)
 - [x] Home shows the logged-in character: the GOLD card reads its own ledger (it showed 0 after 0.9.30), and the kill, death and fight counts leave out the other characters' sessions (0.9.31, #23)
 - [x] Every pane shows the logged-in character only: Timeline, Sessions, Items, Auctions, Fights, Dungeons, Deaths, Quests, Reputation and Professions list the rows of the sessions that carry its GUID; Home counted no fights in 0.9.31 because a fight names its session in `session`, which is read now. Stored and uploaded data unchanged (0.9.32, #23)
+- [x] Invalid data is discarded, never kept as legacy: the load deletes the old account-wide `character` block, the account-wide `loot.gold` ledger and the `characterLegacy` copy of both, which mixed every character; nothing is attributed by guesswork and each character's block starts from what it writes (0.9.33, #23, founder rule 2026-10-05)
 
 ## Performance and SavedVariables size
 
