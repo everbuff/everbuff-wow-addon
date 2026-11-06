@@ -1467,6 +1467,28 @@ do
   check("a bad code does not crash and leaves data alone", #M.errors == 0 and ns.DB.combat.lastAck.source == "paste")
   ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
 end
+-- ── ack by session (everbuff-business #46): exactly the sessions the backend stored are pruned, nothing older ──
+do
+  local keepF, keepL, keepE, keepS = ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions
+  local live = ns.DB.active
+  ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events = {}, {}, {}
+  ns.DB.sessions = { [live] = keepS[live], ["s-stored"] = { id = "s-stored", startedEpoch = 100, endedEpoch = 200 }, ["s-older"] = { id = "s-older", startedEpoch = 10, endedEpoch = 50 } }
+  local F = ns.DB.combat.fights
+  F[1] = { uid = "f-older", id = 9101, session = "s-older", startEpoch = 20, duration = 5, outcome = "kill", foes = { "A" } }
+  F[2] = { uid = "f-stored", id = 9102, session = "s-stored", startEpoch = 150, duration = 5, outcome = "kill", foes = { "B" } }
+  F[3] = { uid = "f-live", id = 9103, session = live, startEpoch = 300, duration = 5, outcome = "kill", foes = { "C" } }
+  ns.DB.loot.log = { { t = 30, s = "s-older", item = "Older Cloth" }, { t = 160, s = "s-stored", item = "Stored Cloth" }, { t = 310, s = live, item = "Live Cloth" } }
+  ns.DB.story.events = { { t = 40, s = "s-older", kind = "QUESTDONE" }, { t = 170, s = "s-stored", kind = "QUESTDONE" } }
+  local ack = { uids = {}, sessions = { ["s-stored"] = true, [live] = true } }
+  local marked, removed = ns.applyAck(ack, "file")
+  local function uids() local t = {} for _, f in ipairs(F) do t[#t + 1] = f.uid end return table.concat(t, ",") end
+  check("ack by session prunes that session's fights only, never an older unexported one or the running one", marked == 1 and removed == 1 and uids() == "f-older,f-live", uids())
+  local items = {} for _, l in ipairs(ns.DB.loot.log) do items[#items + 1] = l.item end
+  check("ack by session prunes its loot and events, keeps the others", table.concat(items, ",") == "Older Cloth,Live Cloth" and #ns.DB.story.events == 1 and ns.DB.story.events[1].s == "s-older", table.concat(items, ","))
+  check("ack by session removes its record, keeps the older and the running one", ns.DB.sessions["s-stored"] == nil and ns.DB.sessions["s-older"] ~= nil and ns.DB.sessions[live] ~= nil)
+  check("ack by session is consumed and recorded", next(ack.sessions) == nil and ack.applied ~= nil and ns.DB.combat.lastAck.sessions == 1)
+  ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
+end
 -- ── the desktop's EverbuffAck.lua, byte for byte as everbuff-desktop ack::render writes it (desktop #38) ──
 do
   local keepF, keepL, keepE, keepS = ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions

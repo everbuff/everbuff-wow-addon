@@ -171,11 +171,13 @@ end
 -- The desktop tells the addon what it has already uploaded so the addon can prune. Two inbound paths,
 -- both landing in ns.applyAck:
 --   A. `EverbuffAck` companion SavedVariable, written by the desktop ONLY while WoW is closed:
---      EverbuffAck = { uids = { ["<fight uid>"] = true, ... }, through = <epoch> }
---      Read on ADDON_LOADED; uids are cleared after use so the file never grows.
+--      EverbuffAck = { uids = { ["<fight uid>"] = true, ... }, sessions = { ["<session id>"] = true, ... }, through = <epoch> }
+--      Read on ADDON_LOADED; uids and sessions are cleared after use so the file never grows.
 --   B. a paste code from the desktop: EB-ACK-<epoch>[:<uid>,<uid>,...]  (/eb ack <code>, or Settings > Data)
--- Effect: fights with an acked uid, or that started at or before `through`, are marked uploaded and pruned;
--- loot rows, events and finished sessions at or before `through` are pruned. `combat.lastAck` records it.
+-- Effect: fights with an acked uid, or of an acked session, or that started at or before `through`, are marked uploaded
+-- and pruned; the loot rows, events and record of an acked session, and loot rows, events and finished sessions at or
+-- before `through`, are pruned. `combat.lastAck` records it. `sessions` names exactly what the backend stored
+-- (everbuff-business #46, 0.9.36); `through` is kept for desktops that still send it.
 -- Keep a record list at `cap` rows (ADDON-2, everbuff-backend #68): drop the oldest row of an earlier session first,
 -- and the running session's own rows only when nothing else is left. Rows carry their session id in `s`. Acked rows
 -- are already gone (applyAck prunes them), so everything here still waits for an upload.
@@ -198,14 +200,23 @@ function ns.applyAck(ack, source)
   if not (db and type(ack) == "table") then return 0, 0 end
   local through = tonumber(ack.through) or 0
   local uids = type(ack.uids) == "table" and ack.uids or {}
+  -- the running session is never pruned: it is still being written
+  local sessions = {}
+  if type(ack.sessions) == "table" then for id, v in pairs(ack.sessions) do if v and id ~= db.active then sessions[id] = true end end end
   local marked = 0
   for _, f in ipairs(db.combat.fights or {}) do
-    if (f.uid and uids[f.uid]) or (through > 0 and (f.startEpoch or math.huge) <= through) then
+    if (f.uid and uids[f.uid]) or (f.session and sessions[f.session]) or (through > 0 and (f.startEpoch or math.huge) <= through) then
       if f.uploaded ~= true then marked = marked + 1 end
       f.uploaded = true
     end
   end
   local removed = (ns.Fights and ns.Fights.pruneUploaded and ns.Fights.pruneUploaded()) or 0
+  local nsess = 0
+  if next(sessions) then
+    local function pruneS(list) if not list then return end for i = #list, 1, -1 do if list[i].s and sessions[list[i].s] then table.remove(list, i) end end end
+    pruneS(db.loot.log); pruneS(db.story.events)
+    for id in pairs(sessions) do if db.sessions and db.sessions[id] then db.sessions[id] = nil; nsess = nsess + 1 end end
+  end
   if through > 0 then
     local function pruneT(list) if not list then return end for i = #list, 1, -1 do if (list[i].t or 0) <= through then table.remove(list, i) end end end
     pruneT(db.loot.log); pruneT(db.story.events)
@@ -214,8 +225,9 @@ function ns.applyAck(ack, source)
     end
   end
   local now = (GetServerTime and GetServerTime()) or time()
-  db.combat.lastAck = { at = now, through = through > 0 and through or nil, fights = marked, source = source or "file" }
+  db.combat.lastAck = { at = now, through = through > 0 and through or nil, fights = marked, sessions = nsess > 0 and nsess or nil, source = source or "file" }
   if ack.uids then ack.uids = {} end          -- consumed: the companion file cannot grow
+  if ack.sessions then ack.sessions = {} end
   ack.applied = now
   return marked, removed
 end
@@ -348,7 +360,7 @@ f:SetScript("OnEvent", function(_, event, ...)
     ns.DB = db
     if ns.flushBlocked then ns.flushBlocked() end   -- blocks seen before the save file loaded
     -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
-    if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
+    if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or next(EverbuffAck.sessions or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
       local marked, removed = ns.applyAck(EverbuffAck, "file")
       ns.msg(("desktop sync applied: %d fight%s acked, %d pruned"):format(marked, marked == 1 and "" or "s", removed))
     end

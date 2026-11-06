@@ -4,14 +4,14 @@ One line per item from the audit backlog (`ADDON_BACKLOG.md`) plus everything ad
 and covered by the headless tests where testable; `[ ]` is open. Items marked *Later* belong to the raid
 vertical and are not in the current milestone. Blocked items name what they wait on.
 
-**Progress as of 2026-09-25:** 135 of 144 items shipped (94%), 9 open.
+**Progress as of 2026-11-06:** 150 of 159 items shipped (94%), 9 open.
 
 | Area | Done | Open | Progress |
 | --- | ---: | ---: | ---: |
 | Capture layer (what the addon records) | 22 | 2 | 92% |
-| Correctness | 14 | 0 | 100% |
+| Correctness | 27 | 0 | 100% |
 | Performance and SavedVariables size | 7 | 2 | 78% |
-| Desktop and backend contract | 11 | 1 | 92% |
+| Desktop and backend contract | 13 | 1 | 93% |
 | Fights tab | 17 | 0 | 100% |
 | Timeline tab (was Events) | 7 | 0 | 100% |
 | Loot tab | 8 | 0 | 100% |
@@ -23,7 +23,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 | On-screen flag and toast (desktop OCR channel) | 9 | 1 | 90% |
 | New tabs and consolidation | 5 | 1 | 83% |
 | Infrastructure and docs | 5 | 0 | 100% |
-| **Total** | **135** | **9** | **94%** |
+| **Total** | **150** | **9** | **94%** |
 
 ---
 
@@ -106,6 +106,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Source, Location name and Coordinates as separate numeric fields and separate columns everywhere
 - [x] Cap warning when fights or loot approach the storage cap
 - [x] Upload ack channel, addon side: `EverbuffAck` companion file applied on load, `/eb ack` and a Settings > Data paste box; desktop side still to build (write the file while WoW is closed, show the code after upload)
+- [x] The ack names the sessions the backend stored (`EverbuffAck.sessions`): their fights, loot, events and record are pruned, nothing older the backend does not have (0.9.36, everbuff-business #46)
 - [x] Acked fights, loot rows and events are pruned; unacked data is never touched
 - [x] Finished sessions before the ack point are pruned; the live session never is
 - [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
