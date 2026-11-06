@@ -68,12 +68,12 @@ build = function(content)
   content.welcome:SetText("Play, and this page fills in. The flag on screen is what the desktop app reads.")
 
   -- a stat card: dim title, big value, small sub. Returned with .value/.sub to update on refresh.
-  -- `goto` = { tab, pane } the card drills into on click (the detail behind the number).
-  local function card(x, y, w, h, goto)
+  -- `drill` = { tab, pane } the card drills into on click (the detail behind the number).
+  local function card(x, y, w, h, drill)
     local p = UI.Panel(ov); p:SetSize(w, h); p:SetPoint("TOPLEFT", x, y)
-    if goto then
+    if drill then
       p:EnableMouse(true)
-      p:SetScript("OnMouseUp", function() UI.Open(goto[1], goto[2]) end)
+      p:SetScript("OnMouseUp", function() UI.Open(drill[1], drill[2]) end)
       p:SetScript("OnEnter", function(f) f:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1); f:SetBackdropBorderColor(C.edgeHi[1], C.edgeHi[2], C.edgeHi[3], 1) end)
       p:SetScript("OnLeave", function(f) f:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
       p.more = UI.FS(p, "GameFontDisableSmall", C.dim); p.more:SetPoint("TOPRIGHT", -10, -9); p.more:SetText("›")
