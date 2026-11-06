@@ -46,6 +46,38 @@ do
   check("debug: the row carries the call stack", errs[1] and type(errs[1].stack) == "string" and errs[1].stack:find("Emitter.lua") ~= nil)
   ns.Debug.command("clear")
 end
+
+-- ── /eb errors: the captured errors in a window, as text ready to copy ──
+do
+  ns.Debug.command("clear")
+  local h = geterrorhandler()
+  h("Interface/AddOns/RXPGuides/functions.lua:906: attempt to index local 'name' (a secret string value)")
+  h("Interface/AddOns/RXPGuides/functions.lua:906: attempt to index local 'name' (a secret string value)")
+  local report = ns.Debug.report()
+  check("errors: the report names the version and the row count", report:find(tostring(ns.VERSION), 1, true) ~= nil and report:find("1 error row", 1, true) ~= nil, report:sub(1, 120))
+  check("errors: a repeated error is one entry with its count", report:find("x2", 1, true) ~= nil and select(2, report:gsub("functions.lua:906: attempt", "")) == 1)
+  check("errors: the entry names the addon the stack points at", report:find("#1  EverbuffJournal  x2", 1, true) ~= nil, report)
+  check("errors: the entry carries the call stack", report:find("Emitter.lua]:1170: in function", 1, true) ~= nil)
+  SlashCmdList.EVERBUFF("errors")
+  local f = _G.EverbuffErrorsFrame
+  check("errors: /eb errors opens the window", f ~= nil and f:IsShown())
+  check("errors: the window holds the report", f and f.report:find("#1  EverbuffJournal  x2", 1, true) ~= nil and f.box:GetText() == f.report)
+  f.copy.scripts.OnClick(f.copy)
+  check("errors: Copy selects the text and says to press Ctrl+C", f.hint:GetText() == "Selected. Press Ctrl+C to copy.")
+  local esc = false; for _, n in ipairs(UISpecialFrames) do if n == "EverbuffErrorsFrame" then esc = true end end
+  check("errors: Esc closes the window", esc)
+  f.box.scripts.OnTextChanged(f.box, true)
+  check("errors: typing in the box puts the report back", f.box:GetText() == f.report)
+  local real = debugstack
+  debugstack = function() return "[Interface/AddOns/Blizzard_Menu/Compositor.lua]:256: in function <x>\n[Interface/AddOns/AzerothCompendium/wishliststars.lua]:158: in function <y>" end
+  h("Use of function 'CreateTexture' is disallowed.")
+  debugstack = real
+  check("errors: a taint error is named after the addon, not Blizzard's code", ns.Debug.report():find("#2  AzerothCompendium  x1", 1, true) ~= nil, ns.Debug.report())
+  ns.Debug.command("clear")
+  SlashCmdList.EVERBUFF("errors")
+  check("errors: no errors says so", f.box:GetText():find("No errors captured.", 1, true) ~= nil)
+  f:Hide()
+end
 -- ── localization pattern builder ──
 check("skillup pattern", select(1, ("Your skill in Mining has increased to 75."):match(T.SKILLUP_PAT)) == "Mining")
 check("skillup number", select(2, ("Your skill in Mining has increased to 75."):match(T.SKILLUP_PAT)) == "75")

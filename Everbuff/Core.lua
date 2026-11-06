@@ -292,6 +292,8 @@ SlashCmdList.EVERBUFF = function(arg)
     local n = 0
     for _ in pairs(ns.DB.sessions) do n = n + 1 end
     ns.msg(("client: %s · %d session(s) stored"):format(ns.flavor, n))
+  elseif arg == "errors" then
+    if ns.Debug then ns.Debug.showErrors() else ns.msg("debug module not loaded") end
   elseif arg == "debug" or arg:match("^debug ") then
     if ns.Debug then ns.Debug.command((arg:gsub("^debug%s*", ""))) else ns.msg("debug module not loaded") end
   elseif arg == "wipe" then
@@ -329,7 +331,7 @@ SlashCmdList.EVERBUFF = function(arg)
     local on = not arg:match("off")
     if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /eb (open) · /eb status · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb export · /eb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
   end
 end
 

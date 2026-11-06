@@ -2,11 +2,12 @@
 --
 -- Addons can't talk to a dev machine, but SavedVariables IS a file on disk. So we:
 --   1. capture every Lua error into EverbuffDB.debug.errors (survives to the SV file),
---   2. write a diagnostics snapshot on `/rb debug`,
---   3. offer a fake 5-man roster (`/rb debug group`) so the group-dependent tabs (Crew, Readiness)
---      can be seen and tested SOLO.
--- Flow: play / repro → `/rb debug` → `/reload` (flushes SV) → the dev reads
---   WTF/Account/<acct>/SavedVariables/Everbuff.lua and sees exactly what happened.
+--   2. write a diagnostics snapshot on `/eb debug`,
+--   3. offer a fake 5-man roster (`/eb debug group`) so the group-dependent tabs (Crew, Readiness)
+--      can be seen and tested SOLO,
+--   4. show every captured error in a window on `/eb errors`, ready to copy (Ctrl+C) and paste to the dev.
+-- Flow: play / repro → `/eb debug` → `/reload` (flushes SV) → the dev reads
+--   WTF/Account/<acct>/SavedVariables/EverbuffJournal.lua and sees exactly what happened.
 
 local ADDON, ns = ...
 local D = {}
@@ -70,10 +71,79 @@ function D.snapshot()
     fakeGroup = D.active(),
     errorCount = #errbuf,
   }
-  ns.msg("diagnostics written - |cffffffff/reload|r then share SavedVariables\\Everbuff.lua")
+  ns.msg("diagnostics written - |cffffffff/reload|r then share SavedVariables\\EverbuffJournal.lua")
 end
 
--- slash: /rb debug [group|clear]
+-- ── /eb errors: every captured error as plain text, in a window with a Copy button ──────────────────────────────
+-- WoW gives addons no clipboard, so Copy selects the whole text and focuses the box: Ctrl+C then copies it.
+-- The errors are those of this load (since the last login or /reload), from every addon, ours included.
+function D.report()
+  local out = {}
+  out[#out + 1] = ("everbuff.gg %s · WoW %s · %s · %d error row(s) since the last login or /reload")
+    :format(tostring(ns.VERSION), tostring((GetBuildInfo and select(2, GetBuildInfo())) or "?"), date("%Y-%m-%d %H:%M:%S"), #errbuf)
+  for i, r in ipairs(errbuf) do
+    -- the first addon in the stack that is not Blizzard's own UI code (a taint error starts in Blizzard_*)
+    local from
+    for a in (r.stack or ""):gmatch("AddOns/([^/%]]+)/") do
+      from = from or a
+      if not a:match("^Blizzard_") then from = a; break end
+    end
+    out[#out + 1] = ""
+    out[#out + 1] = ("#%d  %s  x%d  %s%s"):format(i, from or "unknown", r.n or 1, r.at or "?", r.last and (" .. " .. r.last) or "")
+    out[#out + 1] = r.err or ""
+    if r.stack then out[#out + 1] = r.stack end
+  end
+  if #errbuf == 0 then out[#out + 1] = ""; out[#out + 1] = "No errors captured." end
+  return table.concat(out, "\n")
+end
+
+local errFrame
+local function buildErrors()
+  local UI = ns.UI; if not (UI and UI.C) then return nil end
+  local C = UI.C
+  local f = CreateFrame("Frame", "EverbuffErrorsFrame", UIParent, "BackdropTemplate")
+  f:SetSize(640, 420); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:SetToplevel(true)
+  f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
+  f:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.98); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
+  f:EnableMouse(true); f:SetMovable(true); f:RegisterForDrag("LeftButton")
+  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
+  tinsert(UISpecialFrames, "EverbuffErrorsFrame")   -- Esc closes it
+  local title = UI.FS(f, "GameFontNormalLarge", C.ink); title:SetPoint("TOPLEFT", 16, -16); title:SetText("Errors")
+  f.count = UI.FS(f, "GameFontHighlight", C.dim); f.count:SetPoint("LEFT", title, "RIGHT", 10, 0)
+  local sf = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+  sf:SetPoint("TOPLEFT", 16, -48); sf:SetPoint("BOTTOMRIGHT", -36, 56)
+  local box = CreateFrame("EditBox", nil, sf)
+  box:SetMultiLine(true); box:SetMaxLetters(0); box:SetAutoFocus(false); box:SetWidth(580)
+  box:SetFontObject(UI.BODY_SM or "GameFontHighlightSmall"); box:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+  box:SetScript("OnEscapePressed", function() f:Hide() end)
+  -- read only: any typing puts the report back
+  box:SetScript("OnTextChanged", function(self, user) if user then self:SetText(f.report or ""); self:HighlightText() end end)
+  sf:SetScrollChild(box)
+  f.box = box
+  f.hint = UI.FS(f, "GameFontHighlight", C.dim); f.hint:SetPoint("BOTTOMLEFT", 16, 24)
+  local copy = UI.Button(f, "Copy", 100, 28, function()
+    box:SetFocus(); box:HighlightText()
+    f.hint:SetText("Selected. Press Ctrl+C to copy.")
+  end)
+  copy:SetPoint("BOTTOMRIGHT", -126, 16)
+  f.copy = copy
+  local close = UI.Button(f, "Close", 100, 28, function() f:Hide() end)
+  close:SetPoint("BOTTOMRIGHT", -16, 16)
+  f:Hide()
+  errFrame = f
+  return f
+end
+
+function D.showErrors()
+  local f = errFrame or buildErrors(); if not f then return end
+  f.report = D.report()
+  f.box:SetText(f.report); f.box:SetCursorPosition(0)
+  f.count:SetText(("%d since the last login or /reload"):format(#errbuf))
+  f.hint:SetText("")
+  f:Show()
+end
+
+-- slash: /eb debug [group|clear]
 function D.command(rest)
   rest = (rest or ""):gsub("^%s+", "")
   if rest == "group" then
