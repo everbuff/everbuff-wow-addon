@@ -2111,5 +2111,33 @@ end
 -- the live save after every test above: no code path wrote an account-wide key
 check("#23 nothing writes the account-wide keys during play", ns.DB.character == nil and ns.DB.characterLegacy == nil and ns.DB.loot.gold == nil)
 
+-- ── the SavedVariables contract export (tests/export_fixture.lua, master plan P0-12) ──
+-- The committed export is what the backend ingests with exact counts; CI regenerates it with --check. Here it is
+-- read back as the client reads a save file (a sandbox, no globals touched) and held to the contract.
+do
+  local sv = {}
+  local chunk, err = loadfile("tests/export/EverbuffJournal.lua")
+  check("export: the save file parses as Lua", chunk ~= nil, err)
+  if chunk then setfenv(chunk, sv); local ok, e = pcall(chunk); check("export: the save file runs", ok, e) end
+  local db = sv.EverbuffDB or {}
+  check("export: only the TOC's SavedVariables, a nil one left out", sv.EverbuffTest and sv.EverbuffTest.n == 2 and sv.EverbuffAck == nil and next(sv, nil) ~= nil)
+  check("export: schema 2 with the contract's top-level keys", db.schema == 2 and type(db.settings) == "table" and type(db.sessions) == "table" and type(db.combat) == "table" and type(db.loot) == "table" and type(db.characters) == "table" and type(db.story) == "table")
+  check("export: no account-wide character keys", db.character == nil and db.characterLegacy == nil and db.loot and db.loot.gold == nil)
+  local ids = {}; for id in pairs(db.sessions or {}) do ids[#ids + 1] = id end
+  local sess = ids[1] and db.sessions[ids[1]]
+  check("export: one session across the /reload, ended by the logout", #ids == 1 and sess.endedBy == "logout" and sess.id == ids[1] and sess.startedEpoch - sess.startedLocal == 1, #ids)
+  local resumes = 0; for _, r in ipairs(sess and sess.segments or {}) do if r:find("\tRESUME\treload", 1, true) then resumes = resumes + 1 end end
+  check("export: the reload left one RESUME row", resumes == 1, resumes)
+  local fights = db.combat and db.combat.fights or {}
+  local okF = #fights == 3
+  for _, fg in ipairs(fights) do okF = okF and fg.session == ids[1] and type(fg.uid) == "string" and type(fg.startLocalHi) == "number" and type(fg.startMono) == "number" and fg.outcome == "kill" end
+  check("export: three fights, each with its session, uid and clocks", okF, #fights)
+  local mine = true
+  for _, r in ipairs(db.loot and db.loot.log or {}) do mine = mine and r.s == ids[1] end
+  for _, e in ipairs(db.story and db.story.events or {}) do mine = mine and e.s == ids[1] end
+  check("export: every loot row and story event carries the session id", mine and #db.loot.log == 5 and #db.story.events == 5, #(db.loot and db.loot.log or {}))
+  check("export: the character block sits under the player GUID", db.characters["Player-1-000001"] and db.characters["Player-1-000001"].xp.fromQuests == 600)
+end
+
 print(("\n%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

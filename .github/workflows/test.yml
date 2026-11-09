@@ -1,0 +1,34 @@
+name: test
+# The LuaJIT suite on every pull request and push to main (master plan P0-12), the dependency list and the
+# SavedVariables contract export. The export is the save file a scripted session writes through the real addon
+# files (tests/export_fixture.lua); a change to what the addon saves must regenerate the committed copy, and the
+# backend's copy (everbuff-backend tests/fixtures/addon_export/) follows it. release.yml runs the same suite on a tag.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends luajit
+      - name: Test suite
+        run: luajit tests/run_tests.lua
+      - name: Dependency list is current
+        run: luajit tools/deps.lua --check && luajit tools/deps.lua --json > deps.json
+      - name: Contract export is current
+        run: |
+          mkdir -p out
+          luajit tests/export_fixture.lua out/EverbuffJournal.lua
+          luajit tests/export_fixture.lua --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: savedvariables-export
+          path: |
+            out/EverbuffJournal.lua
+            deps.json
