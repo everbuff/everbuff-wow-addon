@@ -89,6 +89,18 @@ code and asserts on the resulting state: the fight lifecycle, aura guards, loot 
 the ack channel, the schema migration, every tab and pane building and refreshing, and the data contract.
 Secret Values cannot be simulated outside the client; their guards' type gates and positive paths are covered.
 
+```
+luajit tests/export_fixture.lua           # regenerate tests/export/EverbuffJournal.lua
+luajit tests/export_fixture.lua --check   # fail when the committed export is stale
+```
+
+`tests/export_fixture.lua` plays a scripted session through the real addon files (login, three fights with loot
+and coin, a quest, a level-up, a `/reload` in a fresh Lua state that loads the save file the logout wrote, a
+logout) and writes the save file in the client's layout with sorted keys, a fixed clock and a fixed random seed.
+The backend checks in a copy (`everbuff-backend` `tests/fixtures/addon_export/`) and ingests it with exact
+counts, so a change to what the addon saves regenerates this file and then the backend's copy. The `test`
+workflow runs the suite, `tools/deps.lua --check` and the export check on every pull request and push to main.
+
 ## Roadmap
 
 [`docs/ADDON_ROADMAP.md`](docs/ADDON_ROADMAP.md) is the checklist of everything planned, done and open, with
