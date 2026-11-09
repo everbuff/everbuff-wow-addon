@@ -433,7 +433,7 @@ EverbuffDB = {
 			["player"] = "Hart",
 			["project"] = 1,
 			["realm"] = "Realm",
-			["schema"] = 4,
+			["schema"] = 5,
 			["segments"] = {
 				"1	1793000000	831000.500	SESSION_START	Hart	Realm	Elwynn Forest	lvl=12", -- [1]
 				"2	1793000000	831000.500	LOGGING	acl=1	combat=1", -- [2]
