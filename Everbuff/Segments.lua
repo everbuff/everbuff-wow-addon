@@ -71,7 +71,7 @@ function R.start()
   local name, itype = GetInstanceInfo()
   local context = (itype == "raid" or itype == "party") and name or (GetRealZoneText() or "World")
   local sess = {
-    id = newId(), schema = 4,
+    id = newId(), schema = 5,
     startedEpoch = GetServerTime(), startedMono = GetTime(),
     build = select(4, GetBuildInfo()), project = WOW_PROJECT_ID, flavor = ns.flavor, addonVersion = ns.VERSION,
     player = UnitNameUnmodified("player"), surname = ns.surname(), realm = GetRealmName(),
