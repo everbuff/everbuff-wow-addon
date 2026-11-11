@@ -107,6 +107,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Cap warning when fights or loot approach the storage cap
 - [x] Upload ack channel, addon side: `EverbuffAck` companion file applied on load, `/eb ack` and a Settings > Data paste box; desktop side still to build (write the file while WoW is closed, show the code after upload)
 - [x] The ack names the sessions the backend stored (`EverbuffAck.sessions`): their fights, loot, events and record are pruned, nothing older the backend does not have (0.9.36, everbuff-business #46)
+- [x] Fight history cap 5000 (was 1000), loss said in chat on the first drop and every 50th with the count; the old line told the player to start an app that was already running (0.9.37, founder 2026-11-11)
 - [x] Acked fights, loot rows and events are pruned; unacked data is never touched
 - [x] Finished sessions before the ack point are pruned; the live session never is
 - [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
