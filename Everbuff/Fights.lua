@@ -17,8 +17,10 @@ ns.Fights = F
 -- fight and shipped it to the backend, it acks (by fight id) and the addon prunes it. The cap keeps
 -- SavedVariables from growing without bound if the desktop never runs. At the cap a fight the desktop
 -- already has goes first; a fight it does not have goes only when nothing else can, and never silently
--- (everbuff-business #38, A1: 1000 fights, D18).
-local FIGHT_CAP = 1000
+-- (everbuff-business #38, A1, D18). 1000 until 0.9.37; raised to 5000 by the founder on 2026-11-11 because a desktop
+-- that holds the video over the month's hours (0.1.5) never acked, and the addon dropped fights it still had.
+local FIGHT_CAP = 5000
+local LOST_SAY_EVERY = 50   -- the first loss of a session is said in chat, then every 50th, with the running count
 local AURA_CAP = 150        -- per-fight aura timeline cap (each unit)
 local DEFAULT_SAMPLE = 1    -- seconds between stat snapshots (fixed; identical snapshots are deduped)
 local SAMPLE_MIN, SAMPLE_MAX = 1, 10
@@ -885,8 +887,8 @@ function F.trim(list)
     local gone = table.remove(list, drop)
     if gone and gone.uploaded ~= true then
       F.lost = (F.lost or 0) + 1
-      if ns.msg then
-        ns.msg(("fight history is full (%d): the oldest fight the desktop app has not read yet was dropped (%d this session). Start the everbuff.gg app to keep them."):format(FIGHT_CAP, F.lost))
+      if ns.msg and (F.lost == 1 or F.lost % LOST_SAY_EVERY == 0) then
+        ns.msg(("fight history is full (%d): %d fights the everbuff.gg app has not confirmed as stored were dropped this session, oldest first. Recordings the app made keep their own copy."):format(FIGHT_CAP, F.lost))
       end
     end
   end
