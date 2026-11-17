@@ -197,7 +197,7 @@ _G.TakeTaxiNode = function() end
 M.inbox = {}
 _G.ATTACHMENTS_MAX_RECEIVE = 16
 _G.GetInboxHeaderInfo = function(i) local m = M.inbox[i]; if not m then return end
-  return 1, 1, m.sender, m.subject, m.money or 0, m.cod or 0, 30, m.items and #m.items > 0, true, false, false, true, false end
+  return 1, 1, m.sender, m.subject, m.money or 0, m.cod or 0, 30, m.items and #m.items > 0, true, false, false, m.canReply ~= false, false end
 _G.GetInboxInvoiceInfo = function(i) local m = M.inbox[i]; if m and m.invoice then return unpack(m.invoice) end end
 _G.GetInboxItem = function(i, j) local it = M.inbox[i] and M.inbox[i].items and M.inbox[i].items[j]; if not it then return end
   return it.name, it.id, 1000 + it.id, it.count, it.quality, true end
@@ -218,7 +218,8 @@ _G.SetCVar = function(k, v) M.cvars[k] = v end
 M.chatCalls = 0
 _G.LoggingChat = function(v) if v ~= nil then M.chatLogging = v; M.chatCalls = M.chatCalls + 1 end return M.chatLogging end
 _G.LoggingCombat = function(v) if v ~= nil then M.logging = v end return M.logging end
-_G.GetRealmName, _G.GetGuildInfo = function() return "Realm" end, function() return nil end
+_G.GetRealmName = function() return "Realm" end
+_G.GetGuildInfo = function(u) local x = u ~= "player" and M.units[u]; return x and x.guild or nil end
 _G.UnitFactionGroup = function() return "Alliance" end
 _G.UnitName = function(u) if u == "player" then return "Hart", "Realm" end local x = M.units[u]; return x and x.name end
 _G.UnitGUID = function(u) if u == "player" then return "Player-1-000001" end local x = M.units[u]; return x and x.guid end
@@ -306,7 +307,8 @@ _G.GetSavedInstanceInfo = function(i) local s = M.saved[i]; if not s then return
 _G.UIFrameFadeIn, _G.UIFrameFadeOut, _G.UIFrameFade = function() end, function() end, function() end
 M.shift, M.inserted = false, nil
 _G.IsShiftKeyDown = function() return M.shift end
-_G.GetItemInfo = function(id) return "Item " .. tostring(id), ("|cffffffff|Hitem:%d::::::::1:::::::|h[Item %d]|h|r"):format(id, id) end
+M.sellPrice = {}   -- item id -> vendor sell price per unit (GetItemInfo's 11th value)
+_G.GetItemInfo = function(id) return "Item " .. tostring(id), ("|cffffffff|Hitem:%d::::::::1:::::::|h[Item %d]|h|r"):format(id, id), 1, 10, 1, "Misc", "Junk", 20, "", 134400, M.sellPrice[id] end
 _G.ChatEdit_InsertLink = function(link) M.inserted = link; return true end
 _G.CreateFont = function() return mkframe() end
 
@@ -347,5 +349,31 @@ _G.C_AuctionHouse = {
 M.tradeSkillName = nil
 _G.C_TradeSkillUI = _G.C_TradeSkillUI or {}
 _G.C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = M.tradeSkillName } end
+-- gold journal (#36): the trade window, merchant items, the guild roster, the friends list, new mail
+-- M.tradeWin = { gaveMoney, gotMoney, player = { [slot] = { id, name, count } }, target = { ... } } while it is open
+M.tradeWin = nil
+local function tslot(side, i) local w = M.tradeWin; return w and w[side] and w[side][i] end
+_G.MAX_TRADABLE_ITEMS = 6
+_G.ERR_TRADE_COMPLETE, _G.ERR_TRADE_CANCELLED = "Trade complete.", "Trade cancelled."
+_G.GetPlayerTradeMoney = function() return M.tradeWin and M.tradeWin.gaveMoney or 0 end
+_G.GetTargetTradeMoney = function() return M.tradeWin and M.tradeWin.gotMoney or 0 end
+_G.GetTradePlayerItemInfo = function(i) local it = tslot("player", i); if it then return it.name, 134400, it.count, 1, true, nil end end
+_G.GetTradeTargetItemInfo = function(i) local it = tslot("target", i); if it then return it.name, 134400, it.count, 1, true, nil end end
+_G.GetTradePlayerItemLink = function(i) local it = tslot("player", i); if it and it.id then return ("|cffffffff|Hitem:%d::::::::1:::::::|h[%s]|h|r"):format(it.id, it.name) end end
+_G.GetTradeTargetItemLink = function(i) local it = tslot("target", i); if it and it.id then return ("|cffffffff|Hitem:%d::::::::1:::::::|h[%s]|h|r"):format(it.id, it.name) end end
+-- M.merchant[index] = { id, name, price, qty }
+M.merchant = {}
+_G.GetMerchantItemLink = function(i) local it = M.merchant[i]; if it then return ("|cffffffff|Hitem:%d::::::::1:::::::|h[%s]|h|r"):format(it.id, it.name or "x") end end
+_G.GetMerchantItemInfo = function(i) local it = M.merchant[i]; if it then return it.name or "x", 134400, it.price or 0, it.qty or 1, -1, true end end
+M.guild, M.friends, M.newMail = {}, {}, false
+_G.IsInGuild = function() return #M.guild > 0 end
+_G.GetNumGuildMembers = function() return #M.guild end
+_G.GetGuildRosterInfo = function(i) return M.guild[i] end
+_G.C_GuildInfo = { GuildRoster = function() M.rosterAsked = (M.rosterAsked or 0) + 1 end }
+_G.C_FriendList = {
+  GetNumFriends = function() return #M.friends end,
+  GetFriendInfoByIndex = function(i) local n = M.friends[i]; return n and { name = n } or nil end,
+}
+_G.HasNewMail = function() return M.newMail end
 M.frames = frames
 return M

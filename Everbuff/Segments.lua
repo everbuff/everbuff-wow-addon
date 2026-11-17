@@ -84,6 +84,8 @@ function R.start()
     -- live counters (HOME's session cards and per-hour rates): bumped by the capture modules
     xp = 0, gained = 0, spent = 0, kills = 0, deaths = 0, fights = 0, items = 0, dungeons = 0,
     gold = R.newGoldLedger(),   -- this session's own gold ledger, credited with the lifetime one (everbuff-backend #46)
+    -- the gold journal (everbuff-wow-addon #36): one TAB row per purse change, the completed trades, rows past the cap
+    goldLog = {}, trades = {}, goldLogDropped = 0,
   }
   ns.DB.sessions[sess.id] = sess
   ns.DB.active = sess.id

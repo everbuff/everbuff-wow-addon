@@ -390,7 +390,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.39",
+			["addonVersion"] = "0.9.40",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -424,6 +424,13 @@ EverbuffDB = {
 				["training"] = 0,
 				["vendor"] = 0,
 			},
+			["goldLog"] = {
+				"831042.5	80	looted	1600	", -- [1]
+				"831077.5	112	looted	1712	", -- [2]
+				"831097.5	350	quests	2062	quest=176", -- [3]
+				"831181.5	95	looted	2157	", -- [4]
+			},
+			["goldLogDropped"] = 0,
 			["guid"] = "Player-1-000001",
 			["guild"] = "",
 			["id"] = "261026073319-8b60",
@@ -454,80 +461,90 @@ EverbuffDB = {
 			["startedEpoch"] = 1793000000,
 			["startedLocal"] = 1792999999,
 			["startedMono"] = 831000.5,
+			["trades"] = {
+			},
 			["xp"] = 710,
 		},
 	},
 	["settings"] = {
 		["selftest"] = {
 			["absent"] = {
-				"C_AuctionHouse.SendBrowseQuery", -- [1]
-				"C_AuctionHouse.SendSearchQuery", -- [2]
-				"C_ClassTalents.GetActiveConfigID", -- [3]
-				"C_Item.GetItemIconByID", -- [4]
-				"C_NamePlate.GetNamePlates", -- [5]
-				"C_PlayerInfo.ShouldDisplaySurname", -- [6]
-				"C_QuestLog.GetInfo", -- [7]
-				"C_Reputation.GetFactionDataByIndex", -- [8]
-				"C_Reputation.GetNumFactions", -- [9]
-				"C_Spell.GetSpellName", -- [10]
-				"C_Spell.GetSpellTexture", -- [11]
-				"C_ToyBox.GetToyInfo", -- [12]
-				"C_TradeSkillUI.GetRecipeInfo", -- [13]
-				"C_TradeSkillUI.GetTradeSkillLine", -- [14]
-				"C_Traits.GenerateImportString", -- [15]
-				"C_UI.Reload", -- [16]
-				"GetAchievementInfo", -- [17]
-				"GetAuctionItemInfo", -- [18]
-				"GetAuctionSellItemInfo", -- [19]
-				"GetCombatRating", -- [20]
-				"GetCraftDisplaySkillLine", -- [21]
-				"GetHaste", -- [22]
-				"GetHitModifier", -- [23]
-				"GetItemIcon", -- [24]
-				"GetMasteryEffect", -- [25]
-				"GetMeleeHaste", -- [26]
-				"GetNumSkillLines", -- [27]
-				"GetNumTalentTabs", -- [28]
-				"GetNumTalents", -- [29]
-				"GetQuestLogTitle", -- [30]
-				"GetSkillLineInfo", -- [31]
-				"GetSpellBonusDamage", -- [32]
-				"GetTalentInfo", -- [33]
-				"GetTalentTabInfo", -- [34]
-				"GetTradeSkillLine", -- [35]
-				"GetZoneText", -- [36]
-				"IsSpellKnown", -- [37]
-				"PlaceAuctionBid", -- [38]
-				"PlaySound", -- [39]
-				"RaidNotice_AddMessage", -- [40]
-				"ReloadUI", -- [41]
-				"StartAuction", -- [42]
-				"UIErrorsFrame.AddMessage", -- [43]
-				"UnitAura", -- [44]
-				"UnitDefense", -- [45]
-				"C_AddOns", -- [46]
-				"C_AddOns.GetAddOnMetadata", -- [47]
-				"C_ChallengeMode", -- [48]
-				"C_ClassTalents", -- [49]
-				"C_DamageMeter", -- [50]
-				"C_NamePlate", -- [51]
-				"C_PlayerInfo", -- [52]
-				"C_Reputation", -- [53]
-				"C_SpecializationInfo", -- [54]
-				"C_Spell", -- [55]
-				"C_ToyBox", -- [56]
-				"C_Traits", -- [57]
-				"C_UI", -- [58]
-				"ChatTypeInfo", -- [59]
-				"ChatTypeInfo.RAID_WARNING", -- [60]
-				"FACTION_STANDING_INCREASED", -- [61]
-				"NUM_BAG_SLOTS", -- [62]
-				"RaidWarningFrame", -- [63]
-				"SECONDARY_SKILLS", -- [64]
-				"TRADE_SKILLS", -- [65]
-				"UIErrorsFrame", -- [66]
+				"BuybackItem", -- [1]
+				"C_AuctionHouse.SendBrowseQuery", -- [2]
+				"C_AuctionHouse.SendSearchQuery", -- [3]
+				"C_ClassTalents.GetActiveConfigID", -- [4]
+				"C_FriendList.GetFriendInfo", -- [5]
+				"C_FriendList.IsFriend", -- [6]
+				"C_Item.GetItemIconByID", -- [7]
+				"C_Item.GetItemInfo", -- [8]
+				"C_NamePlate.GetNamePlates", -- [9]
+				"C_PlayerInfo.ShouldDisplaySurname", -- [10]
+				"C_QuestLog.GetInfo", -- [11]
+				"C_Reputation.GetFactionDataByIndex", -- [12]
+				"C_Reputation.GetNumFactions", -- [13]
+				"C_Spell.GetSpellName", -- [14]
+				"C_Spell.GetSpellTexture", -- [15]
+				"C_ToyBox.GetToyInfo", -- [16]
+				"C_TradeSkillUI.GetRecipeInfo", -- [17]
+				"C_TradeSkillUI.GetTradeSkillLine", -- [18]
+				"C_Traits.GenerateImportString", -- [19]
+				"C_UI.Reload", -- [20]
+				"GetAchievementInfo", -- [21]
+				"GetAuctionItemInfo", -- [22]
+				"GetAuctionSellItemInfo", -- [23]
+				"GetBuybackItemInfo", -- [24]
+				"GetBuybackItemLink", -- [25]
+				"GetCombatRating", -- [26]
+				"GetContainerItemInfo", -- [27]
+				"GetCraftDisplaySkillLine", -- [28]
+				"GetHaste", -- [29]
+				"GetHitModifier", -- [30]
+				"GetItemIcon", -- [31]
+				"GetMasteryEffect", -- [32]
+				"GetMeleeHaste", -- [33]
+				"GetNumSkillLines", -- [34]
+				"GetNumTalentTabs", -- [35]
+				"GetNumTalents", -- [36]
+				"GetQuestLogTitle", -- [37]
+				"GetSkillLineInfo", -- [38]
+				"GetSpellBonusDamage", -- [39]
+				"GetTalentInfo", -- [40]
+				"GetTalentTabInfo", -- [41]
+				"GetTradeSkillLine", -- [42]
+				"GetZoneText", -- [43]
+				"GuildRoster", -- [44]
+				"IsSpellKnown", -- [45]
+				"PlaceAuctionBid", -- [46]
+				"PlaySound", -- [47]
+				"RaidNotice_AddMessage", -- [48]
+				"ReloadUI", -- [49]
+				"StartAuction", -- [50]
+				"UIErrorsFrame.AddMessage", -- [51]
+				"UnitAura", -- [52]
+				"UnitDefense", -- [53]
+				"C_AddOns", -- [54]
+				"C_AddOns.GetAddOnMetadata", -- [55]
+				"C_ChallengeMode", -- [56]
+				"C_ClassTalents", -- [57]
+				"C_DamageMeter", -- [58]
+				"C_NamePlate", -- [59]
+				"C_PlayerInfo", -- [60]
+				"C_Reputation", -- [61]
+				"C_SpecializationInfo", -- [62]
+				"C_Spell", -- [63]
+				"C_ToyBox", -- [64]
+				"C_Traits", -- [65]
+				"C_UI", -- [66]
+				"ChatTypeInfo", -- [67]
+				"ChatTypeInfo.RAID_WARNING", -- [68]
+				"FACTION_STANDING_INCREASED", -- [69]
+				"NUM_BAG_SLOTS", -- [70]
+				"RaidWarningFrame", -- [71]
+				"SECONDARY_SKILLS", -- [72]
+				"TRADE_SKILLS", -- [73]
+				"UIErrorsFrame", -- [74]
 			},
-			["addon"] = "0.9.39",
+			["addon"] = "0.9.40",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",

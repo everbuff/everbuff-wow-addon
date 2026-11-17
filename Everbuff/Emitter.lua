@@ -556,7 +556,7 @@ local function subjPrefix(global, fallback)
   local fmt = _G[global] or fallback
   return (fmt:gsub("%%s.*$", ""))
 end
-local function mailSource(index)
+local function mailOrigin(index)
   local ok, _, _, sender, subject, money, cod = pcall(GetInboxHeaderInfo, index)
   if not ok then return "Mail", nil end
   sender, subject = safeStr(sender), safeStr(subject)
@@ -581,6 +581,16 @@ local function mailSource(index)
   end
   if sender then return "Mail from " .. sender, m end
   return "Mail", m
+end
+-- The mail's origin plus `rel`, who the sender is to the player (#36): "system" for the auction house and any mail
+-- that cannot be answered (the client's own and NPC mail), else Emitter.relOf (alt, guild, friend, stranger).
+local function mailSource(index)
+  local src, m = mailOrigin(index)
+  if not m then return src, m end
+  local ok, _, _, _, _, _, _, _, _, _, _, _, canReply, isGM = pcall(GetInboxHeaderInfo, index)
+  local system = src:sub(1, 8) == "Auction " or not m.sender or (ok and (canReply == false or isGM == true))
+  m.rel = system and "system" or Emitter.relOf(m.sender)
+  return src, m
 end
 local LOOT_Q_HEX = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000", "ffe6cc80", "ffe6cc80" }
 -- Quality of a looted item as the 8-hex color the Loot pane keys on. Three sources, in order: the link's
@@ -649,6 +659,7 @@ local function logMailItem(index, itemIndex)
              x = loc.x, y = loc.y, zone = loc.zone })
   if ns.Market then pcall(ns.Market.mailItem, src, name, id, plainNum(count) or 1, meta) end
   mailTaken[name] = GetTime()
+  Emitter._mailCtx = { meta = meta, at = GetTime() }   -- a COD payment for this item is booked against this mail (#36)
   Emitter.event("LOOT", { name = name, count = plainNum(count) or 1 }, lootQuiet(q))
 end
 local function armMailMoney(index)
@@ -679,10 +690,222 @@ local function sessionDB() return (ns.Recorder and ns.Recorder.current and ns.Re
 -- One credit to the gold ledger: the character's lifetime total (characters[guid].gold, #23) and, from 0.9.23, the running session's own ledger
 -- (session.gold, everbuff-backend #46, approved 2026-09-29), same keys, at the same moment. A session that began
 -- before 0.9.23 has no ledger and keeps none, so a half-filled one is never mistaken for the whole session.
+-- A credit to a source key also writes the purse change into the session's gold journal (Emitter.goldRow, #36), with
+-- the balance and the ref the caller put in Emitter._gbal and Emitter._gref just before.
 local function credit(g, ses, key, n)
   g[key] = (g[key] or 0) + n
   local sg = ses.gold
   if type(sg) == "table" then sg[key] = (sg[key] or 0) + n end
+  if Emitter.GOLD_SIGN[key] then Emitter.goldRow(ses, key, n) end
+end
+
+-- ── the gold journal (everbuff-wow-addon #36, option A, approved 2026-11-17) ─────────────────────────────────────
+-- Per session `goldLog[]`: one row per purse change, `mono TAB delta TAB source TAB balance TAB ref`, written into
+-- the running session record at the moment of the credit. `trades[]`: every completed trade, both sides. Nothing is
+-- drawn and nothing is said in chat. A session that began before 0.9.40 has neither (Segments starts them empty), so a
+-- half-filled journal is never mistaken for the whole session.
+-- source -> sign of the delta (away is booked signed)
+Emitter.GOLD_SIGN = { looted = 1, quests = 1, sold = 1, auctionSales = 1, mail = 1, trade = 1, unexplained = 1,
+  repairs = -1, vendor = -1, training = -1, flights = -1, auctions = -1, mailSpent = -1, tradeSpent = -1, other = -1, away = 1 }
+Emitter.GOLD_CAP = 4000
+-- past the cap: rows of these sources merge with the row before them when it has the same source
+local COALESCE = { looted = true, sold = true, vendor = true }
+-- never dropped, never merged: the rows that carry a counterparty or an explanation gap
+local KEEP = { trade = true, tradeSpent = true, mail = true, mailSpent = true, auctionSales = true, away = true, unexplained = true }
+local REF_KEYS = { "item", "n", "unit", "npc", "sender", "partner", "guild", "rel", "cod", "trade", "quest", "mailWaiting", "x" }
+local function refStr(ref)
+  if type(ref) ~= "table" then return "" end
+  local out = {}
+  for _, k in ipairs(REF_KEYS) do
+    local v = ref[k]
+    if type(v) == "number" then v = plainNum(v) and ("%d"):format(v) or nil
+    elseif type(v) == "string" then v = safeStr(v); v = v and v:gsub("[\t;=|\r\n]", "") or nil end
+    if v and v ~= "" then out[#out + 1] = k .. "=" .. v end
+  end
+  return table.concat(out, ";")
+end
+local function refParse(s)
+  local t = {}
+  for k, v in (s or ""):gmatch("([^;=]+)=([^;]*)") do t[k] = v end
+  return t
+end
+Emitter.refStr, Emitter.refParse = refStr, refParse
+local function rowParse(r)
+  local mono, d, src, bal, ref = r:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(.*)$")
+  return mono, tonumber(d), src, tonumber(bal), ref
+end
+Emitter.rowParse = rowParse
+
+-- Write one row. `n` is the credited amount (positive; signed for away). A row that a quest claims later (an income
+-- first seen with no source) is rewritten in place: Emitter._grewrite names it.
+function Emitter.goldRow(ses, key, n)
+  local log = ses and ses.goldLog
+  local ref, bal = Emitter._gref, Emitter._gbal
+  Emitter._gref = nil
+  if type(log) ~= "table" then return nil end
+  local rw = Emitter._grewrite
+  Emitter._grewrite = nil
+  if rw and rw.ses == ses and log[rw.i] == rw.row then
+    local mono, d, _, b = rowParse(rw.row)
+    log[rw.i] = ("%s\t%d\t%s\t%d\t%s"):format(mono, d, key, b, refStr(ref))
+    return rw.i
+  end
+  local delta = Emitter.GOLD_SIGN[key] * n
+  bal = plainNum(bal) or plainNum(rd(GetMoney)) or 0
+  local mono = ("%.1f"):format(GetTime())
+  local rs = refStr(ref)
+  if #log >= Emitter.GOLD_CAP and not KEEP[key] then
+    local free = not (type(ref) == "table" and (ref.partner or ref.sender))
+    local last = log[#log]
+    local _, ld, lsrc, _, lref = rowParse(last or "")
+    if COALESCE[key] and free and lsrc == key then
+      local a, b = refParse(lref), refParse(rs)
+      local merged = { x = (tonumber(a.x) or 1) + 1 }
+      for _, k in ipairs({ "item", "unit", "npc" }) do if a[k] and a[k] == b[k] then merged[k] = a[k] end end
+      if merged.item and a.n and b.n then merged.n = (tonumber(a.n) or 0) + (tonumber(b.n) or 0) end
+      for k, v in pairs(merged) do if type(v) == "string" then merged[k] = tonumber(v) or v end end
+      log[#log] = ("%s\t%d\t%s\t%d\t%s"):format(mono, ld + delta, key, bal, refStr(merged))
+      return #log
+    end
+    ses.goldLogDropped = (tonumber(ses.goldLogDropped) or 0) + 1
+    return nil
+  end
+  log[#log + 1] = ("%s\t%d\t%s\t%d\t%s"):format(mono, delta, key, bal, rs)
+  return #log
+end
+
+-- Who a player is to this character (#36): "alt" (a character of this account on the same realm, from the save file's
+-- characters blocks), "guild" (the guild roster, cached on GUILD_ROSTER_UPDATE), "friend" (the friends list), else
+-- "stranger". Read only for a mail or a trade, never per copper.
+local function realmKey(r) return ((r or ""):gsub("[%s%-']", "")):lower() end
+local function nameKey(name)
+  local base, realm = name:match("^([^%-]+)%-(.+)$")
+  if not base then base, realm = name, safeStr(GetRealmName and GetRealmName()) end
+  return base:lower() .. "-" .. realmKey(realm)
+end
+Emitter.nameKey = nameKey
+function Emitter.loadAlts()
+  local set = {}
+  for _, c in pairs((ns.DB and ns.DB.characters) or {}) do
+    if type(c) == "table" and type(c.name) == "string" and type(c.realm) == "string" then set[c.name:lower() .. "-" .. realmKey(c.realm)] = true end
+  end
+  Emitter._alts = set
+  return set
+end
+function Emitter.loadGuild()
+  local set = {}
+  local n = (GetNumGuildMembers and plainNum(rd(GetNumGuildMembers))) or 0
+  for i = 1, n do
+    local nm = GetGuildRosterInfo and safeStr(rd(GetGuildRosterInfo, i))
+    if nm and nm ~= "" then set[nameKey(nm)] = true end
+  end
+  Emitter._guild = set
+  return set
+end
+function Emitter.loadFriends()
+  local set = {}
+  if C_FriendList and C_FriendList.GetNumFriends and C_FriendList.GetFriendInfoByIndex then
+    local n = plainNum(rd(C_FriendList.GetNumFriends)) or 0
+    for i = 1, n do
+      local info = rd(C_FriendList.GetFriendInfoByIndex, i)
+      local nm = type(info) == "table" and safeStr(info.name)
+      if nm and nm ~= "" then set[nameKey(nm)] = true end
+    end
+  end
+  Emitter._friends = set
+  return set
+end
+function Emitter.relOf(name, guid)
+  name = safeStr(name)
+  if not name or name == "" then return nil end
+  local key = nameKey(name)
+  if (Emitter._alts or Emitter.loadAlts())[key] then return "alt" end
+  if (Emitter._guild or {})[key] then return "guild" end
+  if (Emitter._friends or {})[key] then return "friend" end
+  guid = safeStr(guid)
+  if guid and C_FriendList and C_FriendList.IsFriend and rd(C_FriendList.IsFriend, guid) == true then return "friend" end
+  if C_FriendList and C_FriendList.GetFriendInfo and type(rd(C_FriendList.GetFriendInfo, name)) == "table" then return "friend" end
+  return "stranger"
+end
+
+-- Items bought and sold at a merchant, waiting for the purse change the server answers with (#36). Each entry
+-- { id, n, amount?, at }; the purse change takes the entry whose amount it matches, else the oldest of the last 5 s.
+Emitter._pend = { sell = {}, buy = {} }
+local function itemId(link) link = safeStr(link); return link and tonumber(link:match("|Hitem:(%d+)")) or nil end
+-- the n-th value a client function returns, or nil when it is missing or throws
+local function nth(fn, n, ...)
+  if type(fn) ~= "function" then return nil end
+  local r = { pcall(fn, ...) }
+  if r[1] then return r[n + 1] end
+end
+Emitter.nth = nth
+local function sellPrice(id)
+  if not id then return nil end
+  local v = nth(GetItemInfo, 11, id)
+  if v == nil and C_Item then v = nth(C_Item.GetItemInfo, 11, id) end
+  return plainNum(v)
+end
+local function bagItem(bag, slot)
+  bag, slot = plainNum(bag), plainNum(slot)
+  if not (bag and slot) then return nil end
+  if C_Container and C_Container.GetContainerItemInfo then
+    local info = rd(C_Container.GetContainerItemInfo, bag, slot)
+    if type(info) == "table" then return plainNum(info.itemID), plainNum(info.stackCount) or 1 end
+  elseif GetContainerItemInfo then
+    local ok, _, count, _, _, _, _, link, _, _, id = pcall(GetContainerItemInfo, bag, slot)
+    if ok then return plainNum(id) or itemId(link), plainNum(count) or 1 end
+  end
+end
+local function pend(list, id, n, unit)
+  list[#list + 1] = { id = id, n = n, unit = unit, amount = (unit and n) and unit * n or nil, at = GetTime() }
+  while #list > 60 do table.remove(list, 1) end
+end
+function Emitter.takePending(list, amount)
+  local now = GetTime()
+  for i = #list, 1, -1 do if now - list[i].at > 5 then table.remove(list, i) end end
+  for i, e in ipairs(list) do if e.amount == amount then return table.remove(list, i) end end
+  return table.remove(list, 1)
+end
+function Emitter.noteSale(bag, slot)
+  if not Emitter._merchantOpen then return end
+  local id, n = bagItem(bag, slot)
+  if id then pend(Emitter._pend.sell, id, n, sellPrice(id)) end
+end
+function Emitter.noteJunkSale()
+  if not (Emitter._merchantOpen and C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemInfo) then return end
+  for bag = 0, (NUM_BAG_SLOTS or 4) do
+    for slot = 1, (plainNum(rd(C_Container.GetContainerNumSlots, bag)) or 0) do
+      local info = rd(C_Container.GetContainerItemInfo, bag, slot)
+      if type(info) == "table" and info.quality == 0 and not info.hasNoValue then
+        local id = plainNum(info.itemID)
+        if id then pend(Emitter._pend.sell, id, plainNum(info.stackCount) or 1, sellPrice(id)) end
+      end
+    end
+  end
+end
+function Emitter.noteBuy(index, qty)
+  local id = GetMerchantItemLink and itemId(rd(GetMerchantItemLink, index))
+  local per = plainNum(nth(GetMerchantItemInfo, 4, index))
+  if id then pend(Emitter._pend.buy, id, plainNum(qty) or per or 1, nil) end
+end
+function Emitter.noteBuyback(index)
+  local id = GetBuybackItemLink and itemId(rd(GetBuybackItemLink, index))
+  local n = plainNum(nth(GetBuybackItemInfo, 4, index))
+  if id then pend(Emitter._pend.buy, id, n or 1, nil) end
+end
+if hooksecurefunc then
+  if C_Container and type(C_Container.UseContainerItem) == "function" then hooksecurefunc(C_Container, "UseContainerItem", function(b, s) pcall(Emitter.noteSale, b, s) end) end
+  if type(UseContainerItem) == "function" then hooksecurefunc("UseContainerItem", function(b, s) pcall(Emitter.noteSale, b, s) end) end
+  if C_MerchantFrame and type(C_MerchantFrame.SellAllJunkItems) == "function" then hooksecurefunc(C_MerchantFrame, "SellAllJunkItems", function() pcall(Emitter.noteJunkSale) end) end
+  if type(BuyMerchantItem) == "function" then hooksecurefunc("BuyMerchantItem", function(i, q) pcall(Emitter.noteBuy, i, q) end) end
+  if type(BuybackItem) == "function" then hooksecurefunc("BuybackItem", function(i) pcall(Emitter.noteBuyback, i) end) end
+end
+-- the ref of a merchant row: the item the purse change paid for, and the merchant
+function Emitter.merchantRef(list, amount, withUnit)
+  local e = Emitter.takePending(list, amount)
+  local ref = { npc = Emitter._npc and Emitter._npc.merchant }
+  if e then ref.item, ref.n = e.id, e.n; if withUnit then ref.unit = e.unit end end
+  return ref
 end
 
 -- Gold that changed while the addon did not see it (everbuff-wow-addon #31): another PC, the addon off, a
@@ -690,26 +913,92 @@ end
 -- this character; a difference goes to `away` (signed) and `awayIn` or `awayOut`, never to gained or spent, so
 -- balance = gained - spent + away holds across loads. Booked one tick later: Core starts the new session after
 -- this file's PLAYER_ENTERING_WORLD handler has run. A quiet GOLDAWAY story row says how much; nothing shows in game.
-function Emitter.goldAway(d)
+function Emitter.goldAway(d, bal, mailWaiting)
   local function book()
     if not ns.DB then return end
     local g, ses = goldDB(), sessionDB()
+    Emitter._gbal, Emitter._gref = bal, mailWaiting and { mailWaiting = 1 } or nil
     credit(g, ses, "away", d); credit(g, ses, d > 0 and "awayIn" or "awayOut", math.abs(d))
     Emitter.event("GOLDAWAY", { money = d }, true)
   end
   if C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
 end
 
--- Coin traded with another player: the trade window was open, or closed under 3 s ago (the purse can move just
--- after TRADE_CLOSED). The partner's name is read at TRADE_SHOW from the client's "NPC" unit.
+-- Coin and items traded with another player (#31, #36). The window is open, or closed under 3 s ago (the purse can
+-- move just after TRADE_CLOSED). The partner, their guild and who they are to the player are read at TRADE_SHOW from
+-- the client's "NPC" unit. The client clears the window on close, so both sides are snapshotted on every change and
+-- the last snapshot is kept; a trade is written to the session's `trades[]` only once it completed (gold moved in the
+-- window, or the client said "Trade complete."). A cancelled trade writes nothing.
 Emitter._trade = { open = false, untilT = 0, name = nil }
 function Emitter.tradeShow()
-  local t = Emitter._trade
-  t.open, t.name = true, (UnitName and safeStr(UnitName("NPC"))) or nil
+  local npcName = UnitName and safeStr(UnitName("NPC")) or nil
+  local guild = GetGuildInfo and safeStr(rd(GetGuildInfo, "NPC")) or nil
+  local guid = UnitGUID and safeStr(UnitGUID("NPC")) or nil
+  Emitter._trade = { open = true, untilT = 0, name = npcName, guild = guild ~= "" and guild or nil,
+    rel = Emitter.relOf(npcName, guid) }
 end
 function Emitter.tradeClosed() local t = Emitter._trade; t.open, t.untilT = false, GetTime() + 3 end
+-- the client said the trade was cancelled: coin moving in the next 3 s is not the trade's
+function Emitter.tradeCancelled() local t = Emitter._trade; t.open, t.untilT, t.snap = false, 0, nil end
 local function inTrade() local t = Emitter._trade; return t.open or GetTime() < t.untilT end
 local function tradeRow(money) Emitter.event("TRADE", { name = Emitter._trade.name or "a player", money = money }, true) end
+-- one side of the window as "id:count" per filled slot (id 0 when the client gives a name but no link)
+local function tradeSide(player)
+  local out = {}
+  for i = 1, (MAX_TRADABLE_ITEMS or 6) do
+    local link, name, count
+    if player then link, name, count = nth(GetTradePlayerItemLink, 1, i), nth(GetTradePlayerItemInfo, 1, i), nth(GetTradePlayerItemInfo, 3, i)
+    else link, name, count = nth(GetTradeTargetItemLink, 1, i), nth(GetTradeTargetItemInfo, 1, i), nth(GetTradeTargetItemInfo, 3, i) end
+    local id = itemId(link)
+    name = safeStr(name)
+    if id or (name and name ~= "") then out[#out + 1] = ("%d:%d"):format(id or 0, plainNum(count) or 1) end
+  end
+  return out
+end
+-- One snapshot of both sides while the window is open. An empty read never replaces a full one: the client clears
+-- the window as the trade completes, and a trade with nothing on either side moves nothing worth keeping.
+function Emitter.tradeSnap()
+  local t = Emitter._trade
+  if not t.open then return end
+  local s = { gaveMoney = plainNum(rd(GetPlayerTradeMoney)) or 0, gotMoney = plainNum(rd(GetTargetTradeMoney)) or 0,
+    gave = tradeSide(true), got = tradeSide(false) }
+  if s.gaveMoney == 0 and s.gotMoney == 0 and #s.gave == 0 and #s.got == 0 and t.snap then return end
+  t.snap = s
+end
+-- The trade completed: write it once into the session's trades[] and return its 1-based index. `delta` is the purse
+-- change that proved it; it fills the money only when no snapshot was taken.
+function Emitter.tradeDone(delta)
+  local t = Emitter._trade
+  local ses = sessionDB()
+  if t.idx and t.ses == ses then
+    local e = ses.trades and ses.trades[t.idx]
+    if e and t.derived and delta then
+      if delta > 0 then e.gotMoney = e.gotMoney + delta else e.gaveMoney = e.gaveMoney - delta end
+    end
+    return t.idx
+  end
+  if type(ses.trades) ~= "table" or not (t.name or t.snap) then return nil end
+  local s = t.snap
+  local e = { t = (GetServerTime and GetServerTime()) or time(), mono = math.floor(GetTime() * 10 + 0.5) / 10,
+    partner = t.name, guild = t.guild, rel = t.rel,
+    gaveMoney = s and s.gaveMoney or 0, gotMoney = s and s.gotMoney or 0, gave = s and s.gave or {}, got = s and s.got or {} }
+  t.derived = (s == nil) or nil
+  if t.derived and delta then
+    if delta > 0 then e.gotMoney = delta else e.gaveMoney = -delta end
+  end
+  ses.trades[#ses.trades + 1] = e
+  t.idx, t.ses = #ses.trades, ses
+  return t.idx
+end
+function Emitter.tradeRef(delta)
+  local t = Emitter._trade
+  return { partner = t.name, guild = t.guild, rel = t.rel, trade = Emitter.tradeDone(delta) }
+end
+-- the ref of a mail row: the mail the coin came from (#36)
+local function mailRef(meta)
+  if type(meta) ~= "table" then return nil end
+  return { sender = meta.sender, rel = meta.rel, cod = plainNum(meta.cod) or 0 }
+end
 
 local function onMoney()
   if not ns.DB then return end
@@ -721,13 +1010,15 @@ local function onMoney()
       Emitter._moneyRetried = true; C_Timer.After(3, onMoney); return
     end
     lastMoney = c; g.balance = c
-    if prev and c ~= prev then Emitter.goldAway(c - prev) end
+    if prev and c ~= prev then Emitter.goldAway(c - prev, c, rd(HasNewMail) == true) end
     return
   end
   local delta = c - lastMoney; lastMoney = c
   if delta == 0 then return end
   local g = goldDB(); g.balance = c
   local ses = sessionDB()
+  Emitter._gbal, Emitter._gref = c, nil
+  local npc = Emitter._npc
   if delta > 0 then
     credit(g, ses, "gained", delta); ses.gained = (ses.gained or 0) + delta
     if GetTime() < lootWindowUntil then                 -- gained while a loot window was open = looted coin
@@ -739,49 +1030,96 @@ local function onMoney()
       }
       ns.trimToCap(ns.DB.loot.log, 2000)
     elseif inTrade() then
+      Emitter._gref = Emitter.tradeRef(delta)
       credit(g, ses, "trade", delta); tradeRow(delta)     -- coin another player gave us in a trade
     elseif Emitter._questMoney and Emitter._questMoney.amount == delta and GetTime() - Emitter._questMoney.at < 3 then
+      Emitter._gref = { quest = Emitter._questMoney.quest }
       credit(g, ses, "quests", delta)                     -- a quest's money reward (QUEST_TURNED_IN just said so)
       Emitter._questMoney = nil
     elseif merchantOpen then
+      Emitter._gref = Emitter.merchantRef(Emitter._pend.sell, delta, true)
       credit(g, ses, "sold", delta)                       -- vendoring items is income too
     elseif GetTime() < mailMoneyUntil or mailOpen then
       -- coin taken out of a mail: auction proceeds or gold a player sent us
       local src, meta = (GetTime() < mailMoneyUntil) and mailMoneySrc or "Mail", (GetTime() < mailMoneyUntil) and mailMoneyMeta or nil
       mailMoneyUntil = 0
+      Emitter._gref = mailRef(meta)
       if src == "Auction sale" then credit(g, ses, "auctionSales", delta); if ns.Market then pcall(ns.Market.sold, mailMoneyMeta, delta) end
       else credit(g, ses, "mail", delta) end
       local loc = locStamp()
       pushLoot({ t = (GetServerTime and GetServerTime()) or time(), money = delta, src = src, mail = meta,
                  x = loc.x, y = loc.y, zone = loc.zone })
     else
-      Emitter._openGain = { amount = delta, at = GetTime() }   -- no category yet: a quest turn-in may claim it
+      -- no category yet: a quest turn-in may claim it; until then the journal says unexplained
+      local i = Emitter.goldRow(ses, "unexplained", delta)
+      Emitter._openGain = { amount = delta, at = GetTime(), ses = ses, i = i, row = i and ses.goldLog[i] }
     end
   else
     local spent = -delta
     credit(g, ses, "spent", spent); ses.spent = (ses.spent or 0) + spent
-    if GetTime() < repairUntil then credit(g, ses, "repairs", spent); repairUntil = 0
-    elseif inTrade() then credit(g, ses, "tradeSpent", spent); tradeRow(-spent)   -- coin we gave in a trade
-    elseif merchantOpen then credit(g, ses, "vendor", spent)
-    elseif trainerOpen then credit(g, ses, "training", spent)
-    elseif GetTime() < taxiUntil then credit(g, ses, "flights", spent)
+    if GetTime() < repairUntil then Emitter._gref = { npc = npc.merchant }; credit(g, ses, "repairs", spent); repairUntil = 0
+    elseif inTrade() then Emitter._gref = Emitter.tradeRef(delta); credit(g, ses, "tradeSpent", spent); tradeRow(-spent)   -- coin we gave in a trade
+    elseif merchantOpen then Emitter._gref = Emitter.merchantRef(Emitter._pend.buy, spent, false); credit(g, ses, "vendor", spent)
+    elseif trainerOpen then Emitter._gref = { npc = npc.trainer }; credit(g, ses, "training", spent)
+    elseif GetTime() < taxiUntil then Emitter._gref = { npc = npc.taxi }; credit(g, ses, "flights", spent)
     elseif auctionOpen then credit(g, ses, "auctions", spent)     -- bids, buyouts, deposits
-    elseif mailOpen then credit(g, ses, "mailSpent", spent)      -- COD payments, postage
+    elseif mailOpen then                                          -- COD payments, postage
+      local m = Emitter._mailCtx
+      Emitter._gref = (m and GetTime() - m.at < 3) and mailRef(m.meta) or nil
+      credit(g, ses, "mailSpent", spent)
     else credit(g, ses, "other", spent) end
   end
+  Emitter._gref = nil
 end
 
 -- A quest's money reward (#11, G-2). The client may change the money before or after QUEST_TURNED_IN: a gain
--- of exactly the reward in the 3 s before is claimed now, otherwise the next gain of exactly the reward within 3 s.
-function Emitter.questMoney(amount)
+-- of exactly the reward in the 3 s before is claimed now (its journal row turns from unexplained into quests),
+-- otherwise the next gain of exactly the reward within 3 s.
+function Emitter.questMoney(amount, quest)
   if not amount or amount <= 0 or not ns.DB then return end
   local o = Emitter._openGain
   if o and o.amount == amount and GetTime() - o.at < 3 then
+    if o.i then Emitter._grewrite = { ses = o.ses, i = o.i, row = o.row } end
+    Emitter._gref = { quest = quest }
     credit(goldDB(), sessionDB(), "quests", amount)
-    Emitter._openGain = nil
+    Emitter._openGain, Emitter._grewrite = nil, nil
     return
   end
-  Emitter._questMoney = { amount = amount, at = GetTime() }
+  Emitter._questMoney = { amount = amount, at = GetTime(), quest = quest }
+end
+
+-- The journal's own event frame (Emitter's main handler sits at Lua's 60-upvalue limit): the trade window, the names
+-- of the merchant, trainer and flight master the purse pays, and the roster caches behind `rel`.
+Emitter._npc = {}
+do
+  local jf = CreateFrame("Frame")
+  ns.eventFrames[#ns.eventFrames + 1] = jf
+  for _, e in ipairs({ "TRADE_SHOW", "TRADE_CLOSED", "TRADE_MONEY_CHANGED", "TRADE_PLAYER_ITEM_CHANGED", "TRADE_TARGET_ITEM_CHANGED",
+    "TRADE_ACCEPT_UPDATE", "UI_INFO_MESSAGE", "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TAXIMAP_OPENED",
+    "GUILD_ROSTER_UPDATE", "FRIENDLIST_UPDATE", "PLAYER_ENTERING_WORLD" }) do pcall(jf.RegisterEvent, jf, e) end
+  local function npcName() return UnitName and safeStr(UnitName("NPC")) or nil end
+  jf:SetScript("OnEvent", function(_, event, a1, a2)
+    if event == "TRADE_SHOW" then Emitter.tradeShow()
+    elseif event == "TRADE_CLOSED" then Emitter.tradeClosed()
+    elseif event == "TRADE_MONEY_CHANGED" or event == "TRADE_PLAYER_ITEM_CHANGED" or event == "TRADE_TARGET_ITEM_CHANGED"
+      or event == "TRADE_ACCEPT_UPDATE" then Emitter.tradeSnap()
+    elseif event == "UI_INFO_MESSAGE" then
+      local msg = safeStr(a2) or safeStr(a1)
+      if msg and ERR_TRADE_COMPLETE and msg == ERR_TRADE_COMPLETE then Emitter.tradeDone(nil)
+      elseif msg and ERR_TRADE_CANCELLED and msg == ERR_TRADE_CANCELLED then Emitter.tradeCancelled() end
+    elseif event == "MERCHANT_SHOW" then Emitter._merchantOpen = true; Emitter._npc.merchant = npcName()
+    elseif event == "MERCHANT_CLOSED" then Emitter._merchantOpen = false
+    elseif event == "TRAINER_SHOW" then Emitter._npc.trainer = npcName()
+    elseif event == "TAXIMAP_OPENED" then Emitter._npc.taxi = npcName()
+    elseif event == "GUILD_ROSTER_UPDATE" then Emitter.loadGuild()
+    elseif event == "FRIENDLIST_UPDATE" then Emitter.loadFriends()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+      Emitter.loadAlts(); Emitter.loadFriends()
+      if IsInGuild and rd(IsInGuild) then
+        if C_GuildInfo and C_GuildInfo.GuildRoster then pcall(C_GuildInfo.GuildRoster) elseif GuildRoster then pcall(GuildRoster) end
+      end
+    end
+  end)
 end
 
 -- ── durability: aggregate gear health + a milestone when something breaks ──
@@ -884,7 +1222,6 @@ for _, e in ipairs({
   "GROUP_ROSTER_UPDATE",                                 -- party/raid joins and leaves over time
   "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED", "TAXIMAP_OPENED",  -- gold sink context
   "MAIL_SHOW", "MAIL_CLOSED", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",                -- mailbox / auction context
-  "TRADE_SHOW", "TRADE_CLOSED",                          -- coin traded with another player
   "UPDATE_INVENTORY_DURABILITY",                         -- gear health
   "UPDATE_INSTANCE_INFO",                                -- saved instances (lockouts) after RequestRaidInfo
   "SKILL_LINES_CHANGED",                                 -- profession ranks (tier milestones)
@@ -1106,7 +1443,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "QUEST_TURNED_IN" then
     pushed.turnIn = GetTime()
     Emitter.event("QUESTDONE", { name = questTitle(a1, nil) })
-    Emitter.questMoney(plainNum(a3))
+    Emitter.questMoney(plainNum(a3), plainNum(a1))
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
     if qxp and qxp > 0 and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromQuests = (ns.char().xp.fromQuests or 0) + qxp end
   elseif event == "ENCOUNTER_START" then
@@ -1175,8 +1512,6 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "MAIL_CLOSED" then mailOpen = false
   elseif event == "AUCTION_HOUSE_SHOW" then auctionOpen = true
   elseif event == "AUCTION_HOUSE_CLOSED" then auctionOpen = false
-  elseif event == "TRADE_SHOW" then Emitter.tradeShow()
-  elseif event == "TRADE_CLOSED" then Emitter.tradeClosed()
   elseif event == "MERCHANT_SHOW" then merchantOpen = true
   elseif event == "MERCHANT_CLOSED" then merchantOpen = false
   elseif event == "TRAINER_SHOW" then trainerOpen = true

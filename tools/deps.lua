@@ -18,8 +18,8 @@ local SRC = ROOT .. "/Everbuff/"
 local OUT = SRC .. "Deps.lua"
 local FORBIDDEN = { COMBAT_LOG_EVENT_UNFILTERED = true }   -- WoW Forever blocks it (0.9.22, founder 2026-10-02)
 -- calls that protect their first argument: pcall and the addon's own wrappers (Fights `try`, Emitter `rd` call it
--- through pcall; Visits `hook` hooks tbl[name] only when it is a function)
-local PROTECT = { pcall = "call", xpcall = "call", try = "call", rd = "call", hook = "table" }
+-- through pcall, Emitter `nth` checks it is a function and pcalls it; Visits `hook` hooks tbl[name] only when it is a function)
+local PROTECT = { pcall = "call", xpcall = "call", try = "call", rd = "call", nth = "call", hook = "table" }
 -- uses the source cannot show as guarded, with the reason they are
 local CONTEXT = {
   CombatLogGetCurrentEventInfo = "read only in the COMBAT_LOG_EVENT_UNFILTERED handler, registered only without Secret Values",

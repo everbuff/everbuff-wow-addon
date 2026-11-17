@@ -2203,6 +2203,12 @@ do
   M.runTimers()
 end
 
+-- #36: the gold journal (goldLog, trades, mail rel), its cap and the balance chain
+do
+  local ok, err = pcall(dofile("tests/gold_journal.lua"), { check = check, M = M, ns = ns })
+  check("#36 tests/gold_journal.lua runs to its end", ok, err)
+end
+
 -- tests/render_html.lua runs the suite up to here for its data (loot, mail, auctions, gold, fights) and renders the
 -- window from that state
 if EVERBUFF_RENDER_SETUP then return { ns = ns, M = M, T = T } end
