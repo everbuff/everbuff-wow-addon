@@ -2110,16 +2110,16 @@ if ns.UI and ns.UI.registerTab then
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
   ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 
-  -- ── Loot tab: everything you've picked up (items + coin), newest first ─────────
+  -- ── Loot tab, Items pane: every item you picked up, newest first. Coin is not listed here: every purse change,
+  --    looted coin included, is a row of the Gold pane's journal (#38) ─────────
   local function qrgb(q)
     if not q or #q < 8 then return 0.8, 0.8, 0.8 end
     return (tonumber(q:sub(3, 4), 16) or 200) / 255, (tonumber(q:sub(5, 6), 16) or 200) / 255, (tonumber(q:sub(7, 8), 16) or 200) / 255
   end
-  local COIN_ICON = "Interface\\Icons\\INV_Misc_Coin_01"
   local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
   ns._test = ns._test or {}; ns._test.fmtMoney = fmtMoney
   local lootRebuild
-  ns.UI.registerHost(2, "Loot", "Everything you picked up, newest first, and where your gold comes from and goes.")
+  ns.UI.registerHost(2, "Loot", "Every item you picked up, and every copper that came in or went out.")
   ns.UI.registerPane("Loot", 1, "Items", function(content)
     local C, UI = ns.UI.C, ns.UI
     local SP = UI.SP
@@ -2148,7 +2148,7 @@ if ns.UI and ns.UI.registerTab then
     -- inset like the table's first column (UI.Table's inset, SP.S), as the Auctions chips are, so the text lines up
     totals:SetPoint("LEFT", content, "TOPLEFT", SP.S, -BAR_H / 2); totals:SetPoint("RIGHT", modeBtn, "LEFT", -SP.M, 0)
     content.lootTotals = totals
-    -- quality floor: All · Uncommon+ · Rare+ · Epic+ (coin rows always pass)
+    -- quality floor: All · Uncommon+ · Rare+ · Epic+
     local Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 }
     local qBtns = {}
     local function styleQ() for _, b in ipairs(qBtns) do UI.SetButtonSelected(b, b.minQ == st.minQ) end end
@@ -2172,14 +2172,14 @@ if ns.UI and ns.UI.registerTab then
       modeBtn:SetWidth(math.ceil(w) + 2 * SP.M)
     end
     content.lootFilter = function() return st.minQ, st.sortKey, st.sortAsc end
-    -- sort keys read the same fields the columns show; coin rows sort by their value under "item"
+    -- sort keys read the same fields the columns show
     local function sortVal(e, key)
       if key == "time" then return e.t or 0
-      elseif key == "item" then return (e.item or (e.money and ("~coin " .. tostring(e.money))) or ""):lower()
-      elseif key == "qty" then return e.money and 0 or (tonumber(e.count) or 1)
+      elseif key == "item" then return (e.item or ""):lower()
+      elseif key == "qty" then return tonumber(e.count) or 1
       elseif key == "from" then return (e.src or ""):lower()
       elseif key == "loc" then return (e.zone or ""):lower()
-      elseif key == "quality" then return Q_RANK[(e.q or ""):lower()] or (e.money and 1) or 1 end
+      elseif key == "quality" then return Q_RANK[(e.q or ""):lower()] or 1 end
       return 0
     end
     local function sortRows(rows)
@@ -2217,22 +2217,23 @@ if ns.UI and ns.UI.registerTab then
     end
     ns._test.lootAggregate = aggregate
     local function lootMatches(e, q)
-      if st.minQ > 0 and not e.money and (Q_RANK[(e.q or ""):lower()] or 1) < st.minQ then return false end
+      if e.money then return false end   -- coin rows of the loot log belong to the Gold pane
+      if st.minQ > 0 and (Q_RANK[(e.q or ""):lower()] or 1) < st.minQ then return false end
       if not q or q == "" then return true end
-      local hay = ((e.item or "") .. " " .. (e.src or "") .. " " .. (e.zone or "") .. " " .. (e.money and "coin gold" or "") .. (e.quest and " quest" or "")):lower()
+      local hay = ((e.item or "") .. " " .. (e.src or "") .. " " .. ((st.questNames and st.questNames[e]) or "") .. " " .. (e.zone or "") .. (e.quest and " quest" or "")):lower()
       return hay:find(q:lower(), 1, true) ~= nil
     end
     ns._test.lootMatches = lootMatches
 
-    -- two tables on one column model, one per mode: Newest is Time · Item · Dropped by · Location · Coords · Qty,
-    -- By item is Time · Item · Dropped by · Qty · Drops (the aggregate has no one place). Text columns sit left and
+    -- two tables on one column model, one per mode: Newest is Time · Item · Source · Location · Coords · Qty,
+    -- By item is Time · Item · Source · Qty · Drops (the aggregate has no one place). Text columns sit left and
     -- share the free width, shortening with "..."; the number columns sit together at the right and never shorten,
     -- so a right-aligned quantity never reads as part of the source beside it.
     local COL_TIME = { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "00:00:00" }, sort = true }
     local COL_ICON = { key = "icon", label = "", kind = "icon" }
     local COL_ITEM = { key = "item", label = "Item", flex = 3, min = 120, sort = true }
     local COL_QTY = { key = "qty", label = "Qty", kind = "num", color = "dim", measure = { "x200" }, sort = true }
-    local COL_FROM = { key = "from", label = "Dropped by", flex = 2, min = 90, sort = true }
+    local COL_FROM = { key = "from", label = "Source", flex = 2, min = 90, sort = true }
     local SPEC = {
       newest = { COL_TIME, COL_ICON, COL_ITEM, COL_FROM,
         { key = "loc", label = "Location", flex = 2, min = 80, color = "dim", sort = true },
@@ -2270,7 +2271,7 @@ if ns.UI and ns.UI.registerTab then
     end
     for mode, spec in pairs(SPEC) do
       local t = UI.Table(content, spec, { top = TABLE_TOP, sortKey = st.sortKey, sortAsc = st.sortAsc, onSort = onSort,
-        tooltip = tooltip, onClick = onClick, onLayout = placeBadges, emptyText = "No loot yet. Items and coin you pick up show here." })
+        tooltip = tooltip, onClick = onClick, onLayout = placeBadges, emptyText = "No items yet. Items you pick up show here." })
       tbls[mode] = t
     end
     content.lootTables = tbls
@@ -2280,8 +2281,8 @@ if ns.UI and ns.UI.registerTab then
     -- fill one row of either table from a log entry or an aggregate
     local function fill(row, e)
       row.nm = row.c.item                                         -- the name cell, for tests and readers
-      row.itemId = (not e.money) and tonumber(e.id) or nil        -- hover tooltip / shift-click link
-      row.isQuest = (not e.money and e.quest) and true or nil
+      row.itemId = tonumber(e.id)                                 -- hover tooltip / shift-click link
+      row.isQuest = e.quest and true or nil
       if not row.questBadge then
         row.questBadge = UI.FS(row, "GameFontHighlightSmall"); row.questBadge:SetTextColor(0x8c / 255, 0x91 / 255, 0x97 / 255)
         if row.questBadge.SetWordWrap then row.questBadge:SetWordWrap(false) end
@@ -2293,19 +2294,15 @@ if ns.UI and ns.UI.registerTab then
       end
       local c = row.c
       c.time:SetText(date("%H:%M:%S", e.t or 0))
-      if e.money then
-        -- coin looted from a mob/chest: gold amount instead of an item, no quantity
-        c.icon:SetTexture(COIN_ICON)
-        c.item:SetText(fmtMoney(e.money)); c.item:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-      else
-        c.icon:SetTexture(e.icon or FALLBACK)
-        c.item:SetText(e.item or "?"); c.item:SetTextColor(qrgb(e.q))
-        c.qty:SetText("x" .. (e.count or 1))
-      end
+      c.icon:SetTexture(e.icon or FALLBACK)
+      c.item:SetText(e.item or "?"); c.item:SetTextColor(qrgb(e.q))
+      c.qty:SetText("x" .. (e.count or 1))
       if c.drops then c.drops:SetText(tostring(e.drops or 1)) end
       -- legacy rows embedded " at (x, y)" in the source; split it out so old data still reads right
       local srcName, legacyLoc = (e.src or ""):match("^(.-) at (%(.-%))$")
       srcName = srcName or e.src
+      -- a quest's reward names its quest (#38): the QUESTDONE row of the same turn-in
+      if srcName == "Quest reward" and st.questNames and st.questNames[e] then srcName = "Quest: " .. st.questNames[e] end
       c.from:SetText(srcName or "unknown")
       if not srcName then c.from:SetTextColor(C.dim[1], C.dim[2], C.dim[3]) end
       if c.loc then c.loc:SetText(e.zone or "") end
@@ -2314,11 +2311,25 @@ if ns.UI and ns.UI.registerTab then
     end
     lootRebuild = function()
       local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
-      -- totals line: gold looted (running) + item pickups counted
-      local items = 0
-      for _, e in ipairs(loot) do if not e.money then items = items + 1 end end
-      local goldLooted = (ns.DB and ns.char().gold and ns.char().gold.looted) or 0
-      totals:SetText(("Looted:  %s  ·  %d item%s"):format(fmtMoney(goldLooted), items, items == 1 and "" or "s"))
+      -- totals line: the item pickups counted (coin is the Gold pane's)
+      local items, stacks = 0, 0
+      local done = {}
+      st.questNames = st.questNames or setmetatable({}, { __mode = "k" })
+      for _, ev in ipairs((ns.DB and ns.DB.story and ns.DB.story.events) or {}) do
+        if ev.kind == "QUESTDONE" and type(ev.text) == "string" then done[#done + 1] = ev end
+      end
+      for _, e in ipairs(loot) do
+        if not e.money then
+          items = items + 1; stacks = stacks + (tonumber(e.count) or 1)
+          -- (kept beside the rows, never written into the loot log)
+          if e.src == "Quest reward" and not st.questNames[e] then
+            for _, ev in ipairs(done) do
+              if ev.s == e.s and math.abs((ev.t or 0) - (e.t or 0)) <= 5 then st.questNames[e] = ev.text:match("^Complete:%s+(.+)$"); break end
+            end
+          end
+        end
+      end
+      totals:SetText(("%d pickup%s  ·  %d item%s in all"):format(items, items == 1 and "" or "s", stacks, stacks == 1 and "" or "s"))
       pcall(fitToolbar)
       local q = search:GetText()
       local rows

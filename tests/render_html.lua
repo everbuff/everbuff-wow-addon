@@ -31,6 +31,11 @@ local PAGES = {}
 for i = 2, #arg do PAGES[#PAGES + 1] = arg[i] end
 if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "loot/auctions", "home/overview", "home/timeline" } end
 local SIZES = { { 900, 580 }, { 1600, 1000 } }
+-- EVERBUFF_RENDER_SIZES="900x580,1250x760" renders other window sizes
+if os.getenv("EVERBUFF_RENDER_SIZES") then
+  SIZES = {}
+  for w, h in os.getenv("EVERBUFF_RENDER_SIZES"):gmatch("(%d+)x(%d+)") do SIZES[#SIZES + 1] = { tonumber(w), tonumber(h) } end
+end
 local MARGIN = 24          -- world around the window, so anything drawn outside it shows
 
 -- ── geometry and fonts: tests/geometry.lua resolves the anchors and measures with the TTF advance widths ─────
@@ -53,6 +58,8 @@ if ns.DB and ns.DB.settings then ns.DB.settings.winPos = nil end
 -- the suite ends on a nearly empty character: tests/play_session.lua plays one more session through the REAL
 -- handlers (loot of every quality, coin, fights, quests, a vendor, a repair, the mailbox, the auction house, a trade)
 dofile("tests/play_session.lua")(M, ns)
+-- and two evenings of gold with a name behind every row (quests, merchants, mail, trades), for the gold surfaces
+dofile("tests/play_gold.lua")(M, ns)
 print = realPrint
 
 -- ── HTML ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -287,9 +294,18 @@ for _, dataTag in ipairs({ "normal", "long" }) do
     _G.UIParent._w, _G.UIParent._h = sz[1], sz[2]
     VIEW.w, VIEW.h = sz[1], sz[2]
     for _, key in ipairs(PAGES) do
-      local host, pane = key:match("^(%w+)/(%w+)$")
+      -- "loot/gold:journal", ":flagged", ":all", ":previous" or ":<source key>" open the Gold pane in that state
+      local host, pane, state = key:match("^(%w+)/(%w+):?(%w*)$")
       ns.UI.Open(HOSTS[host] or host, pane); M.tick()
       ns.UI.Open(HOSTS[host] or host, pane)       -- a second open: the panes read sizes their first build set
+      if host == "loot" and pane == "gold" then
+        if state == "" then ns.Gold.open("session")
+        elseif state == "journal" then ns.Gold.open("session", "journal")
+        elseif state == "flagged" then ns.Gold.open("session", "journal", true)
+        elseif state == "all" then ns.Gold.open("all", "journal")
+        elseif state == "previous" then ns.Gold.open("previous")
+        else ns.Gold.open("session", "journal"); ns.Gold.filter(state) end
+      end
       if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, capture, data)
         for _, t in ipairs(ns._test.tabs or {}) do
           if t.name == "Settings" and t.content and t.content.subtabs then t.content.subtabs.select(pane) end
@@ -297,7 +313,7 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       end
       M.settle()                                  -- OnSizeChanged to every list whose size the open changed
       local html, info = renderPage(key, sz[1], sz[2], dataTag)
-      local name = ("%s-%s-%dx%d-%s"):format(host, pane, sz[1], sz[2], dataTag)
+      local name = ("%s-%s%s-%dx%d-%s"):format(host, pane, state ~= "" and ("-" .. state) or "", sz[1], sz[2], dataTag)
       write(OUT .. "/" .. name .. ".html", html)
       write(OUT .. "/" .. name .. ".layout.json", json(info))
       manifest[#manifest + 1] = { name = name, w = sz[1] + 2 * MARGIN, h = sz[2] + 2 * MARGIN }
