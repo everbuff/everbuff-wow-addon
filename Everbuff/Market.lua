@@ -250,46 +250,65 @@ f:SetScript("OnEvent", function(_, event, a1, a2)
 end)
 
 -- ── panes: LOOT · Auctions and CHARACTER · Crafting ─────────────────────────
-local function fmtMoney(c)
-  c = plainNum(c) or 0
-  local g, s, cp = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
-  if g > 0 then return ("%dg %02ds %02dc"):format(g, s, cp) elseif s > 0 then return ("%ds %02dc"):format(s, cp) end
-  return ("%dc"):format(cp)
-end
+-- Each pane is a row of summary chips (a dim uppercase label over its value) and a UI.Table below them. The chips
+-- are laid out from their measured widths and wrap onto a second line when the pane is narrow; the table hangs
+-- from the bottom of the chips, so it moves down with them and its rows use the rest of the pane.
+local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua); a hidden value reads as 0
 local function fmtWhen(t) t = plainNum(t); if not t then return "" end; return date("%a %H:%M", t) end
-local function makeList(pane, cols)
-  local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
-  for _, c in ipairs(cols) do
-    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
-    fs:SetText(c[4]:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end
-  local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold); summary:SetPoint("TOPLEFT", 2, -6); summary:SetWidth(650); summary:SetJustifyH("LEFT")
-  local sf, child = UI.ScrollChild(pane)
-  sf:SetPoint("TOPLEFT", 0, -46); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
-  local L = { summary = summary, child = child }
-  L.render = function(rows, fill, emptyText)
-    local y, idx = 0, 0
-    for _, item in ipairs(rows) do
-      idx = idx + 1
-      local row = child.rows[idx]
-      if not row then
-        row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
-        for _, c in ipairs(cols) do
-          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
-        end
-        child.rows[idx] = row
-      end
-      row:SetPoint("TOPLEFT", 0, -y); row:Show(); fill(row, item); y = y + 18
+local CHIP_H, CHIP_GAP = 32, 24   -- a chip's label and value; the space between two chips
+local function makeChips(pane)
+  local SP = UI.SP
+  local box = CreateFrame("Frame", nil, pane)
+  -- inset like the table's first and last column, so the chips line up with the cells below them
+  box:SetPoint("TOPLEFT", pane, "TOPLEFT", SP.S, 0)
+  box:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -(UI.SCROLLBAR + SP.S), 0)
+  box:SetHeight(CHIP_H)
+  local chips, n = {}, 0
+  local K = { box = box, chips = chips }
+  local function layout()
+    local w = box:GetWidth()
+    if type(w) ~= "number" or w <= 1 then return end
+    local x, y = 0, 0
+    for i = 1, n do
+      local ch = chips[i]
+      local lw, vw = ch.label:GetStringWidth(), ch.value:GetStringWidth()
+      local cw = math.min(math.floor(w), math.ceil(math.max(type(lw) == "number" and lw or 0, type(vw) == "number" and vw or 0)))
+      if x > 0 and x + cw > w then x = 0; y = y + CHIP_H + SP.S end
+      ch.label:ClearAllPoints(); ch.label:SetPoint("TOPLEFT", box, "TOPLEFT", x, -y); ch.label:SetWidth(cw)
+      ch.value:ClearAllPoints(); ch.value:SetPoint("TOPLEFT", ch.label, "BOTTOMLEFT", 0, -SP.XS); ch.value:SetWidth(cw)
+      x = x + cw + CHIP_GAP
     end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function() local fs = UI.FS(child, "GameFontDisableSmall"); fs:SetPoint("TOPLEFT", 0, 0); return fs end)()
-      child.empty:SetText(emptyText); child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
+    box:SetHeight(y + CHIP_H)
   end
-  return L
+  K.layout = function() pcall(layout) end
+  box:HookScript("OnSizeChanged", K.layout)
+  -- list: { { label, value }, ... } in reading order
+  function K.set(list)
+    for i, it in ipairs(list) do
+      local ch = chips[i]
+      if not ch then
+        ch = { label = UI.CellFS(box, "GameFontNormalSmall", C.dim), value = UI.CellFS(box, "GameFontHighlight", C.ink) }
+        ch.label:SetJustifyH("LEFT"); ch.value:SetJustifyH("LEFT")
+        chips[i] = ch
+      end
+      ch.label:SetText(tostring(it[1] or ""):upper()); ch.value:SetText(tostring(it[2] or ""))
+      ch.label:Show(); ch.value:Show()
+    end
+    n = #list
+    for j = n + 1, #chips do chips[j].label:Hide(); chips[j].value:Hide() end
+    K.layout()
+  end
+  return K
 end
+local function makePane(pane, spec, emptyText)
+  local chips = makeChips(pane)
+  local body = CreateFrame("Frame", nil, pane)
+  body:SetPoint("TOPLEFT", chips.box, "BOTTOMLEFT", -UI.SP.S, -UI.SP.M)
+  body:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", 0, 0)
+  local tbl = UI.Table(body, spec, { top = 0, emptyText = emptyText })
+  return { chips = chips, body = body, tbl = tbl }
+end
+local WHEN = { "Wed 23:59", "Thu 00:00", "Sun 20:48" }
 
 --- Rows for the Auctions pane, newest first, plus the summary numbers.
 function Market.buildAuctions()
@@ -316,45 +335,70 @@ function Market.buildCrafts()
   return rows, { crafts = #c.crafts, recipes = #c.recipes, byProf = byProf }
 end
 
+
 local auctionsL, craftsL
 local function renderAuctions()
   if not auctionsL then return end
   local rows, sum = Market.buildAuctions()
-  auctionsL.summary:SetText(("posted %d  ·  sold %d for %s (house cut %s)  ·  bought %d for %s  ·  returned %d"):format(
-    sum.posted, sum.sold, fmtMoney(sum.net), fmtMoney(sum.cut), sum.bought, fmtMoney(sum.spent), sum.returned))
-  auctionsL.render(rows, function(row, r)
-    row.c.when:SetText(fmtWhen(r.t)); row.c.when:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.what:SetText(r.what); if r.good then row.c.what:SetTextColor(C.green[1], C.green[2], C.green[3]) elseif r.bad then row.c.what:SetTextColor(C.red[1], C.red[2], C.red[3]) else row.c.what:SetTextColor(C.ink[1], C.ink[2], C.ink[3]) end
-    row.c.item:SetText(r.item or ""); row.c.item:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-    row.c.count:SetText(r.count and tostring(r.count) or ""); row.c.count:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.price:SetText(r.price and fmtMoney(r.price) or ""); row.c.price:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-    row.c.note:SetText(r.note or ""); row.c.note:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end, "No auction activity yet. Post, buy or sell something and it shows up here with the prices.")
+  auctionsL.chips.set({
+    { "posted", sum.posted },
+    { "sold", ("%d for %s"):format(sum.sold, fmtMoney(sum.net)) },
+    { "house cut", fmtMoney(sum.cut) },
+    { "bought", ("%d for %s"):format(sum.bought, fmtMoney(sum.spent)) },
+    { "returned", sum.returned },
+  })
+  auctionsL.tbl.setRows(rows, function(row, r)
+    row.c.when:SetText(fmtWhen(r.t))
+    row.c.what:SetText(r.what or "")
+    if r.good then row.c.what:SetTextColor(C.green[1], C.green[2], C.green[3]) elseif r.bad then row.c.what:SetTextColor(C.red[1], C.red[2], C.red[3]) end
+    row.c.item:SetText(r.item or "")
+    row.c.count:SetText(r.count and tostring(r.count) or "")
+    row.c.price:SetText(r.price and fmtMoney(r.price) or "")
+    row.c.note:SetText(r.note or "")
+  end)
 end
 local function renderCrafts()
   if not craftsL then return end
   local rows, sum = Market.buildCrafts()
-  local parts = {}
-  for p, n in pairs(sum.byProf) do parts[#parts + 1] = ("%s %d"):format(p, n) end
-  table.sort(parts)
-  craftsL.summary:SetText(("%d crafts  ·  %d recipes learned%s"):format(sum.crafts, sum.recipes, #parts > 0 and ("  ·  " .. table.concat(parts, "  ·  ")) or ""))
-  craftsL.render(rows, function(row, r)
-    row.c.when:SetText(fmtWhen(r.t)); row.c.when:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.what:SetText(r.what); row.c.what:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-    row.c.item:SetText(r.item or ""); row.c.item:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-    row.c.count:SetText(r.count and tostring(r.count) or ""); row.c.count:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.prof:SetText(r.prof or ""); row.c.prof:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.zone:SetText(r.zone or ""); row.c.zone:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.coords:SetText((r.x and r.y) and ("%.1f, %.1f"):format(r.x * 100, r.y * 100) or ""); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end, "No crafts yet. Make something and it shows up here with the profession and where you made it.")
+  local profs = {}
+  for p in pairs(sum.byProf) do profs[#profs + 1] = p end
+  table.sort(profs)
+  local list = { { "crafts", sum.crafts }, { "recipes learned", sum.recipes } }
+  for _, p in ipairs(profs) do list[#list + 1] = { p, sum.byProf[p] } end
+  craftsL.chips.set(list)
+  craftsL.tbl.setRows(rows, function(row, r)
+    row.c.when:SetText(fmtWhen(r.t))
+    row.c.what:SetText(r.what or "")
+    row.c.item:SetText(r.item or "")
+    row.c.count:SetText(r.count and tostring(r.count) or "")
+    row.c.prof:SetText(r.prof or "")
+    row.c.zone:SetText(r.zone or "")
+    row.c.coords:SetText(UI.fmtCoords(r.x, r.y))
+  end)
 end
+Market._panes = function() return auctionsL, craftsL end   -- for the pane tests
 if UI and UI.registerPane then
   UI.registerPane("Loot", 3, "Auctions", function(content)
-    auctionsL = makeList(content, { { "when", 0, 70, "When" }, { "what", 74, 64, "What" }, { "item", 142, 220, "Item" }, { "count", 366, 40, "Qty" }, { "price", 410, 110, "Price" }, { "note", 524, 130, "Who / how long" } })
+    auctionsL = makePane(content, {
+      { key = "when", label = "When", kind = "tag", color = "dim", measure = WHEN },
+      { key = "what", label = "What", kind = "tag", measure = { "Cancelled", "Expired", "Posted", "Bought", "Sold" } },
+      { key = "item", label = "Item", flex = 1, min = 140 },
+      { key = "count", label = "Qty", kind = "num", color = "dim", measure = { "9999" } },
+      { key = "price", label = "Price", kind = "money", color = "gold", measure = { fmtMoney(99999999) } },
+      { key = "note", label = "Who / how long", flex = 0.6, min = 100, color = "dim" },
+    }, "No auction activity yet. Post, buy or sell something and it shows up here with the prices.")
     renderAuctions()
   end, renderAuctions)
   UI.registerPane("Character", 4, "Crafting", function(content)
-    craftsL = makeList(content, { { "when", 0, 70, "When" }, { "what", 74, 90, "What" }, { "item", 168, 190, "Item" }, { "count", 362, 36, "Qty" }, { "prof", 402, 96, "Profession" }, { "zone", 502, 100, "Location" }, { "coords", 606, 54, "Coords" } })
+    craftsL = makePane(content, {
+      { key = "when", label = "When", kind = "tag", color = "dim", measure = WHEN },
+      { key = "what", label = "What", kind = "tag", measure = { "Recipe learned", "Crafted" } },
+      { key = "item", label = "Item", flex = 1, min = 120 },
+      { key = "count", label = "Qty", kind = "num", color = "dim", measure = { "9999" } },
+      { key = "prof", label = "Profession", flex = 0.5, min = 80, color = "dim" },
+      { key = "zone", label = "Location", flex = 0.6, min = 90, color = "dim" },
+      { key = "coords", label = "Coords", kind = "num", color = "dim", measure = { "100.0, 100.0" } },
+    }, "No crafts yet. Make something and it shows up here with the profession and where you made it.")
     renderCrafts()
   end, renderCrafts)
 end

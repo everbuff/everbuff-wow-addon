@@ -5,8 +5,8 @@
 --   spill    the text runs past the right or bottom edge of a parent whose size is known
 --   overlap  two texts of the same parent are drawn over each other (a wrapped table cell over the next row)
 --   cut      a number shortened by the client's "..." (a fixed width with wrapping off); names may shorten, numbers never
--- The game's fonts are not available headless, so a text's width is estimated per character from its font size,
--- on the wide side of Inter and Chakra Petch.
+-- Text widths come from the addon's TrueType files through tests/geometry.lua (set L.G); without it a text's width
+-- is estimated per character from its font size, on the wide side of Inter and Chakra Petch.
 local L = {}
 
 local function fontSize(fs)
@@ -36,8 +36,10 @@ local function charW(ch)
   return 0.55
 end
 
--- the width of the longest line of `s` in a font of `size`, in pixels
+-- the width of the longest line of `s` in a font of `size`, in pixels: the fonts' real advance widths when
+-- tests/geometry.lua is loaded (L.G), else the estimate above
 function L.textWidth(fs, s)
+  if L.G then return math.ceil(L.G.naturalWidth(fs, s)) end
   local size, fo = fontSize(fs)
   local bold = (L.BOLD and L.BOLD[fo]) and 1.08 or 1
   local txt, icons = plain(s or fs.text)
@@ -192,9 +194,16 @@ function L.audit(frames)
         table.insert(byParent[f.parentFrame], { f = f, b = b })
         local pw, ph = sizeOf(f.parentFrame)
         local _, _, est = textBox(f)
-        local drawnW = (f._w and f._wrap ~= false) and b.w or math.min(est, f._w or est)
-        if f._w and f._wrap == false and est > f._w + 1 and looksNumeric(f.text) then
-          out[#out + 1] = { kind = "cut", text = label(f), detail = ("needs %d px, has %d"):format(est, f._w) }
+        -- a width of its own, or a LEFT and a RIGHT anchor: the text is drawn (and shortened) inside that width
+        local boxW = f._w
+        if not boxW then
+          local hl, hr = false, false
+          for _, p in ipairs(f._pts or {}) do if p.p:find("LEFT") then hl = true elseif p.p:find("RIGHT") then hr = true end end
+          if hl and hr then boxW = b.w end
+        end
+        local drawnW = (boxW and f._wrap ~= false) and b.w or math.min(est, boxW or est)
+        if boxW and f._wrap == false and est > boxW + 1 and looksNumeric(f.text) then
+          out[#out + 1] = { kind = "cut", text = label(f), detail = ("needs %d px, has %d"):format(est, boxW) }
         end
         -- a parent of 2 px or less is a scroll child sized later, not a box
         if pw and pw > 2 and b.l + drawnW > pw + 1 then
@@ -233,6 +242,24 @@ function L.audit(frames)
     end
   end
   return out
+end
+
+-- the suite's data made long: every name gets " of the Scarlet Monastery Cathedral" and every amount of copper, count
+-- and price becomes three digits larger (v * 1000 + 777); the settings are left alone. Used by the layout sweep and by
+-- tests/render_html.lua.
+local LONG = { item = 1, src = 1, zone = 1, sub = 1, foe = 1, name = 1, text = 1, title = 1, boss = 1, context = 1, prof = 1, craft = 1, buyer = 1, seller = 1, faction = 1 }
+local BIG = { money = 1, balance = 1, gained = 1, spent = 1, looted = 1, sold = 1, quests = 1, auctionSales = 1, mail = 1, repairs = 1, vendor = 1, training = 1, flights = 1, auctions = 1, mailSpent = 1, other = 1, trade = 1, tradeSpent = 1, kills = 1, xp = 1, gold = 1, price = 1, bid = 1, buyout = 1, net = 1, count = 1 }
+function L.stretch(db)
+  local done = {}
+  local function stretch(t)
+    if done[t] then return end; done[t] = true
+    for k, v in pairs(t) do
+      if type(v) == "table" then stretch(v)
+      elseif type(v) == "string" and LONG[k] and #v > 1 and #v < 40 then t[k] = v .. " of the Scarlet Monastery Cathedral"
+      elseif type(v) == "number" and BIG[k] and v > 0 and v == math.floor(v) then t[k] = v * 1000 + 777 end
+    end
+  end
+  for k, v in pairs(db) do if k ~= "settings" and type(v) == "table" then stretch(v) end end
 end
 
 return L

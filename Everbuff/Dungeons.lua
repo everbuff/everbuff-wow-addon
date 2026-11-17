@@ -18,15 +18,7 @@ local function fmtDur(sec)
   if sec >= 60 then return ("%dm %ds"):format(math.floor(sec / 60), sec % 60) end
   return sec .. "s"
 end
-local function fmtMoney(c)
-  c = math.floor(tonumber(c) or 0)
-  local g, s, cp = math.floor(c / 10000), math.floor((c % 10000) / 100), c % 100
-  local out = {}
-  if g > 0 then out[#out + 1] = g .. "g" end
-  if s > 0 then out[#out + 1] = s .. "s" end
-  if cp > 0 or #out == 0 then out[#out + 1] = cp .. "c" end
-  return table.concat(out, " ")
-end
+local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
 local RESULT = { kill = { "Kill", C.green }, wipe = { "Wipe", C.red }, death = { "Death", C.red }, fled = { "Fled", C.dim } }
 -- loot row quality from its stored hex color ("ff0070dd" = rare); rank drives what counts as notable
 local Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 }
@@ -108,47 +100,76 @@ local function buildRuns()
 end
 
 -- ══ DETAIL VIEW ═════════════════════════════════════════════════════════════════
+-- A document laid out for the width it has: every block runs from the list's left to its right edge (W, the scroll
+-- child's width), the small tables in it use UI.Columns, and a resize lays the open run out again.
 local function buildDetail(content)
+  local SP = UI.SP
   local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content); v:Hide()
   local back = UI.Button(v, "< Back", 70, 24, function() v:Hide(); listView:Show(); if listRebuild then listRebuild() end end)
-  back:SetPoint("TOPLEFT", 12, -12)
-  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("TOPLEFT", 92, -14); v.titleFS:SetWidth(600); v.titleFS:SetJustifyH("LEFT")
-  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", 14, -42); v.metaFS:SetWidth(700); v.metaFS:SetJustifyH("LEFT")
+  back:SetPoint("TOPLEFT", SP.M, -SP.M)
+  -- title on the Back button's row, meta under it; both anchored on that row's own y so the two points agree
+  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("LEFT", back, "RIGHT", SP.M, 0); v.titleFS:SetPoint("RIGHT", v, "TOPRIGHT", -SP.M, -(SP.M + 12))
+  v.titleFS:SetJustifyH("LEFT"); if v.titleFS.SetWordWrap then v.titleFS:SetWordWrap(false) end
+  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", back, "BOTTOMLEFT", 2, -SP.S); v.metaFS:SetPoint("TOPRIGHT", v, "TOPRIGHT", -SP.M, -(SP.M + 24 + SP.S)); v.metaFS:SetJustifyH("LEFT")
 
   local sf, child = UI.ScrollChild(v)
-  sf:SetPoint("TOPLEFT", 12, -66); sf:SetPoint("BOTTOMRIGHT", -28, 12)
+  sf:SetPoint("TOPLEFT", v.metaFS, "BOTTOMLEFT", -2, -SP.M); sf:SetPoint("BOTTOMRIGHT", -(SP.M + UI.SCROLLBAR), SP.M)
   child.fs, child.tex, child.btn = {}, {}, {}
-  local WIDTH = 700
+  v.sf, v.child = sf, child
+  local W = 600                 -- the content width this render lays out for (the scroll child's)
+  local INSET = SP.S
   local fn, tn, bn = 0, 0, 0
-  local function cell(x, y, w, text, color, tmpl)
+  local function cell(x, y, w, text, color, tmpl, justify)
     fn = fn + 1
     local fs = child.fs[fn] or ns.UI.CellFS(child, "GameFontHighlightSmall"); child.fs[fn] = fs
     fs:SetFontObject(ns.UI.Font(tmpl) or ns.UI.BODY_SM or GameFontHighlightSmall); fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", x, -y)
-    fs:SetWidth(w); fs:SetJustifyH("LEFT"); local c = color or C.ink
+    fs:SetWidth(math.max(1, w)); fs:SetJustifyH(justify or "LEFT"); local c = color or C.ink
     fs:SetText(text or ""); fs:SetTextColor(c[1], c[2], c[3]); fs:Show(); return fs
   end
+  -- a cell in a laid-out column
+  local function col(cols, key, y, text, color, justify) local c = cols[key]; return cell(c.x, y, c.w, text, color, nil, justify) end
+  local function line(y, text, color) return cell(INSET, y, W - INSET, text, color) end
   local function rule(y) tn = tn + 1; local t = child.tex[tn] or child:CreateTexture(nil, "ARTWORK"); child.tex[tn] = t
-    t:ClearAllPoints(); t:SetPoint("TOPLEFT", 0, -y); t:SetSize(WIDTH, 1); t:SetColorTexture(C.line[1], C.line[2], C.line[3], 1); t:Show() end
-  local function heading(y, text) cell(0, y + 12, WIDTH, text, C.gold, GameFontNormal); rule(y + 32); return y + 40 end
-  -- a clickable encounter row that opens the Fights detail
+    t:ClearAllPoints(); t:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y); t:SetPoint("TOPRIGHT", child, "TOPRIGHT", 0, -y); t:SetHeight(1)
+    t:SetColorTexture(C.line[1], C.line[2], C.line[3], 1); t:Show() end
+  local function heading(y, text) cell(0, y + 12, W, text, C.gold, GameFontNormal); rule(y + 32); return y + 40 end
+  -- the small tables of the page, laid out per render for W; numbers measured from their widest realistic value
+  local BOSS = {
+    { key = "boss", flex = 1, min = 100 },
+    { key = "att", measure = { "ATTEMPTS", "99  (99 wipes)" } },
+    { key = "combat", measure = { "IN COMBAT", "59m 59s", "88m 88s" } },
+    { key = "down", measure = { "DOWN AT", "+23h 59m", "+88h 88m" } },
+    { key = "res", flex = 1, min = 120 },
+  }
+  local DEATH = { { key = "t", measure = { "+23h 59m", "+88h 88m" } }, { key = "foe", flex = 1, min = 100 }, { key = "back", flex = 1, min = 100 } }
+  local LOOT = { { key = "item", flex = 1, min = 100 }, { key = "count", measure = function()
+      local m = { "x999" }   -- and every quantity in the run, so a big stack is never cut
+      for _, l in ipairs((v.run and v.run.notable) or {}) do m[#m + 1] = "x" .. tostring(l.count or 1) end
+      return m
+    end }, { key = "src", flex = 0.7, min = 80 }, { key = "t", measure = { "+23h 59m", "+88h 88m" } } }
+  local FIGHT = { { key = "tm", measure = { "23:59:59", "88:88:88" } }, { key = "nm", flex = 1, min = 100 }, { key = "open", measure = { ">" } }, { key = "re", measure = { "Death", "Wipe", "Kill", "Fled" } } }
+  local cBoss, cDeath, cLoot, cFight
+  -- a clickable encounter row that opens the Fights detail: a Button across the list with a hover highlight
   local function fightRow(y, f)
     bn = bn + 1
     local b = child.btn[bn]
     if not b then
       b = CreateFrame("Button", nil, child)
-      b.hl = b:CreateTexture(nil, "BACKGROUND"); b.hl:SetAllPoints(); b.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 0)
-      b.tm = ns.UI.FS(b, "GameFontDisableSmall"); b.tm:SetPoint("LEFT", 0, 0); b.tm:SetWidth(64)
-      b.nm = ns.UI.FS(b, "GameFontHighlightSmall"); b.nm:SetPoint("LEFT", 70, 0); b.nm:SetWidth(360); b.nm:SetJustifyH("LEFT")
-      b.re = ns.UI.FS(b, "GameFontHighlightSmall"); b.re:SetPoint("LEFT", 440, 0); b.re:SetWidth(120); b.re:SetJustifyH("LEFT")
-      b:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
-      b:SetScript("OnLeave", function(s) s.hl:SetColorTexture(0, 0, 0, 0) end)
+      b.hl = b:CreateTexture(nil, "HIGHLIGHT"); b.hl:SetAllPoints(); b.hl:SetColorTexture(C.hover[1], C.hover[2], C.hover[3], 0.7)
+      b.tm = ns.UI.CellFS(b, "GameFontDisableSmall")
+      b.nm = ns.UI.CellFS(b, "GameFontHighlightSmall"); b.nm:SetJustifyH("LEFT")
+      b.ar = ns.UI.CellFS(b, "GameFontDisableSmall")
+      b.re = ns.UI.CellFS(b, "GameFontHighlightSmall"); b.re:SetJustifyH("LEFT")
       b:SetScript("OnClick", function(s) if ns.OpenFightDetail and s.fight then ns.OpenFightDetail(s.fight) end end)
       child.btn[bn] = b
     end
-    b:SetSize(WIDTH, 16); b:ClearAllPoints(); b:SetPoint("TOPLEFT", 0, -y)
+    b:ClearAllPoints(); b:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y); b:SetPoint("TOPRIGHT", child, "TOPRIGHT", 0, -y); b:SetHeight(16)
+    for key, fs in pairs({ tm = b.tm, nm = b.nm, open = b.ar, re = b.re }) do
+      local c = cFight[key]; fs:ClearAllPoints(); fs:SetPoint("LEFT", b, "LEFT", c.x, 0); fs:SetWidth(c.w)
+    end
     b.tm:SetText(date("%H:%M:%S", f.startEpoch or 0)); b.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    local nm = f.bossName or ((f.foes and f.foes[1]) or "fight")
-    b.nm:SetText(nm .. "   |cff8c9197>|r"); b.nm:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+    b.nm:SetText(f.bossName or ((f.foes and f.foes[1]) or "fight")); b.nm:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+    b.ar:SetText(">"); b.ar:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
     local rc = RESULT[f.outcome] or RESULT.fled
     b.re:SetText(rc[1]); b.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
     b.fight = f; b:Show()
@@ -156,6 +177,12 @@ local function buildDetail(content)
 
   v.render = function(run)
     v.run = run; fn, tn, bn = 0, 0, 0
+    W = math.max(300, sf.contentW or math.floor(tonumber(sf:GetWidth()) or 0))
+    v.renderedW = W
+    cBoss = UI.Columns(BOSS, W, { inset = INSET })
+    cDeath = UI.Columns(DEATH, W, { inset = INSET })
+    cLoot = UI.Columns(LOOT, W, { inset = INSET })
+    cFight = UI.Columns(FIGHT, W, { inset = INSET })
     v.titleFS:SetText(run.name or "Dungeon")
     v.metaFS:SetText(("%s   ·   %s%s   ·   bosses %d   ·   wipes %d   ·   your deaths %d   ·   party deaths %d"):format(
       date("%b %d, %H:%M", run.startT or 0), fmtDur(run.duration), run.inProgress and "  (in progress)" or "",
@@ -169,70 +196,75 @@ local function buildDetail(content)
         local r, g, b = UI.ClassColor(m.class)
         names[#names + 1] = ("|cff%02x%02x%02x%s|r"):format(math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), m.name or "?")
       end
-      cell(8, y, WIDTH - 8, table.concat(names, "   ")); y = y + 18
+      line(y, table.concat(names, "   ")); y = y + 18
     else
-      cell(8, y, WIDTH - 8, "Solo (no group recorded).", C.dim); y = y + 18
+      line(y, "Solo (no group recorded).", C.dim); y = y + 18
     end
     -- bosses: one row per boss in pull order, with attempts and when in the run it went down
     y = heading(y, ("Bosses  (%d)"):format(#(run.bosses or {})))
     if run.bosses and #run.bosses > 0 then
-      cell(8, y, 220, "BOSS", C.dim); cell(236, y, 80, "ATTEMPTS", C.dim); cell(320, y, 90, "IN COMBAT", C.dim); cell(414, y, 120, "DOWN AT", C.dim); cell(540, y, 150, "RESULT", C.dim); y = y + 16
+      col(cBoss, "boss", y, "BOSS", C.dim); col(cBoss, "att", y, "ATTEMPTS", C.dim); col(cBoss, "combat", y, "IN COMBAT", C.dim, "RIGHT")
+      col(cBoss, "down", y, "DOWN AT", C.dim, "RIGHT"); col(cBoss, "res", y, "RESULT", C.dim); y = y + 16
       for _, b in ipairs(run.bosses) do
         local killed = b.killedAt ~= nil
-        cell(8, y, 220, b.name, C.ink)
-        cell(236, y, 80, tostring(b.attempts) .. (b.wipes > 0 and ("  (%d wipe%s)"):format(b.wipes, b.wipes == 1 and "" or "s") or ""), b.wipes > 0 and C.red or C.dim)
-        cell(320, y, 90, fmtDur(b.combat), C.dim)
-        cell(414, y, 120, killed and ("+" .. fmtDur(math.max(0, b.killedAt - (run.startT or 0)))) or "-", C.dim)
+        col(cBoss, "boss", y, b.name, C.ink)
+        col(cBoss, "att", y, tostring(b.attempts) .. (b.wipes > 0 and ("  (%d wipe%s)"):format(b.wipes, b.wipes == 1 and "" or "s") or ""), b.wipes > 0 and C.red or C.dim)
+        col(cBoss, "combat", y, fmtDur(b.combat), C.dim, "RIGHT")
+        col(cBoss, "down", y, killed and ("+" .. fmtDur(math.max(0, b.killedAt - (run.startT or 0)))) or "-", C.dim, "RIGHT")
         local res = killed and "Killed" or (b.wipes > 0 and "Wiped" or (b.deaths > 0 and "Died" or "Not killed"))
         local dbits = {}
         if b.deaths > 0 then dbits[#dbits + 1] = ("you died x%d"):format(b.deaths) end
         if (b.partyDeaths or 0) > 0 then dbits[#dbits + 1] = ("%d party death%s"):format(b.partyDeaths, b.partyDeaths == 1 and "" or "s") end
-        cell(540, y, 150, res .. (#dbits > 0 and ("  ·  " .. table.concat(dbits, ", ")) or ""), killed and C.green or C.red)
+        col(cBoss, "res", y, res .. (#dbits > 0 and ("  ·  " .. table.concat(dbits, ", ")) or ""), killed and C.green or C.red)
         y = y + 16
       end
-      if (run.trash or 0) > 0 then cell(8, y + 2, WIDTH - 8, ("%d trash pull%s recorded between bosses"):format(run.trash, run.trash == 1 and "" or "s"), C.dim); y = y + 18 end
+      if (run.trash or 0) > 0 then line(y + 2, ("%d trash pull%s recorded between bosses"):format(run.trash, run.trash == 1 and "" or "s"), C.dim); y = y + 18 end
     else
-      cell(8, y, WIDTH - 8, "No boss encounters recorded in this run.", C.dim); y = y + 18
+      line(y, "No boss encounters recorded in this run.", C.dim); y = y + 18
     end
     -- deaths
     y = heading(y, ("Deaths  (%d)"):format(run.deaths or 0))
     if run.deathRows and #run.deathRows > 0 then
       for _, d in ipairs(run.deathRows) do
         local dn = tonumber(d.downtime)
-        cell(8, y, 70, "+" .. fmtDur(math.max(0, (d.t or 0) - (run.startT or 0))), C.dim)
-        cell(84, y, 300, "slain by " .. (d.foe or "unknown"), C.red)
-        cell(390, y, 300, dn and ("back on your feet after " .. fmtDur(dn)) or "", C.dim)
+        col(cDeath, "t", y, "+" .. fmtDur(math.max(0, (d.t or 0) - (run.startT or 0))), C.dim, "RIGHT")
+        col(cDeath, "foe", y, "slain by " .. (d.foe or "unknown"), C.red)
+        col(cDeath, "back", y, dn and ("back on your feet after " .. fmtDur(dn)) or "", C.dim)
         y = y + 16
       end
     else
-      cell(8, y, WIDTH - 8, "Deathless run.", C.green); y = y + 16
+      line(y, "Deathless run.", C.green); y = y + 16
     end
     -- loot: totals plus every rare-and-better drop
     y = heading(y, "Loot")
-    cell(8, y, WIDTH - 8, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0)), C.gold); y = y + 20
+    line(y, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0)), C.gold); y = y + 20
     if run.notable and #run.notable > 0 then
       for _, l in ipairs(run.notable) do
         local icon = l.icon and ("|T" .. tostring(l.icon) .. ":14:14:0:0|t ") or ""
-        cell(8, y, 320, icon .. (l.item or "?") .. ((l.count or 1) > 1 and (" x" .. l.count) or ""), qColor(l.q))
-        cell(336, y, 200, l.src or "", C.dim)
-        cell(540, y, 150, "+" .. fmtDur(math.max(0, (l.t or 0) - (run.startT or 0))), C.dim)
+        col(cLoot, "item", y, icon .. (l.item or "?"), qColor(l.q))
+        col(cLoot, "count", y, (l.count or 1) > 1 and ("x" .. l.count) or "", C.dim, "RIGHT")
+        col(cLoot, "src", y, l.src or "", C.dim)
+        col(cLoot, "t", y, "+" .. fmtDur(math.max(0, (l.t or 0) - (run.startT or 0))), C.dim, "RIGHT")
         y = y + 16
       end
     else
-      cell(8, y, WIDTH - 8, "No rare or better drops in this run.", C.dim); y = y + 16
+      line(y, "No rare or better drops in this run.", C.dim); y = y + 16
     end
     -- encounters
     y = heading(y, ("Encounters  (%d)"):format(#(run.fights or {})))
     if run.fights and #run.fights > 0 then
       for i = #run.fights, 1, -1 do fightRow(y, run.fights[i]); y = y + 16 end
     else
-      cell(8, y, WIDTH - 8, "No fights recorded in this run.", C.dim); y = y + 16
+      line(y, "No fights recorded in this run.", C.dim); y = y + 16
     end
     for j = fn + 1, #child.fs do child.fs[j]:Hide() end
     for j = tn + 1, #child.tex do child.tex[j]:Hide() end
     for j = bn + 1, #child.btn do child.btn[j]:Hide() end
-    child:SetSize(WIDTH, math.max(1, y + 12))
+    sf:SetContentHeight(y + 12)
   end
+  -- a new width lays the open run out again
+  sf.onResize = function() if v.run and v:IsShown() then pcall(v.render, v.run) end end
+  v:HookScript("OnShow", function() if v.run and sf.contentW and v.renderedW ~= sf.contentW then pcall(v.render, v.run) end end)
   return v
 end
 
@@ -241,10 +273,8 @@ local function openRun(run) listView:Hide(); detailView.render(run); detailView:
 -- ══ LIST VIEW ═══════════════════════════════════════════════════════════════════
 local function buildList(content)
   local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
-
-  local COL = { time = 0, name = 70, dur = 300, boss = 388, death = 478, loot = 556 }
-  -- lockouts: which instances this character is saved to, and when they reset
-  local lock = UI.FS(v, "GameFontHighlightSmall", C.gold); lock:SetPoint("TOPLEFT", 2, -6); lock:SetWidth(660); lock:SetJustifyH("LEFT")
+  -- lockouts: which instances this character is saved to, and when they reset (wraps; the list moves down with it)
+  local lock = UI.SummaryLine(v, C.gold, nil, true)
   v.lockFS = lock
   local function lockText()
     local L = (ns.DB and ns.char().lockouts) or {}
@@ -260,67 +290,39 @@ local function buildList(content)
     return "Saved to:  " .. table.concat(bits, "   ·   ")
   end
   v.lockText = lockText
-  local hdr = CreateFrame("Frame", nil, v); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
-  local function head(col, text)
-    local fs = ns.UI.CellFS(hdr, "GameFontDisableSmall")
-    fs:SetPoint("LEFT", col, 0); fs:SetText(text); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end
-  head(COL.time, "Time"); head(COL.name, "Dungeon"); head(COL.dur, "Length")
-  head(COL.boss, "Bosses"); head(COL.death, "Deaths"); head(COL.loot, "Loot")
-
-  local sf, child = UI.ScrollChild(v)
-  sf:SetPoint("TOPLEFT", 0, -46); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
+  -- Time · Dungeon · (in progress) · Length · Bosses · Deaths · Loot
+  local tbl = UI.Table(UI.Below(v, lock), {
+    { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
+    { key = "name", label = "Dungeon", flex = 1, min = 120 },
+    { key = "live", label = "", kind = "tag", color = "green", measure = { "•" } },
+    { key = "dur", label = "Length", kind = "num", color = "dim", measure = { "23h 59m" } },
+    { key = "boss", label = "Bosses", kind = "num", measure = { "99" } },
+    { key = "death", label = "Deaths", kind = "num", color = "dim", measure = { "99" } },
+    { key = "loot", label = "Loot", kind = "money", color = "gold", measure = { "999 · " .. fmtMoney(9999999) } },
+  }, { top = 0, emptyText = "No dungeon runs yet. Enter a dungeon and it shows up here.",
+    onClick = function(row) if row.run then openRun(row.run) end end })
+  v.tbl = tbl
 
   listRebuild = function()
     lock:SetText(lockText())
-    local runs = buildRuns()
-    local y, idx = 0, 0
-    for i = #runs, 1, -1 do
-      idx = idx + 1
-      local run = runs[i]
-      local row = child.rows[idx]
-      if not row then
-        row = CreateFrame("Button", nil, child, "BackdropTemplate"); row:SetHeight(20); row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
-        row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" }); row:SetBackdropColor(0, 0, 0, 0)
-        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
-        row:SetScript("OnLeave", function(s) s:SetBackdropColor(0, 0, 0, 0) end)
-        row:SetScript("OnClick", function(s) if s.run then openRun(s.run) end end)
-        row.cells = {}
-        for _, key in ipairs({ "time", "name", "dur", "boss", "death", "loot" }) do
-          local fs = ns.UI.CellFS(row, "GameFontHighlightSmall")
-          fs:SetPoint("LEFT", COL[key], 0); fs:SetJustifyH("LEFT"); row.cells[key] = fs
-        end
-        row.cells.name:SetWidth(224); row.cells.time:SetWidth(64)
-        child.rows[idx] = row
-      end
-      row.run = run; row:SetPoint("TOPLEFT", 0, -y); row:Show()
-      row.cells.time:SetText(date("%m/%d %H:%M", run.startT or 0)); row.cells.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.cells.name:SetText((run.name or "?") .. (run.inProgress and "  |cff47c97e•|r" or "")); row.cells.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.cells.dur:SetText(fmtDur(run.duration)); row.cells.dur:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.cells.boss:SetText(tostring(run.bossesDown or 0)); row.cells.boss:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.cells.death:SetText(tostring(run.deaths or 0))
-      local dc = (run.deaths or 0) > 0 and C.red or C.dim
-      row.cells.death:SetTextColor(dc[1], dc[2], dc[3])
-      row.cells.loot:SetText(((run.items or 0) > 0 and (run.items .. " · ") or "") .. fmtMoney(run.gold or 0))
-      row.cells.loot:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-      y = y + 20
-    end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function()
-        local fs = ns.UI.FS(child, "GameFontDisableSmall")
-        fs:SetPoint("TOPLEFT", 0, 0); fs:SetText("No dungeon runs yet. Enter a dungeon and it shows up here."); return fs
-      end)()
-      child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
-    child:SetSize(math.max(660, (sf:GetWidth() or 660) - 4), math.max(1, y))
+    local runs, rows = buildRuns(), {}
+    for i = #runs, 1, -1 do rows[#rows + 1] = runs[i] end
+    tbl.setRows(rows, function(row, run)
+      row.run = run
+      row.c.time:SetText(date("%m/%d %H:%M", run.startT or 0))
+      row.c.name:SetText(run.name or "?")
+      row.c.live:SetText(run.inProgress and "•" or "")
+      row.c.dur:SetText(fmtDur(run.duration))
+      row.c.boss:SetText(tostring(run.bossesDown or 0))
+      row.c.death:SetText(tostring(run.deaths or 0))
+      if (run.deaths or 0) > 0 then row.c.death:SetTextColor(C.red[1], C.red[2], C.red[3]) end
+      row.c.loot:SetText(((run.items or 0) > 0 and (run.items .. " · ") or "") .. fmtMoney(run.gold or 0))
+    end)
   end
 
   listRebuild()
   return v
 end
-
 local ticker
 UI.registerHost(1, "Combat", "Every dungeon run, every fight and every death, each with a replay you can scrub.")
 UI.registerPane("Combat", 1, "Dungeons", function(content)
@@ -340,3 +342,5 @@ ns.DungeonRuns = buildRuns
 ns._test.buildRuns = buildRuns
 ns._test.dungeonsLockText = function() return listView and listView.lockText and listView.lockText() or nil end
 ns._test.renderRun = function(run) if detailView then detailView.render(run); detailView:Show(); detailView:Hide() end end
+ns._test.dungeonDetail = function() return detailView end
+ns._test.openRun = function(run) openRun(run) end

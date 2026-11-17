@@ -203,8 +203,10 @@ local function buildDetail(content)
   local back = UI.Button(v, "< Back", 70, 24, function() detailView:Hide(); listView:Show(); if listRebuild then listRebuild() end end)
   back:SetPoint("TOPLEFT", 12, -12)
 
-  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("TOPLEFT", 92, -14); v.titleFS:SetWidth(500); v.titleFS:SetJustifyH("LEFT")
-  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", 14, -42); v.metaFS:SetWidth(690); v.metaFS:SetJustifyH("LEFT")
+  -- the title runs from the Back button to the Timeline button; the meta line spans the view and wraps
+  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("LEFT", back, "RIGHT", UI.SP.M, 0); v.titleFS:SetJustifyH("LEFT")
+  if v.titleFS.SetWordWrap then v.titleFS:SetWordWrap(false) end
+  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", 14, -42); v.metaFS:SetPoint("TOPRIGHT", -14, -42); v.metaFS:SetJustifyH("LEFT")
 
   -- delete THIS fight (a test pull, a misfire). Two clicks within 5s; the first arms it.
   local delArmedAt = 0
@@ -231,11 +233,12 @@ local function buildDetail(content)
     ns.OpenTimelineWindow(s0 - 5, s0 + (f.duration or 0) + 20, foesText(f) .. "  " .. date("%H:%M", s0))
   end)
   v.tlBtn:SetPoint("RIGHT", v.delBtn, "LEFT", -8, 0)
+  v.titleFS:SetPoint("RIGHT", v.tlBtn, "LEFT", -UI.SP.M, 0)
 
   -- scrubber: drag to inspect the character's state at any moment of the fight
   local slider = CreateFrame("Slider", "EverbuffFightScrubber", v, "OptionsSliderTemplate")
-  slider:SetOrientation("HORIZONTAL"); slider:SetWidth(560); slider:SetHeight(16)
-  slider:SetPoint("TOPLEFT", 16, -70)
+  slider:SetOrientation("HORIZONTAL"); slider:SetHeight(16)
+  slider:SetPoint("TOPLEFT", 16, -70); slider:SetPoint("TOPRIGHT", -(16 + UI.SCROLLBAR), -70)   -- as wide as the view
   slider:SetObeyStepOnDrag(true)
   if _G.EverbuffFightScrubberLow then _G.EverbuffFightScrubberLow:SetText("pull") end
   if _G.EverbuffFightScrubberHigh then _G.EverbuffFightScrubberHigh:SetText("end") end
@@ -252,8 +255,8 @@ local function buildDetail(content)
     if not b then
       b = CreateFrame("Button", nil, v); b:SetSize(7, 10)
       b.tex = b:CreateTexture(nil, "OVERLAY"); b.tex:SetAllPoints()
-      b:SetScript("OnEnter", function(s) GameTooltip:SetOwner(s, "ANCHOR_TOP"); GameTooltip:SetText(s.label or "", 1, 1, 1); GameTooltip:Show() end)
-      b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      b:SetScript("OnEnter", function(s) if not GameTooltip then return end; GameTooltip:SetOwner(s, "ANCHOR_TOP"); GameTooltip:SetText(s.label or "", 1, 1, 1); GameTooltip:Show() end)
+      b:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
       b:SetScript("OnClick", function(s) if s.t and v.slider then v.slider:SetValue(s.t) end end)
       v.ticks[tickN] = b
     end
@@ -263,7 +266,7 @@ local function buildDetail(content)
   end
   v.placeLandmarks = function(f, dur)
     tickN = 0
-    local W = v.slider:GetWidth() or 560
+    local W = tonumber(v.slider:GetWidth()) or 0
     local function place(t, color, label)
       if dur > 0 then tick((math.max(0, math.min(t or 0, dur)) / dur) * W, color, label, t) end
     end
@@ -273,13 +276,15 @@ local function buildDetail(content)
     if f.enemies then for _, e in ipairs(f.enemies) do if (e.firstT or 0) > 0.5 then place(e.firstT, C.dim, (e.name or "?") .. " joins") end end end
     for j = tickN + 1, #v.ticks do v.ticks[j]:Hide() end
   end
-  v.timeFS = UI.FS(v, "GameFontHighlightSmall", C.gold); v.timeFS:SetPoint("TOPLEFT", 16, -92); v.timeFS:SetWidth(560); v.timeFS:SetJustifyH("LEFT")
+  v.timeFS = UI.FS(v, "GameFontHighlightSmall", C.gold); v.timeFS:SetPoint("TOPLEFT", 16, -92); v.timeFS:SetPoint("TOPRIGHT", -16, -92); v.timeFS:SetJustifyH("LEFT")
+  if v.timeFS.SetWordWrap then v.timeFS:SetWordWrap(false) end
 
   local sf, child = UI.ScrollChild(v)
   sf:SetPoint("TOPLEFT", 12, -112); sf:SetPoint("BOTTOMRIGHT", -28, 12)
   child.fs = {}; child.tex = {}
   v.child = child
-  local WIDTH = 690
+  v.sf = sf
+  local WIDTH = 600   -- the content width of this render: the scroll child's, set by renderState
 
   -- ── pooled renderers (absolute-positioned; y grows downward) ──
   local fn, tn = 0, 0
@@ -298,7 +303,7 @@ local function buildDetail(content)
     tn = tn + 1
     local t = child.tex[tn]
     if not t then t = child:CreateTexture(nil, "ARTWORK"); child.tex[tn] = t end
-    t:ClearAllPoints(); t:SetPoint("TOPLEFT", x, -y); t:SetSize(w, 1)
+    t:ClearAllPoints(); t:SetPoint("TOPLEFT", x, -y); t:SetSize(math.max(1, w), 1)
     local c = color or C.line; t:SetColorTexture(c[1], c[2], c[3], 1); t:Show()
     return t
   end
@@ -316,15 +321,25 @@ local function buildDetail(content)
     if not btn then
       btn = CreateFrame("Button", nil, child)
       btn.hl = btn:CreateTexture(nil, "BACKGROUND"); btn.hl:SetAllPoints(); btn.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 0)
-      btn.fs = ns.UI.FS(btn, "GameFontHighlightSmall"); btn.fs:SetPoint("LEFT", 0, 0)
-      btn:SetScript("OnEnter", function(s) s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
-      btn:SetScript("OnLeave", function(s) s.hl:SetColorTexture(0, 0, 0, 0) end)
+      -- the name on one line (shortened when it must be), the ">" marker always shown at the right
+      btn.arrow = ns.UI.FS(btn, "GameFontHighlightSmall", C.dim); btn.arrow:SetPoint("RIGHT", btn, "RIGHT", -4, 0); btn.arrow:SetText(">")
+      btn.fs = ns.UI.FS(btn, "GameFontHighlightSmall"); btn.fs:SetPoint("LEFT", btn, "LEFT", 0, 0); btn.fs:SetPoint("RIGHT", btn.arrow, "LEFT", -6, 0)
+      if btn.fs.SetWordWrap then btn.fs:SetWordWrap(false) end
+      if btn.fs.SetMaxLines then btn.fs:SetMaxLines(1) end
+      btn:SetScript("OnEnter", function(s)
+        s.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1)
+        -- a shortened name reads in full in the tooltip, as in every list
+        if GameTooltip and s.fs.IsTruncated and s.fs:IsTruncated() then
+          GameTooltip:SetOwner(s, "ANCHOR_RIGHT"); GameTooltip:AddLine(s.fs:GetText() or "", 1, 1, 1, true); GameTooltip:Show()
+        end
+      end)
+      btn:SetScript("OnLeave", function(s) s.hl:SetColorTexture(0, 0, 0, 0); if GameTooltip and GameTooltip:GetOwner() == s then GameTooltip:Hide() end end)
       btn:SetScript("OnClick", function(s) if openMember and s.member then openMember(v.fight, s.member) end end)
       child.mbtn[mbn] = btn
     end
     btn:SetSize(w, 16); btn:ClearAllPoints(); btn:SetPoint("TOPLEFT", x, -y)
-    btn.fs:SetWidth(w - 4); btn.fs:SetJustifyH("LEFT")
-    btn.fs:SetText((name or "?") .. "   |cff8c9197>|r"); btn.fs:SetTextColor(r, g, b)
+    btn.fs:SetJustifyH("LEFT")
+    btn.fs:SetText(name or "?"); btn.fs:SetTextColor(r, g, b)
     btn.member = member; btn:Show()
     return btn
   end
@@ -334,7 +349,7 @@ local function buildDetail(content)
     cell(colX, y, colW, title, C.dim, "LEFT", GameFontNormalSmall); y = y + 17
     for _, e in ipairs(entries) do
       cell(colX + 8, y, 116, e[1], C.dim)
-      cell(colX + 128, y, colW - 128, e[2], C.ink)
+      cell(colX + 128, y, colW - 136, e[2], C.ink, "RIGHT")
       y = y + 15
     end
     return y + 10
@@ -344,7 +359,10 @@ local function buildDetail(content)
   local PRIM = { "Str", "Agi", "Sta", "Int", "Spi" }
   local RESI = { "Arcane", "Fire", "Frost", "Nature", "Shadow" }
   local function statGrid(y, s)
-    local COLW, LX, RX = 330, 8, 358
+    -- two label/value columns, each at most 360 px so a value stays near its label on a wide window
+    local COLW = math.min(360, math.floor((WIDTH - 8 - 24) / 2))
+    local LX = 8
+    local RX = LX + COLW + 24
     local attrs = {}
     if s.prim then for i = 1, 5 do if s.prim[i] then attrs[#attrs + 1] = { PRIM[i], tostring(s.prim[i]) } end end end
     local off = {}
@@ -409,11 +427,12 @@ local function buildDetail(content)
         b.bg = b:CreateTexture(nil, "BACKGROUND"); b.bg:SetAllPoints()
         b.icon = b:CreateTexture(nil, "ARTWORK"); b.icon:SetPoint("CENTER"); b.icon:SetSize(ICON - PAD - 2, ICON - PAD - 2)
         b:SetScript("OnEnter", function(s)
+          if not GameTooltip then return end
           GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
           GameTooltip:SetText(s.auraName or "?", 1, 1, 1)
           GameTooltip:AddLine(s.auraKind or "", 0.6, 0.6, 0.6); GameTooltip:Show()
         end)
-        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        b:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
         child.abtn[an] = b
       end
       b:ClearAllPoints(); b:SetPoint("TOPLEFT", cx, -cy)
@@ -427,8 +446,8 @@ local function buildDetail(content)
     return rows * ICON
   end
   -- one combatant: colored name on the left, its live buff/debuff icons on the right; returns new y
-  local NAMEW = 150
   local function combatantRow(y, name, r, g, b, auras, member)
+    local NAMEW = math.max(150, math.min(280, math.floor(WIDTH * 0.3)))   -- the name column grows with the view
     if member then nameButton(8, y + 1, NAMEW, name, r, g, b, member)   -- clickable: opens their timeline
     else cell(8, y + 2, NAMEW, name, { r, g, b }) end
     local h = auraStrip(8 + NAMEW + 6, y, WIDTH - (8 + NAMEW + 6) - 8, auras)
@@ -447,10 +466,17 @@ local function buildDetail(content)
     cell(x, y + 1, WIDTH - x, icon .. (it.name or "?"), Q_COLOR[it.quality or 1] or C.ink)
   end
 
+  -- the fight's loot: item · quantity · source · time, laid out for the render's width
+  local LOOT_COLS = { { key = "item", flex = 1, min = 100 }, { key = "count", measure = function()
+      local m = { "x999" }   -- and every quantity on the page, so a big stack is never cut
+      for _, l in ipairs(v.lootNow or {}) do m[#m + 1] = "x" .. tostring(l.count or 1) end
+      return m
+    end }, { key = "src", flex = 0.7, min = 80 }, { key = "t", measure = { "23:59:59", "88:88:88" } } }
   -- rebuild the scroll for the current scrubber time (v.curT); called on every slider move
   v.renderState = function()
     local f = v.fight; if not f then return end
     fn, tn, mbn, an = 0, 0, 0, 0
+    WIDTH = math.max(300, sf.contentW or math.floor(tonumber(sf:GetWidth()) or 0))
     local dur = math.max(f.duration or 0, 0)
     local T = math.min(v.curT or dur, dur)
     v.timeFS:SetText(("Showing the fight at |cff35eebb+%.1fs|r of %s   ·   drag to scrub"):format(T, fmtDur(dur)))
@@ -511,15 +537,18 @@ local function buildDetail(content)
     local loot = fightLoot(f)
     y = heading(y, ("Loot  (%d)"):format(#loot))
     if #loot > 0 then
+      v.lootNow = loot
+      local lc = UI.Columns(LOOT_COLS, WIDTH, { inset = 8 })
       for _, l in ipairs(loot) do
         if l.money then
-          cell(8, y, 300, "|TInterface\\Icons\\INV_Misc_Coin_01:14:14:0:0|t " .. fmtCoin(l.money), C.gold)
+          cell(lc.item.x, y, lc.item.w, "|TInterface\\Icons\\INV_Misc_Coin_01:14:14:0:0|t " .. fmtCoin(l.money), C.gold)
         else
           local icon = l.icon and ("|T" .. tostring(l.icon) .. ":14:14:0:0|t ") or ""
-          cell(8, y, 300, icon .. (l.item or "?") .. ((l.count or 1) > 1 and ("  x" .. l.count) or ""), hexColor(l.q))
+          cell(lc.item.x, y, lc.item.w, icon .. (l.item or "?"), hexColor(l.q))
+          cell(lc.count.x, y, lc.count.w, (l.count or 1) > 1 and ("x" .. l.count) or "", C.dim, "RIGHT")
         end
-        cell(316, y, 220, l.src or "", C.dim)
-        cell(540, y, 150, date("%H:%M:%S", l.t or 0), C.dim)
+        cell(lc.src.x, y, lc.src.w, l.src or "", C.dim)
+        cell(lc.t.x, y, lc.t.w, date("%H:%M:%S", l.t or 0), C.dim, "RIGHT")
         y = y + 16
       end
     else
@@ -580,7 +609,7 @@ local function buildDetail(content)
     for j = tn + 1, #child.tex do child.tex[j]:Hide() end
     for j = mbn + 1, #child.mbtn do child.mbtn[j]:Hide() end
     for j = an + 1, #child.abtn do child.abtn[j]:Hide() end
-    child:SetSize(WIDTH, math.max(1, y + 12))
+    sf:SetContentHeight(y + 12)
   end
 
   v.render = function(f)
@@ -602,6 +631,13 @@ local function buildDetail(content)
     v.slider:SetValue(dur)   -- fires OnValueChanged → renderState (when the value actually changes)
     v.renderState()          -- guarantee a render even if the value didn't change
   end
+  -- a new width lays the fight out again and moves the landmarks with the scrubber
+  sf.onResize = function()
+    local f = v.fight
+    if not (f and v:IsShown()) then return end
+    pcall(v.renderState)
+    if v.placeLandmarks then pcall(v.placeLandmarks, f, math.max(f.duration or 0, 0)) end
+  end
 
   return v
 end
@@ -614,13 +650,15 @@ local function buildMemberView(content)
 
   local back = UI.Button(v, "< Back", 70, 24, function() v:Hide(); if detailView then detailView:Show() end end)
   back:SetPoint("TOPLEFT", 12, -12)
-  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("TOPLEFT", 92, -14); v.titleFS:SetWidth(600); v.titleFS:SetJustifyH("LEFT")
-  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", 14, -44); v.metaFS:SetWidth(690); v.metaFS:SetJustifyH("LEFT")
+  v.titleFS = UI.FS(v, "GameFontNormalLarge"); v.titleFS:SetPoint("LEFT", back, "RIGHT", UI.SP.M, 0); v.titleFS:SetPoint("RIGHT", v, "TOPRIGHT", -UI.SP.M, -24); v.titleFS:SetJustifyH("LEFT")   -- on the Back button's row
+  if v.titleFS.SetWordWrap then v.titleFS:SetWordWrap(false) end
+  v.metaFS = UI.FS(v, "GameFontHighlightSmall", C.dim); v.metaFS:SetPoint("TOPLEFT", 14, -44); v.metaFS:SetPoint("TOPRIGHT", -14, -44); v.metaFS:SetJustifyH("LEFT")
 
   local sf, child = UI.ScrollChild(v)
   sf:SetPoint("TOPLEFT", 12, -68); sf:SetPoint("BOTTOMRIGHT", -28, 12)
   child.fs = {}
-  local WIDTH = 690
+  v.sf, v.child = sf, child
+  local WIDTH = 600   -- the content width of this render (the scroll child's)
   local fn = 0
   local function cell(x, y, w, text, color, justify, template)
     fn = fn + 1
@@ -635,6 +673,8 @@ local function buildMemberView(content)
 
   v.render = function(fight, member)
     fn = 0
+    v.fight, v.member = fight, member
+    WIDTH = math.max(300, sf.contentW or math.floor(tonumber(sf:GetWidth()) or 0))
     local r, g, b = UI.ClassColor(member.class)
     v.titleFS:SetText(member.name or "?"); v.titleFS:SetTextColor(r, g, b)
     local bits = {}
@@ -658,8 +698,9 @@ local function buildMemberView(content)
       cell(8, y, WIDTH - 8, "No buff/debuff changes captured for this member (out of range at pull, or restricted).", C.dim); y = y + 16
     end
     for j = fn + 1, #child.fs do child.fs[j]:Hide() end
-    child:SetSize(WIDTH, math.max(1, y + 12))
+    sf:SetContentHeight(y + 12)
   end
+  sf.onResize = function() if v.fight and v.member and v:IsShown() then pcall(v.render, v.fight, v.member) end end
 
   return v
 end
@@ -667,6 +708,7 @@ end
 -- ══ LIST VIEW ═══════════════════════════════════════════════════════════════════
 local function openDetail(f)
   listView:Hide()
+  if memberView then memberView:Hide() end   -- a fight opened from another tab while a member's view was up
   detailView.render(f)
   detailView:Show()
 end
@@ -687,6 +729,7 @@ ns.OpenFightDetail = function(f)
 end
 
 local function buildList(content)
+  local SP = UI.SP
   local v = CreateFrame("Frame", nil, content)
   v:SetAllPoints(content)
 
@@ -706,49 +749,62 @@ local function buildList(content)
   v.tabs = tabs
   local pane = tabs.content
 
-  -- first row inside the pane: aggregate summary (left) + text search (right)
-  local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold); summary:SetPoint("TOPLEFT", 2, -6); summary:SetWidth(430); summary:SetJustifyH("LEFT")
-  search = UI.EditBox(pane, 200, 22); search:SetPoint("TOPRIGHT", -2, -2)
-  local hint = UI.FS(pane, "GameFontDisableSmall", C.dim); hint:SetPoint("LEFT", search, "LEFT", 8, 0); hint:SetText("search foe or zone")
-  search:SetScript("OnTextChanged", function(e)
-    if (e:GetText() or "") == "" then hint:Show() else hint:Hide() end
-    if listRebuild then listRebuild() end
-  end)
+  -- first row inside the pane: the text search at the right (it ends where the list ends), the aggregate summary in
+  -- one line to its left
+  search = UI.EditBox(pane, 200, UI.ROW_H, "search foe or zone"); search:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -UI.SCROLLBAR, -SP.XS)
+  search:HookScript("OnTextChanged", function() if listRebuild then listRebuild() end end)
+  local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold)
+  if summary.SetWordWrap then summary:SetWordWrap(false) end
+  if summary.SetMaxLines then summary:SetMaxLines(1) end
+  summary:SetJustifyH("LEFT")
+  summary:SetPoint("LEFT", pane, "TOPLEFT", SP.S, -(SP.XS + UI.ROW_H / 2)); summary:SetPoint("RIGHT", search, "LEFT", -SP.M, 0)
+  v.summary, v.search = summary, search
 
-  -- columns: When · Faced (source) · Location (name) · Coords · Length · Result
-  local COL = { time = 0, foe = 92, loc = 298, coords = 424, dur = 508, res = 584 }
-  local WID = { time = 84, foe = 200, loc = 120, coords = 78, dur = 70, res = 80 }
-  local ROWW = 670
-  local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -38); hdr:SetSize(ROWW, 16)
+  -- columns: When · Faced (source) · group size · Location (name) · Coords · Length · Result. Click a header to sort;
+  -- sorted by time the list carries a header per day and per dungeon run.
   local sortKey, sortAsc = "time", false
-  local heads, styleHeads = {}, nil
-  local function head(key, col, w, text)
-    local b = CreateFrame("Button", nil, hdr); b:SetPoint("LEFT", col, 0); b:SetSize(w, 16)
-    local fs = UI.FS(b, "GameFontNormalSmall"); fs:SetPoint("LEFT", 0, 0); fs:SetWidth(w); fs:SetJustifyH("LEFT")
-    b.fs, b.key, b.label = fs, key, text
-    b:SetScript("OnClick", function(hb)
-      if sortKey == hb.key then sortAsc = not sortAsc else sortKey = hb.key; sortAsc = (hb.key == "foe" or hb.key == "res" or hb.key == "loc") end
-      if styleHeads then styleHeads() end
-      if listRebuild then listRebuild() end
-    end)
-    heads[#heads + 1] = b
-  end
-  styleHeads = function()
-    for _, b in ipairs(heads) do
-      local on = (b.key == sortKey)
-      b.fs:SetText(b.label:upper() .. (on and (sortAsc and "  ^" or "  v") or ""))
-      local col = on and C.gold or C.dim; b.fs:SetTextColor(col[1], col[2], col[3])
-    end
-  end
-  head("time", COL.time, WID.time, "When"); head("foe", COL.foe, WID.foe, "Faced")
-  head("loc", COL.loc, WID.loc, "Location"); head("coords", COL.coords, WID.coords, "Coords")
-  head("dur", COL.dur, WID.dur, "Length"); head("res", COL.res, WID.res, "Result")
+  local tbl = UI.Table(pane, {
+    { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" }, sort = true },
+    -- Faced and Location share the spare width equally, and neither is cut on a realistic name at 900 px
+    { key = "foe", label = "Faced", flex = 1, min = 90, measure = { "Murloc Coastrunner" }, sort = true },
+    { key = "grp", label = "", kind = "tag", color = "dim", measure = { "40-player" } },
+    { key = "loc", label = "Location", flex = 1, min = 90, measure = { "Stranglethorn Vale", "Redridge Mountains" }, color = "dim", sort = true },
+    { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" }, sort = true },
+    { key = "dur", label = "Length", kind = "num", color = "dim", measure = { "999:59" }, sort = true },
+    { key = "res", label = "Result", kind = "tag", measure = { GLYPH.death .. "Death  99 died" }, sort = true },
+  }, { top = -(SP.XS + UI.ROW_H + SP.M), bottom = 2, sortKey = sortKey, sortAsc = sortAsc,
+    onSort = function(key, asc) sortKey, sortAsc = key, asc; if listRebuild then listRebuild() end end,
+    onClick = function(row) if row.fight then openDetail(row.fight) end end,
+    tooltip = function(row, f, tip)
+      tip:AddLine(foesText(f), 1, 1, 1)
+      tip:AddLine(("%s  ·  %s  ·  %s"):format(date("%b %d %H:%M:%S", f.startEpoch or 0), fmtDur(f.duration), (RESULT[f.outcome] or RESULT.fled)[1]), 0.8, 0.8, 0.8)
+      if f.zone then tip:AddLine(f.zone .. (UI.fmtCoords(f.x, f.y) ~= "" and ("  " .. UI.fmtCoords(f.x, f.y)) or ""), 0.6, 0.7, 0.75) end
+      if f.group and #f.group > 0 then
+        local names = {}
+        for _, m in ipairs(f.group) do names[#names + 1] = (m.name or "?") .. (m.deadT and " (died)" or "") end
+        tip:AddLine("Group: " .. table.concat(names, ", "), 0.6, 0.7, 0.75, true)
+      end
+      if f.spec or f.talents then tip:AddLine((f.spec or "") .. (f.talents and ("  " .. f.talents) or ""), 0.6, 0.7, 0.75) end
+      tip:AddLine("Click to open the replay", 0.5, 0.65, 0.75)
+    end })
+  v.tbl = tbl
+  v.rows = tbl.rows      -- exposed for the headless tests
+  v.daysFn = tbl.sections
 
-  local sf, child = UI.ScrollChild(pane)
-  sf:SetPoint("TOPLEFT", 0, -58); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
-  v.rows = child.rows   -- exposed for the headless tests
-  v.daysFn = function() return child.days end
+  local function fill(row, f)
+    row.fight = f
+    local c = row.c
+    c.time:SetText(date("%m/%d %H:%M", f.startEpoch or 0))
+    local gn = (f.group and #f.group) or 0
+    c.foe:SetText(foesText(f))
+    c.grp:SetText(gn > 1 and ("%d-player"):format(gn) or "")
+    c.loc:SetText(f.zone or "")
+    c.coords:SetText(UI.fmtCoords(f.x, f.y))
+    c.dur:SetText(fmtDur(f.duration))
+    local rc = RESULT[f.outcome] or RESULT.fled
+    local md = tonumber(f.memberDeaths) or 0
+    c.res:SetText((GLYPH[f.outcome] or GLYPH.fled) .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); c.res:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
+  end
 
   listRebuild = function()
     local fights = ns.mine(ns.Fights and ns.Fights.list())   -- the logged-in character's fights only (#23)
@@ -760,101 +816,41 @@ local function buildList(content)
       secs = secs + (f.duration or 0)
     end
     summary:SetText(("%d fights  ·  %d kills  ·  %d wipes  ·  %d deaths  ·  %s in combat"):format(#fights, kills, wipes, deaths, fmtDur(secs)))
-    local y, idx, dn, lastDay, lastRun = 0, 0, 0, nil, nil
     -- dungeon runs (from the Combat / Dungeons pane) so fights inside one get a run header
     local runs = (sortKey == "time" and ns.DungeonRuns) and ns.DungeonRuns() or {}
     local function runOf(f)
       local t = f.startEpoch or 0
       for _, r in ipairs(runs) do if t >= r.startT and t <= (r.endT or math.huge) then return r end end
     end
-    child.days = child.days or {}
+    local items, lastDay, lastRun = {}, nil, nil
     for _, f in ipairs(sortFights(fights, sortKey, sortAsc)) do
       if matches(f) then
         if sortKey == "time" then                       -- a day header whenever the date changes
           local day = date("%Y-%m-%d", f.startEpoch or 0)
           if day ~= lastDay then
-            lastDay = day; dn = dn + 1
-            local dfs = child.days[dn]
-            if not dfs then dfs = UI.FS(child, "GameFontNormalSmall", C.gold); dfs:SetJustifyH("LEFT"); child.days[dn] = dfs end
-            dfs:ClearAllPoints(); dfs:SetPoint("TOPLEFT", 2, -(y + 4)); dfs:SetText(UI.fmtDay(f.startEpoch):upper()); dfs:Show()
-            y = y + 20; lastRun = nil
+            lastDay = day; lastRun = nil
+            items[#items + 1] = { ebSection = UI.fmtDay(f.startEpoch):upper() }
           end
           local run = runOf(f)
           if run ~= lastRun then                       -- entering (or leaving) a dungeon run: a run header
             lastRun = run
             if run then
-              dn = dn + 1
-              local rfs = child.days[dn]
-              if not rfs then rfs = UI.FS(child, "GameFontNormalSmall", C.gold); rfs:SetJustifyH("LEFT"); child.days[dn] = rfs end
-              rfs:ClearAllPoints(); rfs:SetPoint("TOPLEFT", 14, -(y + 3))
-              rfs:SetText(("|cff0cd29d%s|r  ·  %s  ·  %d boss%s down  ·  %d death%s"):format(run.name or "Dungeon", date("%H:%M", run.startT or 0),
-                run.bossesDown or 0, (run.bossesDown or 0) == 1 and "" or "es", run.deaths or 0, (run.deaths or 0) == 1 and "" or "s"))
-              rfs:Show(); y = y + 18
+              items[#items + 1] = { ebIndent = SP.M, ebSection = ("|cff0cd29d%s|r  ·  %s  ·  %d boss%s down  ·  %d death%s"):format(run.name or "Dungeon", date("%H:%M", run.startT or 0),
+                run.bossesDown or 0, (run.bossesDown or 0) == 1 and "" or "es", run.deaths or 0, (run.deaths or 0) == 1 and "" or "s") }
             end
           end
         end
-        idx = idx + 1
-        local row = child.rows[idx]
-        if not row then
-          row = CreateFrame("Button", nil, child, "BackdropTemplate"); row:SetHeight(20); row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
-          row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" }); row:SetBackdropColor(0, 0, 0, 0)
-          row:SetScript("OnEnter", function(r)
-            r:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.6)
-            local f = r.fight; if not (f and GameTooltip) then return end
-            GameTooltip:SetOwner(r, "ANCHOR_RIGHT")
-            GameTooltip:AddLine(foesText(f), 1, 1, 1)
-            GameTooltip:AddLine(("%s  ·  %s  ·  %s"):format(date("%b %d %H:%M:%S", f.startEpoch or 0), fmtDur(f.duration), (RESULT[f.outcome] or RESULT.fled)[1]), 0.8, 0.8, 0.8)
-            if f.zone then GameTooltip:AddLine(f.zone .. (UI.fmtCoords(f.x, f.y) ~= "" and ("  " .. UI.fmtCoords(f.x, f.y)) or ""), 0.6, 0.7, 0.75) end
-            if f.group and #f.group > 0 then
-              local names = {}
-              for _, m in ipairs(f.group) do names[#names + 1] = (m.name or "?") .. (m.deadT and " (died)" or "") end
-              GameTooltip:AddLine("Group: " .. table.concat(names, ", "), 0.6, 0.7, 0.75, true)
-            end
-            if f.spec or f.talents then GameTooltip:AddLine((f.spec or "") .. (f.talents and ("  " .. f.talents) or ""), 0.6, 0.7, 0.75) end
-            GameTooltip:AddLine("Click to open the replay", 0.5, 0.65, 0.75)
-            GameTooltip:Show()
-          end)
-          row:SetScript("OnLeave", function(r) r:SetBackdropColor(0, 0, 0, 0); if GameTooltip then GameTooltip:Hide() end end)
-          row:SetScript("OnClick", function(r) if r.fight then openDetail(r.fight) end end)
-          row.tm = UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
-          row.fo = UI.CellFS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
-          row.lo = UI.CellFS(row, "GameFontDisableSmall"); row.lo:SetPoint("LEFT", COL.loc, 0); row.lo:SetWidth(WID.loc); row.lo:SetJustifyH("LEFT")
-          row.co = UI.CellFS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-          row.du = UI.CellFS(row, "GameFontHighlightSmall"); row.du:SetPoint("LEFT", COL.dur, 0); row.du:SetWidth(WID.dur); row.du:SetJustifyH("LEFT")
-          row.re = UI.CellFS(row, "GameFontHighlightSmall"); row.re:SetPoint("LEFT", COL.res, 0); row.re:SetWidth(WID.res); row.re:SetJustifyH("LEFT")
-          child.rows[idx] = row
-        end
-        row.fight = f
-        row:SetPoint("TOPLEFT", 0, -y); row:Show()
-        row.tm:SetText(date("%m/%d %H:%M", f.startEpoch or 0)); row.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-        local gn = (f.group and #f.group) or 0
-        row.fo:SetText(foesText(f) .. (gn > 1 and ("  |cff8c9197%d-player|r"):format(gn) or "")); row.fo:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-        row.lo:SetText(f.zone or ""); row.lo:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-        row.co:SetText(UI.fmtCoords(f.x, f.y)); row.co:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-        row.du:SetText(fmtDur(f.duration)); row.du:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-        local rc = RESULT[f.outcome] or RESULT.fled
-        local md = tonumber(f.memberDeaths) or 0
-        row.re:SetText((GLYPH[f.outcome] or GLYPH.fled) .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); row.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
-        y = y + 20
+        items[#items + 1] = f
       end
     end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    for j = dn + 1, #child.days do child.days[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function()
-        local fs = UI.FS(child, "GameFontDisableSmall"); fs:SetPoint("TOPLEFT", 0, 0); return fs
-      end)()
-      child.empty:SetText(#fights == 0 and "No fights yet. Enter combat and they show up here." or "No fights match this filter.")
-      child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
-    child:SetSize(math.max(ROWW, (sf:GetWidth() or ROWW) - 4), math.max(1, y))
+    tbl.setRows(items, fill)
+    for _, row in ipairs(tbl.rows) do if row.item and row.item.ebSection then row.fight = nil end end
+    if #items == 0 then tbl.setEmpty(#fights == 0 and "No fights yet. Enter combat and they show up here." or "No fights match this filter.") end
   end
 
-  styleHeads()
   tabs.select("all")
   return v
 end
-
 local function build(content)
   listView = buildList(content)
   detailView = buildDetail(content)

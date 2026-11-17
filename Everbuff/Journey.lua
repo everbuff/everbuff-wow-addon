@@ -10,15 +10,7 @@ local UI = ns.UI
 local C = ns.UI.C
 
 -- ── formatting ──────────────────────────────────────────────────────────────────
-local function fmtMoney(c)
-  c = math.floor(tonumber(c) or 0)
-  local g, s, cp = math.floor(c / 10000), math.floor((c % 10000) / 100), c % 100
-  local out = {}
-  if g > 0 then out[#out + 1] = g .. "g" end
-  if s > 0 then out[#out + 1] = s .. "s" end
-  if cp > 0 or #out == 0 then out[#out + 1] = cp .. "c" end
-  return table.concat(out, " ")
-end
+local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
 local function fmtTime(sec)
   sec = math.floor(tonumber(sec) or 0)
   if sec <= 0 then return "-" end
@@ -46,6 +38,7 @@ local view    -- the content frame the framework builds for us (set in build, us
 build = function(content)
   view = content
   local ov = content
+  local SP = UI.SP
   -- first-run walkthrough: a card over the dashboard until "Got it". Three things a new player must know.
   local ob = UI.Panel(content); ob:SetPoint("TOPLEFT", 4, -8); ob:SetPoint("TOPRIGHT", -4, -8); ob:SetHeight(150)
   ob:SetFrameLevel((content:GetFrameLevel() or 1) + 20)
@@ -64,13 +57,16 @@ build = function(content)
   ob.okBtn = obOk
   content.onboard = ob
   if ns.DB and ns.DB.settings and ns.DB.settings.onboarded then ob:Hide() end
-  content.welcome = UI.FS(content, "GameFontHighlightSmall", C.dim); content.welcome:SetPoint("BOTTOMLEFT", 4, 4); content.welcome:SetWidth(660); content.welcome:SetJustifyH("LEFT")
+  content.welcome = UI.FS(content, "GameFontHighlightSmall", C.dim)
+  content.welcome:SetPoint("BOTTOMLEFT", 4, 4); content.welcome:SetPoint("BOTTOMRIGHT", -4, 4); content.welcome:SetJustifyH("LEFT")
   content.welcome:SetText("Play, and this page fills in. The flag on screen is what the desktop app reads.")
 
-  -- a stat card: dim title, big value, small sub. Returned with .value/.sub to update on refresh.
-  -- `drill` = { tab, pane } the card drills into on click (the detail behind the number).
-  local function card(x, y, w, h, drill)
-    local p = UI.Panel(ov); p:SetSize(w, h); p:SetPoint("TOPLEFT", x, y)
+  -- a stat card: dim title, big value, small sub between the card's edges. Title and value are one line; the sub takes
+  -- a second line when it does not fit, so a number in it is never cut. Returned with .value/.sub to update on refresh. `drill` = { tab, pane } the card drills into on click (the detail behind the number).
+  local PADC = SP.M
+  local function oneLine(fs) if fs.SetWordWrap then fs:SetWordWrap(false) end; if fs.SetMaxLines then fs:SetMaxLines(1) end; fs:SetJustifyH("LEFT"); return fs end
+  local function card(drill)
+    local p = UI.Panel(ov)
     if drill then
       p:EnableMouse(true)
       p:SetScript("OnMouseUp", function() UI.Open(drill[1], drill[2]) end)
@@ -78,43 +74,85 @@ build = function(content)
       p:SetScript("OnLeave", function(f) f:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
       p.more = UI.FS(p, "GameFontDisableSmall", C.dim); p.more:SetPoint("TOPRIGHT", -10, -9); p.more:SetText("›")
     end
-    p.title = UI.FS(p, "GameFontNormalSmall", C.dim); p.title:SetPoint("TOPLEFT", 12, -9)
-    p.value = UI.FS(p, "GameFontNormalLarge", C.ink); if UI.VALUE_FONT then p.value:SetFontObject(UI.VALUE_FONT) end; p.value:SetPoint("TOPLEFT", 12, -26)
-    p.sub = UI.FS(p, "GameFontHighlightSmall", C.dim); p.sub:SetPoint("TOPLEFT", 12, -50)
-    p.sub:SetWidth(w - 20); p.sub:SetJustifyH("LEFT")
+    p.title = oneLine(UI.FS(p, "GameFontNormalSmall", C.dim)); p.title:SetPoint("TOPLEFT", PADC, -9); p.title:SetPoint("TOPRIGHT", -(PADC + 12), -9)
+    p.value = oneLine(UI.CellFS(p, "GameFontNormalLarge", C.ink)); if UI.VALUE_FONT then p.value:SetFontObject(UI.VALUE_FONT) end
+    p.value:SetPoint("TOPLEFT", PADC, -26); p.value:SetPoint("TOPRIGHT", -PADC, -26)
+    p.sub = UI.CellFS(p, "GameFontHighlightSmall", C.dim); p.sub:SetPoint("TOPLEFT", PADC, -50); p.sub:SetPoint("TOPRIGHT", -PADC, -50)
+    p.sub:SetJustifyH("LEFT"); p.sub:SetJustifyV("TOP")
+    if p.sub.SetWordWrap then p.sub:SetWordWrap(true) end
+    if p.sub.SetMaxLines then p.sub:SetMaxLines(2) end
     return p
   end
 
-  local CW, CH, GAP, X0, Y0 = 220, 78, 12, 4, -8
-  local col = { X0, X0 + CW + GAP, X0 + 2 * (CW + GAP) }
-  content.cLevel  = card(col[1], Y0, CW, CH, { "Character", "professions" }); content.cLevel.title:SetText("CHARACTER")
-  content.cXP     = card(col[2], Y0, CW, CH, { "Character", "quests" });      content.cXP.title:SetText("EXPERIENCE")
-  content.cPlayed = card(col[3], Y0, CW, CH, { "Home", "sessions" });         content.cPlayed.title:SetText("TIME PLAYED")
-  local Y1 = Y0 - CH - GAP
-  content.cGold   = card(col[1], Y1, CW, CH, { "Loot", "gold" });             content.cGold.title:SetText("GOLD")
-  content.cKills  = card(col[2], Y1, CW, CH, { "Combat", "fights" });         content.cKills.title:SetText("COMBAT")
-  content.cPace   = card(col[3], Y1, CW, CH);                                 content.cPace.title:SetText("LEVELING PACE")
+  -- three cards over three, filling the pane's width with the same X0 inset on both sides (the feed below keeps its
+  -- own scroll bar gutter; the cards do not scroll, so they leave none)
+  local CH, LINE, GAP, X0, Y0 = 78, 14, SP.M, SP.XS, -8
+  content.cLevel  = card({ "Character", "professions" }); content.cLevel.title:SetText("CHARACTER")
+  content.cXP     = card({ "Character", "quests" });      content.cXP.title:SetText("EXPERIENCE")
+  content.cPlayed = card({ "Home", "sessions" });         content.cPlayed.title:SetText("TIME PLAYED")
+  content.cGold   = card({ "Loot", "gold" });             content.cGold.title:SetText("GOLD")
+  content.cKills  = card({ "Combat", "fights" });         content.cKills.title:SetText("COMBAT")
+  content.cPace   = card();                               content.cPace.title:SetText("LEVELING PACE")
+  local grid = { { content.cLevel, content.cXP, content.cPlayed }, { content.cGold, content.cKills, content.cPace } }
 
-  -- full-width XP progress bar
-  local barY = Y1 - CH - GAP - 4
+  -- full-width XP progress bar, under the cards
   local track = UI.Panel(ov, C.bg[1], C.bg[2], C.bg[3]); track:SetHeight(14)
-  track:SetPoint("TOPLEFT", X0, barY); track:SetPoint("TOPRIGHT", ov, "TOPLEFT", col[3] + CW, barY)
+  track:SetPoint("TOPLEFT", grid[2][1], "BOTTOMLEFT", 0, -(GAP + 4)); track:SetPoint("TOPRIGHT", grid[2][3], "BOTTOMRIGHT", 0, -(GAP + 4))
   local fill = track:CreateTexture(nil, "ARTWORK"); fill:SetPoint("TOPLEFT", 1, -1); fill:SetPoint("BOTTOMLEFT", 1, 1)
   fill:SetColorTexture(ns.UI.C.accentPressed[1], ns.UI.C.accentPressed[2], ns.UI.C.accentPressed[3], 1)   -- progress is the accent, pressed shade so the white label reads on it
   content.xpFill, content.xpTrack = fill, track
+  content.xpPct = 0
   content.xpText = UI.FS(ov, "GameFontHighlightSmall", C.ink); content.xpText:SetPoint("LEFT", track, "LEFT", 8, 0)
+  -- the fill follows the track's width
+  content.placeXP = function()
+    local tw = track:GetWidth()
+    if tw and tw > 2 then fill:SetWidth(math.max(1, (tw - 2) * (content.xpPct / 100))) end
+  end
+
+  -- cards sized from the pane's width: three columns with M gaps, the last one takes the rounding. A row is one line
+  -- taller when a subtitle in it needs a second line; every card of a row shares the row's height.
+  local function relayout(w)
+    w = tonumber(w) or 0
+    if w <= 1 then return end
+    local avail = w - 2 * X0
+    local cw = math.floor((avail - 2 * GAP) / 3)
+    local y = Y0
+    for _, rowCards in ipairs(grid) do
+      local h = CH
+      for c, p in ipairs(rowCards) do
+        local pw = (c == 3) and (avail - 2 * (cw + GAP)) or cw
+        local sw = tonumber(p.sub:GetStringWidth()) or 0
+        if sw > pw - 2 * PADC then h = CH + LINE end
+      end
+      for c, p in ipairs(rowCards) do
+        local x = X0 + (c - 1) * (cw + GAP)
+        p:ClearAllPoints(); p:SetPoint("TOPLEFT", ov, "TOPLEFT", x, y)
+        p:SetSize((c == 3) and (avail - 2 * (cw + GAP)) or cw, h)
+      end
+      y = y - h - GAP
+    end
+    content.placeXP()
+  end
+  content.relayout = relayout
+  content:HookScript("OnSizeChanged", function(_, w) pcall(relayout, w) end)
+  pcall(relayout, content:GetWidth())
 
   -- this session's story: milestones newest first (the full feed with filters is the Timeline pane)
-  local mh = UI.FS(ov, "GameFontNormal", C.gold); mh:SetPoint("TOPLEFT", X0, barY - 26); mh:SetText("This session")
-  content.mhSub = UI.FS(ov, "GameFontDisableSmall", C.dim); content.mhSub:SetPoint("LEFT", mh, "RIGHT", 10, 0); content.mhSub:SetText("")
-  local sf, mchild = UI.ScrollChild(ov)
-  sf:SetPoint("TOPLEFT", X0 - 2, barY - 48); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  mchild.rows = {}
-  content.mchild = mchild
+  local mh = UI.FS(ov, "GameFontNormal", C.gold); mh:SetPoint("TOPLEFT", track, "BOTTOMLEFT", 0, -SP.M); mh:SetText("This session")
+  content.mhSub = oneLine(UI.FS(ov, "GameFontDisableSmall", C.dim))
+  content.mhSub:SetPoint("TOPLEFT", mh, "TOPRIGHT", 10, -2); content.mhSub:SetPoint("TOPRIGHT", track, "BOTTOMRIGHT", 0, -(SP.M + 2)); content.mhSub:SetText("")
+  -- the feed: time and milestone, no header; a shortened milestone reads in full on hover
+  local feed = CreateFrame("Frame", nil, ov)
+  feed:SetPoint("TOPLEFT", mh, "BOTTOMLEFT", -X0, -SP.S); feed:SetPoint("BOTTOMRIGHT", ov, "BOTTOMRIGHT", 0, 0)
+  local mtbl = UI.Table(feed, {
+    { key = "time", label = "", kind = "tag", color = "dim", measure = { "23:59" } },
+    { key = "text", label = "", flex = 1, min = 120 },
+  }, { top = 0, header = false, inset = SP.S,
+    emptyText = "Nothing yet this session. Level up, explore, fight, and it shows up here." })
+  content.mtbl, content.msf, content.mchild = mtbl, mtbl.sf, mtbl.child
 
   refresh(content)
 end
-
 refresh = function(content)
   if not content or not content.cLevel then return end
   local D = ns.DB or {}
@@ -142,7 +180,7 @@ refresh = function(content)
   local pct = (max > 0) and (cur / max * 100) or 0
   if lvl >= (GetMaxPlayerLevel and GetMaxPlayerLevel() or 60) then
     content.cXP.value:SetText("Max"); content.cXP.sub:SetText("Level cap reached")
-    content.xpFill:SetWidth(1); content.xpText:SetText("")
+    content.xpPct = 0; content.placeXP(); content.xpText:SetText("")
   else
     content.cXP.value:SetText(("%.0f%%"):format(pct))
     local rested = tonumber(xp.rested) or 0
@@ -150,8 +188,7 @@ refresh = function(content)
     local split = (q + k) > 0 and ("  ·  quests %d%% / kills %d%%"):format(math.floor(q / (q + k) * 100 + 0.5), math.floor(k / (q + k) * 100 + 0.5)) or ""
     content.cXP.sub:SetText(("%s / %s%s%s"):format(commas(cur), commas(max),
       rested > 0 and ("  ·  rested " .. commas(rested)) or "", split))
-    local tw = content.xpTrack:GetWidth()
-    if tw and tw > 2 then content.xpFill:SetWidth(math.max(1, (tw - 2) * (pct / 100))) end
+    content.xpPct = math.max(0, math.min(100, pct)); content.placeXP()
     content.xpText:SetText(("XP  %s / %s  (%.0f%%)"):format(commas(cur), commas(max), pct))
   end
 
@@ -163,7 +200,8 @@ refresh = function(content)
   -- Gold
   local gold = db.gold or {}   -- the character's own ledger (#23); loot.gold is retired
   content.cGold.value:SetText(fmtMoney(gold.balance or 0)); content.cGold.value:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-  content.cGold.sub:SetText(("looted %s  ·  spent %s"):format(fmtMoney(gold.looted or 0), fmtMoney(gold.spent or 0)))
+  -- a label and its amount are joined by a no-break space, so a wrap can only fall at the separator
+  content.cGold.sub:SetText(("looted%s%s  ·  spent%s%s"):format(UI.NBSP, fmtMoney(gold.looted or 0), UI.NBSP, fmtMoney(gold.spent or 0)))
 
   -- Combat (from the event timeline: every kill/death lands there)
   local kills, deaths = 0, 0
@@ -201,43 +239,28 @@ refresh = function(content)
   end
 
   -- This session's milestones (falls back to everything when the session id is unknown)
-  local mchild = content.mchild
   local log = story.events or {}
   local sid = D.active
-  local y, idx = 0, 0
   if content.mhSub then
     local ses = (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or {}
     local el = (ses.startedEpoch and ((GetServerTime and GetServerTime()) or time()) - ses.startedEpoch) or 0
     content.mhSub:SetText(el > 0 and ("started %s ago  ·  %d kills  ·  %d deaths  ·  %d items"):format(fmtTime(el) ~= "-" and fmtTime(el) or "moments", tonumber(ses.kills) or 0, tonumber(ses.deaths) or 0, tonumber(ses.items) or 0) or "")
   end
+  local miles = {}
   for i = #log, 1, -1 do
     local e = log[i]
     if MILE[e.kind] and (sid == nil or e.s == nil or e.s == sid) and ns.isMine(e) then
-      idx = idx + 1
-      local row = mchild.rows[idx]
-      if not row then
-        row = CreateFrame("Frame", nil, mchild); row:SetHeight(16); row:SetPoint("RIGHT", mchild, "RIGHT", 0, 0)
-        row.tm = ns.UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", 0, 0); row.tm:SetWidth(64)
-        row.tx = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", 70, 0); row.tx:SetWidth(580); row.tx:SetJustifyH("LEFT")
-        mchild.rows[idx] = row
-      end
-      row:SetPoint("TOPLEFT", 0, -y); row:Show()
-      row.tm:SetText(date("%H:%M", e.t or 0)); row.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      local col = MILE[e.kind] or C.ink
-      row.tx:SetText(e.text or e.kind or "?"); row.tx:SetTextColor(col[1], col[2], col[3])
-      y = y + 16
-      if idx >= 40 then break end
+      miles[#miles + 1] = e
+      if #miles >= 40 then break end
     end
   end
-  for j = idx + 1, #mchild.rows do mchild.rows[j]:Hide() end
-  if idx == 0 then
-    mchild.empty = mchild.empty or (function()
-      local fs = ns.UI.FS(mchild, "GameFontDisableSmall")
-      fs:SetPoint("TOPLEFT", 0, 0); fs:SetText("Nothing yet this session. Level up, explore, fight, and it shows up here."); return fs
-    end)()
-    mchild.empty:Show()
-  elseif mchild.empty then mchild.empty:Hide() end
-  mchild:SetSize(660, math.max(1, y))
+  content.mtbl.setRows(miles, function(row, e)
+    row.c.time:SetText(date("%H:%M", e.t or 0))
+    local col = MILE[e.kind] or C.ink
+    row.c.text:SetText(e.text or e.kind or "?"); row.c.text:SetTextColor(col[1], col[2], col[3])
+  end)
+  -- the subtitles just set decide whether a card row needs its second line
+  if content.relayout then pcall(content.relayout, content:GetWidth()) end
 end
 
 -- ── HOME / Sessions: one row per play session (login -> logout), newest first ─────
@@ -255,10 +278,13 @@ local function sessionRows()
   return out
 end
 -- a strip of bars, one per session (oldest left), value scaled to the strip height; negative values
--- hang below the baseline in ember. Pooled textures; hover names the session and value.
-local STRIP_N, STRIP_H, BAR_W, BAR_GAP = 10, 44, 28, 4
-local function makeStrip(parent, x, y, label)
-  local st = CreateFrame("Frame", nil, parent); st:SetPoint("TOPLEFT", x, y); st:SetSize(STRIP_N * (BAR_W + BAR_GAP), STRIP_H + 18)
+-- hang below the baseline in ember. Pooled textures; hover names the session and value. The strip is as wide as
+-- the pane gives it (placeStrips): each of the STRIP_N slots is stripW / STRIP_N wide and holds a bar of at most
+-- BAR_MAX px, centred in it.
+local STRIP_N, STRIP_H, BAR_W, BAR_GAP, BAR_MAX = 10, 44, 28, 4, 56
+local function makeStrip(parent, label)
+  local st = CreateFrame("Frame", nil, parent); st:SetSize(STRIP_N * (BAR_W + BAR_GAP), STRIP_H + 18)
+  st.slot, st.barW = BAR_W + BAR_GAP, BAR_W
   st.title = UI.FS(st, "GameFontNormalSmall", C.dim); st.title:SetPoint("TOPLEFT", 0, 0); st.title:SetText(label:upper())
   st.base = st:CreateTexture(nil, "ARTWORK"); st.base:SetPoint("BOTTOMLEFT", 0, 0); st.base:SetPoint("BOTTOMRIGHT", 0, 0); st.base:SetHeight(1)
   st.base:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
@@ -267,6 +293,8 @@ local function makeStrip(parent, x, y, label)
 end
 -- values: array of { v = number, label = string } oldest first; fmt(v) renders the hover text
 local function renderStrip(st, values, fmt, signed)
+  st.values, st.fmt, st.signed = values, fmt, signed   -- drawn again when the strip takes a new width
+  local slot, bw = st.slot, st.barW
   local maxAbs = 1
   for _, e in ipairs(values) do if math.abs(e.v) > maxAbs then maxAbs = math.abs(e.v) end end
   local baseY = signed and STRIP_H / 2 or 0
@@ -277,18 +305,19 @@ local function renderStrip(st, values, fmt, signed)
     local bar = st.bars[i]; local hit = st.hits[i]
     if not bar then
       bar = st:CreateTexture(nil, "ARTWORK"); st.bars[i] = bar
-      hit = CreateFrame("Frame", nil, st); hit:SetSize(BAR_W, STRIP_H); hit:EnableMouse(true); st.hits[i] = hit
+      hit = CreateFrame("Frame", nil, st); hit:EnableMouse(true); st.hits[i] = hit
       hit:SetScript("OnEnter", function(h) if h.tip and GameTooltip then GameTooltip:SetOwner(h, "ANCHOR_TOP"); GameTooltip:AddLine(h.tip, 1, 1, 1); GameTooltip:Show() end end)
       hit:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     end
     if e then
       local h = math.max(1, math.floor(math.abs(e.v) / maxAbs * (span - 2) + 0.5))
-      bar:ClearAllPoints(); bar:SetWidth(BAR_W); bar:SetHeight(h)
-      if e.v < 0 then bar:SetPoint("TOP", st, "BOTTOMLEFT", (i - 1) * (BAR_W + BAR_GAP) + BAR_W / 2, baseY)
-      else bar:SetPoint("BOTTOM", st, "BOTTOMLEFT", (i - 1) * (BAR_W + BAR_GAP) + BAR_W / 2, baseY) end
+      bar:ClearAllPoints(); bar:SetWidth(bw); bar:SetHeight(h)
+      local cx = (i - 1) * slot + slot / 2
+      if e.v < 0 then bar:SetPoint("TOP", st, "BOTTOMLEFT", cx, baseY)
+      else bar:SetPoint("BOTTOM", st, "BOTTOMLEFT", cx, baseY) end
       local col = e.v < 0 and C.red or (e.live and C.cyan or C.gold)
       bar:SetColorTexture(col[1], col[2], col[3], 0.85); bar:Show()
-      hit:ClearAllPoints(); hit:SetPoint("BOTTOMLEFT", (i - 1) * (BAR_W + BAR_GAP), 0); hit.tip = e.label .. "  ·  " .. fmt(e.v); hit:Show()
+      hit:ClearAllPoints(); hit:SetSize(slot, STRIP_H); hit:SetPoint("BOTTOMLEFT", (i - 1) * slot, 0); hit.tip = e.label .. "  ·  " .. fmt(e.v); hit:Show()
     else bar:Hide(); hit:Hide() end
   end
 end
@@ -308,62 +337,71 @@ ns._test.stripValues = stripValues
 
 local function buildSessions(content)
   sessionsView = content
-  local xpStrip = makeStrip(content, 2, -4, "XP per session")
-  local goldStrip = makeStrip(content, 2 + STRIP_N * (BAR_W + BAR_GAP) + 20, -4, "Gold per session")
+  local xpStrip = makeStrip(content, "XP per session")
+  local goldStrip = makeStrip(content, "Gold per session")
   content.xpStrip, content.goldStrip = xpStrip, goldStrip
-  local COL = { date = 0, len = 116, lvl = 190, xp = 250, gold = 330, kills = 428, deaths = 486, dung = 550, items = 622 }
-  local WID = { date = 110, len = 70, lvl = 56, xp = 76, gold = 94, kills = 54, deaths = 60, dung = 68, items = 48 }
-  local hdr = CreateFrame("Frame", nil, content); hdr:SetPoint("TOPLEFT", 2, -(STRIP_H + 30)); hdr:SetSize(670, 16)
-  local function head(k, text)
-    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", COL[k], 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT")
-    fs:SetText(text:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+  -- the two strips share the list's width in two halves, L apart, from the table's text inset (SP.S) to its right
+  -- inset, so their titles line up with the SESSION header and the right half of the row is used
+  local function placeStrips(w)
+    w = tonumber(w) or 0
+    if w <= 1 then return end
+    local SP = UI.SP
+    local left, right = SP.S, w - UI.SCROLLBAR - SP.S
+    local half = math.floor((right - left - SP.L) / 2)
+    for i, st in ipairs({ xpStrip, goldStrip }) do
+      st:ClearAllPoints(); st:SetPoint("TOPLEFT", content, "TOPLEFT", left + (i - 1) * (half + SP.L), -4)
+      st:SetWidth(half)
+      st.slot = half / STRIP_N
+      st.barW = math.max(4, math.min(BAR_MAX, math.floor(st.slot - BAR_GAP)))
+      if st.values then renderStrip(st, st.values, st.fmt, st.signed) end
+    end
   end
-  head("date", "Session"); head("len", "Length"); head("lvl", "Level"); head("xp", "XP"); head("gold", "Gold"); head("kills", "Kills"); head("deaths", "Deaths"); head("dung", "Dungeons"); head("items", "Items")
-  local sf, child = UI.ScrollChild(content)
-  sf:SetPoint("TOPLEFT", 0, -(STRIP_H + 50)); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
+  content.placeStrips = placeStrips
+  content:HookScript("OnSizeChanged", function(_, w) pcall(placeStrips, w) end)
+  pcall(placeStrips, content:GetWidth())
+  -- Session · (live) · Length · Level · XP · Gold · Kills · Deaths · Dungeons · Items: the numbers right-aligned at
+  -- the right, the session's date takes the free width
+  local tbl = UI.Table(content, {
+    { key = "date", label = "Session", flex = 1, min = 110 },
+    { key = "live", label = "", kind = "tag", color = "green", measure = { "•" } },
+    { key = "len", label = "Length", kind = "num", color = "dim", measure = { "23h 59m" } },
+    { key = "lvl", label = "Level", kind = "num", measure = { "59 > 60" } },
+    { key = "xp", label = "XP", kind = "num", measure = { "9,999,999" } },
+    { key = "gold", label = "Gold", kind = "money", color = "gold", measure = { "+" .. fmtMoney(9999999) } },
+    { key = "kills", label = "Kills", kind = "num", measure = { "9999" } },
+    { key = "deaths", label = "Deaths", kind = "num", color = "dim", measure = { "999" } },
+    { key = "dung", label = "Dungeons", kind = "num", measure = { "99" } },
+    { key = "items", label = "Items", kind = "num", measure = { "9999" } },
+  }, { top = -(4 + STRIP_H + 18 + UI.SP.M), emptyText = "Your first session starts when you log in." })
+  content.tbl = tbl
   sessionsRebuild = function()
     local rows = sessionRows()
     renderStrip(xpStrip, stripValues(rows, "xp"), function(v) return commas(v) .. " XP" end, false)
     renderStrip(goldStrip, stripValues(rows, nil, true), function(v) return (v < 0 and "-" or "+") .. fmtMoney(math.abs(v)) end, true)
     local nowT = (GetServerTime and GetServerTime()) or time()
-    local y, idx = 0, 0
-    for _, sess in ipairs(rows) do
-      idx = idx + 1
-      local row = child.rows[idx]
-      if not row then
-        row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
-        for k, x in pairs(COL) do
-          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", x, 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT"); row.c[k] = fs
-        end
-        child.rows[idx] = row
-      end
-      row:SetPoint("TOPLEFT", 0, -y); row:Show()
+    tbl.setRows(rows, function(row, sess)
+      local c = row.c
       local live = (sess.endedEpoch == nil)
       local endT = sess.endedEpoch or nowT
-      row.c.date:SetText(date("%b %d, %H:%M", sess.startedEpoch or 0) .. (live and "  |cff59c77f•|r" or "")); row.c.date:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.c.len:SetText(fmtTime(math.max(0, endT - (sess.startedEpoch or endT)))); row.c.len:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      c.date:SetText(date("%b %d, %H:%M", sess.startedEpoch or 0))
+      c.live:SetText(live and "•" or "")
+      c.len:SetText(fmtTime(math.max(0, endT - (sess.startedEpoch or endT))))
       local l0, l1 = tonumber(sess.level0) or tonumber(sess.level) or 0, tonumber(sess.level) or 0
-      row.c.lvl:SetText(l1 > l0 and (l0 .. " > " .. l1) or tostring(l1)); row.c.lvl:SetTextColor(l1 > l0 and C.gold[1] or C.ink[1], l1 > l0 and C.gold[2] or C.ink[2], l1 > l0 and C.gold[3] or C.ink[3])
-      row.c.xp:SetText(commas(sess.xp or 0)); row.c.xp:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+      c.lvl:SetText(l1 > l0 and (l0 .. " > " .. l1) or tostring(l1))
+      if l1 > l0 then c.lvl:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end
+      c.xp:SetText(commas(sess.xp or 0))
       local net = (tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)
-      row.c.gold:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net))); row.c.gold:SetTextColor(net < 0 and C.red[1] or C.gold[1], net < 0 and C.red[2] or C.gold[2], net < 0 and C.red[3] or C.gold[3])
-      row.c.kills:SetText(tostring(sess.kills or 0)); row.c.kills:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.c.deaths:SetText(tostring(sess.deaths or 0)); local dc = (tonumber(sess.deaths) or 0) > 0 and C.red or C.dim; row.c.deaths:SetTextColor(dc[1], dc[2], dc[3])
-      row.c.dung:SetText(tostring(sess.dungeons or 0)); row.c.dung:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.c.items:SetText(tostring(sess.items or 0)); row.c.items:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      y = y + 18
-    end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function() local fs = UI.FS(child, "GameFontDisableSmall"); fs:SetPoint("TOPLEFT", 0, 0); fs:SetText("Your first session starts when you log in."); return fs end)()
-      child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
-    child:SetSize(math.max(670, (sf:GetWidth() or 670) - 4), math.max(1, y))
+      c.gold:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net)))
+      if net < 0 then c.gold:SetTextColor(C.red[1], C.red[2], C.red[3]) end
+      c.kills:SetText(tostring(sess.kills or 0))
+      c.deaths:SetText(tostring(sess.deaths or 0))
+      if (tonumber(sess.deaths) or 0) > 0 then c.deaths:SetTextColor(C.red[1], C.red[2], C.red[3]) end
+      c.dung:SetText(tostring(sess.dungeons or 0))
+      c.items:SetText(tostring(sess.items or 0))
+    end)
   end
   sessionsRebuild()
 end
-
 -- HOME is the landing tab (order 0). Overview and Sessions live here; the Timeline pane is registered
 -- into Home by Emitter.lua.
 UI.registerHost(0, "Home", "How your run is going, the story of this session, and every session before it.")

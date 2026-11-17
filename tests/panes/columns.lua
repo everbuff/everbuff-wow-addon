@@ -1,0 +1,61 @@
+-- Pane tests: the column model's choices on the busiest lists. Fights: Faced and Location share the spare width, so
+-- a realistic zone name is never cut and neither column hoards empty space. Timeline: an event summary carries
+-- counts, and with the suite's data it is never the text the ellipsis takes at the minimum window; the foe and the
+-- place share what is left equally, and from 1250 wide a realistic foe name is never cut.
+return function(P)
+  local check, ns = P.check, P.ns
+  local UI = ns.UI
+  local function tableOf(content)
+    for _, f in ipairs(P.descendants(content)) do if rawget(f, "SetContentHeight") and f.ebTable and P.visible(f) then return f.ebTable end end
+  end
+  local function rowsOf(t)
+    local out = {}
+    for i = 1, t.shownN do local r = t.rows[i]; if r.shown ~= false and not (r.item and r.item.ebSection) then out[#out + 1] = r end end
+    return out
+  end
+  -- the flex minimum: a column is never narrower than its measured values while the row has room
+  do
+    local cols = UI.LayoutColumns({
+      { key = "a", flex = 3, min = 40 }, { key = "b", flex = 1, min = 40, headMin = 150 }, { key = "c", flex = 1, min = 40 },
+    }, 400, function() return 0 end, 12, 8)
+    check("LayoutColumns: a flex column under its minimum is held at it, the rest share what is left",
+      cols.b.w == 150 and cols.a.w + cols.b.w + cols.c.w == 400 - 16 - 24 and cols.a.w > cols.c.w, ("%d %d %d"):format(cols.a.w, cols.b.w, cols.c.w))
+  end
+  for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
+    local tag = ("%dx%d"):format(size[1], size[2])
+    local c = P.open("combat", "fights", size[1], size[2], "normal")
+    local t = c and tableOf(c)
+    check("Fights " .. tag .. ": the list was found", t ~= nil)
+    if t then
+      local cut = {}
+      for _, r in ipairs(rowsOf(t)) do if r.c.loc:IsTruncated() then cut[#cut + 1] = r.c.loc.text end end
+      check("Fights " .. tag .. ": no zone name is cut", #cut == 0, table.concat(cut, ", "))
+      check("Fights " .. tag .. ": Faced and Location share the spare width equally", math.abs(t.cols.foe.w - t.cols.loc.w) <= 1, ("%d vs %d"):format(t.cols.foe.w, t.cols.loc.w))
+    end
+    local h = P.open("home", "timeline", size[1], size[2], "normal")
+    local tt = h and tableOf(h)
+    check("Timeline " .. tag .. ": the list was found", tt ~= nil)
+    if tt then
+      local cut = {}
+      for _, r in ipairs(rowsOf(tt)) do
+        if r.c.ev:IsTruncated() and tostring(r.c.ev.text):find("%d") then cut[#cut + 1] = r.c.ev.text end
+      end
+      check("Timeline " .. tag .. ": an event summary with counts is never cut", #cut == 0, table.concat(cut, " | "))
+      -- past the summary's minimum, the foe and the place share the width equally; from 1250 wide a realistic foe
+      -- name is never cut. At 900 the summary is held at its minimum and the names take everything else.
+      if size[1] >= 1250 then
+        check("Timeline " .. tag .. ": While fighting and Location share the spare width equally", math.abs(tt.cols.foe.w - tt.cols.where.w) <= 2, ("%d vs %d"):format(tt.cols.foe.w, tt.cols.where.w))
+        local foes = {}
+        for _, r in ipairs(rowsOf(tt)) do if r.c.foe:IsTruncated() then foes[#foes + 1] = r.c.foe.text end end
+        check("Timeline " .. tag .. ": no realistic foe name is cut under While fighting", #foes == 0, table.concat(foes, ", "))
+      else
+        local evMin = 0
+        for _, r in ipairs(rowsOf(tt)) do
+          if tostring(r.c.ev.text):find("^Auction house: 2 posts, 1 bid, 1 buy$") then evMin = math.ceil(P.G.naturalWidth(r.c.ev)) end
+        end
+        check("Timeline " .. tag .. ": the event column holds only its measured minimum, the names take the rest", evMin > 0 and tt.cols.ev.w <= evMin + 1, ("%d vs %d"):format(tt.cols.ev.w, evMin))
+      end
+    end
+  end
+  UI.SetWindowSize(900, 580)
+end
