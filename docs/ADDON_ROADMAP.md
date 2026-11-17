@@ -114,6 +114,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
 - [x] Per-session gold ledger `session.gold` (0.9.23, everbuff-backend #46); the backend ingest of it is still to build
 - [x] Gold journal: per session `goldLog` (one row per purse change with its source, balance and what explains it: item and vendor price, merchant, sender, trade partner and guild, who the counterparty is to the player, quest, mail waiting) and `trades` (both sides of every completed trade); mail rows carry `rel`; silent in game (0.9.40, #36)
+- [x] Dungeon runs on WoW Forever: the client answers instance type `none` inside a dungeon, so DUNGEON and DUNGEONLEAVE never fired and Combat > Dungeons stayed empty. Entry and exit now also come from the dungeon map type and the instance name, are checked on zone changes too, and the raw answers are kept in `settings.selftest.instance` (0.9.41)
 - [x] Idea 5 `M` copper meter row (#26): replaced by `goldLog` per #36, which carries the amount with its source; never built
 - [ ] Idea 5 (#26): `track` rows, the `X` XP meter rows, QUESTDONE `xp` and `money`, loot `map`
 - [ ] Loot council data contract (*Later*)

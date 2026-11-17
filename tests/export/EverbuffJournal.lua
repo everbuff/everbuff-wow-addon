@@ -390,7 +390,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.40",
+			["addonVersion"] = "0.9.41",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -544,11 +544,22 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [73]
 				"UIErrorsFrame", -- [74]
 			},
-			["addon"] = "0.9.40",
+			["addon"] = "0.9.41",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",
 			["forbidden"] = {
+			},
+			["instance"] = {
+				["diff"] = 0,
+				["inInstance"] = false,
+				["map"] = 0,
+				["mapType"] = 3,
+				["name"] = "Elwynn Forest",
+				["type"] = "none",
+				["uiMap"] = 37,
+				["verdict"] = "none",
+				["zone"] = "Elwynn Forest",
 			},
 			["interface"] = 120001,
 			["missing"] = {

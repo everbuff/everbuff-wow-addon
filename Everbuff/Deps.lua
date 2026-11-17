@@ -36,6 +36,7 @@ ns.deps = {
   { "function", "C_Item.GetItemQualityByID", "guarded" },
   { "function", "C_Item.GetStackCount", "guarded" },
   { "function", "C_Map.GetBestMapForUnit", "guarded" },
+  { "function", "C_Map.GetMapInfo", "guarded" },
   { "function", "C_Map.GetPlayerMapPosition", "guarded" },
   { "function", "C_MerchantFrame.SellAllJunkItems", "guarded" },
   { "function", "C_MountJournal.GetMountInfoByID", "guarded" },
