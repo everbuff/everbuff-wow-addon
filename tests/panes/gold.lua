@@ -287,6 +287,15 @@ return function(P)
     check("Gold periods: a session picked elsewhere gets its own selected button", P.visible(c.pickBtn) and c.pickBtn.ebSelected == true and c.pickBtn.text.text == Gold.sessionLabel(prev) and c.scopeBtns[1].ebSelected == nil)
     click(c.scopeBtns[1])
     check("Gold periods: back on This session the picked button is gone", not P.visible(c.pickBtn))
+    -- a long journal lists Gold.MAX_ROWS rows and says so; the count and the sum are of every row
+    do
+      local keep = Gold.MAX_ROWS
+      Gold.MAX_ROWS = 20
+      Gold.open("session", "journal"); M.settle()
+      local n = #ns.Recorder.current().goldLog
+      check("Gold long journal: the newest rows are listed, the caption counts them all", #dataRows(c.tblJrn) == 20 and c.caption.text:find(("Every row  ·  %d rows"):format(n), 1, true) == 1 and c.caption.text:find("the first 20 listed", 1, true) ~= nil, c.caption.text)
+      Gold.MAX_ROWS = keep
+    end
     -- an empty period
     local ses = ns.Recorder.current()
     ses.goldLog, ses.gold, ses.gained, ses.spent, ses.trades = {}, {}, 0, 0, {}

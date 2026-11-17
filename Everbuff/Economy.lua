@@ -426,6 +426,7 @@ local CARDS = {
 }
 local SCOPES = { { "session", "This session" }, { "previous", "Previous" }, { "all", "All time" } }
 local NARROW = 760   -- a list narrower than this leaves the Balance column out
+Gold.MAX_ROWS = 500  -- journal rows listed at once (a row is a frame): the newest, the caption says how many more
 
 local function textW(fs)
   local ok, w = pcall(fs.GetStringWidth, fs)
@@ -625,6 +626,7 @@ local function refresh(c)
         rows[#rows + 1] = e; sum = sum + e.delta
       end
     end
+    local matched = #rows
     local key, asc = st.sortKey, st.sortAsc
     if not (key == "time" and not asc) then
       local function val(e)
@@ -654,6 +656,8 @@ local function refresh(c)
       end
       rows = out
     end
+    -- the list holds Gold.MAX_ROWS rows; the sum and the count are of every matching row
+    if #rows > Gold.MAX_ROWS then for i = #rows, Gold.MAX_ROWS + 1, -1 do rows[i] = nil end end
     jrn.setRows(rows, function(row, e)
       local cc = row.c
       cc.time:SetText(date("%H:%M:%S", e.t or 0))
@@ -668,9 +672,9 @@ local function refresh(c)
     end)
     c.journalRows, c.journalCount = jrn.rows, #rows
     local what = st.flags and "Flagged rows" or (st.src and Gold.LABEL[st.src]) or "Every row"
-    local nRows = 0
-    for _, e in ipairs(rows) do if not e.ebSection then nRows = nRows + 1 end end
+    local nRows = matched
     caption = ("%s%s%d row%s%s%s"):format(what, SEP, nRows, nRows == 1 and "" or "s", SEP, signed(sum))
+    if matched > Gold.MAX_ROWS then caption = caption .. SEP .. ("the first %d listed: pick a source or search to narrow"):format(Gold.MAX_ROWS) end
     if q ~= "" then caption = caption .. SEP .. "matching \"" .. q .. "\"" end
   end
   if #notes > 0 then caption = caption .. SEP .. table.concat(notes, SEP) end
