@@ -4,14 +4,14 @@ One line per item from the audit backlog (`ADDON_BACKLOG.md`) plus everything ad
 and covered by the headless tests where testable; `[ ]` is open. Items marked *Later* belong to the raid
 vertical and are not in the current milestone. Blocked items name what they wait on.
 
-**Progress as of 2026-11-06:** 150 of 159 items shipped (94%), 9 open.
+**Progress as of 2026-11-17:** 152 of 162 items shipped (94%), 10 open.
 
 | Area | Done | Open | Progress |
 | --- | ---: | ---: | ---: |
 | Capture layer (what the addon records) | 22 | 2 | 92% |
 | Correctness | 27 | 0 | 100% |
 | Performance and SavedVariables size | 7 | 2 | 78% |
-| Desktop and backend contract | 13 | 1 | 93% |
+| Desktop and backend contract | 15 | 2 | 88% |
 | Fights tab | 17 | 0 | 100% |
 | Timeline tab (was Events) | 7 | 0 | 100% |
 | Loot tab | 8 | 0 | 100% |
@@ -23,7 +23,7 @@ vertical and are not in the current milestone. Blocked items name what they wait
 | On-screen flag and toast (desktop OCR channel) | 9 | 1 | 90% |
 | New tabs and consolidation | 5 | 1 | 83% |
 | Infrastructure and docs | 5 | 0 | 100% |
-| **Total** | **150** | **9** | **94%** |
+| **Total** | **152** | **10** | **94%** |
 
 ---
 
@@ -113,6 +113,9 @@ vertical and are not in the current milestone. Blocked items name what they wait
 - [x] Finished sessions before the ack point are pruned; the live session never is
 - [x] Session manifest: player GUID, local start and end clocks alongside the server epochs
 - [x] Per-session gold ledger `session.gold` (0.9.23, everbuff-backend #46); the backend ingest of it is still to build
+- [x] Gold journal: per session `goldLog` (one row per purse change with its source, balance and what explains it: item and vendor price, merchant, sender, trade partner and guild, who the counterparty is to the player, quest, mail waiting) and `trades` (both sides of every completed trade); mail rows carry `rel`; silent in game (0.9.40, #36)
+- [x] Idea 5 `M` copper meter row (#26): replaced by `goldLog` per #36, which carries the amount with its source; never built
+- [ ] Idea 5 (#26): `track` rows, the `X` XP meter rows, QUESTDONE `xp` and `money`, loot `map`
 - [ ] Loot council data contract (*Later*)
 
 ## Fights tab

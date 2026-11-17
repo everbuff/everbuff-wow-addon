@@ -39,12 +39,68 @@ fights, loot rows and events of the sessions it clears and opens a new session w
 | `schema` | int | 2 |
 | `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load. Diagnostics, not settings: `blocked[]` (0.9.22, the last 10 `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` the client raised, `{ t, kind, addon, func, combat, stack }`) and `selftest` (0.9.24, the client self-test, below) |
 | `debug` | object or nil | diagnostics: `errors[]` (the last 50 Lua errors the client raised, any addon's, `{ at, err, stack?, n?, last? }`; from 0.9.23 a repeat of the row before it counts up in `n` and `last` instead of adding a row), `snapshot` (`/eb debug`) |
-| `sessions` | map id -> session | HOME. One record per login -> logout (a `/reload` resumes it: PLAYER_LOGOUT, which a reload also fires, writes `endedEpoch` and `endedBy = "logout"` into the save file, and the reload clears them again and adds a RESUME row; a real login leaves them; everbuff-wow-addon #14, 0.9.20): identity (`player, realm, class, guild, build, flavor, addonVersion`), `surname?` (the second name of a WoW Forever character, "Hammershield" for Hart Hammershield; from 0.9.17, absent where the client shows no surname; everbuff-backend #85), `guid` (player GUID), `schema` (4, the session record's own version), `project` (`WOW_PROJECT_ID`), `startedEpoch`, `startedLocal`, `startedMono` (the client's `GetTime()` at the start), `endedEpoch?`, `endedLocal?`, `endedMono?`, `endedBy?` (`"logout"`, written at PLAYER_LOGOUT, which a /reload also fires; absent on a session `/eb export` closed), `recovered?` (closed on the next login after a crash), `level0 -> level`, `context`, `logging`, TAB-delimited `segments[]` (Segments.lua beacon), live counters `xp, gained, spent, kills, deaths, fights, items, dungeons`, and `gold?` (0.9.23, everbuff-backend #46): this session's own gold ledger in copper, `{ gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` (`trade` to `awayOut` from 0.9.37, everbuff-wow-addon #31; a session resumed by a /reload into 0.9.37 gets them on first use), the keys of the character's `gold` ledger (`characters[guid].gold`) without `balance`, every key present from the session's start and credited at the same moment as the lifetime totals. Absent on a session that began before 0.9.23 (a /reload into 0.9.23 does not add a partial one) |
+| `sessions` | map id -> session | HOME. One record per login -> logout (a `/reload` resumes it: PLAYER_LOGOUT, which a reload also fires, writes `endedEpoch` and `endedBy = "logout"` into the save file, and the reload clears them again and adds a RESUME row; a real login leaves them; everbuff-wow-addon #14, 0.9.20): identity (`player, realm, class, guild, build, flavor, addonVersion`), `surname?` (the second name of a WoW Forever character, "Hammershield" for Hart Hammershield; from 0.9.17, absent where the client shows no surname; everbuff-backend #85), `guid` (player GUID), `schema` (4, the session record's own version), `project` (`WOW_PROJECT_ID`), `startedEpoch`, `startedLocal`, `startedMono` (the client's `GetTime()` at the start), `endedEpoch?`, `endedLocal?`, `endedMono?`, `endedBy?` (`"logout"`, written at PLAYER_LOGOUT, which a /reload also fires; absent on a session `/eb export` closed), `recovered?` (closed on the next login after a crash), `level0 -> level`, `context`, `logging`, TAB-delimited `segments[]` (Segments.lua beacon), live counters `xp, gained, spent, kills, deaths, fights, items, dungeons`, and `gold?` (0.9.23, everbuff-backend #46): this session's own gold ledger in copper, `{ gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` (`trade` to `awayOut` from 0.9.37, everbuff-wow-addon #31; a session resumed by a /reload into 0.9.37 gets them on first use), the keys of the character's `gold` ledger (`characters[guid].gold`) without `balance`, every key present from the session's start and credited at the same moment as the lifetime totals. Absent on a session that began before 0.9.23 (a /reload into 0.9.23 does not add a partial one). `goldLog?`, `trades?` and `goldLogDropped?` (0.9.40, everbuff-wow-addon #36): the gold journal, below; absent on a session that began before 0.9.40 (a /reload into 0.9.40 does not add a partial one) |
 | `active` | id or nil | the session in progress |
 | `combat` | object | COMBAT. `fights[]` (below; oldest first, capped at 5000 since 0.9.38, 1000 before (founder, 2026-11-11); at the cap an uploaded fight goes first, an unread one only as a last resort, counted and said in chat on the first loss and every 50th, everbuff-business #38), `fightSeq`, `uploadedThrough?`, `lastAck? { at, through?, fights, sessions?, source }` |
 | `loot` | object | LOOT. `log[]` = every pickup, item rows and coin rows (below; capped at 2000); item row `q` is the 8-hex quality color (`ff9d9d9d` poor .. `ffe6cc80` artifact), read from the link's `|cff` color or its `|cnIQ<n>:` named color (11.0+ and Forever), else from `C_Item.GetItemQualityByID`; white rows with an id are backfilled on login (0.8.2); the gold totals live in `characters[guid].gold` (0.9.30, #23; the old account-wide `loot.gold` is deleted on load, 0.9.33); `history`, `reserves` reserved for raid loot council; `ah` (0.9.0) `{ posted[] { s, t, item, id, icon, count, bid, buyout, unit, hours, kind }, bought[] { s, t, item, id, count, price, unit, auctionId, seller, kind }, sold[] { s, t, item, buyer, bid, buyout, deposit, cut, net }, returned[] { s, t, item, id, count, reason } }` in copper, from the auction house hooks and the mail invoices |
 | `characters` | map GUID -> block | CHARACTER, one block per character (0.9.30, everbuff-wow-addon #23, approved 2026-10-04, option A). The key is the player GUID (`UnitGUID("player")`, the same value as the session records' `guid`); the addon writes only the block of the character logged in, and a GUID the client hides or has not given yet writes nothing. Each block: `name`, `realm` (when the block was created); `crafts[]` `{ s, t, item, id, icon, count, prof, zone, x, y }` and `recipes[]` `{ s, t, name, prof }` (0.9.0); `xp { cur, max, rested, gained, fromQuests, fromKills, last, lastMax }`, `played { total, level, atEpoch }`, `playedAtLevel { level -> seconds }`, `professions { name -> { rank, max } }`, `reputation { faction -> { standing, label } }`, `durability { pct, at }`, `ilvl`, `seenZones { zone -> epoch }`, `itemUses { name -> count }` (the client's internal all-caps effects such as LOGINEFFECT are not counted, 0.9.3), `flightTime` (seconds on taxis), `lockouts[] { name, id, resetAt (epoch), difficulty, raid?, players, bosses, down, extended? }`, `gold` totals `{ balance, gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` in copper (`quests`, 0.9.3: a quest's money reward, matched to QUEST_TURNED_IN in either order within 3 s, exact amount only; 0.9.37, everbuff-wow-addon #31: `trade` and `tradeSpent` are coin received and given while the trade window was open or closed under 3 s ago, part of `gained` and `spent`; `away` is gold that changed while the addon did not see it, signed, booked at the first read of a load as the purse minus the `balance` the save file kept, with its size in `awayIn` or `awayOut`, never part of `gained` or `spent`, so `balance = gained - spent + away` holds from the first 0.9.37 load on; a 0 read at load with gold saved is read once more 3 s later; a block without a `balance` is seeded silently), `inInstance?` (the DUNGEON / DUNGEONLEAVE dedupe state) |
 | `story` | object | the feed behind Home. `events[]` (below; capped at 500), `rep[]` (0.9.10: every reputation gain `{ t, s, faction, amount, src?, zone?, sub?, map?, x?, y? }`, `src` is "Quest: <name>" when a quest was turned in within 5 s or "Kill: <name>" after a kill; capped at 2000) (`inInstance` moved to the character block, 0.9.30) |
+
+## Gold journal (session `goldLog`, `trades`, 0.9.40, everbuff-wow-addon #36, option A, approved 2026-11-17)
+
+Written into the running session record at the same moment as the ledger credit (`session.gold`). All fields are
+optional; nothing is drawn in game, nothing goes to chat, no new story kind.
+
+`goldLog[]`: one TAB-separated string per purse change, `mono TAB delta TAB source TAB balance TAB ref`.
+
+| Field | Meaning |
+| --- | --- |
+| `mono` | `GetTime()` at the change, one decimal (`"831042.5"`) |
+| `delta` | signed copper: income positive, spending negative, `away` signed |
+| `source` | the ledger key credited. Income: `looted`, `quests`, `sold`, `auctionSales`, `mail`, `trade`, `unexplained` (income no source claimed; counted in `gained` only). Spending: `repairs`, `vendor`, `training`, `flights`, `auctions`, `mailSpent`, `tradeSpent`, `other`. And `away`. Never `gained`, `spent`, `awayIn`, `awayOut` |
+| `balance` | `GetMoney()` after the change |
+| `ref` | `k=v` pairs joined by `;`, empty when nothing is known. TAB, `;`, `=`, `\|` and line breaks are stripped from values; a value the client hides is left out |
+
+`ref` keys, in this order when present: `item` (item id), `n` (count), `unit` (the item's vendor sell price per unit,
+`GetItemInfo`'s 11th value, on `sold` rows), `npc` (the merchant on `sold`, `vendor` and `repairs`, the trainer on
+`training`, the flight master on `flights`, read from the `NPC` unit when the window opened), `sender`, `partner`,
+`guild` (the trade partner's guild, `GetGuildInfo("NPC")`), `rel`, `cod` (copper, 0 when none), `trade` (1-based
+index into this session's `trades[]`), `quest` (quest id), `mailWaiting` (1 when `HasNewMail()` was true at the first
+read of the load, on `away` rows), `x` (rows merged past the cap).
+
+| Source | ref |
+| --- | --- |
+| `sold` | `item, n, unit, npc`; the item is the stack the player sold (a right click, or one of the junk stacks of "sell all junk") whose `unit * n` equals the delta, else the oldest sale of the last 5 s; a sale the addon did not see asked for carries `npc` only. A delta above `unit * n` is a sale above the vendor price |
+| `vendor` | `item, n, npc` (`BuyMerchantItem`, `BuybackItem`) |
+| `repairs`, `training`, `flights` | `npc` |
+| `quests` | `quest`. An income first seen with no source is written `unexplained` and rewritten in place to `quests` when QUEST_TURNED_IN names that amount within 3 s (one row per purse change either way) |
+| `mail`, `auctionSales` | `sender, rel, cod` of the mail the coin came from (absent when the mailbox was open but no take was seen) |
+| `mailSpent` | `sender, rel, cod` for a COD payment (the item taken in the 3 s before); empty for postage |
+| `trade`, `tradeSpent` | `partner, guild?, rel, trade` |
+| `away` | `mailWaiting` when true |
+| `looted`, `auctions`, `other`, `unexplained` | empty |
+
+`rel`, who the player is to this character: `alt` (a `characters[guid]` block of this save file with that `name` on the
+same realm; a `Name-Realm` name compares its own realm), `guild` (the guild roster, cached on GUILD_ROSTER_UPDATE),
+`friend` (the friends list, cached on FRIENDLIST_UPDATE, or `C_FriendList.IsFriend` / `GetFriendInfo`), `stranger`,
+and on mail only `system` (auction house invoices and subjects, and any mail the client says cannot be answered).
+
+Cap: 4000 rows per session. Past it a `looted`, `sold` or `vendor` row with no `partner` or `sender` merges into the
+row before it when that row has the same source: deltas summed, the newest `mono` and `balance`, the `ref` keys both
+rows share kept (`n` summed when the item is the same), `x` = rows merged. Anything else past the cap is counted in
+`goldLogDropped` (0 from the session's start), except `trade`, `tradeSpent`, `mail`, `mailSpent`, `auctionSales`,
+`away` and `unexplained` rows, which are always written. While nothing is dropped, each `balance` minus the one
+before is that row's `delta`, and the rows of each source sum to `session.gold[source]`.
+
+`trades[]`: `{ t (server epoch), mono, partner, guild?, rel, gaveMoney, gotMoney, gave = { "id:count", ... }, got = {
+"id:count", ... } }`, copper. Both sides are read from the trade window (`GetPlayerTradeMoney`, `GetTargetTradeMoney`,
+`GetTradePlayerItemLink/Info`, `GetTradeTargetItemLink/Info`, slots 1 to 6) on every TRADE_MONEY_CHANGED,
+TRADE_PLAYER_ITEM_CHANGED, TRADE_TARGET_ITEM_CHANGED and TRADE_ACCEPT_UPDATE; the last snapshot is kept (an empty
+read as the client clears the window never replaces it). An item the client names without a link is `"0:count"`.
+A trade is written once it completed: a purse change while the window is open or under 3 s after it closed, or the
+client's `ERR_TRADE_COMPLETE` (UI_INFO_MESSAGE), so an items-only trade is written too. When gold moved but no
+snapshot was taken the money comes from the purse change. A cancelled trade (closed with nothing moved, or
+`ERR_TRADE_CANCELLED`) is not written. The `trade` ref of the gold row is the entry's index.
 
 ## Fight record (`schema = 1`)
 
@@ -114,7 +170,7 @@ Coin: `{ t, s (session id), money (copper), src, guid?, x?, y?, zone? }`.
 `"Skinned creature"` / `"Object"` / `"Creature"` / `"Unknown source"`; items pushed without a loot window use the world object just clicked (its name), the mob just killed, `"Quest reward"`, or `"Picked up"`. Location is separate: `zone` (name) and `x`, `y` (numeric coordinates), each its own field and its own UI column.
 (Rows written before 2026-09-25 embedded " at (x, y)" in `src`; the UI splits those on display.)
 Mailbox rows (2026-09-25): `src` is `"Auction sale"` (coin row), `"Auction won"`, `"Auction returned"` or
-`"Mail from <sender>"`, with `mail = { sender, subject, item?, buyer?, seller?, cod? }`. Location is the mailbox.
+`"Mail from <sender>"`, with `mail = { sender, subject, item?, buyer?, seller?, cod?, rel? }` (`rel` from 0.9.40, #36: `alt`, `guild`, `friend`, `stranger` or `system`, as in the gold journal). Location is the mailbox.
 Classic prints no chat line for mail pickups, so these come from hooks on `TakeInboxItem` / `TakeInboxMoney` /
 `AutoLootMailItem`. Gold breakdown fields: `auctionSales`, `mail` (income); `auctions`, `mailSpent` (sinks).
 
