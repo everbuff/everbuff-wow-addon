@@ -196,6 +196,7 @@ and answers false for plain values, and that none of its event frames holds an e
 | `events` | string | `checked` (`C_EventUtils.IsEventValid`), or `unchecked` when the client cannot say |
 | `skipped?` | string | `classic`: a Classic client is not checked (WoW Forever only) |
 | `error?` | string | the check itself failed; `ok` is false and nothing is said in chat |
+| `instance?` | object | 0.9.41: the client's raw answers at the last dungeon check (world entry and zone change): `zone`, `name`, `type`, `diff`, `map` (GetInstanceInfo), `inInstance`, `ptype` (IsInInstance), `uiMap`, `mapType` (C_Map), `verdict` (`party`, `raid` or `none`). Diagnostics only; WoW Forever answers instance type `none` inside Shadowfang Keep, so the addon also reads the dungeon map type and a list of instance names |
 
 Silent when `ok`. When it fails the player sees exactly one chat line (founder decision 3, option B):
 `everbuff.gg: this WoW build changed <first item> (and N more); recording continues.` The backend's live canary

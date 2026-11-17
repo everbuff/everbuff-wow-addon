@@ -279,7 +279,8 @@ _G.GetItemInfoInstant = function(id) return id, "Quest", "Quest", "", 134400, M.
 _G.GetSpellInfo = function(id) return ({ [2366] = "Herb Gathering", [2575] = "Mining", [8613] = "Skinning", [7620] = "Fishing", [1243] = "Power Word: Fortitude", [1126] = "Mark of the Wild", [17534] = "Superior Healing Potion", [746] = "First Aid" })[id] end
 M.knownSpells = { [2366] = true, [2575] = true, [8613] = true, [7620] = true, [1243] = true, [1126] = true, [746] = true }
 _G.IsPlayerSpell = function(id) return M.knownSpells[id] or false end
-_G.C_Map = { GetBestMapForUnit = function() return 37 end,
+_G.C_Map = { GetBestMapForUnit = function() return M.uiMap or 37 end,
+             GetMapInfo = function(id) return { mapID = id, mapType = M.mapType or 3 } end,
              GetPlayerMapPosition = function() return { GetXY = function() return 0.421, 0.637 end } end }
 _G.GetLootSourceInfo = function() return M.lootSourceGUID end
 M.dur = {}
