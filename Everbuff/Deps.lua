@@ -289,6 +289,8 @@ ns.deps = {
   { "event", "SKILL_LINES_CHANGED", "guarded" },
   { "event", "TAXIMAP_OPENED", "guarded" },
   { "event", "TIME_PLAYED_MSG", "guarded" },
+  { "event", "TRADE_CLOSED", "guarded" },
+  { "event", "TRADE_SHOW", "guarded" },
   { "event", "TRADE_SKILL_CLOSE", "guarded" },
   { "event", "TRADE_SKILL_LIST_UPDATE", "guarded" },
   { "event", "TRADE_SKILL_SHOW", "guarded" },

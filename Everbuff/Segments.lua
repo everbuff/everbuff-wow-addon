@@ -49,7 +49,7 @@ end
 -- The session's gold ledger (everbuff-backend #46): the keys of the character's lifetime gold ledger (characters[guid].gold) except balance, in copper,
 -- all present from the start so a zero is a known zero. Emitter's money handler credits it.
 R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",
-  "flights", "auctions", "mailSpent", "other" }
+  "flights", "auctions", "mailSpent", "other", "trade", "tradeSpent", "away", "awayIn", "awayOut" }
 function R.newGoldLedger()
   local g = {}
   for _, k in ipairs(R.GOLD_KEYS) do g[k] = 0 end

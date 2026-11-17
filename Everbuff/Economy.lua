@@ -26,13 +26,14 @@ local function refresh(c)
   c.cGained.value:SetText(fmtMoney(g.gained or 0))
   c.cSpent.value:SetText(fmtMoney(g.spent or 0))
   local gained, looted, sold = tonumber(g.gained) or 0, tonumber(g.looted) or 0, tonumber(g.sold) or 0
-  local auctions, mail = tonumber(g.auctionSales) or 0, tonumber(g.mail) or 0
+  local auctions, mail, quests, trade = tonumber(g.auctionSales) or 0, tonumber(g.mail) or 0, tonumber(g.quests) or 0, tonumber(g.trade) or 0
   c.cBalance.sub:SetText("current purse")
   c.cLooted.sub:SetText("coin picked up from mobs and chests")
-  c.cGained.sub:SetText(("looted %s  ·  sold %s  ·  auctions %s  ·  mail %s  ·  other %s"):format(
-    fmtMoney(looted), fmtMoney(sold), fmtMoney(auctions), fmtMoney(mail), fmtMoney(math.max(0, gained - looted - sold - auctions - mail))))
-  c.cSpent.sub:SetText(("repairs %s  ·  vendor %s  ·  training %s  ·  flights %s  ·  auctions %s  ·  mail %s"):format(
-    fmtMoney(g.repairs or 0), fmtMoney(g.vendor or 0), fmtMoney(g.training or 0), fmtMoney(g.flights or 0), fmtMoney(g.auctions or 0), fmtMoney(g.mailSpent or 0)))
+  c.cGained.sub:SetText(("looted %s  ·  quests %s  ·  sold %s  ·  auctions %s  ·  mail %s  ·  trade %s  ·  other %s"):format(
+    fmtMoney(looted), fmtMoney(quests), fmtMoney(sold), fmtMoney(auctions), fmtMoney(mail), fmtMoney(trade),
+    fmtMoney(math.max(0, gained - looted - quests - sold - auctions - mail - trade))))
+  c.cSpent.sub:SetText(("repairs %s  ·  vendor %s  ·  training %s  ·  flights %s  ·  auctions %s  ·  mail %s  ·  trade %s"):format(
+    fmtMoney(g.repairs or 0), fmtMoney(g.vendor or 0), fmtMoney(g.training or 0), fmtMoney(g.flights or 0), fmtMoney(g.auctions or 0), fmtMoney(g.mailSpent or 0), fmtMoney(g.tradeSpent or 0)))
   local net = (tonumber(g.gained) or 0) - (tonumber(g.spent) or 0)
   local ses = (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or {}
   local elapsed = (ses.startedEpoch and ((GetServerTime and GetServerTime()) or time()) - ses.startedEpoch) or 0
@@ -68,7 +69,7 @@ function ns.BuildEconomyPane(pane)
 
   local note = UI.FS(content, "GameFontDisableSmall", C.dim); note:SetPoint("TOPLEFT", X0, Y1 - CH - 16)
   note:SetWidth(680); note:SetJustifyH("LEFT")
-  note:SetText("Gold in and out since this session began. Sinks are attributed by the window that was open when gold left: repairs, vendor, trainer, flight master, auction house, mailbox. Coin looted, auction proceeds and mailed gold are attributed to their source in the Loot tab. On the beta these totals are per session until SavedVariables persistence is fixed.")
+  note:SetText("Gold in and out since this session began. Sinks are attributed by the window that was open when gold left: repairs, vendor, trainer, flight master, auction house, mailbox, trade window. Coin looted, auction proceeds and mailed gold are attributed to their source in the Loot tab. On the beta these totals are per session until SavedVariables persistence is fixed.")
   refresh(content)
   return function() refresh(content) end
 end
