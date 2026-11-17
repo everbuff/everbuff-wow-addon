@@ -40,21 +40,27 @@ local function collectDeaths()
 end
 
 local ticker
+local function fmtDowntime(dn)
+  if not dn then return "" end
+  return dn >= 60 and ("%dm %02ds"):format(math.floor(dn / 60), dn % 60) or (dn .. "s")
+end
 UI.registerPane("Combat", 3, "Deaths", function(content)
   view = content
-  local summary = UI.FS(content, "GameFontHighlightSmall", C.red); summary:SetPoint("TOPLEFT", 2, -6)
-
-  local COL = { time = 0, lvl = 118, zone = 170, coords = 326, by = 416, down = 586 }
-  local hdr = CreateFrame("Frame", nil, content); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
-  local function head(col, text)
-    local fs = ns.UI.CellFS(hdr, "GameFontDisableSmall")
-    fs:SetPoint("LEFT", col, 0); fs:SetText(text); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end
-  head(COL.time, "When"); head(COL.lvl, "Level"); head(COL.zone, "Location"); head(COL.coords, "Coords"); head(COL.by, "Slain by"); head(COL.down, "Downtime")
-
-  local sf, child = UI.ScrollChild(content)
-  sf:SetPoint("TOPLEFT", 0, -46); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
+  local summary = UI.SummaryLine(content, C.red, nil, true)
+  view.summary = summary
+  -- When · Level · Location · Coords · Slain by · (opens the fight) · Downtime · Gear lost
+  local tbl = UI.Table(UI.Below(content, summary), {
+    { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
+    { key = "lvl", label = "Level", kind = "num", measure = { "60" } },
+    { key = "zone", label = "Location", flex = 1, min = 90 },
+    { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } },
+    { key = "by", label = "Slain by", flex = 1, min = 90, color = "red" },
+    { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
+    { key = "down", label = "Downtime", kind = "num", color = "dim", measure = { "59m 59s" } },
+    { key = "gear", label = "", kind = "tag", color = "red", measure = { "-100% gear" } },
+  }, { top = 0, emptyText = "No deaths recorded. Stay alive out there.",
+    onClick = function(row) if row.fight and ns.OpenFightDetail then ns.OpenFightDetail(row.fight) end end })
+  view.tbl = tbl
 
   listRebuild = function()
     local list = collectDeaths()
@@ -73,48 +79,19 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
       if tz then bits[#bits + 1] = ("deadliest zone: %s (%d)"):format(tz, tzc) end
       summary:SetText(table.concat(bits, "   ·   "))
     end
-
-    local y, idx = 0, 0
-    for i = #list, 1, -1 do
-      idx = idx + 1
-      local d = list[i]
-      local row = child.rows[idx]
-      if not row then
-        row = CreateFrame("Button", nil, child, "BackdropTemplate"); row:SetHeight(20); row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
-        row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" }); row:SetBackdropColor(0, 0, 0, 0)
-        row:SetScript("OnEnter", function(s) s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1) end)
-        row:SetScript("OnLeave", function(s) s:SetBackdropColor(0, 0, 0, 0) end)
-        row:SetScript("OnClick", function(s) if s.fight and ns.OpenFightDetail then ns.OpenFightDetail(s.fight) end end)
-        row.tm = ns.UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(112)
-        row.lv = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.lv:SetPoint("LEFT", COL.lvl, 0); row.lv:SetWidth(46)
-        row.zo = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.zo:SetPoint("LEFT", COL.zone, 0); row.zo:SetWidth(150); row.zo:SetJustifyH("LEFT")
-        row.co = ns.UI.CellFS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(84); row.co:SetJustifyH("LEFT")
-        row.by = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.by:SetPoint("LEFT", COL.by, 0); row.by:SetWidth(164); row.by:SetJustifyH("LEFT")
-        row.dn = ns.UI.CellFS(row, "GameFontDisableSmall"); row.dn:SetPoint("LEFT", COL.down, 0); row.dn:SetWidth(70); row.dn:SetJustifyH("LEFT")
-        child.rows[idx] = row
-      end
-      row.fight = d.fight; row:SetPoint("TOPLEFT", 0, -y); row:Show()
-      row.tm:SetText(date("%m/%d %H:%M", d.t or 0)); row.tm:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.lv:SetText(d.level and tostring(d.level) or "-"); row.lv:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.zo:SetText(d.zone or "-")
-      row.co:SetText(UI.fmtCoords(d.x, d.y)); row.co:SetTextColor(C.dim[1], C.dim[2], C.dim[3]); row.zo:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      local by = d.killer or "unknown"
-      row.by:SetText(by .. (d.fight and "   |cff8c9197>|r" or "")); row.by:SetTextColor(C.red[1], C.red[2], C.red[3])
-      local dn = d.downtime
-      local dnText = dn and (dn >= 60 and ("%dm %02ds"):format(math.floor(dn / 60), dn % 60) or (dn .. "s")) or ""
-      if d.durLoss and d.durLoss > 0 then dnText = dnText .. ("  |cffe5484d-%d%% gear|r"):format(d.durLoss) end
-      row.dn:SetText(dnText); row.dn:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      y = y + 20
-    end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function()
-        local fs = ns.UI.FS(child, "GameFontDisableSmall")
-        fs:SetPoint("TOPLEFT", 0, 0); fs:SetText("No deaths recorded. Stay alive out there."); return fs
-      end)()
-      child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
-    child:SetSize(math.max(660, (sf:GetWidth() or 660) - 4), math.max(1, y))
+    local rows = {}
+    for i = #list, 1, -1 do rows[#rows + 1] = list[i] end
+    tbl.setRows(rows, function(row, d)
+      row.fight = d.fight
+      row.c.time:SetText(date("%m/%d %H:%M", d.t or 0))
+      row.c.lvl:SetText(d.level and tostring(d.level) or "-")
+      row.c.zone:SetText(d.zone or "-")
+      row.c.coords:SetText(UI.fmtCoords(d.x, d.y))
+      row.c.by:SetText(d.killer or "unknown")
+      row.c.open:SetText(d.fight and ">" or "")
+      row.c.down:SetText(fmtDowntime(d.downtime))
+      row.c.gear:SetText((d.durLoss and d.durLoss > 0) and ("-%d%% gear"):format(d.durLoss) or "")
+    end)
   end
 
   listRebuild()

@@ -15,9 +15,9 @@ end
 frameMT.__index = function(t, k)
   -- WoW methods are PascalCase; anything else is an ordinary data field, nil until the addon sets it
   if type(k) ~= "string" or not k:match("^%u") then return nil end
-  if k == "SetScript" then return function(self, n, fn) self.scripts[n] = fn; return self end end
+  if k == "SetScript" then return function(self, n, fn) self.scripts[n] = fn; if n == "OnSizeChanged" then M.watchSize(self) end; return self end end
   if k == "GetScript" then return function(self, n) return self.scripts[n] end end
-  if k == "HookScript" then return function(self, n, fn) local p = self.scripts[n]; self.scripts[n] = function(...) if p then p(...) end fn(...) end; return self end end
+  if k == "HookScript" then return function(self, n, fn) local p = self.scripts[n]; self.scripts[n] = function(...) if p then p(...) end fn(...) end; if n == "OnSizeChanged" then M.watchSize(self) end; return self end end
   if k == "RegisterEvent" then return function(self, ev) self.events[ev] = true; return self end end
   if k == "IsEventRegistered" then return function(self, ev) return self.events[ev] == true end end
   if k == "UnregisterEvent" then return function(self, ev) self.events[ev] = nil; return self end end
@@ -42,8 +42,8 @@ frameMT.__index = function(t, k)
   if k == "SetAttribute" then return function(self, a, v) self.attrs[a] = v; return self end end
   if k == "GetAttribute" then return function(self, a) return self.attrs[a] end end
   -- geometry for the layout audit (tests/layout.lua): parents, anchors, sizes, fonts and wrapping are recorded
-  if k == "CreateTexture" then return function(self) local f = mkframe(); f.parentFrame = self; return f end end
-  if k == "CreateFontString" then return function(self, _, _, tmpl) local f = mkframe(); f.parentFrame = self; f._isFS = true; f._tmpl = tmpl; return f end end
+  if k == "CreateTexture" then return function(self, _, layer) local f = mkframe(); f.parentFrame = self; f._isTex = true; f._layer = layer; return f end end
+  if k == "CreateFontString" then return function(self, _, layer, tmpl) local f = mkframe(); f.parentFrame = self; f._isFS = true; f._layer = layer; f._tmpl = tmpl; return f end end
   if k == "SetPoint" then return function(self, point, a, b, c, d)
     local rel, rp, x, y
     if type(a) == "number" or a == nil then rel, rp, x, y = nil, point, a or 0, b or 0
@@ -53,20 +53,81 @@ frameMT.__index = function(t, k)
     self._pts = self._pts or {}; self._pts[#self._pts + 1] = { p = point, rel = rel, rp = rp, x = x, y = y }; return self end end
   if k == "SetAllPoints" then return function(self, rel) self._pts = { { p = "TOPLEFT", rel = rel, rp = "TOPLEFT", x = 0, y = 0 }, { p = "BOTTOMRIGHT", rel = rel, rp = "BOTTOMRIGHT", x = 0, y = 0 } }; return self end end
   if k == "ClearAllPoints" then return function(self) self._pts = nil; return self end end
-  if k == "SetWidth" then return function(self, w) self._w = w; return self end end
-  if k == "SetHeight" then return function(self, h) self._h = h; return self end end
-  if k == "SetSize" then return function(self, w, h) self._w, self._h = w, h; return self end end
+  if k == "SetWidth" then return function(self, w) self._w = w; M.sized(self); return self end end
+  if k == "SetHeight" then return function(self, h) self._h = h; M.sized(self); return self end end
+  if k == "SetSize" then return function(self, w, h) self._w, self._h = w, h; M.sized(self); return self end end
+  -- mouse and object type, as the client answers them (UI.CellFS turns the mouse on for a plain frame it hooks)
+  if k == "RegisterForClicks" then return function(self, ...) self._clicks = { ... }; return self end end
+  if k == "EnableMouse" then return function(self, v) self._mouse = v and true or false; return self end end
+  if k == "IsMouseEnabled" then return function(self) return self._mouse == true or self._kind == "Button" or self._kind == "EditBox" end end
+  if k == "GetObjectType" then return function(self) return self._isFS and "FontString" or self._isTex and "Texture" or self._kind or "Frame" end end
   if k == "SetJustifyH" then return function(self, j) self._justify = j; return self end end
   if k == "SetWordWrap" then return function(self, v) self._wrap = v and true or false; return self end end
   if k == "SetMaxLines" then return function(self, n) self._maxLines = n; return self end end
   if k == "SetFontObject" then return function(self, fo) self._font = fo; return self end end
-  if k == "SetFont" then return function(self, file, size) self._size = size; return true end end
+  if k == "SetFont" then return function(self, file, size, flags) self._file, self._size, self._flags = file, size, flags; return true end end
+  -- paint for tests/render_html.lua: colors, textures, backdrops, alpha and clipping are recorded, nothing reads them back
+  if k == "SetTextColor" then return function(self, r, g, b, a) self._color = { r, g, b, a or 1 }; return self end end
+  if k == "SetShadowColor" then return function(self, r, g, b, a) self._shadow = { r, g, b, a or 1 }; return self end end
+  if k == "SetColorTexture" then return function(self, r, g, b, a) self._fill = { r, g, b, a or 1 }; self._file = nil; return self end end
+  if k == "SetTexture" then return function(self, file) self._file = file; if file ~= nil then self._fill = nil end; return self end end
+  if k == "SetTexCoord" then return function(self, ...) self._tc = { ... }; return self end end
+  if k == "SetVertexColor" then return function(self, r, g, b, a) self._vc = { r, g, b, a or 1 }; return self end end
+  if k == "SetBackdrop" then return function(self, bd) self._bd = bd; return self end end
+  if k == "SetBackdropBorderColor" then return function(self, r, g, b, a) self._bdc = { r, g, b, a or 1 }; return self end end
+  if k == "SetAlpha" then return function(self, a) self._alpha = a; return self end end
+  if k == "SetFrameLevel" then return function(self, n) self._level = n; return self end end
+  if k == "SetClipsChildren" then return function(self, v) self._clips = v and true or false; return self end end
+  if k == "SetScrollChild" then return function(self, child) self._scrollChild = child; if child then child.parentFrame = self end; return self end end
+  if k == "SetTextInsets" then return function(self, l, r, t, b) self._insets = { l or 0, r or 0, t or 0, b or 0 }; return self end end
+  if k == "SetSpacing" then return function(self, n) self._spacing = n; return self end end
+  if k == "SetJustifyV" then return function(self, j) self._justifyV = j; return self end end
   if k == "SetParent" then return function(self, pa) self.parentFrame = pa; return self end end
   if k == "GetStringWidth" then return function(self) return M.textWidth and M.textWidth(self) or 100 end end
   if k == "GetName" then return noop end
   return function(self) return self end        -- chainable no-op for SetPoint/SetSize/etc.
 end
 M.errors = {}
+-- OnSizeChanged, the way the client sends it: to a frame with the handler whenever the size it resolves to changes.
+-- The stub has no layout engine of its own (tests/geometry.lua installs one), so it asks GetWidth and GetHeight
+-- each time the window is sized (SetSize/SetWidth/SetHeight on EverbuffFrame) and when a test calls M.settle(),
+-- and repeats until nothing changes, as a resize ripples down nested frames; a watched frame sized directly hears
+-- its own change at once.
+M.sizeWatch = {}
+function M.watchSize(f) if not f._watched then f._watched = true; M.sizeWatch[#M.sizeWatch + 1] = f end end
+-- a frame was sized: the window ripples through everything, a watched frame hears its own change
+function M.sized(f)
+  if f._root then M.settle()
+  elseif f._watched and not M.settling then
+    local h = f.scripts.OnSizeChanged
+    local w, ht = f:GetWidth(), f:GetHeight()
+    if h and (w ~= f._seenW or ht ~= f._seenH) then
+      f._seenW, f._seenH = w, ht
+      local ok, err = pcall(h, f, w, ht)
+      if not ok then M.errors[#M.errors + 1] = "OnSizeChanged: " .. tostring(err) end
+    end
+  end
+end
+function M.settle()
+  if M.settling then return end
+  M.settling = true
+  for _ = 1, 8 do
+    local changed = false
+    for _, f in ipairs(M.sizeWatch) do
+      local h = f.scripts.OnSizeChanged
+      if h then
+        local w, ht = f:GetWidth(), f:GetHeight()
+        if w ~= f._seenW or ht ~= f._seenH then
+          f._seenW, f._seenH = w, ht; changed = true
+          local ok, err = pcall(h, f, w, ht)
+          if not ok then M.errors[#M.errors + 1] = "OnSizeChanged: " .. tostring(err) end
+        end
+      end
+    end
+    if not changed then break end
+  end
+  M.settling = false
+end
 function M.fire(event, ...)
   for _, f in ipairs(frames) do
     if f.events[event] and f.scripts.OnEvent then
@@ -82,8 +143,23 @@ function M.tick()
   end
 end
 
-_G.CreateFrame = function(_, name, parent) local f = mkframe(); f.parentFrame = parent; if name then _G[name] = f end; return f end
+_G.CreateFrame = function(kind, name, parent, tmpl) local f = mkframe(); f.parentFrame = parent; f._kind, f._tmpl = kind, tmpl; if name then _G[name] = f end; if name == "EverbuffFrame" then f._root = true end; return f end
 _G.UIParent, _G.GameTooltip = mkframe(), mkframe()
+-- the tooltip keeps its owner and lines so tests can read what a hover shows
+do
+  local tip = _G.GameTooltip
+  tip.lines, tip.shown = {}, false
+  function tip:SetOwner(owner, anchor) self.owner, self.anchor = owner, anchor; self.lines = {}; self._pts = nil; return self end
+  function tip:GetOwner() return self.owner end
+  -- the client's line FontStrings, GameTooltipTextLeft1..n, read back what each line says
+  function tip:GetName() return "GameTooltip" end
+  local function lineFS(i, text) _G["GameTooltipTextLeft" .. i] = { GetText = function() return text end } end
+  function tip:AddLine(text) self.lines[#self.lines + 1] = text; lineFS(#self.lines, text); return self end
+  function tip:AddDoubleLine(a, b) self.lines[#self.lines + 1] = tostring(a) .. "  " .. tostring(b); lineFS(#self.lines, a); return self end
+  function tip:ClearLines() self.lines = {}; return self end
+  function tip:NumLines() return #self.lines end
+  function tip:Hide() self.shown = false; self.owner = nil; return self end
+end
 _G.C_Timer = {
   After = function(_, fn) M.timers[#M.timers + 1] = fn end,
   NewTicker = function(_, fn) local tk = { fn = fn }; tk.Cancel = function(s) s.cancelled = true end; M.tickers[#M.tickers + 1] = tk; return tk end,
@@ -271,6 +347,5 @@ _G.C_AuctionHouse = {
 M.tradeSkillName = nil
 _G.C_TradeSkillUI = _G.C_TradeSkillUI or {}
 _G.C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = M.tradeSkillName } end
-M.frames = frames
 M.frames = frames
 return M

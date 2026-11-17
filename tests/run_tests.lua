@@ -195,7 +195,15 @@ local at3, at6 = T.activeAuras(al, 3), T.activeAuras(al, 6)
 check("activeAuras at t=3 has both", #at3 == 2 and at3[1].name == "Fort" and at3[2].name == "Poison")
 check("activeAuras at t=6 lost Fort", #at6 == 1 and at6[1].name == "Poison")
 
-check("fmtMoney", T.fmtMoney(12345) == "1g 23s 45c" and T.fmtMoney(0) == "0c" and T.fmtMoney(500) == "5s")
+-- the one money formatter (ns.fmtMoney, UI.lua). The format changed on purpose with the layout fix: the parts are
+-- joined by no-break spaces (a wrapping line never breaks inside an amount) and gold is grouped by thousands.
+do
+  local nb = "\194\160"
+  check("fmtMoney", T.fmtMoney(12345) == "1g" .. nb .. "23s" .. nb .. "45c" and T.fmtMoney(0) == "0c" and T.fmtMoney(500) == "5s", T.fmtMoney(12345))
+  check("fmtMoney groups gold by thousands", T.fmtMoney(123456789) == "12,345g" .. nb .. "67s" .. nb .. "89c" and T.fmtMoney(10000000) == "1,000g", T.fmtMoney(123456789))
+  check("fmtMoney: a hidden or broken value reads as 0c", (function() M.secrets[777] = true; local r = T.fmtMoney(777); M.secrets[777] = nil; return r end)() == "0c" and T.fmtMoney(nil) == "0c" and T.fmtMoney(0 / 0) == "0c")
+  check("fmtMoney: one formatter behind every pane", T.fmtMoney == ns.fmtMoney and T.economyFmtMoney == ns.fmtMoney and T.journeyMoney == ns.fmtMoney)
+end
 check("fmtTime", T.fmtTime(90061) == "1d 1h" and T.fmtTime(3661) == "1h 1m" and T.fmtTime(300) == "5m" and T.fmtTime(0) == "-")
 check("commas", T.commas(1234567) == "1,234,567" and T.commas(50) == "50")
 check("fmtDur", T.fmtDur(75) == "1:15" and T.fmtDur(9) == "9s")
@@ -1258,7 +1266,7 @@ do
   }
   local agg = ns._test.lootAggregate(log, "", function() return true end)
   check("aggregation: one row per item, coin excluded, most quantity first", #agg == 2 and agg[1].item == "Linen Cloth" and agg[1].count == 6 and agg[1].drops == 3, agg[1] and agg[1].count)
-  check("aggregation: most frequent source with drop count", agg[1].src == "Kobold Miner  ·  3 drops", agg[1].src)
+  check("aggregation: most frequent source, the drop count kept apart for its own column", agg[1].src == "Kobold Miner" and agg[1].drops == 3, agg[1].src)
   check("aggregation keeps id and quality for tooltips and color", agg[2].id == 7777 and agg[2].q == "ff0070dd")
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
@@ -2052,13 +2060,13 @@ do
   -- logged in as Undertaker: only his rows
   asUT()
   ns.UI.Open("Home", "timeline"); M.tick()
-  tlRows = shownRows(tl.timelineRows)
+  tlRows = {}; for _, r in ipairs(shownRows(tl.timelineRows)) do if r.ev then tlRows[#tlRows + 1] = r end end   -- the event rows (not the day headers)
   check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
   lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
   check("#23 Undertaker: Loot / Items shows only his item and coin", #lr == 2 and lr[1].nm:GetText() == T.fmtMoney(777) and lr[2].nm:GetText() == "Undertaker Shroud", #lr)
   ns.UI.Open("Combat", "fights"); M.tick()
-  fr = shownRows(fl.rows)
+  fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
   local runs = T.buildRuns()
   check("#23 Undertaker: Combat / Dungeons shows only his run, with his fight, kill, death and loot", #runs == 1 and runs[1].name == "Shadowfang Keep" and #runs[1].fights == 1 and runs[1].kills == 1 and runs[1].deaths == 1 and runs[1].items == 1 and runs[1].gold == 777, #runs)
@@ -2195,18 +2203,36 @@ do
   M.runTimers()
 end
 
+-- tests/render_html.lua runs the suite up to here for its data (loot, mail, auctions, gold, fights) and renders the
+-- window from that state
+if EVERBUFF_RENDER_SETUP then return { ns = ns, M = M, T = T } end
+
 -- ── layout audit: no text spills out of its box or over another text (founder, 2026-11-17: "fix the overflowing
 -- txt problem cause you have alot of that in tables and overview boxes"). Every tab and pane is rendered twice, on
 -- the suite's data and on the same data with long names and gold three digits larger; tests/layout.lua places the
 -- texts from the anchors and sizes the stub recorded and estimates their widths from the font size.
+-- From here on the stub answers GetWidth, GetStringWidth and IsTruncated from the resolved layout and the addon's
+-- real fonts (tests/geometry.lua), so the panes' own sizing (OnSizeChanged, scroll children, measured columns) runs.
+local G = dofile("tests/geometry.lua")
+G.install(M)
+local Lay = dofile("tests/layout.lua")
+Lay.G = G
+ns.UI.SetWindowSize(900, 580)
+-- the suite's data as it stands, kept for the pane tests below; the sweep makes ns.DB long in place
+local function deepcopy(v, seen)
+  if type(v) ~= "table" then return v end
+  seen = seen or {}
+  if seen[v] then return seen[v] end
+  local out = {}; seen[v] = out
+  for k, x in pairs(v) do out[deepcopy(k, seen)] = deepcopy(x, seen) end
+  return out
+end
+local normalDB = deepcopy(ns.DB)
 do
-  local Lay = dofile("tests/layout.lua")
-  Lay.BOLD = { [ns.UI.VALUE_FONT] = true, [ns.UI.TITLE_FONT] = true }
-  M.textWidth = function(f) return Lay.textWidth(f) end
   local function sweep(tag)
     local found, seen, placed = {}, {}, 0
     for _, tab in ipairs(T.tabs) do
-      ns.UI.Open(tab.name)
+      ns.UI.Open(tab.name); M.settle()
       local function one(where)
         for _, x in ipairs(Lay.audit(M.frames)) do
           local key = x.kind .. x.text
@@ -2214,26 +2240,121 @@ do
         end
         placed = placed + Lay.placed
       end
-      if tab.host then for _, pn in ipairs(tab.panes) do tab.ctl.select(pn.key); one(tab.name .. "/" .. pn.key) end; tab.ctl.select(tab.panes[1].key)
+      if tab.host then for _, pn in ipairs(tab.panes) do tab.ctl.select(pn.key); M.settle(); one(tab.name .. "/" .. pn.key) end; tab.ctl.select(tab.panes[1].key)
       else one(tab.name) end
     end
     check(tag .. ": the audit placed the panes' texts", placed > 300, placed)
     check(tag .. ": no text spills out of its box, over another text, or a number cut short", #found == 0, table.concat(found, " || "))
   end
   sweep("layout")
-  local LONG = { item = 1, src = 1, zone = 1, sub = 1, foe = 1, name = 1, text = 1, title = 1, boss = 1, context = 1, prof = 1, craft = 1, buyer = 1, seller = 1, faction = 1 }
-  local BIG = { money = 1, balance = 1, gained = 1, spent = 1, looted = 1, sold = 1, quests = 1, auctionSales = 1, mail = 1, repairs = 1, vendor = 1, training = 1, flights = 1, auctions = 1, mailSpent = 1, other = 1, trade = 1, tradeSpent = 1, kills = 1, xp = 1, gold = 1, price = 1, bid = 1, buyout = 1, net = 1, count = 1 }
-  local done = {}
-  local function stretch(t)
-    if done[t] then return end; done[t] = true
-    for k, v in pairs(t) do
-      if type(v) == "table" then stretch(v)
-      elseif type(v) == "string" and LONG[k] and #v > 1 and #v < 40 then t[k] = v .. " of the Scarlet Monastery Cathedral"
-      elseif type(v) == "number" and BIG[k] and v > 0 and v == math.floor(v) then t[k] = v * 1000 + 777 end
+  Lay.stretch(ns.DB)
+  sweep("layout, long data")
+end
+
+-- ── pane tests: every tests/panes/*.lua returns function(P), run here in name order. P carries the suite's helpers:
+--   P.check(name, cond, detail), P.eq(name, got, want), P.M (the stub), P.ns, P.G (tests/geometry.lua), P.Lay
+--   P.open(host, pane, w, h, data)  window at w x h, data "normal" (the suite's) or "long" (tests/layout.lua
+--                                   L.stretch), the pane opened and settled; returns the pane's content frame
+--   P.box(region)                   its absolute box { l, t, w, h } (G.resolve), nil when it cannot be placed
+--   P.visible(region)               shown, and every parent up to the window shown
+--   P.scrollFrames(root)            the visible UI.ScrollChild frames under `root`
+--   P.descendants(root)             every frame and region under `root`
+do
+  local longDB
+  local function useData(which)
+    local src = deepcopy(which == "long" and longDB or normalDB)
+    for k in pairs(ns.DB) do ns.DB[k] = nil end
+    for k, v in pairs(src) do ns.DB[k] = v end
+  end
+  -- the suite's data as it was before the sweep, plus one more session played (tests/play_session.lua), so every
+  -- list has rows: that is "normal"; "long" is the same made long
+  useData("normal")
+  local realPrint = print
+  print = function() end
+  local okPlay, errPlay = pcall(dofile("tests/play_session.lua"), M, ns)
+  print = realPrint
+  check("pane tests: tests/play_session.lua played", okPlay, errPlay)
+  M.inCombat = false
+  normalDB = deepcopy(ns.DB)
+  longDB = deepcopy(normalDB); Lay.stretch(longDB)
+  local kids
+  local function index()
+    kids = {}
+    for _, f in ipairs(M.frames) do local pa = f.parentFrame; if pa then kids[pa] = kids[pa] or {}; table.insert(kids[pa], f) end end
+  end
+  local P = { check = check, M = M, ns = ns, G = G, Lay = Lay, T = T }
+  function P.eq(name, got, want) check(name, got == want, ("got %s, want %s"):format(tostring(got), tostring(want))) end
+  function P.box(f) return G.resolve(f) end
+  function P.visible(f)
+    local n = 0
+    while f and n < 80 do
+      if f.shown == false then return false end
+      if f == _G.EverbuffFrame then return true end
+      f = f.parentFrame; n = n + 1
+    end
+    return false
+  end
+  function P.descendants(root)
+    index()
+    local out, stack = {}, { root }
+    while #stack > 0 do
+      local f = table.remove(stack)
+      for _, c in ipairs(kids[f] or {}) do out[#out + 1] = c; stack[#stack + 1] = c end
+    end
+    return out
+  end
+  function P.scrollFrames(root)
+    local out = {}
+    for _, f in ipairs(P.descendants(root)) do
+      if rawget(f, "SetContentHeight") and rawget(f, "child") and P.visible(f) then out[#out + 1] = f end
+    end
+    return out
+  end
+  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", character = "Character" }
+  function P.open(host, pane, w, h, data)
+    useData(data or "normal")
+    ns.UI.SetWindowSize(w or 900, h or 580)
+    local name = HOSTS[host] or host
+    ns.UI.Open(name, pane); M.settle()
+    for _, tab in ipairs(T.tabs) do
+      if tab.name == name then
+        if tab.host then local pn = tab.paneByKey and tab.paneByKey[pane]; return pn and pn.content end
+        return tab.content
+      end
     end
   end
-  for k, v in pairs(ns.DB) do if k ~= "settings" and type(v) == "table" then stretch(v) end end
-  sweep("layout, long data")
+  function P.hosts()
+    local out = {}
+    for _, tab in ipairs(T.tabs) do if tab.host then for _, pn in ipairs(tab.panes) do out[#out + 1] = { host = tab.name, pane = pn.key } end end end
+    return out
+  end
+  local sep = package.config:sub(1, 1)
+  local cmd = sep == "\\" and 'dir /b "tests\\panes\\*.lua" 2>nul' or 'ls tests/panes 2>/dev/null'
+  local files = {}
+  local ph = io.popen(cmd)
+  if ph then
+    for line in ph:lines() do
+      local base = line:match("([%w_%-]+%.lua)%s*$")
+      if base then files[#files + 1] = base end
+    end
+    ph:close()
+  end
+  table.sort(files)
+  check("pane tests: tests/panes holds test files", #files > 0, #files)
+  for _, file in ipairs(files) do
+    local chunk, err = loadfile("tests/panes/" .. file)
+    check("pane tests: parse " .. file, chunk ~= nil, err)
+    if chunk then
+      local ok, fn = pcall(chunk)
+      if ok and type(fn) == "function" then
+        local ok2, e2 = pcall(fn, P)
+        check("pane tests: " .. file .. " runs to its end", ok2, e2)
+      else check("pane tests: " .. file .. " returns a function(P)", false, fn) end
+    end
+  end
+  useData("normal")
+  ns.UI.SetWindowSize(900, 580)
+  check("pane tests: no addon error while sizing (OnSizeChanged)", (function() for _, e in ipairs(M.errors) do if tostring(e):find("OnSizeChanged") then return false end end return true end)())
 end
 
 print(("\n%d passed, %d failed"):format(passed, failed))

@@ -40,18 +40,36 @@ refresh = function()
     or (dot(YELLOW) .. (" never  ·  %d fight%s waiting for the desktop app"):format(pending, pending == 1 and "" or "s")))
   local errs = (UI.tabErrors and UI.tabErrors()) or {}
   R.ui:SetText(#errs == 0 and (dot(GREEN) .. " all tabs built cleanly") or (dot(YELLOW) .. " " .. table.concat(errs, "  |  ")))
+  if c.relayout then c.relayout() end   -- a value that now takes another line pushes the rows below it down
 end
 
+-- Layout: one column of blocks placed top to bottom by relayout() on the pane's OnSizeChanged and after every
+-- refresh. A value runs from x 172 to 14 px inside the pane's right edge (two-point anchors, no fixed width) and may
+-- wrap; the block below it starts under its measured height, so a wrapped value pushes the next row down.
+local function measuredH(fs, dflt)
+  local ok, h = pcall(fs.GetStringHeight, fs)
+  h = ok and tonumber(h) or 0
+  return math.ceil(math.max(h, dflt or 0))
+end
 function ns.BuildCapturePane(content)
   view = content
   content.rows = {}
-  local y = -6
-  local function heading(text) local h = UI.FS(content, "GameFontNormal", C.gold); h:SetPoint("TOPLEFT", 14, y); h:SetText(text); y = y - 24 end
-  local function line(label, key)
-    local l = UI.FS(content, "GameFontNormalSmall", C.dim); l:SetPoint("TOPLEFT", 16, y); l:SetWidth(150); l:SetJustifyH("LEFT"); l:SetText(label:upper())
-    local v = UI.FS(content, "GameFontHighlightSmall", C.ink); v:SetPoint("TOPLEFT", 172, y); v:SetWidth(540); v:SetJustifyH("LEFT")
-    content.rows[key] = v; y = y - 22
+  local blocks = {}   -- each places itself at y and returns the height it took
+  local function heading(text)
+    local h = UI.FS(content, "GameFontNormal", C.gold); h:SetText(text)
+    blocks[#blocks + 1] = function(y) h:ClearAllPoints(); h:SetPoint("TOPLEFT", content, "TOPLEFT", 14, y); return 24 end
   end
+  local function line(label, key)
+    local l = UI.FS(content, "GameFontNormalSmall", C.dim); l:SetWidth(150); l:SetJustifyH("LEFT"); l:SetText(label:upper())
+    local v = UI.FS(content, "GameFontHighlightSmall", C.ink); v:SetJustifyH("LEFT")
+    content.rows[key] = v
+    blocks[#blocks + 1] = function(y)
+      l:ClearAllPoints(); l:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
+      v:ClearAllPoints(); v:SetPoint("TOPLEFT", content, "TOPLEFT", 172, y); v:SetPoint("TOPRIGHT", content, "TOPRIGHT", -14, y)
+      return math.max(22, measuredH(v, 0) + 9)   -- one line keeps the 22 px rhythm; more lines push the next row
+    end
+  end
+  local function gap(n) blocks[#blocks + 1] = function() return n end end
 
   heading("Capture")
   line("Capture", "recording")
@@ -61,36 +79,63 @@ function ns.BuildCapturePane(content)
   line("In-combat aura names", "auras")
   line("Desktop sync", "sync")
 
-  y = y - 8
+  gap(8)
   heading("Disconnect protection")
   local auto = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-  auto:SetPoint("TOPLEFT", 14, y + 2); auto:SetSize(24, 24)
+  auto:SetSize(24, 24)
   local isOn = (not ns.DB or not ns.DB.settings or ns.DB.settings.autoSave == nil) or (ns.DB.settings.autoSave and true or false)
   auto:SetChecked(isOn)
   local autoLbl = UI.FS(content, "GameFontHighlightSmall"); autoLbl:SetPoint("LEFT", auto, "RIGHT", 4, 0); autoLbl:SetText("Remind me to save (recommended)")
   auto:SetScript("OnClick", function(self)
     if ns.DB and ns.DB.settings then ns.DB.settings.autoSave = self:GetChecked() and true or false end
   end)
-  y = y - 30
-  local dc = UI.FS(content, "GameFontDisableSmall", C.dim); dc:SetPoint("TOPLEFT", 16, y); dc:SetWidth(680); dc:SetJustifyH("LEFT")
+  blocks[#blocks + 1] = function(y) auto:ClearAllPoints(); auto:SetPoint("TOPLEFT", content, "TOPLEFT", 14, y + 2); return 30 end
+  local dc = UI.FS(content, "GameFontDisableSmall", C.dim); dc:SetJustifyH("LEFT")
   dc:SetText("WoW only writes to disk on reload or logout, so a disconnect loses anything since then. With the reminder on, Everbuff.GG asks you to reload when it is safe (out of combat). Nothing is lost by reloading; it just commits to disk.")
-  y = y - 44
+  content.disconnectNote = dc
+  blocks[#blocks + 1] = function(y)
+    dc:ClearAllPoints(); dc:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y); dc:SetPoint("TOPRIGHT", content, "TOPRIGHT", -14, y)
+    return measuredH(dc, 26) + UI.SP.L
+  end
   -- SECURE reload button: our addon reads secret values so a Lua-driven reload is blocked; a click on a
   -- SecureActionButton running /reload is a hardware event and works.
   local save = CreateFrame("Button", "EverbuffSyncReloadBtn", content, "SecureActionButtonTemplate,BackdropTemplate")
-  save:SetSize(150, 26); save:SetPoint("TOPLEFT", 16, y)
+  save:SetSize(150, 26)
   save:SetAttribute("type", "macro"); save:SetAttribute("macrotext", "/reload"); save:RegisterForClicks("AnyUp", "AnyDown")
   save:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
   save:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9); save:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1)
   local sfs = UI.FS(save, "GameFontNormal"); sfs:SetPoint("CENTER"); sfs:SetText("Reload & save"); sfs:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
   save:HookScript("OnEnter", function(s) s:SetBackdropColor(C.hover[1], C.hover[2], C.hover[3], 1); s:SetBackdropBorderColor(C.hover[1], C.hover[2], C.hover[3], 1) end)
   save:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1); s:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 0.9) end)
-  y = y - 44
+  -- a protected frame: anchored once, under the note it follows, so no relayout (the 3 s refresh runs in combat
+  -- too) ever calls ClearAllPoints/SetPoint on it during combat lockdown
+  save:SetPoint("TOPLEFT", dc, "BOTTOMLEFT", 0, -UI.SP.L)
+  blocks[#blocks + 1] = function() return 44 end
 
   heading("Health")
   line("UI health", "ui")
 
+  local function relayout()
+    local y = -6
+    for _, place in ipairs(blocks) do y = y - place(y) end
+  end
+  -- the secure button hangs from these blocks, and moving a frame a protected frame is anchored to can be blocked
+  -- in combat: hold the relayout during lockdown and run it once when combat ends
+  local regen
+  content.relayout = function()
+    if InCombatLockdown and InCombatLockdown() then
+      if not regen then
+        regen = CreateFrame("Frame")
+        regen:SetScript("OnEvent", function() pcall(relayout) end)
+        regen:RegisterEvent("PLAYER_REGEN_ENABLED")
+      end
+      return
+    end
+    pcall(relayout)
+  end
+  content:HookScript("OnSizeChanged", content.relayout)
   refresh()
+  content.relayout()
   if not ticker then
     ticker = C_Timer.NewTicker(3, function() if view and view:IsShown() and refresh then refresh() end end)
   end

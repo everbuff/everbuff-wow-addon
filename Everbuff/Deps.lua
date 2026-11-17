@@ -217,6 +217,8 @@ ns.deps = {
   { "value", "GameFontNormal", "required" },
   { "value", "GameFontNormalSmall", "required" },
   { "value", "GameTooltip", "guarded" },
+  { "value", "GameTooltip.GetOwner", "guarded" },
+  { "value", "GameTooltip.NumLines", "guarded" },
   { "value", "GetAddOnMetadata", "guarded" },
   { "value", "GetSpecialization", "guarded" },
   { "value", "GetSpecializationInfo", "guarded" },

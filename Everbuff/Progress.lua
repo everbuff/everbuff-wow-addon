@@ -137,45 +137,38 @@ local STANDING_COLOR = {   -- reaction id 1..8: hated .. exalted
   [5] = { 0.13, 0.80, 0.13 }, [6] = { 0.13, 0.80, 0.13 }, [7] = { 0.13, 0.80, 0.13 }, [8] = { 0.13, 0.80, 0.80 },
 }
 
-local function makeList(pane, cols, header)
-  -- one header row + a pooled scrolling list; cols = { {key, x, w, label} ... }
-  local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
-  for _, c in ipairs(cols) do
-    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
-    fs:SetText(c[4]:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-  end
-  local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold); summary:SetPoint("TOPLEFT", 2, -6); summary:SetWidth(650); summary:SetJustifyH("LEFT")
-  local sf, child = UI.ScrollChild(pane)
-  sf:SetPoint("TOPLEFT", 0, -46); sf:SetPoint("BOTTOMRIGHT", -22, 2)
-  child.rows = {}
-  local L = { summary = summary, child = child, cols = cols }
-  -- render(rows, fill) : fill(row, item) sets the cells; rows are pooled Frames with .c[key] FontStrings
+-- A list pane: a summary line (it wraps; the list moves down with it) over a UI.Table. opts.fit = n makes the list
+-- exactly as tall as its first n rows (the factions and professions, with their history right below them);
+-- without it the list runs to the pane's bottom. opts.onClick(row) makes the rows a filter.
+local function makeList(pane, spec, opts)
+  opts = opts or {}
+  local SP = UI.SP
+  local summary = UI.SummaryLine(pane, C.gold, nil, true)
+  local body = CreateFrame("Frame", nil, pane)
+  body:SetPoint("TOPLEFT", summary, "BOTTOMLEFT", -SP.S, -SP.S)
+  if opts.fit then body:SetPoint("TOPRIGHT", summary, "BOTTOMRIGHT", UI.SCROLLBAR + SP.S, -SP.S); body:SetHeight(2 * UI.ROW_H + 1)
+  else body:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", 0, 0) end
+  local tbl = UI.Table(body, spec, { top = 0, onClick = opts.onClick and function(row) opts.onClick(row) end })
+  local L = { summary = summary, body = body, tbl = tbl, child = tbl.child, pane = pane }
+  -- render(rows, fill, emptyText): fill(row, item) sets the cells row.c[key]
   L.render = function(rows, fill, emptyText)
-    local y, idx = 0, 0
-    for _, item in ipairs(rows) do
-      idx = idx + 1
-      local row = child.rows[idx]
-      if not row then
-        row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
-        for _, c in ipairs(cols) do
-          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
-        end
-        row.bar = row:CreateTexture(nil, "ARTWORK"); row.bar:SetColorTexture(C.cyan[1], C.cyan[2], C.cyan[3], 0.35); row.bar:Hide()
-        child.rows[idx] = row
-      end
-      row:SetPoint("TOPLEFT", 0, -y); row:Show(); row.bar:Hide()
-      fill(row, item)
-      y = y + 18
-    end
-    for j = idx + 1, #child.rows do child.rows[j]:Hide() end
-    if idx == 0 then
-      child.empty = child.empty or (function() local fs = UI.FS(child, "GameFontDisableSmall"); fs:SetPoint("TOPLEFT", 0, 0); return fs end)()
-      child.empty:SetText(emptyText); child.empty:Show()
-    elseif child.empty then child.empty:Hide() end
-    child:SetSize(math.max(660, (sf:GetWidth() or 660) - 4), math.max(1, y))
+    tbl.setRows(rows, fill)
+    if #rows == 0 then tbl.setEmpty(emptyText) end
+    if opts.fit then body:SetHeight(UI.ROW_H + 1 + UI.ROW_H * math.max(1, math.min(#rows, opts.fit))) end
   end
   return L
 end
+-- a selected filter row keeps a fill under its hover highlight
+local function markSelected(row, on)
+  if not row.sel then
+    row.sel = row:CreateTexture(nil, "BACKGROUND"); row.sel:SetAllPoints(row)
+    row.sel:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1)
+  end
+  if on then row.sel:Show() else row.sel:Hide() end
+end
+local TIME_MEASURE = { "Dec 31, 23:59", "Sep 30, 23:59" }
+local COORDS = { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } }
+local STANDINGS = { "Hated", "Hostile", "Unfriendly", "Neutral", "Friendly", "Honored", "Revered", "Exalted" }
 
 -- CHARACTER host: Quests · Reputation · Professions, each a pane built on first select.
 UI.registerHost(3, "Character", "How your character is growing: quests done, standing with every faction, and your professions.")
@@ -185,12 +178,12 @@ local function renderQuests()
   local rows, sum = buildQuests()
   quests.summary:SetText(("%d completed  ·  %d in progress  ·  %d rewards chosen  ·  %s XP from quests"):format(sum.done, sum.open, sum.rewards, tostring(sum.xp)))
   quests.render(rows, function(row, q)
-    row.c.time:SetText(date("%H:%M", q.t)); row.c.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.name:SetText(q.name or "?"); row.c.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+    row.c.time:SetText(date("%H:%M", q.t))
+    row.c.name:SetText(q.name or "?")
     if q.status == "done" then row.c.status:SetText("Completed"); row.c.status:SetTextColor(C.green[1], C.green[2], C.green[3])
     else row.c.status:SetText("In progress"); row.c.status:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end
-    row.c.loc:SetText(UI.fmtPlace(q.zone, q.sub)); row.c.loc:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.coords:SetText(UI.fmtCoords(q.x, q.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+    row.c.loc:SetText(UI.fmtPlace(q.zone, q.sub))
+    row.c.coords:SetText(UI.fmtCoords(q.x, q.y))
   end, "No quests recorded yet. Accept or turn in a quest and it shows up here.")
 end
 local repFilter, repHist, repHistFrame
@@ -199,40 +192,26 @@ local function renderRep()
   local rows, sum = buildReputation()
   rep.summary:SetText(("%d factions known  ·  %d standing gains  ·  click a faction to see how you earned it"):format(sum.factions, sum.ups))
   rep.render(rows, function(row, r)
-    if not row.clickable then
-      row.clickable = true; row:EnableMouse(true)
-      row.hl = row:CreateTexture(nil, "BACKGROUND"); row.hl:SetAllPoints(); row.hl:SetColorTexture(0, 0, 0, 0)
-      row:SetScript("OnMouseUp", function(x) repFilter = (repFilter == x.faction) and nil or x.faction; renderRep() end)
-      row:SetScript("OnEnter", function(x) if repFilter ~= x.faction then x.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end end)
-      row:SetScript("OnLeave", function(x) if repFilter ~= x.faction then x.hl:SetColorTexture(0, 0, 0, 0) end end)
-    end
     row.faction = r.name
-    if repFilter == r.name then row.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) else row.hl:SetColorTexture(0, 0, 0, 0) end
-    row.c.name:SetText(r.name); row.c.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+    markSelected(row, repFilter == r.name)
+    row.c.name:SetText(r.name)
     local col = STANDING_COLOR[r.standing] or C.dim
     row.c.standing:SetText(r.label); row.c.standing:SetTextColor(col[1], col[2], col[3])
-    row.c.last:SetText(r.lastUp and date("%b %d, %H:%M", r.lastUp) or ""); row.c.last:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+    row.c.last:SetText(r.lastUp and date("%b %d, %H:%M", r.lastUp) or "")
   end, "No reputation snapshot yet. It is taken a few seconds after login.")
-  -- the history sits right under the factions (the list scrolls when there are many)
-  if repHistFrame then
-    local shown = math.min(#rows, 8)
-    repHistFrame:ClearAllPoints()
-    repHistFrame:SetPoint("TOPLEFT", rep.pane, "TOPLEFT", 0, -(46 + 18 * math.max(1, shown) + 16))
-    repHistFrame:SetPoint("BOTTOMRIGHT", rep.pane, "BOTTOMRIGHT", 0, 0)
-  end
   if repHist then
     local hist = buildRepHistory(repFilter)
     local total = 0
     for _, h in ipairs(hist) do if not h.milestone then total = total + (tonumber((h.change or ""):match("%d+")) or 0) end end
     repHist.summary:SetText(repFilter and ("How you earned %s  ·  +%d reputation"):format(repFilter, total) or ("How you earned your reputation  ·  +%d in %d gains"):format(total, #hist))
     repHist.render(hist, function(row, h)
-      row.c.time:SetText(date("%b %d, %H:%M", h.t)); row.c.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.faction:SetText(h.faction); row.c.faction:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+      row.c.time:SetText(date("%b %d, %H:%M", h.t))
+      row.c.faction:SetText(h.faction)
       row.c.change:SetText(h.change)
-      if h.milestone then row.c.change:SetTextColor(C.green[1], C.green[2], C.green[3]) else row.c.change:SetTextColor(C.ink[1], C.ink[2], C.ink[3]) end
-      row.c.source:SetText(h.source); row.c.source:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub)); row.c.loc:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.coords:SetText(UI.fmtCoords(h.x, h.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      if h.milestone then row.c.change:SetTextColor(C.green[1], C.green[2], C.green[3]) end
+      row.c.source:SetText(h.source)
+      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub))
+      row.c.coords:SetText(UI.fmtCoords(h.x, h.y))
     end, repFilter and ("No gains for %s recorded yet."):format(repFilter) or "No reputation gains recorded yet. Turn in a quest or defeat an enemy that gives reputation.")
   end
 end
@@ -243,71 +222,92 @@ local function renderProf()
   prof.summary:SetText(("%d professions  ·  %d recipes learned  ·  click a profession to see how it leveled"):format(sum.professions, sum.recipes))
   prof.render(rows, function(row, p)
     -- a profession row filters the history below; clicking the selected one shows all again
-    if not row.clickable then
-      row.clickable = true; row:EnableMouse(true)
-      row.hl = row:CreateTexture(nil, "BACKGROUND"); row.hl:SetAllPoints(); row.hl:SetColorTexture(0, 0, 0, 0)
-      row:SetScript("OnMouseUp", function(r) profFilter = (profFilter == r.prof) and nil or r.prof; renderProf() end)
-      row:SetScript("OnEnter", function(r) if profFilter ~= r.prof then r.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) end end)
-      row:SetScript("OnLeave", function(r) if profFilter ~= r.prof then r.hl:SetColorTexture(0, 0, 0, 0) end end)
-    end
     row.prof = p.name
-    if profFilter == p.name then row.hl:SetColorTexture(C.panel2[1], C.panel2[2], C.panel2[3], 1) else row.hl:SetColorTexture(0, 0, 0, 0) end
-    row.c.name:SetText(p.name); row.c.name:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-    row.c.rank:SetText(("%d / %d"):format(p.rank, p.max)); row.c.rank:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-    row.c.bar:SetText("")
-    if p.max > 0 then
-      row.bar:ClearAllPoints(); row.bar:SetPoint("LEFT", 302, 0); row.bar:SetSize(math.max(1, 160 * math.min(1, p.rank / p.max)), 8); row.bar:Show()
+    markSelected(row, profFilter == p.name)
+    row.c.name:SetText(p.name)
+    row.c.rank:SetText(("%d / %d"):format(p.rank, p.max))
+    -- the skill bar: a dim track across the whole bar column, the filled part over it, so a low skill still reads as
+    -- a share of its column and not as a stray mark
+    if not row.bar then
+      row.barTrack = row:CreateTexture(nil, "BORDER"); row.barTrack:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
+      row.barTrack:SetPoint("LEFT", row.c.bar, "LEFT", 0, 0)
+      row.bar = row:CreateTexture(nil, "ARTWORK"); row.bar:SetColorTexture(C.cyan[1], C.cyan[2], C.cyan[3], 0.35)
+      row.bar:SetPoint("LEFT", row.c.bar, "LEFT", 0, 0)
     end
-    row.c.tiers:SetText(p.tiers > 0 and tostring(p.tiers) or "-"); row.c.tiers:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-    row.c.ups:SetText(p.skillups > 0 and tostring(p.skillups) or "-"); row.c.ups:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+    local colW = prof.tbl.cols.bar and prof.tbl.cols.bar.w or 160
+    if p.max > 0 then
+      local bw = math.max(1, colW * math.min(1, p.rank / p.max))
+      row.barTrack:SetSize(colW, 8); row.barTrack:Show()
+      row.bar:SetSize(bw, 8); row.bar:Show()
+    else row.bar:Hide(); row.barTrack:Hide() end
+    row.c.tiers:SetText(p.tiers > 0 and tostring(p.tiers) or "-")
+    row.c.ups:SetText(p.skillups > 0 and tostring(p.skillups) or "-")
   end, "No professions found. Learn one and it shows up here.")
-  -- the history sits right under the professions, however many there are
-  if profHistFrame then
-    profHistFrame:ClearAllPoints()
-    profHistFrame:SetPoint("TOPLEFT", prof.pane, "TOPLEFT", 0, -(46 + 18 * math.max(1, #rows) + 16))
-    profHistFrame:SetPoint("BOTTOMRIGHT", prof.pane, "BOTTOMRIGHT", 0, 0)
-  end
   if profHist then
     local hist = buildSkillups(profFilter)
     profHist.summary:SetText(profFilter and ("How %s leveled  ·  %d skill-ups"):format(profFilter, #hist) or ("How your professions leveled  ·  %d skill-ups"):format(#hist))
     profHist.render(hist, function(row, h)
-      row.c.time:SetText(date("%b %d, %H:%M", h.t)); row.c.time:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.prof:SetText(h.prof); row.c.prof:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.c.rank:SetText(h.rank and tostring(h.rank) or ""); row.c.rank:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
-      row.c.source:SetText(h.source); row.c.source:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub)); row.c.loc:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
-      row.c.coords:SetText(UI.fmtCoords(h.x, h.y)); row.c.coords:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
+      row.c.time:SetText(date("%b %d, %H:%M", h.t))
+      row.c.prof:SetText(h.prof)
+      row.c.rank:SetText(h.rank and tostring(h.rank) or "")
+      row.c.source:SetText(h.source)
+      row.c.loc:SetText(UI.fmtPlace(h.zone, h.sub))
+      row.c.coords:SetText(UI.fmtCoords(h.x, h.y))
     end, profFilter and ("No skill-ups for %s recorded yet."):format(profFilter) or "No skill-ups recorded yet. Gather or craft and each point shows up here.")
   end
 end
+-- the history list of a pane, right under its first list
+local function historyFrame(L)
+  local f = CreateFrame("Frame", nil, L.pane)
+  f:SetPoint("TOPLEFT", L.body, "BOTTOMLEFT", 0, -UI.SP.L)
+  f:SetPoint("BOTTOMRIGHT", L.pane, "BOTTOMRIGHT", 0, 0)
+  return f
+end
 UI.registerPane("Character", 1, "Quests", function(content)
   quests = makeList(content, {
-    { "time", 0, 60, "Time" }, { "name", 66, 260, "Quest" }, { "status", 332, 80, "Status" }, { "loc", 418, 150, "Location" }, { "coords", 574, 80, "Coords" },
+    { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "23:59" } },
+    { key = "name", label = "Quest", flex = 1.4, min = 120 },
+    { key = "status", label = "Status", kind = "tag", measure = { "In progress", "Completed" } },
+    { key = "loc", label = "Location", flex = 1, min = 90, color = "dim" },
+    COORDS,
   }); renderQuests()
 end, renderQuests)
 UI.registerPane("Character", 2, "Reputation", function(content)
   rep = makeList(content, {
-    { "name", 0, 300, "Faction" }, { "standing", 306, 120, "Standing" }, { "last", 432, 200, "Last standing gain" },
-  })
-  rep.pane = content
-  repHistFrame = CreateFrame("Frame", nil, content)
+    { key = "name", label = "Faction", flex = 1, min = 140 },
+    { key = "standing", label = "Standing", kind = "tag", measure = STANDINGS },
+    { key = "last", label = "Last standing gain", kind = "tag", color = "dim", measure = TIME_MEASURE },
+  }, { fit = 8, onClick = function(row) repFilter = (repFilter == row.faction) and nil or row.faction; renderRep() end })
+  repHistFrame = historyFrame(rep)
   repHist = makeList(repHistFrame, {
-    { "time", 0, 96, "Time" }, { "faction", 100, 150, "Faction" }, { "change", 254, 90, "Gain" }, { "source", 348, 150, "Source" }, { "loc", 502, 100, "Location" }, { "coords", 606, 54, "Coords" },
+    { key = "time", label = "Time", kind = "tag", color = "dim", measure = TIME_MEASURE },
+    { key = "faction", label = "Faction", flex = 1, min = 90 },
+    { key = "change", label = "Gain", kind = "tag", justify = "RIGHT", measure = { "+9999", "Now Unfriendly" } },
+    { key = "source", label = "Source", flex = 1, min = 90, color = "dim" },
+    { key = "loc", label = "Location", flex = 0.8, min = 80, color = "dim" },
+    COORDS,
   })
   renderRep()
 end, renderRep)
 UI.registerPane("Character", 3, "Professions", function(content)
   prof = makeList(content, {
-    { "name", 0, 200, "Profession" }, { "rank", 206, 90, "Skill" }, { "bar", 302, 160, "" }, { "tiers", 468, 90, "Milestones" }, { "ups", 564, 90, "Skill-ups" },
-  })
-  prof.pane = content
-  profHistFrame = CreateFrame("Frame", nil, content)
+    { key = "name", label = "Profession", flex = 1, min = 120 },
+    { key = "rank", label = "Skill", kind = "num", measure = { "300 / 300" } },
+    { key = "bar", label = "", kind = "tag", min = 160 },
+    { key = "tiers", label = "Milestones", kind = "num", color = "dim", measure = { "9" } },
+    { key = "ups", label = "Skill-ups", kind = "num", color = "dim", measure = { "9999" } },
+  }, { fit = math.huge, onClick = function(row) profFilter = (profFilter == row.prof) and nil or row.prof; renderProf() end })
+  profHistFrame = historyFrame(prof)
   profHist = makeList(profHistFrame, {
-    { "time", 0, 96, "Time" }, { "prof", 100, 100, "Profession" }, { "rank", 204, 44, "Skill" }, { "source", 252, 170, "Source" }, { "loc", 426, 150, "Location" }, { "coords", 580, 70, "Coords" },
+    { key = "time", label = "Time", kind = "tag", color = "dim", measure = TIME_MEASURE },
+    { key = "prof", label = "Profession", flex = 0.6, min = 80 },
+    { key = "rank", label = "Skill", kind = "num", measure = { "300" } },
+    { key = "source", label = "Source", flex = 1, min = 90, color = "dim" },
+    { key = "loc", label = "Location", flex = 0.8, min = 80, color = "dim" },
+    COORDS,
   })
   renderProf()
 end, renderProf)
-
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}
 ns._test.buildQuests, ns._test.buildReputation, ns._test.buildProfessions = buildQuests, buildReputation, buildProfessions
