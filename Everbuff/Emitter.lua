@@ -436,7 +436,68 @@ local function questTitle(qid, index)
   return "quest"
 end
 
-local lastZone, wasInstance, lastInstanceName, wasDead = nil, false, nil, false
+-- Is the player in a dungeon or raid, and which? WoW Forever answers GetInstanceInfo() inside Shadowfang Keep with
+-- instance type "none" (a session there started with context "Shadowfang Keep" from the zone text and recorded no
+-- DUNGEON), so one signal is not enough. Any of these says yes, in order: GetInstanceInfo's type, IsInInstance's
+-- type, the map the player stands on being a dungeon map (C_Map mapType 4), the zone being a known instance by name.
+-- Returns name, kind ("party" or "raid") or nil. The raw answers go to settings.selftest.instance for the next look.
+Emitter.INSTANCES = {
+  party = { "Ragefire Chasm", "Wailing Caverns", "The Deadmines", "Deadmines", "Shadowfang Keep", "Blackfathom Deeps",
+    "The Stockade", "Stormwind Stockade", "Gnomeregan", "Razorfen Kraul", "Scarlet Monastery", "Razorfen Downs",
+    "Uldaman", "Zul'Farrak", "Maraudon", "The Temple of Atal'Hakkar", "Sunken Temple", "Blackrock Depths",
+    "Blackrock Spire", "Lower Blackrock Spire", "Upper Blackrock Spire", "Dire Maul", "Stratholme", "Scholomance" },
+  raid = { "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj", "Ahn'Qiraj Temple",
+    "Temple of Ahn'Qiraj", "Naxxramas" },
+}
+function Emitter.instanceNow()
+  -- (plainNum is declared further down; the same guard inline)
+  local function plainNum(v) if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then return v end end
+  local byName = Emitter._instByName
+  if not byName then
+    byName = {}
+    for kind, list in pairs(Emitter.INSTANCES) do for _, n in ipairs(list) do byName[n:lower()] = kind end end
+    Emitter._instByName = byName
+  end
+  local zone = safeStr(GetRealZoneText and GetRealZoneText()) or ""
+  local ok, iname, itype, diff, _, _, _, _, imap = pcall(GetInstanceInfo)
+  iname, itype = ok and safeStr(iname) or nil, ok and safeStr(itype) or nil
+  local inInst, ptype
+  if IsInInstance then local ok2, a, b = pcall(IsInInstance); if ok2 then inInst, ptype = a, safeStr(b) end end
+  local mapID, mapType
+  if C_Map and C_Map.GetBestMapForUnit and C_Map.GetMapInfo then
+    local ok3, m = pcall(C_Map.GetBestMapForUnit, "player"); mapID = ok3 and plainNum(m) or nil
+    if mapID then local ok4, info = pcall(C_Map.GetMapInfo, mapID); mapType = ok4 and type(info) == "table" and plainNum(info.mapType) or nil end
+  end
+  local name, kind
+  if itype == "party" or itype == "raid" then name, kind = iname, itype
+  elseif inInst and (ptype == "party" or ptype == "raid") then name, kind = iname, ptype
+  elseif mapType == 4 then kind = byName[zone:lower()] or "party"; name = zone
+  elseif byName[zone:lower()] then name, kind = zone, byName[zone:lower()] end
+  if kind and (not name or name == "") then name = (zone ~= "" and zone) or iname or "Dungeon" end
+  if ns.DB and ns.DB.settings then
+    ns.DB.settings.selftest = ns.DB.settings.selftest or {}
+    ns.DB.settings.selftest.instance = { zone = zone, name = iname, type = itype, diff = plainNum(diff), map = plainNum(imap),
+      inInstance = inInst and true or false, ptype = ptype, uiMap = mapID, mapType = mapType, verdict = kind or "none" }
+  end
+  return name, kind
+end
+-- Announce a dungeon entry or exit when the answer changed (deduped on the character across /reload).
+function Emitter.checkInstance()
+  local iname, kind = Emitter.instanceNow()
+  local announced = ns.DB and ns.char().inInstance   -- per character (#23): another character is not in this dungeon
+  -- state FIRST, then the event/toast: if presentation ever throws, the dedupe state is still correct
+  if kind and announced ~= iname then
+    if announced then Emitter.event("DUNGEONLEAVE", { name = announced }) end
+    if ns.DB then ns.char().inInstance = iname end
+    Emitter.event("DUNGEON", { name = iname })
+  elseif (not kind) and announced then
+    if ns.DB then ns.char().inInstance = nil end
+    Emitter.event("DUNGEONLEAVE", { name = announced })
+  end
+  return kind ~= nil
+end
+
+local lastZone, wasDead = nil, false
 local deadAt = nil       -- GetTime() at PLAYER_DEAD, for the corpse-run downtime
 local lootSource = nil   -- the corpse/node currently being looted (best effort)
 local lootSourceGUID = nil  -- its GUID (contains the npcID) for exact desktop attribution
@@ -1358,6 +1419,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     Emitter.event("LEVELUP", { level = a1 })
     if RequestTimePlayed then pcall(RequestTimePlayed) end   -- stamp real /played at this ding (pace chart)
   elseif event == "ZONE_CHANGED_NEW_AREA" then
+    pcall(Emitter.checkInstance)   -- a client that enters an instance without a loading screen event still counts
     local z = GetRealZoneText() or GetZoneText()
     if z and z ~= lastZone then
       lastZone = z
@@ -1383,21 +1445,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       C_Timer.After(12, function() if RequestTimePlayed then pcall(RequestTimePlayed) end end) -- /played once on login
       C_Timer.After(15, function() if RequestRaidInfo then pcall(RequestRaidInfo) end end)     -- lockouts once on login
     end
-    local iname, itype = GetInstanceInfo()
-    local nowInst = (itype == "party" or itype == "raid")
-    -- de-dup across reload/relog: wasInstance resets to false on every load, so we key the
-    -- "already announced this dungeon" state on ns.DB (survives /reload) to avoid a duplicate DUNGEON.
-    local announced = ns.DB and ns.char().inInstance   -- per character (#23): another character is not in this dungeon
-    -- state FIRST, then the event/toast: if presentation ever throws, the dedupe state is still correct
-    if nowInst and announced ~= iname then
-      if ns.DB then ns.char().inInstance = iname end
-      Emitter.event("DUNGEON", { name = iname })
-    elseif (not nowInst) and announced then
-      if ns.DB then ns.char().inInstance = nil end
-      Emitter.event("DUNGEONLEAVE", { name = lastInstanceName or announced or "the dungeon" })
-    end
-    wasInstance = nowInst
-    if nowInst then lastInstanceName = iname end
+    pcall(Emitter.checkInstance)   -- dungeon entry or exit, deduped on the character across /reload
     lastZone = GetRealZoneText()
     if ns.DB and lastZone then   -- the zone you log into is "seen", not discovered
       ns.char().seenZones = ns.char().seenZones or {}

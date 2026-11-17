@@ -163,6 +163,42 @@ M.inst = { name = "Elwynn Forest", type = "none", diff = 0, mapID = 0 }
 M.fire("PLAYER_ENTERING_WORLD")
 check("DUNGEONLEAVE emitted", count(ns.DB.story.events, function(e) return e.kind == "DUNGEONLEAVE" end) == 1)
 
+-- ── WoW Forever: GetInstanceInfo says "none" inside a dungeon; the zone name and the map type still tell ──
+do
+  local function nk(k) return count(ns.DB.story.events, function(e) return e.kind == k end) end
+  local d0, l0 = nk("DUNGEON"), nk("DUNGEONLEAVE")
+  local n0 = #ns.DB.story.events
+  M.inst = { name = "Kalimdor", type = "none", diff = 0, mapID = 0 }
+  local z0 = M.zone
+  M.zone = "Shadowfang Keep"; M.fire("PLAYER_ENTERING_WORLD"); M.fire("PLAYER_ENTERING_WORLD")
+  check("Forever: DUNGEON from the zone name when the instance type is none", nk("DUNGEON") == d0 + 1, nk("DUNGEON") - d0)
+  local last = ns.DB.story.events[#ns.DB.story.events]
+  local dn; for i = #ns.DB.story.events, 1, -1 do if ns.DB.story.events[i].kind == "DUNGEON" then dn = ns.DB.story.events[i]; break end end
+  check("Forever: the run is named after the zone", dn and dn.text == "Shadowfang Keep", dn and dn.text)
+  local probe = ns.DB.settings.selftest and ns.DB.settings.selftest.instance
+  check("instance probe kept for diagnosis", probe and probe.type == "none" and probe.verdict == "party", probe and probe.verdict)
+  M.zone = "Silverpine Forest"; M.fire("ZONE_CHANGED_NEW_AREA")
+  check("Forever: DUNGEONLEAVE on the zone change out", nk("DUNGEONLEAVE") == l0 + 1, nk("DUNGEONLEAVE") - l0)
+  -- an instance the name list lacks: the dungeon map type
+  M.zone = "Some New Crypt"; M.mapType = 4; M.fire("ZONE_CHANGED_NEW_AREA")
+  check("Forever: DUNGEON from the dungeon map type", nk("DUNGEON") == d0 + 2, nk("DUNGEON") - d0)
+  -- straight from one dungeon into another: the first is left, the second entered
+  M.mapType = nil; M.zone = "Razorfen Kraul"; M.fire("PLAYER_ENTERING_WORLD")
+  check("dungeon to dungeon: leave then enter", nk("DUNGEONLEAVE") == l0 + 2 and nk("DUNGEON") == d0 + 3)
+  M.zone = "The Barrens"; M.fire("PLAYER_ENTERING_WORLD")
+  check("out again", nk("DUNGEONLEAVE") == l0 + 3 and ns.char().inInstance == nil)
+  -- an outdoor zone stays open world
+  M.zone = "Silverpine Forest"; M.fire("ZONE_CHANGED_NEW_AREA")
+  check("open world raises nothing", nk("DUNGEON") == d0 + 3 and nk("DUNGEONLEAVE") == l0 + 3)
+  M.zone = z0
+  -- the run list sees the Forever runs
+  local rr = T.buildRuns(); local sfk
+  for _, r in ipairs(rr) do if r.name == "Shadowfang Keep" then sfk = r end end
+  check("Forever: Shadowfang Keep run listed and closed", sfk and sfk.inProgress == false, sfk and tostring(sfk.inProgress))
+  -- clean up so later run-count checks see only the original run
+  for i = #ns.DB.story.events, n0 + 1, -1 do table.remove(ns.DB.story.events, i) end
+end
+
 -- ── Dungeons run grouping (pure) ──
 local runs = T.buildRuns()
 check("one run built", #runs == 1, #runs)
