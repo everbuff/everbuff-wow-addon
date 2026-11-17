@@ -390,7 +390,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.36",
+			["addonVersion"] = "0.9.37",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -406,6 +406,9 @@ EverbuffDB = {
 			["gold"] = {
 				["auctionSales"] = 0,
 				["auctions"] = 0,
+				["away"] = 0,
+				["awayIn"] = 0,
+				["awayOut"] = 0,
 				["flights"] = 0,
 				["gained"] = 637,
 				["looted"] = 287,
@@ -416,6 +419,8 @@ EverbuffDB = {
 				["repairs"] = 0,
 				["sold"] = 0,
 				["spent"] = 0,
+				["trade"] = 0,
+				["tradeSpent"] = 0,
 				["training"] = 0,
 				["vendor"] = 0,
 			},
@@ -522,7 +527,7 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [65]
 				"UIErrorsFrame", -- [66]
 			},
-			["addon"] = "0.9.36",
+			["addon"] = "0.9.37",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",

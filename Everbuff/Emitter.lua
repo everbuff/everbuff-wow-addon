@@ -342,6 +342,16 @@ function Emitter.event(kind, d, quiet)
     machine = ("LOOT %d %s"):format(c, name)
     human = c > 1 and ("Loot:  %s x%d"):format(name, c) or ("Loot:  " .. name)
   elseif kind == "REWARD" then machine = "REWARD " .. name; human = "Chose:  " .. name
+  elseif kind == "GOLDAWAY" or kind == "TRADE" then
+    local m = type(d.money) == "number" and d.money or 0   -- our own purse: a plain number
+    local c = math.abs(m); local g, sv, cp = math.floor(c / 10000), math.floor(c % 10000 / 100), c % 100
+    local parts = {}
+    if g > 0 then parts[#parts + 1] = g .. "g" end
+    if sv > 0 then parts[#parts + 1] = sv .. "s" end
+    if cp > 0 or #parts == 0 then parts[#parts + 1] = cp .. "c" end
+    local amt = (m < 0 and "-" or "+") .. table.concat(parts, " ")
+    machine = kind .. " " .. m
+    human = kind == "TRADE" and ("Trade %s with %s"):format(amt, name) or ("Gold elsewhere " .. amt)   -- the amount first: a narrow column shortens the end
   else machine = kind .. " " .. (name ~= "" and name or zone); human = kind end
   -- bulk/common loot is already recorded in the Loot tab (lootlog); keep it out of the timeline and flag
   if kind == "LOOT" and quiet then return end
@@ -357,6 +367,7 @@ function Emitter.event(kind, d, quiet)
       -- profession skill-ups carry what was crafted + how many times, in which profession (= name)
       prof = (kind == "SKILLUP" and d.craft) and name or nil, craft = d.craft, crafted = d.crafted,
       standing = d.standing,  -- reputation tier reached (REP)
+      money = (kind == "GOLDAWAY" or kind == "TRADE") and type(d.money) == "number" and d.money or nil,   -- copper, signed (#31)
       -- seconds on the taxi (FLIGHTTRIP, #11): the catalog's T-2 and T-5 read it per trip, not from the text
       duration = (kind == "FLIGHTTRIP" and type(d.duration) == "number") and math.floor(d.duration * 10 + 0.5) / 10 or nil,
       guid = d.guid,          -- exact npc guid for a precise kill (PARTY_KILL) - desktop attribution
@@ -674,10 +685,45 @@ local function credit(g, ses, key, n)
   if type(sg) == "table" then sg[key] = (sg[key] or 0) + n end
 end
 
+-- Gold that changed while the addon did not see it (everbuff-wow-addon #31): another PC, the addon off, a
+-- character transfer. The first read of a load compares the purse with the balance the save file last kept for
+-- this character; a difference goes to `away` (signed) and `awayIn` or `awayOut`, never to gained or spent, so
+-- balance = gained - spent + away holds across loads. Booked one tick later: Core starts the new session after
+-- this file's PLAYER_ENTERING_WORLD handler has run. A quiet GOLDAWAY story row says how much; nothing shows in game.
+function Emitter.goldAway(d)
+  local function book()
+    if not ns.DB then return end
+    local g, ses = goldDB(), sessionDB()
+    credit(g, ses, "away", d); credit(g, ses, d > 0 and "awayIn" or "awayOut", math.abs(d))
+    Emitter.event("GOLDAWAY", { money = d }, true)
+  end
+  if C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
+end
+
+-- Coin traded with another player: the trade window was open, or closed under 3 s ago (the purse can move just
+-- after TRADE_CLOSED). The partner's name is read at TRADE_SHOW from the client's "NPC" unit.
+Emitter._trade = { open = false, untilT = 0, name = nil }
+function Emitter.tradeShow()
+  local t = Emitter._trade
+  t.open, t.name = true, (UnitName and safeStr(UnitName("NPC"))) or nil
+end
+function Emitter.tradeClosed() local t = Emitter._trade; t.open, t.untilT = false, GetTime() + 3 end
+local function inTrade() local t = Emitter._trade; return t.open or GetTime() < t.untilT end
+local function tradeRow(money) Emitter.event("TRADE", { name = Emitter._trade.name or "a player", money = money }, true) end
+
 local function onMoney()
   if not ns.DB then return end
   local c = plainNum(rd(GetMoney)); if not c then return end
-  if lastMoney == nil then lastMoney = c; goldDB().balance = c; return end   -- first read seeds baseline
+  if lastMoney == nil then                                   -- first read of this load seeds the baseline
+    local g = goldDB(); local prev = plainNum(g.balance)
+    -- a 0 at load with gold saved may be the client not ready yet: read once more 3 s later before booking it
+    if c == 0 and prev and prev > 0 and not Emitter._moneyRetried and C_Timer and C_Timer.After then
+      Emitter._moneyRetried = true; C_Timer.After(3, onMoney); return
+    end
+    lastMoney = c; g.balance = c
+    if prev and c ~= prev then Emitter.goldAway(c - prev) end
+    return
+  end
   local delta = c - lastMoney; lastMoney = c
   if delta == 0 then return end
   local g = goldDB(); g.balance = c
@@ -692,6 +738,8 @@ local function onMoney()
         x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
       }
       ns.trimToCap(ns.DB.loot.log, 2000)
+    elseif inTrade() then
+      credit(g, ses, "trade", delta); tradeRow(delta)     -- coin another player gave us in a trade
     elseif Emitter._questMoney and Emitter._questMoney.amount == delta and GetTime() - Emitter._questMoney.at < 3 then
       credit(g, ses, "quests", delta)                     -- a quest's money reward (QUEST_TURNED_IN just said so)
       Emitter._questMoney = nil
@@ -713,6 +761,7 @@ local function onMoney()
     local spent = -delta
     credit(g, ses, "spent", spent); ses.spent = (ses.spent or 0) + spent
     if GetTime() < repairUntil then credit(g, ses, "repairs", spent); repairUntil = 0
+    elseif inTrade() then credit(g, ses, "tradeSpent", spent); tradeRow(-spent)   -- coin we gave in a trade
     elseif merchantOpen then credit(g, ses, "vendor", spent)
     elseif trainerOpen then credit(g, ses, "training", spent)
     elseif GetTime() < taxiUntil then credit(g, ses, "flights", spent)
@@ -835,6 +884,7 @@ for _, e in ipairs({
   "GROUP_ROSTER_UPDATE",                                 -- party/raid joins and leaves over time
   "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED", "TAXIMAP_OPENED",  -- gold sink context
   "MAIL_SHOW", "MAIL_CLOSED", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",                -- mailbox / auction context
+  "TRADE_SHOW", "TRADE_CLOSED",                          -- coin traded with another player
   "UPDATE_INVENTORY_DURABILITY",                         -- gear health
   "UPDATE_INSTANCE_INFO",                                -- saved instances (lockouts) after RequestRaidInfo
   "SKILL_LINES_CHANGED",                                 -- profession ranks (tier milestones)
@@ -1125,6 +1175,8 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "MAIL_CLOSED" then mailOpen = false
   elseif event == "AUCTION_HOUSE_SHOW" then auctionOpen = true
   elseif event == "AUCTION_HOUSE_CLOSED" then auctionOpen = false
+  elseif event == "TRADE_SHOW" then Emitter.tradeShow()
+  elseif event == "TRADE_CLOSED" then Emitter.tradeClosed()
   elseif event == "MERCHANT_SHOW" then merchantOpen = true
   elseif event == "MERCHANT_CLOSED" then merchantOpen = false
   elseif event == "TRAINER_SHOW" then trainerOpen = true
@@ -1626,12 +1678,12 @@ if ns.UI and ns.UI.registerTab then
     end)
     content.search = search
     -- columns: Time · Type · Event · Location (name) · Coords · While fighting (source)
-    local COL = { time = 0, type = 66, ev = 156, where = 358, coords = 490, foe = 576 }
-    local WID = { time = 60, type = 84, ev = 196, where = 126, coords = 80, foe = 94 }
+    local COL = { time = 0, type = 66, ev = 156, where = 358, coords = 490, foe = 562 }
+    local WID = { time = 60, type = 84, ev = 196, where = 126, coords = 68, foe = 108 }
     local ROWW = 670
     local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -30); hdr:SetSize(ROWW, 16)
     local function head(col, w, text)
-      local fs = ns.UI.FS(hdr, "GameFontNormalSmall")
+      local fs = ns.UI.CellFS(hdr, "GameFontNormalSmall")
       fs:SetPoint("LEFT", col, 0); if w then fs:SetWidth(w) end; fs:SetJustifyH("LEFT")
       fs:SetText(text:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
     end
@@ -1686,12 +1738,12 @@ if ns.UI and ns.UI.registerTab then
                 local f = fightAt(ev.t or 0); if f and ns.OpenFightDetail then ns.OpenFightDetail(f) end
               elseif ev.kind == "LOOT" and ns.UI.Open then ns.UI.Open("Loot", "items") end
             end)
-            row.tm = ns.UI.FS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
-            row.ty = ns.UI.FS(row, "GameFontHighlightSmall"); row.ty:SetPoint("LEFT", COL.type, 0); row.ty:SetWidth(WID.type); row.ty:SetJustifyH("LEFT")
-            row.tx = ns.UI.FS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", COL.ev, 0); row.tx:SetWidth(WID.ev); row.tx:SetJustifyH("LEFT")
-            row.wh = ns.UI.FS(row, "GameFontDisableSmall"); row.wh:SetPoint("LEFT", COL.where, 0); row.wh:SetWidth(WID.where); row.wh:SetJustifyH("LEFT")
-            row.co = ns.UI.FS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-            row.fo = ns.UI.FS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
+            row.tm = ns.UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
+            row.ty = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.ty:SetPoint("LEFT", COL.type, 0); row.ty:SetWidth(WID.type); row.ty:SetJustifyH("LEFT")
+            row.tx = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", COL.ev, 0); row.tx:SetWidth(WID.ev); row.tx:SetJustifyH("LEFT")
+            row.wh = ns.UI.CellFS(row, "GameFontDisableSmall"); row.wh:SetPoint("LEFT", COL.where, 0); row.wh:SetWidth(WID.where); row.wh:SetJustifyH("LEFT")
+            row.co = ns.UI.CellFS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
+            row.fo = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
             child.rows[idx] = row
           end
           row.ev = e
@@ -1894,18 +1946,18 @@ if ns.UI and ns.UI.registerTab then
               local _, link = GetItemInfo(r.itemId); if link then ChatEdit_InsertLink(link) end
             end
           end)
-          row.lo = ns.UI.FS(row, "GameFontDisableSmall")
+          row.lo = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.lo:SetPoint("LEFT", COL.loc, 0); row.lo:SetWidth(WID.loc); row.lo:SetJustifyH("LEFT")
-          row.co = ns.UI.FS(row, "GameFontDisableSmall")
+          row.co = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-          row.tm = ns.UI.FS(row, "GameFontDisableSmall")
+          row.tm = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
           row.ic = row:CreateTexture(nil, "ARTWORK"); row.ic:SetSize(16, 16); row.ic:SetPoint("LEFT", COL.icon, 0)
-          row.nm = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.nm = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.nm:SetPoint("LEFT", COL.item, 0); row.nm:SetWidth(WID.item); row.nm:SetJustifyH("LEFT")
-          row.qt = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.qt = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.qt:SetPoint("LEFT", COL.qty, 0); row.qt:SetWidth(WID.qty); row.qt:SetJustifyH("LEFT")
-          row.fr = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.fr = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.fr:SetPoint("LEFT", COL.from, 0); row.fr:SetWidth(WID.from); row.fr:SetJustifyH("LEFT")
           child.rows[idx] = row
         end
@@ -1962,5 +2014,6 @@ ns._test.lootQuiet = lootQuiet
 ns._test.safeStr = safeStr
 ns._test.plainNum = plainNum
 ns._test.onMoney, ns._test.onXP, ns._test.onPlayed = onMoney, onXP, onPlayed
+ns._test.newLoad = function() lastMoney = nil; Emitter._moneyRetried = nil end   -- what a fresh load starts with (#31)
 ns._test.CREATE_PAT, ns._test.SKILLUP_PAT = CREATE_PAT, SKILLUP_PAT
 ns._test.DISCOVER_XP_PAT, ns._test.DISCOVER_PAT = DISCOVER_XP_PAT, DISCOVER_PAT
