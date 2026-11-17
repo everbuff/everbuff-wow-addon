@@ -17,7 +17,7 @@ ns.Fights = F
 -- fight and shipped it to the backend, it acks (by fight id) and the addon prunes it. The cap keeps
 -- SavedVariables from growing without bound if the desktop never runs. At the cap a fight the desktop
 -- already has goes first; a fight it does not have goes only when nothing else can, and never silently
--- (everbuff-business #38, A1, D18). 1000 until 0.9.37; raised to 5000 by the founder on 2026-11-11 because a desktop
+-- (everbuff-business #38, A1, D18). 1000 until 0.9.38; raised to 5000 by the founder on 2026-11-11 because a desktop
 -- that holds the video over the month's hours (0.1.5) never acked, and the addon dropped fights it still had.
 local FIGHT_CAP = 5000
 local LOST_SAY_EVERY = 50   -- the first loss of a session is said in chat, then every 50th, with the running count
