@@ -96,7 +96,7 @@ carried across those windows rather than recorded as lost. `t` is seconds since 
 (`shown`, 0.9.5: the client's `GetTime()` in seconds with milliseconds when the notification for this row reached the screen; absent when it was quiet, muted, hidden or dropped from the queue. With the session's `startedMono` it is the addon side of an alignment anchor, matched to the desktop's OCR of the same notification, everbuff-desktop #72. `downtime` is stamped on a DEATH row once you are back on your feet: seconds from death to revive, the corpse run; `durLoss` is the gear durability percentage lost across that death.)
 (`x`,`y` are 0..1 map fractions.) Kinds: `LEVELUP ZONE FIRSTZONE DUNGEON DUNGEONLEAVE QUESTACCEPT QUESTDONE
 REWARD BOSS KILL WIPE DEATH ALIVE SKILLUP DISCOVERY FLIGHT FLIGHTTRIP LOOT ACHIEV SPELL REP ROSTERJOIN
-ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE GOLDAWAY TRADE`. (`money`, 0.9.37, #31: signed copper on GOLDAWAY, gold changed outside the addon's view, and TRADE, coin received or given in one purse change of a trade, whose text names the partner; both are quiet, never shown in game.) Only rare+ LOOT lands here (all loot is in `loot.log`).
+ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE GOLDAWAY TRADE`. (`money`, 0.9.37, #31: signed copper on GOLDAWAY, gold changed outside the addon's view, and TRADE, coin received or given in one purse change of a trade, whose text names the partner ("Gold elsewhere +5g 65s 70c", "Trade +25s with Kristijan"); both are quiet, never shown in game.) Only rare+ LOOT lands here (all loot is in `loot.log`).
 
 ### Town visits and the chat log (everbuff-business #39, approved 2026-09-29, shipped in 0.9.13)
 

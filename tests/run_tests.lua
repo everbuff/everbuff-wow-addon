@@ -2156,7 +2156,7 @@ do
   check("#31 gained and spent stay what the addon saw", g.gained == gained0 and g.spent == spent0 and sg.gained == 0 and sg.spent == 0)
   check("#31 balance = gained - spent + away still holds", drift() == d0, drift() - d0)
   local ev = last("GOLDAWAY")
-  check("#31 a GOLDAWAY story row with the signed copper on the new session", ev and ev.money == 56570 and ev.s == ns.DB.active and ev.text == "Gold changed outside everbuff.gg:  +5g 65s 70c", ev and ev.text)
+  check("#31 a GOLDAWAY story row with the signed copper on the new session", ev and ev.money == 56570 and ev.s == ns.DB.active and ev.text == "Gold elsewhere +5g 65s 70c", ev and ev.text)
   ns._test.newLoad(); M.money = g.balance - 1000; M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
   sg = ns.Recorder.current().gold
   check("#31 gold lost elsewhere goes to awayOut, away is signed", sg.away == -1000 and sg.awayOut == 1000 and sg.awayIn == 0 and last("GOLDAWAY").money == -1000)
@@ -2179,7 +2179,7 @@ do
   M.units.NPC = { name = "Kristijan" }; M.fire("TRADE_SHOW"); M.money = M.money + 2500; M.fire("PLAYER_MONEY")
   check("#31 coin received in a trade is trade income in both ledgers", sg.trade == 2500 and g.trade == trade0 + 2500, sg.trade)
   local tr = last("TRADE")
-  check("#31 a TRADE story row names the partner and the copper", tr and tr.money == 2500 and tr.text == "Trade with Kristijan:  +0g 25s 0c", tr and tr.text)
+  check("#31 a TRADE story row names the partner and the copper", tr and tr.money == 2500 and tr.text == "Trade +25s with Kristijan", tr and tr.text)
   M.money = M.money - 700; M.fire("PLAYER_MONEY")
   check("#31 coin given in a trade is tradeSpent, not other", sg.tradeSpent == 700 and g.tradeSpent == tspent0 + 700 and sg.other == other0 and last("TRADE").money == -700, tostring(sg.tradeSpent) .. " " .. tostring(g.tradeSpent) .. " " .. tostring(tspent0) .. " " .. tostring(sg.other) .. " " .. tostring(other0) .. " " .. tostring(last("TRADE").money))
   M.fire("TRADE_CLOSED"); M.units.NPC = nil; M.money = M.money + 100; M.fire("PLAYER_MONEY")
@@ -2187,6 +2187,47 @@ do
   M.now = M.now + 5; M.money = M.money + 100; M.fire("PLAYER_MONEY")
   check("#31 coin 5 s after the trade closed is not trade", sg.trade == 2600)
   M.runTimers()
+end
+
+-- ── layout audit: no text spills out of its box or over another text (founder, 2026-11-17: "fix the overflowing
+-- txt problem cause you have alot of that in tables and overview boxes"). Every tab and pane is rendered twice, on
+-- the suite's data and on the same data with long names and gold three digits larger; tests/layout.lua places the
+-- texts from the anchors and sizes the stub recorded and estimates their widths from the font size.
+do
+  local Lay = dofile("tests/layout.lua")
+  Lay.BOLD = { [ns.UI.VALUE_FONT] = true, [ns.UI.TITLE_FONT] = true }
+  M.textWidth = function(f) return Lay.textWidth(f) end
+  local function sweep(tag)
+    local found, seen, placed = {}, {}, 0
+    for _, tab in ipairs(T.tabs) do
+      ns.UI.Open(tab.name)
+      local function one(where)
+        for _, x in ipairs(Lay.audit(M.frames)) do
+          local key = x.kind .. x.text
+          if not seen[key] then seen[key] = true; found[#found + 1] = ("%s %s: %s (%s)"):format(x.kind, where, x.text, x.detail) end
+        end
+        placed = placed + Lay.placed
+      end
+      if tab.host then for _, pn in ipairs(tab.panes) do tab.ctl.select(pn.key); one(tab.name .. "/" .. pn.key) end; tab.ctl.select(tab.panes[1].key)
+      else one(tab.name) end
+    end
+    check(tag .. ": the audit placed the panes' texts", placed > 300, placed)
+    check(tag .. ": no text spills out of its box, over another text, or a number cut short", #found == 0, table.concat(found, " || "))
+  end
+  sweep("layout")
+  local LONG = { item = 1, src = 1, zone = 1, sub = 1, foe = 1, name = 1, text = 1, title = 1, boss = 1, context = 1, prof = 1, craft = 1, buyer = 1, seller = 1, faction = 1 }
+  local BIG = { money = 1, balance = 1, gained = 1, spent = 1, looted = 1, sold = 1, quests = 1, auctionSales = 1, mail = 1, repairs = 1, vendor = 1, training = 1, flights = 1, auctions = 1, mailSpent = 1, other = 1, trade = 1, tradeSpent = 1, kills = 1, xp = 1, gold = 1, price = 1, bid = 1, buyout = 1, net = 1, count = 1 }
+  local done = {}
+  local function stretch(t)
+    if done[t] then return end; done[t] = true
+    for k, v in pairs(t) do
+      if type(v) == "table" then stretch(v)
+      elseif type(v) == "string" and LONG[k] and #v > 1 and #v < 40 then t[k] = v .. " of the Scarlet Monastery Cathedral"
+      elseif type(v) == "number" and BIG[k] and v > 0 and v == math.floor(v) then t[k] = v * 1000 + 777 end
+    end
+  end
+  for k, v in pairs(ns.DB) do if k ~= "settings" and type(v) == "table" then stretch(v) end end
+  sweep("layout, long data")
 end
 
 print(("\n%d passed, %d failed"):format(passed, failed))

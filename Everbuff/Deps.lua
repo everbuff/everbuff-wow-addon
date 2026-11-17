@@ -216,7 +216,7 @@ ns.deps = {
   { "value", "GameFontHighlightSmall", "guarded" },
   { "value", "GameFontNormal", "required" },
   { "value", "GameFontNormalSmall", "required" },
-  { "value", "GameTooltip", "required" },
+  { "value", "GameTooltip", "guarded" },
   { "value", "GetAddOnMetadata", "guarded" },
   { "value", "GetSpecialization", "guarded" },
   { "value", "GetSpecializationInfo", "guarded" },

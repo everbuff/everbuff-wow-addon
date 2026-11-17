@@ -344,9 +344,14 @@ function Emitter.event(kind, d, quiet)
   elseif kind == "REWARD" then machine = "REWARD " .. name; human = "Chose:  " .. name
   elseif kind == "GOLDAWAY" or kind == "TRADE" then
     local m = type(d.money) == "number" and d.money or 0   -- our own purse: a plain number
-    local c = math.abs(m); local amt = ("%s%dg %ds %dc"):format(m < 0 and "-" or "+", math.floor(c / 10000), math.floor(c % 10000 / 100), c % 100)
+    local c = math.abs(m); local g, sv, cp = math.floor(c / 10000), math.floor(c % 10000 / 100), c % 100
+    local parts = {}
+    if g > 0 then parts[#parts + 1] = g .. "g" end
+    if sv > 0 then parts[#parts + 1] = sv .. "s" end
+    if cp > 0 or #parts == 0 then parts[#parts + 1] = cp .. "c" end
+    local amt = (m < 0 and "-" or "+") .. table.concat(parts, " ")
     machine = kind .. " " .. m
-    human = kind == "TRADE" and ("Trade with %s:  %s"):format(name, amt) or ("Gold changed outside everbuff.gg:  " .. amt)
+    human = kind == "TRADE" and ("Trade %s with %s"):format(amt, name) or ("Gold elsewhere " .. amt)   -- the amount first: a narrow column shortens the end
   else machine = kind .. " " .. (name ~= "" and name or zone); human = kind end
   -- bulk/common loot is already recorded in the Loot tab (lootlog); keep it out of the timeline and flag
   if kind == "LOOT" and quiet then return end
@@ -1673,12 +1678,12 @@ if ns.UI and ns.UI.registerTab then
     end)
     content.search = search
     -- columns: Time · Type · Event · Location (name) · Coords · While fighting (source)
-    local COL = { time = 0, type = 66, ev = 156, where = 358, coords = 490, foe = 576 }
-    local WID = { time = 60, type = 84, ev = 196, where = 126, coords = 80, foe = 94 }
+    local COL = { time = 0, type = 66, ev = 156, where = 358, coords = 490, foe = 562 }
+    local WID = { time = 60, type = 84, ev = 196, where = 126, coords = 68, foe = 108 }
     local ROWW = 670
     local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -30); hdr:SetSize(ROWW, 16)
     local function head(col, w, text)
-      local fs = ns.UI.FS(hdr, "GameFontNormalSmall")
+      local fs = ns.UI.CellFS(hdr, "GameFontNormalSmall")
       fs:SetPoint("LEFT", col, 0); if w then fs:SetWidth(w) end; fs:SetJustifyH("LEFT")
       fs:SetText(text:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
     end
@@ -1733,12 +1738,12 @@ if ns.UI and ns.UI.registerTab then
                 local f = fightAt(ev.t or 0); if f and ns.OpenFightDetail then ns.OpenFightDetail(f) end
               elseif ev.kind == "LOOT" and ns.UI.Open then ns.UI.Open("Loot", "items") end
             end)
-            row.tm = ns.UI.FS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
-            row.ty = ns.UI.FS(row, "GameFontHighlightSmall"); row.ty:SetPoint("LEFT", COL.type, 0); row.ty:SetWidth(WID.type); row.ty:SetJustifyH("LEFT")
-            row.tx = ns.UI.FS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", COL.ev, 0); row.tx:SetWidth(WID.ev); row.tx:SetJustifyH("LEFT")
-            row.wh = ns.UI.FS(row, "GameFontDisableSmall"); row.wh:SetPoint("LEFT", COL.where, 0); row.wh:SetWidth(WID.where); row.wh:SetJustifyH("LEFT")
-            row.co = ns.UI.FS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-            row.fo = ns.UI.FS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
+            row.tm = ns.UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
+            row.ty = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.ty:SetPoint("LEFT", COL.type, 0); row.ty:SetWidth(WID.type); row.ty:SetJustifyH("LEFT")
+            row.tx = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", COL.ev, 0); row.tx:SetWidth(WID.ev); row.tx:SetJustifyH("LEFT")
+            row.wh = ns.UI.CellFS(row, "GameFontDisableSmall"); row.wh:SetPoint("LEFT", COL.where, 0); row.wh:SetWidth(WID.where); row.wh:SetJustifyH("LEFT")
+            row.co = ns.UI.CellFS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
+            row.fo = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
             child.rows[idx] = row
           end
           row.ev = e
@@ -1941,18 +1946,18 @@ if ns.UI and ns.UI.registerTab then
               local _, link = GetItemInfo(r.itemId); if link then ChatEdit_InsertLink(link) end
             end
           end)
-          row.lo = ns.UI.FS(row, "GameFontDisableSmall")
+          row.lo = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.lo:SetPoint("LEFT", COL.loc, 0); row.lo:SetWidth(WID.loc); row.lo:SetJustifyH("LEFT")
-          row.co = ns.UI.FS(row, "GameFontDisableSmall")
+          row.co = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-          row.tm = ns.UI.FS(row, "GameFontDisableSmall")
+          row.tm = ns.UI.CellFS(row, "GameFontDisableSmall")
           row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
           row.ic = row:CreateTexture(nil, "ARTWORK"); row.ic:SetSize(16, 16); row.ic:SetPoint("LEFT", COL.icon, 0)
-          row.nm = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.nm = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.nm:SetPoint("LEFT", COL.item, 0); row.nm:SetWidth(WID.item); row.nm:SetJustifyH("LEFT")
-          row.qt = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.qt = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.qt:SetPoint("LEFT", COL.qty, 0); row.qt:SetWidth(WID.qty); row.qt:SetJustifyH("LEFT")
-          row.fr = ns.UI.FS(row, "GameFontHighlightSmall")
+          row.fr = ns.UI.CellFS(row, "GameFontHighlightSmall")
           row.fr:SetPoint("LEFT", COL.from, 0); row.fr:SetWidth(WID.from); row.fr:SetJustifyH("LEFT")
           child.rows[idx] = row
         end

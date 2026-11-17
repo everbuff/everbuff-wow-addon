@@ -41,7 +41,28 @@ frameMT.__index = function(t, k)
   if k == "SetMinMaxValues" then return function(self, a, b) self.min, self.max = a, b; return self end end
   if k == "SetAttribute" then return function(self, a, v) self.attrs[a] = v; return self end end
   if k == "GetAttribute" then return function(self, a) return self.attrs[a] end end
-  if k == "CreateTexture" or k == "CreateFontString" then return function() return mkframe() end end
+  -- geometry for the layout audit (tests/layout.lua): parents, anchors, sizes, fonts and wrapping are recorded
+  if k == "CreateTexture" then return function(self) local f = mkframe(); f.parentFrame = self; return f end end
+  if k == "CreateFontString" then return function(self, _, _, tmpl) local f = mkframe(); f.parentFrame = self; f._isFS = true; f._tmpl = tmpl; return f end end
+  if k == "SetPoint" then return function(self, point, a, b, c, d)
+    local rel, rp, x, y
+    if type(a) == "number" or a == nil then rel, rp, x, y = nil, point, a or 0, b or 0
+    elseif type(b) == "string" then rel, rp, x, y = a, b, c or 0, d or 0
+    else rel, rp, x, y = a, point, b or 0, c or 0 end
+    if type(rel) == "string" then rel = _G[rel] end
+    self._pts = self._pts or {}; self._pts[#self._pts + 1] = { p = point, rel = rel, rp = rp, x = x, y = y }; return self end end
+  if k == "SetAllPoints" then return function(self, rel) self._pts = { { p = "TOPLEFT", rel = rel, rp = "TOPLEFT", x = 0, y = 0 }, { p = "BOTTOMRIGHT", rel = rel, rp = "BOTTOMRIGHT", x = 0, y = 0 } }; return self end end
+  if k == "ClearAllPoints" then return function(self) self._pts = nil; return self end end
+  if k == "SetWidth" then return function(self, w) self._w = w; return self end end
+  if k == "SetHeight" then return function(self, h) self._h = h; return self end end
+  if k == "SetSize" then return function(self, w, h) self._w, self._h = w, h; return self end end
+  if k == "SetJustifyH" then return function(self, j) self._justify = j; return self end end
+  if k == "SetWordWrap" then return function(self, v) self._wrap = v and true or false; return self end end
+  if k == "SetMaxLines" then return function(self, n) self._maxLines = n; return self end end
+  if k == "SetFontObject" then return function(self, fo) self._font = fo; return self end end
+  if k == "SetFont" then return function(self, file, size) self._size = size; return true end end
+  if k == "SetParent" then return function(self, pa) self.parentFrame = pa; return self end end
+  if k == "GetStringWidth" then return function(self) return M.textWidth and M.textWidth(self) or 100 end end
   if k == "GetName" then return noop end
   return function(self) return self end        -- chainable no-op for SetPoint/SetSize/etc.
 end
@@ -250,5 +271,6 @@ _G.C_AuctionHouse = {
 M.tradeSkillName = nil
 _G.C_TradeSkillUI = _G.C_TradeSkillUI or {}
 _G.C_TradeSkillUI.GetBaseProfessionInfo = function() return { professionName = M.tradeSkillName } end
+M.frames = frames
 M.frames = frames
 return M

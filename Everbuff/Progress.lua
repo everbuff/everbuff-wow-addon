@@ -141,7 +141,7 @@ local function makeList(pane, cols, header)
   -- one header row + a pooled scrolling list; cols = { {key, x, w, label} ... }
   local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
   for _, c in ipairs(cols) do
-    local fs = UI.FS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
+    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
     fs:SetText(c[4]:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end
   local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold); summary:SetPoint("TOPLEFT", 2, -6); summary:SetWidth(650); summary:SetJustifyH("LEFT")
@@ -158,7 +158,7 @@ local function makeList(pane, cols, header)
       if not row then
         row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
         for _, c in ipairs(cols) do
-          local fs = UI.FS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
+          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
         end
         row.bar = row:CreateTexture(nil, "ARTWORK"); row.bar:SetColorTexture(C.cyan[1], C.cyan[2], C.cyan[3], 0.35); row.bar:Hide()
         child.rows[idx] = row
@@ -292,7 +292,7 @@ UI.registerPane("Character", 2, "Reputation", function(content)
   rep.pane = content
   repHistFrame = CreateFrame("Frame", nil, content)
   repHist = makeList(repHistFrame, {
-    { "time", 0, 96, "Time" }, { "faction", 100, 150, "Faction" }, { "change", 254, 90, "Gain" }, { "source", 348, 150, "Source" }, { "loc", 502, 100, "Location" }, { "coords", 606, 60, "Coordinates" },
+    { "time", 0, 96, "Time" }, { "faction", 100, 150, "Faction" }, { "change", 254, 90, "Gain" }, { "source", 348, 150, "Source" }, { "loc", 502, 100, "Location" }, { "coords", 606, 54, "Coords" },
   })
   renderRep()
 end, renderRep)
@@ -303,7 +303,7 @@ UI.registerPane("Character", 3, "Professions", function(content)
   prof.pane = content
   profHistFrame = CreateFrame("Frame", nil, content)
   profHist = makeList(profHistFrame, {
-    { "time", 0, 96, "Time" }, { "prof", 100, 100, "Profession" }, { "rank", 204, 44, "Skill" }, { "source", 252, 170, "Source" }, { "loc", 426, 150, "Location" }, { "coords", 580, 70, "Coordinates" },
+    { "time", 0, 96, "Time" }, { "prof", 100, 100, "Profession" }, { "rank", 204, 44, "Skill" }, { "source", 252, 170, "Source" }, { "loc", 426, 150, "Location" }, { "coords", 580, 70, "Coords" },
   })
   renderProf()
 end, renderProf)

@@ -29,11 +29,14 @@ local function refresh(c)
   local auctions, mail, quests, trade = tonumber(g.auctionSales) or 0, tonumber(g.mail) or 0, tonumber(g.quests) or 0, tonumber(g.trade) or 0
   c.cBalance.sub:SetText("current purse")
   c.cLooted.sub:SetText("coin picked up from mobs and chests")
-  c.cGained.sub:SetText(("looted %s  ·  quests %s  ·  sold %s  ·  auctions %s  ·  mail %s  ·  trade %s  ·  other %s"):format(
+  c.cGained.sub:SetText("everything that came in")
+  c.cSpent.sub:SetText("everything that went out")
+  -- the breakdowns run full width below the cards: in a 220 px card they wrapped out of its bottom
+  c.inLine:SetText(("|cff8c9197IN|r   looted %s  ·  quests %s  ·  sold %s  ·  auctions %s  ·  mail %s  ·  trade %s  ·  other %s"):format(
     fmtMoney(looted), fmtMoney(quests), fmtMoney(sold), fmtMoney(auctions), fmtMoney(mail), fmtMoney(trade),
     fmtMoney(math.max(0, gained - looted - quests - sold - auctions - mail - trade))))
-  c.cSpent.sub:SetText(("repairs %s  ·  vendor %s  ·  training %s  ·  flights %s  ·  auctions %s  ·  mail %s  ·  trade %s"):format(
-    fmtMoney(g.repairs or 0), fmtMoney(g.vendor or 0), fmtMoney(g.training or 0), fmtMoney(g.flights or 0), fmtMoney(g.auctions or 0), fmtMoney(g.mailSpent or 0), fmtMoney(g.tradeSpent or 0)))
+  c.outLine:SetText(("|cff8c9197OUT|r   repairs %s  ·  vendor %s  ·  training %s  ·  flights %s  ·  auctions %s  ·  mail %s  ·  trade %s  ·  other %s"):format(
+    fmtMoney(g.repairs or 0), fmtMoney(g.vendor or 0), fmtMoney(g.training or 0), fmtMoney(g.flights or 0), fmtMoney(g.auctions or 0), fmtMoney(g.mailSpent or 0), fmtMoney(g.tradeSpent or 0), fmtMoney(g.other or 0)))
   local net = (tonumber(g.gained) or 0) - (tonumber(g.spent) or 0)
   local ses = (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or {}
   local elapsed = (ses.startedEpoch and ((GetServerTime and GetServerTime()) or time()) - ses.startedEpoch) or 0
@@ -67,8 +70,12 @@ function ns.BuildEconomyPane(pane)
   content.cSpent   = card(col[1], Y1, CW, CH, "SPENT", C.red)
   content.cNet     = card(col[2], Y1, CW, CH, "NET THIS SESSION", C.green)
 
-  local note = UI.FS(content, "GameFontDisableSmall", C.dim); note:SetPoint("TOPLEFT", X0, Y1 - CH - 16)
-  note:SetWidth(680); note:SetJustifyH("LEFT")
+  content.inLine = UI.FS(content, "GameFontHighlightSmall"); content.inLine:SetPoint("TOPLEFT", X0, Y1 - CH - 16)
+  content.inLine:SetWidth(3 * CW + 2 * GAP - 12); content.inLine:SetJustifyH("LEFT")
+  content.outLine = UI.FS(content, "GameFontHighlightSmall"); content.outLine:SetPoint("TOPLEFT", content.inLine, "BOTTOMLEFT", 0, -6)
+  content.outLine:SetWidth(3 * CW + 2 * GAP - 12); content.outLine:SetJustifyH("LEFT")
+  local note = UI.FS(content, "GameFontDisableSmall", C.dim); note:SetPoint("TOPLEFT", content.outLine, "BOTTOMLEFT", 0, -14)
+  note:SetWidth(3 * CW + 2 * GAP - 12); note:SetJustifyH("LEFT")
   note:SetText("Gold in and out since this session began. Sinks are attributed by the window that was open when gold left: repairs, vendor, trainer, flight master, auction house, mailbox, trade window. Coin looted, auction proceeds and mailed gold are attributed to their source in the Loot tab. On the beta these totals are per session until SavedVariables persistence is fixed.")
   refresh(content)
   return function() refresh(content) end

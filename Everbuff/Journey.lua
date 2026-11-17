@@ -217,8 +217,8 @@ refresh = function(content)
       local row = mchild.rows[idx]
       if not row then
         row = CreateFrame("Frame", nil, mchild); row:SetHeight(16); row:SetPoint("RIGHT", mchild, "RIGHT", 0, 0)
-        row.tm = ns.UI.FS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", 0, 0); row.tm:SetWidth(64)
-        row.tx = ns.UI.FS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", 70, 0); row.tx:SetWidth(580); row.tx:SetJustifyH("LEFT")
+        row.tm = ns.UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", 0, 0); row.tm:SetWidth(64)
+        row.tx = ns.UI.CellFS(row, "GameFontHighlightSmall"); row.tx:SetPoint("LEFT", 70, 0); row.tx:SetWidth(580); row.tx:SetJustifyH("LEFT")
         mchild.rows[idx] = row
       end
       row:SetPoint("TOPLEFT", 0, -y); row:Show()
@@ -315,7 +315,7 @@ local function buildSessions(content)
   local WID = { date = 110, len = 70, lvl = 56, xp = 76, gold = 94, kills = 54, deaths = 60, dung = 68, items = 48 }
   local hdr = CreateFrame("Frame", nil, content); hdr:SetPoint("TOPLEFT", 2, -(STRIP_H + 30)); hdr:SetSize(670, 16)
   local function head(k, text)
-    local fs = UI.FS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", COL[k], 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT")
+    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", COL[k], 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT")
     fs:SetText(text:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end
   head("date", "Session"); head("len", "Length"); head("lvl", "Level"); head("xp", "XP"); head("gold", "Gold"); head("kills", "Kills"); head("deaths", "Deaths"); head("dung", "Dungeons"); head("items", "Items")
@@ -334,7 +334,7 @@ local function buildSessions(content)
       if not row then
         row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
         for k, x in pairs(COL) do
-          local fs = UI.FS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", x, 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT"); row.c[k] = fs
+          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", x, 0); fs:SetWidth(WID[k]); fs:SetJustifyH("LEFT"); row.c[k] = fs
         end
         child.rows[idx] = row
       end

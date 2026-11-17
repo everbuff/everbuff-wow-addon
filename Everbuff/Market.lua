@@ -260,7 +260,7 @@ local function fmtWhen(t) t = plainNum(t); if not t then return "" end; return d
 local function makeList(pane, cols)
   local hdr = CreateFrame("Frame", nil, pane); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
   for _, c in ipairs(cols) do
-    local fs = UI.FS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
+    local fs = UI.CellFS(hdr, "GameFontNormalSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT")
     fs:SetText(c[4]:upper()); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end
   local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold); summary:SetPoint("TOPLEFT", 2, -6); summary:SetWidth(650); summary:SetJustifyH("LEFT")
@@ -276,7 +276,7 @@ local function makeList(pane, cols)
       if not row then
         row = CreateFrame("Frame", nil, child); row:SetHeight(18); row:SetPoint("RIGHT", child, "RIGHT", 0, 0); row.c = {}
         for _, c in ipairs(cols) do
-          local fs = UI.FS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
+          local fs = UI.CellFS(row, "GameFontHighlightSmall"); fs:SetPoint("LEFT", c[2], 0); fs:SetWidth(c[3]); fs:SetJustifyH("LEFT"); row.c[c[1]] = fs
         end
         child.rows[idx] = row
       end
@@ -354,7 +354,7 @@ if UI and UI.registerPane then
     renderAuctions()
   end, renderAuctions)
   UI.registerPane("Character", 4, "Crafting", function(content)
-    craftsL = makeList(content, { { "when", 0, 70, "When" }, { "what", 74, 90, "What" }, { "item", 168, 190, "Item" }, { "count", 362, 36, "Qty" }, { "prof", 402, 100, "Profession" }, { "zone", 506, 110, "Location" }, { "coords", 620, 60, "Coords" } })
+    craftsL = makeList(content, { { "when", 0, 70, "When" }, { "what", 74, 90, "What" }, { "item", 168, 190, "Item" }, { "count", 362, 36, "Qty" }, { "prof", 402, 96, "Profession" }, { "zone", 502, 100, "Location" }, { "coords", 606, 54, "Coords" } })
     renderCrafts()
   end, renderCrafts)
 end

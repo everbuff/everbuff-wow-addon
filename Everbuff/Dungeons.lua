@@ -122,7 +122,7 @@ local function buildDetail(content)
   local fn, tn, bn = 0, 0, 0
   local function cell(x, y, w, text, color, tmpl)
     fn = fn + 1
-    local fs = child.fs[fn] or ns.UI.FS(child, "GameFontHighlightSmall"); child.fs[fn] = fs
+    local fs = child.fs[fn] or ns.UI.CellFS(child, "GameFontHighlightSmall"); child.fs[fn] = fs
     fs:SetFontObject(ns.UI.Font(tmpl) or ns.UI.BODY_SM or GameFontHighlightSmall); fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", x, -y)
     fs:SetWidth(w); fs:SetJustifyH("LEFT"); local c = color or C.ink
     fs:SetText(text or ""); fs:SetTextColor(c[1], c[2], c[3]); fs:Show(); return fs
@@ -262,7 +262,7 @@ local function buildList(content)
   v.lockText = lockText
   local hdr = CreateFrame("Frame", nil, v); hdr:SetPoint("TOPLEFT", 2, -26); hdr:SetSize(660, 16)
   local function head(col, text)
-    local fs = ns.UI.FS(hdr, "GameFontDisableSmall")
+    local fs = ns.UI.CellFS(hdr, "GameFontDisableSmall")
     fs:SetPoint("LEFT", col, 0); fs:SetText(text); fs:SetTextColor(C.dim[1], C.dim[2], C.dim[3])
   end
   head(COL.time, "Time"); head(COL.name, "Dungeon"); head(COL.dur, "Length")
@@ -288,7 +288,7 @@ local function buildList(content)
         row:SetScript("OnClick", function(s) if s.run then openRun(s.run) end end)
         row.cells = {}
         for _, key in ipairs({ "time", "name", "dur", "boss", "death", "loot" }) do
-          local fs = ns.UI.FS(row, "GameFontHighlightSmall")
+          local fs = ns.UI.CellFS(row, "GameFontHighlightSmall")
           fs:SetPoint("LEFT", COL[key], 0); fs:SetJustifyH("LEFT"); row.cells[key] = fs
         end
         row.cells.name:SetWidth(224); row.cells.time:SetWidth(64)

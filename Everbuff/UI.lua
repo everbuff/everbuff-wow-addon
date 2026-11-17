@@ -97,6 +97,37 @@ function UI.FS(parent, template, color)
   return fs
 end
 
+-- A table cell or column header: one line, never wrapped into the row below (founder, 2026-11-17: overflowing text in
+-- tables). The client shortens a text longer than the cell with "..."; hovering the row shows the full text of every
+-- shortened cell, unless the row shows its own tooltip.
+local function cellTip(row)
+  if not GameTooltip or GameTooltip:IsShown() then return end
+  local lines = {}
+  for _, fs in ipairs(row.ebCells or {}) do
+    if fs:IsShown() and fs.IsTruncated and fs:IsTruncated() then lines[#lines + 1] = fs:GetText() end
+  end
+  if #lines == 0 then return end
+  GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+  for _, t in ipairs(lines) do GameTooltip:AddLine(t, 1, 1, 1, true) end
+  GameTooltip:Show()
+  row.ebCellTip = true
+end
+local function cellTipHide(row) if row.ebCellTip and GameTooltip then GameTooltip:Hide() end; row.ebCellTip = nil end
+function UI.CellFS(parent, template, color)
+  local fs = UI.FS(parent, template, color)
+  if fs.SetWordWrap then fs:SetWordWrap(false) end
+  if fs.SetNonSpaceWrap then fs:SetNonSpaceWrap(false) end
+  if fs.SetMaxLines then fs:SetMaxLines(1) end
+  parent.ebCells = parent.ebCells or {}
+  parent.ebCells[#parent.ebCells + 1] = fs
+  if not parent.ebCellHooked and parent.HookScript then
+    parent.ebCellHooked = true
+    pcall(parent.HookScript, parent, "OnEnter", cellTip)
+    pcall(parent.HookScript, parent, "OnLeave", cellTipHide)
+  end
+  return fs
+end
+
 function UI.Button(parent, text, w, h, onClick)
   local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
   b:SetSize(w or 100, h or 22)

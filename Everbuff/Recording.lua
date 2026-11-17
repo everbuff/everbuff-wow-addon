@@ -286,7 +286,7 @@ local function buildDetail(content)
   local function cell(x, y, w, text, color, justify, template)
     fn = fn + 1
     local fs = child.fs[fn]
-    if not fs then fs = ns.UI.FS(child, "GameFontHighlightSmall"); child.fs[fn] = fs end
+    if not fs then fs = ns.UI.CellFS(child, "GameFontHighlightSmall"); child.fs[fn] = fs end
     fs:SetFontObject(ns.UI.Font(template) or ns.UI.BODY_SM or GameFontHighlightSmall)
     fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", x, -y)
     fs:SetWidth(w); fs:SetJustifyH(justify or "LEFT")
@@ -625,7 +625,7 @@ local function buildMemberView(content)
   local function cell(x, y, w, text, color, justify, template)
     fn = fn + 1
     local fs = child.fs[fn]
-    if not fs then fs = ns.UI.FS(child, "GameFontHighlightSmall"); child.fs[fn] = fs end
+    if not fs then fs = ns.UI.CellFS(child, "GameFontHighlightSmall"); child.fs[fn] = fs end
     fs:SetFontObject(ns.UI.Font(template) or ns.UI.BODY_SM or GameFontHighlightSmall)
     fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", x, -y)
     fs:SetWidth(w); fs:SetJustifyH(justify or "LEFT")
@@ -816,12 +816,12 @@ local function buildList(content)
           end)
           row:SetScript("OnLeave", function(r) r:SetBackdropColor(0, 0, 0, 0); if GameTooltip then GameTooltip:Hide() end end)
           row:SetScript("OnClick", function(r) if r.fight then openDetail(r.fight) end end)
-          row.tm = UI.FS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
-          row.fo = UI.FS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
-          row.lo = UI.FS(row, "GameFontDisableSmall"); row.lo:SetPoint("LEFT", COL.loc, 0); row.lo:SetWidth(WID.loc); row.lo:SetJustifyH("LEFT")
-          row.co = UI.FS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
-          row.du = UI.FS(row, "GameFontHighlightSmall"); row.du:SetPoint("LEFT", COL.dur, 0); row.du:SetWidth(WID.dur); row.du:SetJustifyH("LEFT")
-          row.re = UI.FS(row, "GameFontHighlightSmall"); row.re:SetPoint("LEFT", COL.res, 0); row.re:SetWidth(WID.res); row.re:SetJustifyH("LEFT")
+          row.tm = UI.CellFS(row, "GameFontDisableSmall"); row.tm:SetPoint("LEFT", COL.time, 0); row.tm:SetWidth(WID.time); row.tm:SetJustifyH("LEFT")
+          row.fo = UI.CellFS(row, "GameFontHighlightSmall"); row.fo:SetPoint("LEFT", COL.foe, 0); row.fo:SetWidth(WID.foe); row.fo:SetJustifyH("LEFT")
+          row.lo = UI.CellFS(row, "GameFontDisableSmall"); row.lo:SetPoint("LEFT", COL.loc, 0); row.lo:SetWidth(WID.loc); row.lo:SetJustifyH("LEFT")
+          row.co = UI.CellFS(row, "GameFontDisableSmall"); row.co:SetPoint("LEFT", COL.coords, 0); row.co:SetWidth(WID.coords); row.co:SetJustifyH("LEFT")
+          row.du = UI.CellFS(row, "GameFontHighlightSmall"); row.du:SetPoint("LEFT", COL.dur, 0); row.du:SetWidth(WID.dur); row.du:SetJustifyH("LEFT")
+          row.re = UI.CellFS(row, "GameFontHighlightSmall"); row.re:SetPoint("LEFT", COL.res, 0); row.re:SetWidth(WID.res); row.re:SetJustifyH("LEFT")
           child.rows[idx] = row
         end
         row.fight = f
