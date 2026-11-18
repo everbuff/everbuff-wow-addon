@@ -657,6 +657,9 @@ function Gold.dayCredit(key, n, bal, at)
   if not n then return end
   n = n < 0 and -math.floor(-n) or math.floor(n)
   at = plainN(at) or nowT()
+  -- the rate window (0.9.45) needs no day base; a failure there never stops the day row
+  local okR, errR = pcall(Gold.rateCredit, key, n, at)
+  if not okR then Gold._rateErr = errR end
   local base = Gold.base()
   if not base then
     Gold._held = Gold._held or {}
@@ -679,18 +682,23 @@ function Gold.flush(force)
   local c = ns.char()
   for _, h in ipairs(held) do applyDay(c, base, h[1], h[2], h[3], h[4]) end
 end
--- active seconds: every 10 s the time since the last tick (capped at the tick length) goes to today's row
+-- active seconds: every 10 s the time since the last tick (capped at the tick length) goes to today's row and to
+-- the current minute of the rate window (0.9.45). Time away from the keyboard is not active time (Gold._afk, read
+-- on PLAYER_FLAGS_CHANGED), and neither is time logged out (no tick runs).
 function Gold.tick()
   local now = GetTime()
   local last = Gold._tickAt
   Gold._tickAt = now
   if not last or not (ns.DB and ns.charGuid()) then return end
+  if Gold._afk then return end
   local add = math.floor(math.min(10, now - last) + 0.5)
   if add <= 0 then return end
+  local at = nowT()
+  local okR, errR = pcall(Gold.rateActive, add, at)
+  if not okR then Gold._rateErr = errR end
   local base = Gold.baseStored()
   if not base then return end
   local c = ns.char()
-  local at = nowT()
   c.goldDays = type(c.goldDays) == "table" and c.goldDays or {}
   local dk = Gold.dayKey(at, base)
   local r = c.goldDays[dk]
@@ -978,9 +986,12 @@ end
 
 -- The one resolver behind every surface: Gold.metric(id, who, when).
 --   id    "balance", "earned", "spent", "net", "away", "played" (active seconds of a day period, the length of a
---         session), "perHour" (net over that time, nil under 5 minutes), or a ledger source key
+--         session), "perHour" (net over that time, nil under 5 minutes), "rate" (the rolling per hour figure of
+--         the logged-in character by the per hour setting, Gold.rate; nil with no active time), or a ledger
+--         source key
 --   who   "char" (default), "realm", "account"
---   when  a day period of Gold.period, "session", "previous", "all" or a session id; default "today"
+--   when  a day period of Gold.period, "session", "previous", "all", a session id, or "timer" (since the farm
+--         timer was started: the lifetime ledger minus its snapshot; nil when no timer runs); default "today"
 function Gold.metric(id, who, when)
   who, when = who or "char", when or "today"
   if id == "balance" then
@@ -990,8 +1001,13 @@ function Gold.metric(id, who, when)
     end
     return Gold.roster(who == "realm" and "realm" or "all").total
   end
+  if id == "rate" then return Gold.rate().perHour end
   local ledger, t
-  if Gold.isDayScope(when) then
+  if when == "timer" then
+    local tm = Gold.timer()
+    if not tm then return nil end
+    ledger, t = tm.ledger, tm.elapsed
+  elseif Gold.isDayScope(when) then
     local p = Gold.period(when, who)
     ledger, t = p.ledger, p.t
   else
@@ -1024,7 +1040,15 @@ end
 -- before anything else does. Gold.tooltip(tip, opts) adds the lines to an open tooltip and returns how many.
 function Gold.tipLines(opts)
   opts = opts or {}
-  local budget, limit = opts.budget or Gold.TIP_LINES, opts.limit or Gold.TIP_ROWS
+  -- (0.9.45) the coin icons when they are on; more characters, and the week and month lines, when Settings asks
+  -- for them: each widens the budget by what it adds (more characters also by the three lines that may stand
+  -- beside them: the rate, the farm timer and "and N more"), so the default block stays inside 18 lines
+  local fmtMoney = Gold.full
+  local function signed(c) return Gold.full(c, { signed = true }) end
+  local tc = Gold.tipCfg() or {}
+  local rowsSet = math.max(5, math.min(30, tonumber(tc.limit) or Gold.TIP_ROWS))
+  local limit = opts.limit or rowsSet
+  local budget = opts.budget or (Gold.TIP_LINES + (limit > Gold.TIP_ROWS and (limit - Gold.TIP_ROWS + 3) or 0) + (tc.week == true and 1 or 0) + (tc.month == true and 1 or 0))
   local L = {}
   local function add(left, right, color, head) L[#L + 1] = { left = left, right = right, color = color, head = head } end
   if not (ns.DB and ns.charGuid()) then return L end
@@ -1036,6 +1060,22 @@ function Gold.tipLines(opts)
   add("Today", ("%s   (in %s  ·  out %s)"):format(signed(g - s), fmtMoney(g), fmtMoney(s)), (g - s) < 0 and C.red or C.ink)
   local cur = current()
   if cur then add("This session", signed(num(cur.gained) - num(cur.spent))) end
+  for _, pk in ipairs({ { "week", "This week" }, { "month", "This month" } }) do
+    if tc[pk[1]] == true then
+      local pp = Gold.period(pk[1], "char", now)
+      add(pk[2], ("%s   (in %s  ·  out %s)"):format(signed(pp.ledger.gained - pp.ledger.spent), fmtMoney(pp.ledger.gained), fmtMoney(pp.ledger.spent)))
+    end
+  end
+  -- the rolling rate, named by its definition; dimmed while it warms up; left out before any active time
+  do
+    local r = Gold.rate(nil, now)
+    if r.perHour then
+      local name, v, note, dim = Gold.rateParts(r)
+      add(name, v .. "  ·  " .. note, dim and C.dim or nil)
+    end
+    local tm = Gold.timer(now)
+    if tm then add("Farm timer", (Gold.timerText(tm):gsub("^This farm: ", ""))) end
+  end
   local ins, outs = {}, {}
   for _, k in ipairs(Gold.IN) do if num(p.ledger[k]) > 0 then ins[#ins + 1] = { k, p.ledger[k] } end end
   for _, k in ipairs(Gold.OUT) do if num(p.ledger[k]) > 0 then outs[#outs + 1] = { k, p.ledger[k] } end end
@@ -1090,10 +1130,16 @@ function Gold.tipLines(opts)
   while #L > budget do table.remove(L) end
   return L
 end
+-- opts.owner and opts.redo(owner): the frame the tooltip belongs to and the function that draws it again; while that
+-- frame owns the tooltip the block follows the purse and, every 10 s, the rate (Gold.tipRedo, Gold.repaint).
 function Gold.tooltip(tip, opts)
   if not tip then return 0 end
   local cfg = Gold.cfg()
   if cfg and cfg.tips == false then return 0 end
+  if opts and opts.owner and opts.redo then
+    Gold._tipOwner, Gold._tipRedo = opts.owner, opts.redo
+    Gold.rateWatch()
+  end
   local ok, L = pcall(Gold.tipLines, opts)
   if not ok or type(L) ~= "table" then return 0 end
   for _, l in ipairs(L) do
@@ -1105,8 +1151,8 @@ function Gold.tooltip(tip, opts)
   return #L
 end
 
--- /eb gold and /eb gold chars: direct replies to a typed command; nothing else about gold goes to chat. Returns
--- true (the argument was a gold command).
+-- /eb gold, /eb gold chars, /eb gold stats and /eb gold timer: direct replies to a typed command; nothing else
+-- about gold goes to chat. Returns true (the argument was a gold command).
 function Gold.slash(sub)
   sub = tostring(sub or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if not (ns.DB and ns.charGuid()) then ns.msg("gold: the character is not known yet, try again in a moment"); return true end
@@ -1119,12 +1165,17 @@ function Gold.slash(sub)
     local p = Gold.period("today", "char", now)
     ns.msg(("today: %s (in %s, out %s)"):format(signed(p.ledger.gained - p.ledger.spent), fmtMoney(p.ledger.gained), fmtMoney(p.ledger.spent)))
     local sum = Gold.summary(current())
-    if sum then
-      ns.msg(("this session: %s"):format(signed(sum.net)))
+    ns.msg(sum and ("this session: %s"):format(signed(sum.net)) or "this session: no session yet")
+    -- the rolling rate once there is active time for it (0.9.45), else the session's net over its length
+    local r = Gold.rate(nil, now)
+    if r.perHour then
+      local name, v, note = Gold.rateParts(r)
+      ns.msg(("per hour: %s %s  ·  %s"):format(name, v, note))
+    elseif sum then
       ns.msg(sum.perHour and ("per hour: %s net over this session"):format(signed(sum.perHour)) or "per hour: after 2 minutes of this session")
-    else
-      ns.msg("this session: no session yet"); ns.msg("per hour: no session yet")
-    end
+    else ns.msg("per hour: no session yet") end
+    local tm = Gold.timer(now)
+    if tm then ns.msg(Gold.timerText(tm)) end
   elseif sub == "chars" or sub == "characters" then
     for _, row in ipairs(ro.rows) do
       local tag = row.hidden and "hidden from totals" or (row.stale and "not in the total, not seen in 90 days") or nil
@@ -1132,8 +1183,21 @@ function Gold.slash(sub)
         fmtMoney(row.balance), row.me and "you" or ("seen " .. Gold.fmtAge(row.seen, now)), tag and ("  ·  " .. tag) or ""))
     end
     ns.msg(("total: %s  ·  %s"):format(fmtMoney(ro.total), Gold.rosterLine(ro)))
+  elseif sub == "stats" then
+    -- today, this week and this month: in, out and net, for the character, its realm and the account
+    for _, w in ipairs({ { "char", "this character" }, { "realm", "this realm" }, { "account", "account" } }) do
+      local parts = {}
+      for _, pk in ipairs({ { "today", "today" }, { "week", "week" }, { "month", "month" } }) do
+        local p = Gold.period(pk[1], w[1], now)
+        parts[#parts + 1] = ("%s %s (in %s, out %s)"):format(pk[2], signed(p.ledger.gained - p.ledger.spent), fmtMoney(p.ledger.gained), fmtMoney(p.ledger.spent))
+      end
+      ns.msg(("%s: %s"):format(w[2], table.concat(parts, "  ·  ")))
+    end
+  elseif sub == "timer" then
+    Gold.timerStart(now)
+    ns.msg("Farm timer started.")
   else
-    ns.msg("gold commands: /eb gold · /eb gold chars")
+    ns.msg("gold commands: /eb gold · /eb gold chars · /eb gold stats · /eb gold timer")
   end
   return true
 end
@@ -1143,18 +1207,756 @@ do
   local gf = CreateFrame("Frame")
   ns.eventFrames = ns.eventFrames or {}
   ns.eventFrames[#ns.eventFrames + 1] = gf
-  for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP", "PLAYER_LOGOUT" }) do pcall(gf.RegisterEvent, gf, e) end
+  -- (0.9.45: the AFK flag, the end of a fight for what waited for it, the broker objects at login, the screen size)
+  for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP", "PLAYER_LOGOUT", "PLAYER_LOGIN", "PLAYER_FLAGS_CHANGED",
+    "PLAYER_REGEN_ENABLED", "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do pcall(gf.RegisterEvent, gf, e) end
   local function note(tries)
-    if Gold.noteChar() then pcall(Gold.checkBase); return end
+    if Gold.noteChar() then pcall(Gold.checkBase); pcall(Gold.pillApply); return end
     if tries > 0 and C_Timer and type(C_Timer.After) == "function" then C_Timer.After(1, function() note(tries - 1) end) end
   end
   gf:SetScript("OnEvent", function(_, event, a1)
     if not ns.DB then return end
-    if event == "PLAYER_ENTERING_WORLD" then note(5)
+    if event == "PLAYER_ENTERING_WORLD" then note(5); pcall(Gold.readAfk); pcall(Gold.brokerInit)
     elseif event == "PLAYER_LEVEL_UP" then Gold.noteChar(a1)
-    elseif event == "PLAYER_LOGOUT" then Gold.noteChar(); Gold.flush(true) end
+    elseif event == "PLAYER_LOGOUT" then Gold.noteChar(); Gold.flush(true)
+    elseif event == "PLAYER_LOGIN" then pcall(Gold.brokerInit)
+    elseif event == "PLAYER_FLAGS_CHANGED" then
+      -- (the unit is asked through the guard too: a hidden value is not compared)
+      if plainS(a1) == "player" then pcall(Gold.readAfk) end
+    elseif event == "PLAYER_REGEN_ENABLED" then pcall(Gold.afterCombat)
+    elseif event == "UI_SCALE_CHANGED" or event == "DISPLAY_SIZE_CHANGED" then pcall(Gold.pillPlace) end
   end)
   if C_Timer and type(C_Timer.NewTicker) == "function" then pcall(C_Timer.NewTicker, 10, function() Gold.tick() end) end
+end
+
+-- ── rate and glance (0.9.45, everbuff-wow-addon #43) ────────────────────────────────────────────────────────────
+-- Everything here lives on the Gold table (no new file-level state): the rate window, the farm timer, the glance
+-- texts, the gold pill, its menu, the broker objects and the settings pane.
+--
+-- characters[guid].goldRate = { m = { [epochMinute] = { e, s, f, a } }, last }: one bucket per minute of server
+-- time, at most 91. e earned (the purse's gains without mail and auction payouts), s spent, f farmed (looted coin,
+-- vendor sales, quest rewards), a active seconds of that minute. A rate is the sum over the buckets of the last 90
+-- minutes times 3600 over their active seconds; the window starts over after more than 30 minutes without a write
+-- (logged out, or away from the keyboard). Written by Gold.dayCredit (every credit) and Gold.tick (active time).
+Gold.RATE_WINDOW = 90 * 60   -- seconds of wall time a rate looks back
+Gold.RATE_GAP = 30 * 60      -- a longer silence starts the window over
+Gold.RATE_WARM = 300         -- active seconds under which a rate is shown dimmed
+Gold.RATE_CAP = 91           -- minute buckets kept
+Gold.RATE_MODES = { { "farm", "Farming" }, { "earned", "Earned" }, { "net", "Net" } }
+Gold.RATE_LABEL = { farm = "Farming", earned = "Earned", net = "Net" }
+Gold.RATE_WHAT = {
+  farm = "looted coin, vendor sales and quest rewards",
+  earned = "everything gained except mail and auction payouts",
+  net = "earned (without mail and auction payouts) minus everything spent",
+}
+Gold.RATE_NOTE = {}
+for k, what in pairs(Gold.RATE_WHAT) do Gold.RATE_NOTE[k] = ("%s: %s, per hour of active time"):format(Gold.RATE_LABEL[k], what) end
+Gold.FARM = { looted = true, sold = true, quests = true }
+Gold.NOT_EARNED = { mail = true, auctionSales = true }
+
+function Gold.rateMode()
+  local cfg = Gold.cfg()
+  local m = cfg and cfg.rateMode
+  return Gold.RATE_LABEL[m] and m or "farm"
+end
+-- the logged-in character's window, ready for a write at `now`: started over after a gap, old minutes pruned
+function Gold.rateStore(now)
+  local c = ns.char()
+  local r = c.goldRate
+  if type(r) ~= "table" or type(r.m) ~= "table" then r = { m = {} }; c.goldRate = r end
+  local last = plainN(r.last)
+  if last and now - last > Gold.RATE_GAP then r.m = {} end
+  local oldest = math.floor(now / 60) - (Gold.RATE_CAP - 1)
+  for k in pairs(r.m) do if type(k) ~= "number" or k < oldest then r.m[k] = nil end end
+  r.last = now
+  return r
+end
+local function rateBucket(r, minute)
+  local b = r.m[minute]
+  if type(b) ~= "table" then b = { e = 0, s = 0, f = 0, a = 0 }; r.m[minute] = b end
+  return b
+end
+-- One credit into its minute. A credit always counts, also while the character is away from the keyboard. Mail and
+-- auction payouts were added with `gained` a moment before and are taken out of `e` again; transfers, away changes
+-- and every other key leave the window alone.
+function Gold.rateCredit(key, n, at)
+  local field, sign
+  if key == "gained" then field, sign = "e", 1
+  elseif key == "spent" then field, sign = "s", 1
+  elseif Gold.FARM[key] then field, sign = "f", 1
+  elseif Gold.NOT_EARNED[key] then field, sign = "e", -1
+  else return end
+  if not (ns.DB and ns.charGuid()) then return end
+  local now = nowT()
+  at = plainN(at) or now
+  local minute = math.min(math.floor(at / 60), math.floor(now / 60))
+  local r = Gold.rateStore(now)
+  if minute < math.floor(now / 60) - (Gold.RATE_CAP - 1) then return end
+  local b = rateBucket(r, minute)
+  b[field] = (plainN(b[field]) or 0) + sign * n
+end
+-- `add` active seconds into the minute of `at`
+function Gold.rateActive(add, at)
+  local r = Gold.rateStore(at)
+  local b = rateBucket(r, math.floor(at / 60))
+  b.a = math.min(60, (plainN(b.a) or 0) + add)
+end
+-- The rate of the logged-in character: { mode, label, sum, active, span (seconds from the first bucket to now),
+-- warm (under 300 active seconds), left (seconds of warm-up left), perHour (copper, nil with no active time) }.
+-- Reads only: a window past its gap reads as empty and is started over by the next write.
+function Gold.rate(mode, now)
+  mode = Gold.RATE_LABEL[mode] and mode or Gold.rateMode()
+  now = now or nowT()
+  local out = { mode = mode, label = Gold.RATE_LABEL[mode], sum = 0, active = 0, span = 0 }
+  local c = ns.DB and ns.charGuid() and ns.char() or nil
+  local r = c and c.goldRate
+  if type(r) == "table" and type(r.m) == "table" and not (plainN(r.last) and now - r.last > Gold.RATE_GAP) then
+    local cur, first = math.floor(now / 60), nil
+    for k, b in pairs(r.m) do
+      if type(k) == "number" and type(b) == "table" and k >= cur - (Gold.RATE_CAP - 1) and k <= cur then
+        local e, s, f = num(b.e), num(b.s), num(b.f)
+        out.active = out.active + num(b.a)
+        out.sum = out.sum + ((mode == "farm" and f) or (mode == "earned" and e) or (e - s))
+        if not first or k < first then first = k end
+      end
+    end
+    if first then out.span = math.max(0, now - first * 60) end
+  end
+  out.warm = out.active < Gold.RATE_WARM
+  out.left = math.max(0, Gold.RATE_WARM - out.active)
+  if out.active > 0 then
+    local v = out.sum * 3600 / out.active
+    out.perHour = v < 0 and -math.floor(-v + 0.5) or math.floor(v + 0.5)   -- half away from zero
+  end
+  return out
+end
+function Gold.resetRate()
+  if not (ns.DB and ns.charGuid()) then return false end
+  ns.char().goldRate = nil
+  Gold.fire()
+  return true
+end
+
+-- whether the character is away from the keyboard, read on PLAYER_FLAGS_CHANGED and at login. A missing function,
+-- a blocked call or a secret answer counts as active; the raw answer is never tested before the guard.
+function Gold.readAfk()
+  local afk = false
+  if type(UnitIsAFK) == "function" then
+    local ok, v = pcall(UnitIsAFK, "player")
+    if ok and not (issecretvalue and issecretvalue(v)) and v == true then afk = true end
+  end
+  Gold._afk = afk
+  return afk
+end
+
+-- settings.gold.pill and settings.gold.tip: created on the first write, never by a read
+function Gold.pillCfg(create)
+  local cfg = Gold.cfg(create)
+  if not cfg then return nil end
+  if type(cfg.pill) ~= "table" then
+    if not create then return nil end
+    cfg.pill = { on = false, metrics = { "balance" } }
+  end
+  return cfg.pill
+end
+function Gold.tipCfg(create)
+  local cfg = Gold.cfg(create)
+  if not cfg then return nil end
+  if type(cfg.tip) ~= "table" then
+    if not create then return nil end
+    cfg.tip = { limit = Gold.TIP_ROWS, week = false, month = false }
+  end
+  return cfg.tip
+end
+
+-- the formatter with the player's display settings: Gold.full for a tooltip or a chat line (every part of the
+-- amount), Gold.fmt for a glance (pill, bar text, rates: the short form, compact when that is on)
+function Gold.full(c, o)
+  local cfg = Gold.cfg()
+  local opts = { icons = (cfg and cfg.icons == true) or nil }
+  if o then for k, v in pairs(o) do opts[k] = v end end
+  return fmtMoney(c, opts)
+end
+function Gold.fmt(c, o)
+  local cfg = Gold.cfg()
+  local opts = { short = true, icons = (cfg and cfg.icons == true) or nil, compact = (cfg and cfg.compact == true) or nil }
+  if o then for k, v in pairs(o) do opts[k] = v end end
+  return fmtMoney(c, opts)
+end
+-- "18 min", "1h 05m"
+function Gold.fmtSpan(sec)
+  local m = math.max(1, math.floor(num(sec) / 60 + 0.5))
+  if m >= 60 then return ("%dh %02dm"):format(math.floor(m / 60), m % 60) end
+  return ("%d min"):format(m)
+end
+-- a rate as its label ("Farming"), its value ("44g 20s/h"), a note ("last 37 min" or "warming up 1:20") and whether
+-- it is still warming up (shown dimmed). The label always names the definition.
+function Gold.rateParts(r)
+  r = r or Gold.rate()
+  if not r.perHour then return r.label, "no time yet", "no active time yet", true end
+  local v = Gold.fmt(r.perHour, { rate = true, signed = (r.mode == "net" or r.perHour < 0) or nil }) .. "/h"
+  local note
+  if r.warm then note = ("warming up %d:%02d"):format(math.floor(r.left / 60), r.left % 60)
+  else note = "last " .. Gold.fmtSpan(r.span) end
+  return r.label, v, note, r.warm
+end
+
+-- the status line of a pane that shows the rate: its definition and its window
+-- ("Farming per hour, last 37 min: looted coin, vendor sales and quest rewards over active time")
+function Gold.rateStatus(r)
+  r = r or Gold.rate()
+  local name, _, note = Gold.rateParts(r)
+  return ("%s per hour, %s: %s over active time"):format(name, note, Gold.RATE_WHAT[r.mode])
+end
+
+-- The farm timer: characters[guid].goldTimer = { at, ledger = <every key of the lifetime ledger at the start> }.
+-- It survives a /reload and a relog and never touches the recording session. Its figures are the ledger now minus
+-- the snapshot, over the time since `at`.
+function Gold.timerStart(now)
+  if not (ns.DB and ns.charGuid()) then return false end
+  local c = ns.char()
+  local snap = {}
+  for k, v in pairs(type(c.gold) == "table" and c.gold or {}) do
+    if k ~= "balance" and plainN(v) then snap[k] = v end
+  end
+  c.goldTimer = { at = now or nowT(), ledger = snap }
+  Gold.fire()
+  return true
+end
+-- { at, elapsed, ledger (the difference per key), farmed, earned, net, mode, value (by the per hour setting),
+-- perHour (nil in the first minute) }, or nil when no timer runs
+function Gold.timer(now)
+  local c = ns.DB and ns.charGuid() and ns.char() or nil
+  local t = c and c.goldTimer
+  if type(t) ~= "table" or not plainN(t.at) then return nil end
+  now = now or nowT()
+  local out = { at = t.at, elapsed = math.max(0, now - t.at), ledger = {} }
+  local snap = type(t.ledger) == "table" and t.ledger or {}
+  for k, v in pairs(type(c.gold) == "table" and c.gold or {}) do
+    if k ~= "balance" then out.ledger[k] = num(v) - num(snap[k]) end
+  end
+  local L = out.ledger
+  L.gained, L.spent = num(L.gained), num(L.spent)
+  out.farmed = num(L.looted) + num(L.sold) + num(L.quests)
+  out.earned = L.gained - num(L.mail) - num(L.auctionSales)
+  out.net = out.earned - L.spent
+  out.mode = Gold.rateMode()
+  out.value = (out.mode == "farm" and out.farmed) or (out.mode == "earned" and out.earned) or out.net
+  if out.elapsed >= 60 then
+    local v = out.value * 3600 / out.elapsed
+    out.perHour = v < 0 and -math.floor(-v + 0.5) or math.floor(v + 0.5)
+  end
+  return out
+end
+-- "This farm: +12g 00s in 18 min  ·  40g 00s/h"
+function Gold.timerText(t)
+  t = t or Gold.timer()
+  if not t then return "No farm timer. Start one with /eb gold timer." end
+  local s = ("This farm: %s in %s"):format(Gold.fmt(t.value, { signed = true }), Gold.fmtSpan(t.elapsed))
+  if t.perHour then s = s .. SEP .. Gold.fmt(t.perHour, { rate = true, signed = t.perHour < 0 or nil }) .. "/h" end
+  return s
+end
+
+-- Reset gold history, for the logged-in character only (#43, rule 44): the day rows, the month rows, the rate window
+-- and the farm timer go, and the history starts now. The lifetime ledger and the balance stay (the backend reads
+-- them).
+function Gold.resetHistory(now)
+  if not (ns.DB and ns.charGuid()) then return false end
+  local c = ns.char()
+  c.goldDays, c.goldMonths, c.goldRate, c.goldTimer = nil, nil, nil, nil
+  c.goldSince = now or nowT()
+  Gold._held = nil
+  Gold.fire()
+  return true
+end
+
+-- ── glance texts: the six values a pill or a bar can show ──────────────────────────────────────────────────────
+Gold.GLANCE = { { "balance", "Balance" }, { "total", "Account total" }, { "session", "Session net" }, { "today", "Today net" },
+  { "rate", "Per hour" }, { "timer", "Farm timer" } }
+Gold.GLANCE_LABEL = {}
+for _, g in ipairs(Gold.GLANCE) do Gold.GLANCE_LABEL[g[1]] = g[2] end
+local function dimText(s)
+  return ("|cff%02x%02x%02x%s|r"):format(math.floor(C.dim[1] * 255 + 0.5), math.floor(C.dim[2] * 255 + 0.5), math.floor(C.dim[3] * 255 + 0.5), s)
+end
+-- the text of one value; `label` puts its name before it (a rate and the farm timer always name themselves)
+function Gold.glance(id, label)
+  if not (ns.DB and ns.charGuid()) then return "" end
+  local function named(name, s) return label and (name .. " " .. s) or s end
+  if id == "total" then
+    return named("All", Gold.fmt(Gold.roster((Gold.cfg() or {}).filter or "all").total))
+  elseif id == "session" then
+    local cur = current()
+    return named("Session", Gold.fmt(cur and (num(cur.gained) - num(cur.spent)) or 0, { signed = true }))
+  elseif id == "today" then
+    return named("Today", Gold.fmt(Gold.metric("net", "char", "today"), { signed = true }))
+  elseif id == "rate" then
+    local name, v, _, dim = Gold.rateParts()
+    return dim and dimText(name .. " " .. v) or (name .. " " .. v)
+  elseif id == "timer" then
+    local t = Gold.timer()
+    if not t then return "Farm timer off" end
+    return ("Farm %s in %s"):format(Gold.fmt(t.value, { signed = true }), Gold.fmtSpan(t.elapsed))
+  end
+  return named("Balance", Gold.fmt(Gold.metric("balance")))
+end
+
+-- ── the gold pill (opt-in: settings.gold.pill.on) ───────────────────────────────────────────────────────────────
+-- One line of text on the screen showing one or two glance values. No frame exists while it is off. Left-click
+-- opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. Its place is
+-- kept relative to the nearest screen corner, inside the screen and clear of the flag (the flag is what the desktop
+-- app reads). Its text follows the purse in the frame of the change, in combat too; nothing is moved, resized,
+-- shown or hidden in combat.
+Gold.PILL_H = 22
+Gold.PILL_SCALE = { 0.5, 2 }
+Gold.PILL_ALPHA = { 0.2, 1 }
+Gold.FLAG_W, Gold.FLAG_H, Gold.FLAG_MARGIN = 320, 40, 8
+local CORNER_OK = { TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
+local function clampN(v, lo, hi) v = tonumber(v) or lo; if v ~= v then v = lo end; return math.max(lo, math.min(hi, v)) end
+function Gold.inCombat()
+  local a = type(InCombatLockdown) == "function" and InCombatLockdown()
+  local b = type(UnitAffectingCombat) == "function" and UnitAffectingCombat("player")
+  return (a or b) and true or false
+end
+function Gold.pillMetrics()
+  local pc = Gold.pillCfg()
+  local out = {}
+  for _, m in ipairs(pc and type(pc.metrics) == "table" and pc.metrics or {}) do
+    if Gold.GLANCE_LABEL[m] and #out < 2 and out[1] ~= m then out[#out + 1] = m end
+  end
+  if #out == 0 then out[1] = "balance" end
+  return out
+end
+function Gold.pillText()
+  local pc = Gold.pillCfg()
+  local parts = {}
+  for _, m in ipairs(Gold.pillMetrics()) do parts[#parts + 1] = Gold.glance(m, pc and pc.label == true) end
+  return table.concat(parts, SEP)
+end
+-- The offsets of a w x h pill whose `corner` sits x, y from the same corner of a sw x sh screen, moved the least
+-- that brings all of it inside the screen. All in screen units.
+function Gold.pillClamp(corner, x, y, w, h, sw, sh)
+  local right, top = corner:find("RIGHT") ~= nil, corner:find("TOP") ~= nil
+  local ax, ay = right and -x or x, top and -y or y   -- the distance inward from the corner
+  ax = math.max(0, math.min(ax, math.max(0, sw - w)))
+  ay = math.max(0, math.min(ay, math.max(0, sh - h)))
+  return right and -ax or ax, top and -ay or ay
+end
+-- the left and bottom edge of that pill
+function Gold.cornerRect(corner, x, y, w, h, sw, sh)
+  local right, top = corner:find("RIGHT") ~= nil, corner:find("TOP") ~= nil
+  return right and (sw + x - w) or x, top and (sh + y - h) or y
+end
+-- the corner nearest to a rectangle, and its offsets from it
+function Gold.nearestCorner(l, b, w, h, sw, sh)
+  local right, top = (l + w / 2) > sw / 2, (b + h / 2) > sh / 2
+  return (top and "TOP" or "BOTTOM") .. (right and "RIGHT" or "LEFT"), right and (l + w - sw) or l, top and (b + h - sh) or b
+end
+-- where the flag and its notification line are: { l, b, w, h } in screen units, from the saved flag settings
+function Gold.flagRect(sw, sh)
+  local st = (ns.DB and ns.DB.settings) or {}
+  local sc = clampN(st.flagScale, 1, 1.5)
+  local w, h = Gold.FLAG_W * sc, Gold.FLAG_H * sc
+  local corner, x, y = st.emitCorner, 0, 0
+  local pos = st.flagPos
+  if type(pos) == "table" and CORNER_OK[pos.point] then corner, x, y = pos.point, num(pos.x) * sc, num(pos.y) * sc end
+  if not CORNER_OK[corner] then corner = "TOPLEFT" end
+  local l, b = Gold.cornerRect(corner, x, y, w, h, sw, sh)
+  return { l = l, b = b, w = w, h = h }
+end
+-- A pill that would lie over the flag (with 8 px of air) is moved off it: under the flag when the flag is in the
+-- top half of the screen, above it otherwise, and sideways when there is no room. Returns the left and bottom edge.
+function Gold.pillClear(l, b, w, h, fr, sw, sh)
+  local m = Gold.FLAG_MARGIN
+  local fl, fb, fw, fh = fr.l - m, fr.b - m, fr.w + 2 * m, fr.h + 2 * m
+  if l >= fl + fw or l + w <= fl or b >= fb + fh or b + h <= fb then return l, b end
+  local nb = (fb + fh / 2 > sh / 2) and (fb - h) or (fb + fh)
+  if nb >= 0 and nb + h <= sh then return l, nb end
+  local nl = (fl + fw / 2 > sw / 2) and (fl - w) or (fl + fw)
+  return math.max(0, math.min(nl, math.max(0, sw - w))), b
+end
+local function screenSize()
+  local okW, sw = pcall(UIParent.GetWidth, UIParent)
+  local okH, sh = pcall(UIParent.GetHeight, UIParent)
+  return (okW and tonumber(sw)) or 0, (okH and tonumber(sh)) or 0
+end
+-- Put the pill where its settings say, inside the screen and clear of the flag, and save the place it ended at
+-- (so a new pill is saved the moment it is created). Not in combat, except for the first placing of a new pill.
+function Gold.pillPlace()
+  local p = Gold.pill
+  if not p then return false end
+  if Gold.inCombat() and p._placed then Gold._pillDirty = true; return false end
+  local pc = Gold.pillCfg(true)
+  local sw, sh = screenSize()
+  local sc = clampN(pc.scale or 1, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2])
+  local okW, pw = pcall(p.GetWidth, p)
+  local w, h = ((okW and tonumber(pw)) or 80) * sc, Gold.PILL_H * sc
+  local corner = CORNER_OK[pc.corner] and pc.corner or "TOPLEFT"
+  local x, y = plainN(pc.x), plainN(pc.y)
+  if not (x and y) then corner, x, y = "TOPLEFT", Gold.FLAG_W * 1.5 + 40, -8 end   -- the default: beside the flag's widest reach
+  if sw > 0 and sh > 0 then
+    x, y = Gold.pillClamp(corner, x, y, w, h, sw, sh)
+    local l, b = Gold.cornerRect(corner, x, y, w, h, sw, sh)
+    local l2, b2 = Gold.pillClear(l, b, w, h, Gold.flagRect(sw, sh), sw, sh)
+    if l2 ~= l or b2 ~= b then
+      corner, x, y = Gold.nearestCorner(l2, b2, w, h, sw, sh)
+      x, y = Gold.pillClamp(corner, x, y, w, h, sw, sh)
+    end
+  end
+  pc.corner, pc.x, pc.y = corner, math.floor(x + 0.5), math.floor(y + 0.5)
+  p:ClearAllPoints()
+  p:SetPoint(corner, UIParent, corner, pc.x / sc, pc.y / sc)
+  p._placed = true
+  return true
+end
+-- the text, and (out of combat) the width that fits it
+function Gold.pillUpdate()
+  local p = Gold.pill
+  if not (p and p:IsShown()) then return end
+  local text = Gold.pillText()
+  if text ~= p._text then p._text = text; p.text:SetText(text) end
+  if Gold.inCombat() and p._placed then Gold._pillDirty = true; return end
+  local ok, tw = pcall(p.text.GetStringWidth, p.text)
+  local w = math.ceil((ok and tonumber(tw)) or 0) + 2 * SP.S
+  if w ~= p._wSet then
+    p._wSet = w
+    p:SetSize(w, Gold.PILL_H)
+    Gold.pillPlace()
+  end
+end
+function Gold.pillTip(p)
+  if not (GameTooltip and type(GameTooltip.SetOwner) == "function") then return end
+  local pc = Gold.pillCfg() or {}
+  local top = not (type(pc.corner) == "string" and pc.corner:find("BOTTOM"))
+  local right = type(pc.corner) == "string" and pc.corner:find("RIGHT") ~= nil
+  GameTooltip:SetOwner(p, "ANCHOR_NONE")
+  GameTooltip:ClearAllPoints()
+  if top then GameTooltip:SetPoint(right and "TOPRIGHT" or "TOPLEFT", p, right and "BOTTOMRIGHT" or "BOTTOMLEFT", 0, -6)
+  else GameTooltip:SetPoint(right and "BOTTOMRIGHT" or "BOTTOMLEFT", p, right and "TOPRIGHT" or "TOPLEFT", 0, 6) end
+  GameTooltip:AddLine("everbuff.gg gold")
+  GameTooltip:AddLine("Left-click: open gold   Right-click: menu   Drag: move", 0.7, 0.7, 0.7)
+  Gold.tooltip(GameTooltip, { owner = p, redo = Gold.pillTip })
+  GameTooltip:Show()
+end
+function Gold.pillBuild()
+  local p = UI.Panel(UIParent)
+  if p.SetFrameStrata then p:SetFrameStrata("MEDIUM") end
+  p:SetSize(80, Gold.PILL_H)
+  p:SetMovable(true); p:SetClampedToScreen(true); p:EnableMouse(true)
+  p:RegisterForDrag("LeftButton")
+  p.text = UI.FS(p, "GameFontHighlightSmall", C.gold)
+  if p.text.SetWordWrap then p.text:SetWordWrap(false) end
+  p.text:SetPoint("CENTER", p, "CENTER", 0, 0)
+  p:SetScript("OnDragStart", function(s)
+    local pc = Gold.pillCfg() or {}
+    if pc.locked == true then return end
+    if ns.blockedInCombat and ns.blockedInCombat() then return end
+    s._dragging = true
+    s:StartMoving()
+  end)
+  p:SetScript("OnDragStop", function(s)
+    if not s._dragging then return end
+    s:StopMovingOrSizing()
+    s._dragging, s._draggedAt = nil, GetTime()
+    local pc = Gold.pillCfg(true)
+    local sw, sh = screenSize()
+    local sc = clampN(pc.scale or 1, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2])
+    local okL, l = pcall(s.GetLeft, s)
+    local okB, b = pcall(s.GetBottom, s)
+    local okW, w = pcall(s.GetWidth, s)
+    if okL and okB and okW and tonumber(l) and tonumber(b) and sw > 0 then
+      -- the frame answers in its own scaled units: times the scale is screen units
+      pc.corner, pc.x, pc.y = Gold.nearestCorner(l * sc, b * sc, (tonumber(w) or 80) * sc, Gold.PILL_H * sc, sw, sh)
+    end
+    Gold.pillPlace()
+  end)
+  p:SetScript("OnMouseUp", function(s, button)
+    if s._dragging or (s._draggedAt and GetTime() - s._draggedAt < 0.2) then return end
+    if button == "RightButton" then Gold.menu(s) else Gold.openSoon() end
+  end)
+  p:SetScript("OnEnter", function(s) pcall(Gold.pillTip, s) end)
+  p:SetScript("OnLeave", function() if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end end)
+  return p
+end
+-- Make the screen match the settings: build, show, scale and place the pill when it is on, hide it when it is off.
+-- Returns false when it had to wait (combat, or the character not known yet).
+function Gold.pillApply()
+  local pc = Gold.pillCfg()
+  local on = pc ~= nil and pc.on == true
+  local p = Gold.pill
+  if not on and not p then Gold.rateWatch(); return true end
+  if Gold.inCombat() and p then Gold._pillDirty = true; return false end   -- shown, hidden and scaled after the fight
+  if not on then
+    p:Hide()
+    Gold.rateWatch()
+    return true
+  end
+  if not (ns.DB and ns.charGuid()) then return false end
+  if not p then p = Gold.pillBuild(); Gold.pill = p end
+  pc = Gold.pillCfg(true)
+  if type(pc.metrics) ~= "table" or #pc.metrics == 0 then pc.metrics = { "balance" } end
+  p:SetScale(clampN(pc.scale or 1, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2]))
+  p:SetAlpha(clampN(pc.alpha or 1, Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2]))
+  p:Show()
+  p._text, p._wSet = nil, nil
+  Gold.pillUpdate()
+  Gold.pillPlace()
+  Gold.rateWatch()
+  return true
+end
+-- the setters behind the menu and Settings; each returns false when combat made it wait
+function Gold.pillOn(on)
+  if ns.blockedInCombat and ns.blockedInCombat() then return false end
+  local pc = Gold.pillCfg(true)
+  pc.on = on and true or false
+  pc.asked = true
+  return Gold.pillApply()
+end
+function Gold.pillSet(i, id)
+  local pc = Gold.pillCfg(true)
+  local m = Gold.pillMetrics()
+  if i == 1 then
+    if not Gold.GLANCE_LABEL[id] then return end
+    m[1] = id
+    if m[2] == id then m[2] = nil end
+  else
+    m[2] = (Gold.GLANCE_LABEL[id] and id ~= m[1]) and id or nil
+  end
+  pc.metrics = m
+  Gold.pillUpdate(); Gold.rateWatch()
+end
+function Gold.pillOpt(key, v)
+  local pc = Gold.pillCfg(true)
+  if key == "scale" then pc.scale = math.floor(clampN(v, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2]) * 20 + 0.5) / 20
+  elseif key == "alpha" then pc.alpha = math.floor(clampN(v, Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2]) * 20 + 0.5) / 20
+  elseif key == "locked" or key == "label" then pc[key] = v and true or false
+  elseif key == "pos" then pc.corner, pc.x, pc.y = nil, nil, nil end
+  if pc.on == true then return Gold.pillApply() end
+  return true
+end
+-- Left-click on the pill or a bar text: open Loot > Gold, after the fight when in combat (nothing opens in combat)
+function Gold.openSoon()
+  if Gold.inCombat() then Gold._openAfter = GetTime(); return false end
+  Gold._openAfter = nil
+  Gold.open("today")
+  return true
+end
+function Gold.afterCombat()
+  if Gold._pillDirty then
+    Gold._pillDirty = nil
+    local p = Gold.pill
+    if p then p._wSet = nil end
+    pcall(Gold.pillApply)
+  end
+  local at = Gold._openAfter
+  Gold._openAfter = nil
+  if at and GetTime() - at < 300 then pcall(Gold.open, "today") end
+end
+
+-- ── the menu of the pill and the bar texts ─────────────────────────────────────────────────────────────────────
+-- Gold.menuItems() is the menu as data: { kind = "title" | "radio" | "check" | "button" | "sub", text, checked(),
+-- pick(), items }. Gold.menu(owner) shows it with the client's MenuUtil when that is there and works, else with the
+-- addon's own list frame. Never UIDropDownMenu (it spreads taint).
+function Gold.menuItems()
+  local items = { { kind = "title", text = "Show" } }
+  for _, g in ipairs(Gold.GLANCE) do
+    items[#items + 1] = { kind = "radio", text = g[2], checked = function() return Gold.pillMetrics()[1] == g[1] end,
+      pick = function() Gold.pillSet(1, g[1]) end }
+  end
+  local second = { { kind = "radio", text = "None", checked = function() return Gold.pillMetrics()[2] == nil end, pick = function() Gold.pillSet(2, nil) end } }
+  for _, g in ipairs(Gold.GLANCE) do
+    second[#second + 1] = { kind = "radio", text = g[2], checked = function() return Gold.pillMetrics()[2] == g[1] end,
+      pick = function() Gold.pillSet(2, g[1]) end }
+  end
+  items[#items + 1] = { kind = "sub", text = "Second value", items = second }
+  items[#items + 1] = { kind = "check", text = "Show label", checked = function() return (Gold.pillCfg() or {}).label == true end,
+    pick = function() Gold.pillOpt("label", not ((Gold.pillCfg() or {}).label == true)) end }
+  items[#items + 1] = { kind = "button", text = Gold.timer() and "Restart farm timer" or "Start farm timer", pick = function() Gold.timerStart() end }
+  items[#items + 1] = { kind = "button", text = "Reset per hour", pick = function() Gold.resetRate() end }
+  items[#items + 1] = { kind = "check", text = "Lock", checked = function() return (Gold.pillCfg() or {}).locked == true end,
+    pick = function() Gold.pillOpt("locked", not ((Gold.pillCfg() or {}).locked == true)) end }
+  local on = (Gold.pillCfg() or {}).on == true
+  items[#items + 1] = { kind = "button", text = on and "Hide" or "Show the gold pill", pick = function() Gold.pillOn(not on) end }
+  items[#items + 1] = { kind = "button", text = "Open gold", pick = function() Gold.openSoon() end }
+  return items
+end
+function Gold.menuBuild(root, items)
+  for _, it in ipairs(items) do
+    if it.kind == "title" then root:CreateTitle(it.text)
+    elseif it.kind == "radio" then root:CreateRadio(it.text, it.checked, it.pick)
+    elseif it.kind == "check" then root:CreateCheckbox(it.text, it.checked, it.pick)
+    elseif it.kind == "sub" then Gold.menuBuild(root:CreateButton(it.text), it.items)
+    else root:CreateButton(it.text, it.pick) end
+  end
+end
+-- The addon's own list: one button per entry under `owner`; a selected radio or a ticked box is drawn selected, a
+-- sub list replaces the list (with a way back), a click on anything else picks and closes. A second call for the
+-- same owner closes it.
+function Gold.ownMenu(owner, items, keep)
+  local m = Gold._menu
+  if not m then
+    m = UI.Panel(UIParent)
+    if m.SetFrameStrata then m:SetFrameStrata("DIALOG") end
+    m:SetClampedToScreen(true); m:EnableMouse(true)
+    m.btns = {}
+    m:Hide()
+    Gold._menu = m
+  end
+  if not keep and m:IsShown() and m.owner == owner then m:Hide(); m.owner = nil; return m end
+  m.owner, m.items = owner, items
+  local rows = {}
+  for _, it in ipairs(items) do rows[#rows + 1] = it end
+  if not keep then m.root = items end
+  if items ~= m.root then table.insert(rows, 1, { kind = "back", text = "‹ Back" }) end
+  rows[#rows + 1] = { kind = "close", text = "Close" }
+  local wmax = 0
+  for i, it in ipairs(rows) do
+    local b = m.btns[i]
+    if not b then
+      b = UI.Button(m, "", 44, ROW_H, function(bb)
+        local e = bb.item
+        if not e or e.kind == "title" then return end
+        if e.kind == "sub" then Gold.ownMenu(m.owner, e.items, true); return end
+        if e.kind == "back" then Gold.ownMenu(m.owner, m.root, true); return end
+        m:Hide(); m.owner = nil
+        if e.pick then e.pick() end
+      end)
+      m.btns[i] = b
+    end
+    b.item = it
+    b.text:SetText(it.kind == "sub" and (it.text .. "  ›") or it.text)
+    UI.FitButton(b, 44)
+    local sel = (it.kind == "radio" or it.kind == "check") and it.checked and it.checked() or false
+    UI.SetButtonSelected(b, sel and true or false)
+    if it.kind == "title" then b.text:SetTextColor(C.dim[1], C.dim[2], C.dim[3]) elseif not sel then b.text:SetTextColor(C.ink[1], C.ink[2], C.ink[3]) end
+    local ok, bw = pcall(b.GetWidth, b)
+    wmax = math.max(wmax, ok and tonumber(bw) or 0)
+    b:Show()
+  end
+  for i = #rows + 1, #m.btns do m.btns[i]:Hide() end
+  for i = 1, #rows do
+    local b = m.btns[i]
+    b:ClearAllPoints(); b:SetPoint("TOPLEFT", m, "TOPLEFT", SP.XS, -SP.XS - (i - 1) * (ROW_H + 2)); b:SetWidth(wmax)
+  end
+  m.count = #rows
+  m:SetSize(wmax + 2 * SP.XS, #rows * (ROW_H + 2) - 2 + 2 * SP.XS)
+  m:ClearAllPoints()
+  m:SetPoint("TOPLEFT", owner, "BOTTOMLEFT", 0, -2)
+  m:Show()
+  return m
+end
+-- Show the menu under `owner`. Returns "MenuUtil" or "own", or false in combat (nothing opens in combat).
+function Gold.menu(owner, items)
+  if ns.blockedInCombat and ns.blockedInCombat() then return false end
+  items = items or Gold.menuItems()
+  if not Gold._menuFail and type(MenuUtil) == "table" and type(MenuUtil.CreateContextMenu) == "function" then
+    local built = false
+    local ok = pcall(MenuUtil.CreateContextMenu, owner, function(_, root)
+      built = pcall(Gold.menuBuild, root, items)
+    end)
+    if ok and built then return "MenuUtil" end
+    Gold._menuFail = true   -- this client's menu does not work for us: the own list from now on
+  end
+  Gold.ownMenu(owner, items)
+  return "own"
+end
+
+-- ── bar text: LibDataBroker data sources, only when another addon brought the library (#43, decision 18) ─────────
+Gold.BROKER = { { "balance", "everbuff.gg Balance" }, { "total", "everbuff.gg Account total" }, { "today", "everbuff.gg Today" },
+  { "rate", "everbuff.gg Per hour" } }
+function Gold.brokerInit()
+  if Gold._broker then return true end
+  local LS = rawget(_G, "LibStub")   -- another addon's library, not a client function
+  if LS == nil then return false end
+  local ok, ldb = pcall(function() return LS:GetLibrary("LibDataBroker-1.1", true) end)
+  if not ok or type(ldb) ~= "table" or type(ldb.NewDataObject) ~= "function" then return false end
+  local objs = {}
+  for _, b in ipairs(Gold.BROKER) do
+    local okN, obj = pcall(ldb.NewDataObject, ldb, b[2], { type = "data source", label = b[2], text = "",
+      icon = "Interface\\AddOns\\EverbuffJournal\\media\\mark",
+      OnClick = function(frame, button) if button == "RightButton" then Gold.menu(frame) else Gold.openSoon() end end,
+      OnTooltipShow = function(tip)
+        if not (tip and tip.AddLine) then return end
+        tip:AddLine("everbuff.gg gold")
+        pcall(Gold.tooltip, tip)
+      end })
+    if okN and type(obj) == "table" then objs[#objs + 1] = { id = b[1], obj = obj } end
+  end
+  if #objs == 0 then return false end
+  Gold._broker = objs
+  Gold.brokerUpdate()
+  Gold.rateWatch()
+  return true
+end
+function Gold.brokerUpdate()
+  for _, o in ipairs(Gold._broker or {}) do
+    local ok, text = pcall(Gold.glance, o.id, false)
+    if ok and text ~= o.text then
+      o.text = text
+      pcall(function() o.obj.text = text end)
+    end
+  end
+end
+
+-- ── the 10 s repaint: a rate moves with time, so what shows one is drawn again every 10 s, and only then ────────
+-- A rate is on screen when the pill shows one (or the farm timer), a bar text exists, one of our tooltips is open
+-- or the Gold pane is showing. With none of them there is no ticker.
+function Gold.rateOnScreen()
+  local p = Gold.pill
+  if p and p:IsShown() then
+    for _, m in ipairs(Gold.pillMetrics()) do if m == "rate" or m == "timer" then return true end end
+  end
+  if Gold._broker then return true end
+  if Gold._tipOwner and GameTooltip and type(GameTooltip.IsOwned) == "function" and GameTooltip:IsOwned(Gold._tipOwner) == true then return true end
+  if Gold.paneShowing and Gold.paneShowing() then return true end
+  return false
+end
+function Gold.rateWatch()
+  local need = Gold.rateOnScreen()
+  local tk = Gold._rateTicker
+  if tk and not need then
+    if type(tk.Cancel) == "function" then pcall(tk.Cancel, tk) end
+    Gold._rateTicker = nil
+  elseif need and not tk and C_Timer and type(C_Timer.NewTicker) == "function" then
+    local ok, t = pcall(C_Timer.NewTicker, 10, function() Gold.repaint() end)
+    Gold._rateTicker = ok and t or nil
+  end
+end
+function Gold.tipRedo()
+  local owner, redo = Gold._tipOwner, Gold._tipRedo
+  if not (owner and redo) then return end
+  if GameTooltip and type(GameTooltip.IsOwned) == "function" and GameTooltip:IsOwned(owner) == true then pcall(redo, owner)
+  else Gold._tipOwner, Gold._tipRedo = nil, nil end
+end
+function Gold.repaint()
+  if not Gold.rateOnScreen() then Gold.rateWatch(); return end
+  pcall(Gold.pillUpdate); pcall(Gold.brokerUpdate); pcall(Gold.tipRedo)
+  if Gold.paneRate then pcall(Gold.paneRate) end
+end
+-- every surface follows the purse in the frame of the change
+Gold.onChange(function() pcall(Gold.pillUpdate); pcall(Gold.brokerUpdate); pcall(Gold.tipRedo) end)
+
+-- The gold block on the flag's tooltip, under its four help lines. Off unless settings.gold.tip.flag is true: the
+-- flag is what the desktop app reads, and a taller tooltip beside it waits for the desktop's replay of its fixtures.
+function Gold.flagTip(tip, flag)
+  local tc = Gold.tipCfg()
+  if not (tc and tc.flag == true) then return 0 end
+  return Gold.tooltip(tip, { owner = flag, redo = function(f)
+    local h = f and f.GetScript and f:GetScript("OnEnter")
+    if h then h(f) end
+  end })
+end
+
+-- the first-run question of the pill (#43, decision 4): asked once, in the Gold pane, until it is answered or the
+-- pill was turned on some other way
+function Gold.pillAskDue()
+  if not (ns.DB and ns.charGuid()) then return false end
+  local pc = Gold.pillCfg()
+  return not (pc and (pc.asked == true or pc.on == true))
+end
+function Gold.pillAnswer(yes)
+  if yes then return Gold.pillOn(true) end
+  Gold.pillCfg(true).asked = true
+  return true
 end
 
 -- ── the Gold pane ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -1257,6 +2059,15 @@ local function relayout(c, w, h)
   local rows = (total <= w - 4 * GAP) and { { 1, 2, 3, 4, 5 } } or { { 1, 2, 3 }, { 4, 5 } }
   c.cardRows = #rows
   local y = -(ROW_H + GAP)
+  -- the first-run question of the pill, a row of its own above the cards until it is answered (0.9.45)
+  if c.askRow then
+    if c.askOn then
+      c.askRow:ClearAllPoints()
+      c.askRow:SetPoint("TOPLEFT", c, "TOPLEFT", 0, y); c.askRow:SetPoint("TOPRIGHT", c, "TOPRIGHT", -UI.SCROLLBAR, y)
+      c.askRow:Show()
+      y = y - ROW_H - GAP
+    else c.askRow:Hide() end
+  end
   for _, r in ipairs(rows) do
     local rn = {}
     for i, idx in ipairs(r) do rn[i] = needs[idx] end
@@ -1403,6 +2214,7 @@ local function refresh(c)
   if c.menu then c.menu:Hide() end
   local cfg = Gold.cfg() or {}
   local now = nowT()
+  c.askOn = Gold.pillAskDue()
   local isSession = not Gold.isDayScope(st.scope) and st.scope ~= "all"
   if isSession then st.who = "char" end
   local sc = Gold.scope(st.scope, st.who, st.withStale)
@@ -1449,9 +2261,15 @@ local function refresh(c)
   c.cNet.value:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net)))
   local nc = net < 0 and C.red or C.green
   c.cNet.value:SetTextColor(nc[1], nc[2], nc[3])
+  c.cRate.value:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
+  c.rateLive, c.rateStatusText = false, nil
   if sc.lifetime then
     c.cRate.title:SetText("CHANGED WHILE AWAY")
     c.cRate.value:SetText(signed(num(g.away)))
+  elseif Gold.paintRate(c) then
+    -- today or the running session of this character: the rolling rate (0.9.45), its definition in the status line
+    c.rateStatusText = Gold.rateStatus()
+    status[#status + 1] = c.rateStatusText
   else
     -- the label names the definition: net over the time played (a day period) or the session's length. For one
     -- character the status line says over how long; a realm or an account says it in the card's title.
@@ -1787,6 +2605,25 @@ local function refresh(c)
   relayout(c, w, h)
 end
 
+-- The PER HOUR card of a period that is still running, for the logged-in character (today, the running session):
+-- the rolling rate by the per hour setting, its title naming the definition ("FARMING PER HOUR"), dimmed while it
+-- warms up; the status line names the window (Gold.rateStatus). Returns false when the card is not of that kind or there is no active
+-- time yet (the caller then shows the period's net over its time, as before). Drawn again every 10 s (Gold.paneRate).
+function Gold.paintRate(c)
+  local sc = c.scopeData
+  if not sc or sc.lifetime or sc.who ~= "char" or not sc.live then return false end
+  if not (sc.key == "today" or sc.key == "session") then return false end
+  local r = Gold.rate()
+  if not r.perHour then return false end
+  local name, v, _, dim = Gold.rateParts(r)
+  c.cRate.title:SetText((name .. " per hour"):upper())
+  c.cRate.value:SetText(v)
+  local col = dim and C.dim or C.ink
+  c.cRate.value:SetTextColor(col[1], col[2], col[3])
+  c.rateLive = true
+  return true
+end
+
 -- ── build ────────────────────────────────────────────────────────────────────
 local function card(content, d)
   local p = UI.Panel(content)
@@ -1903,6 +2740,16 @@ function ns.BuildEconomyPane(pane)
   end)
   c.whoBtn:SetPoint("RIGHT", c.viewBtn, "LEFT", -SP.XS, 0)
   for _, d in ipairs(CARDS) do c[d.key] = card(c, d) end
+  -- the first-run question of the gold pill (#43, decision 4): one row above the cards, gone once answered
+  c.askRow = CreateFrame("Frame", nil, c); c.askRow:SetHeight(ROW_H)
+  c.askNo = UI.Button(c.askRow, "No", 44, ROW_H, function() Gold.pillAnswer(false); again() end)
+  c.askNo:SetPoint("RIGHT", c.askRow, "RIGHT", 0, 0); UI.FitButton(c.askNo, 44)
+  c.askYes = UI.Button(c.askRow, "Yes", 44, ROW_H, function() Gold.pillAnswer(true); again() end)
+  c.askYes:SetPoint("RIGHT", c.askNo, "LEFT", -SP.S, 0); UI.FitButton(c.askYes, 44)
+  c.askText = UI.CellFS(c.askRow, "GameFontHighlightSmall", C.ink); c.askText:SetJustifyH("LEFT")
+  c.askText:SetPoint("LEFT", c.askRow, "LEFT", SP.S, 0); c.askText:SetPoint("RIGHT", c.askYes, "LEFT", -SP.M, 0)
+  c.askText:SetText("Show your gold on screen? One line you can drag anywhere.")
+  c.askRow:Hide()
   -- the status line under the cards: what the cards do not say (who is counted, what moved between the player's own
   -- characters, what changed while away, where the history starts)
   -- It wraps (up to three lines) and the row takes the height of its text, so no part of it is cut.
@@ -2028,7 +2875,7 @@ end
 -- LOOT / Gold pane (the Loot host is declared by Emitter.lua with the Items pane)
 local goldRefresh, goldContent
 UI.registerPane("Loot", 2, "Gold", function(content) goldContent = content; goldRefresh = ns.BuildEconomyPane(content) end,
-  function() if goldRefresh then goldRefresh() end end)
+  function() if goldRefresh then goldRefresh() end; Gold.rateWatch() end)
 
 -- the open pane follows the purse: one refresh 0.1 s after the first of a burst of changes
 local function showing(f)
@@ -2052,6 +2899,26 @@ Gold.onChange(function()
   end)
 end)
 
+-- the 10 s repaint of the open pane: the rate card only (a full refresh would close an open list)
+function Gold.paneShowing() return (goldContent ~= nil and goldRefresh ~= nil and showing(goldContent)) and true or false end
+function Gold.paneRate()
+  local c = goldContent
+  if not (c and c.cRate and Gold.paneShowing()) then return end
+  local was = c.rateLive
+  if Gold.paintRate(c) then
+    -- the window in the status line moves too: its part of the line is replaced in place
+    local old, new = c.rateStatusText, Gold.rateStatus()
+    local a, b = nil, nil
+    if old and c.statusText then a, b = c.statusText:find(old, 1, true) end
+    if a then
+      c.statusText = c.statusText:sub(1, a - 1) .. new .. c.statusText:sub(b + 1)
+      c.rateStatusText = new
+      c.status:SetText(c.statusText)
+    elseif not (was and old) and goldRefresh and not (c.menu and c.menu:IsShown()) then goldRefresh(); return end
+    relayout(c, c.layoutW, c.layoutH)
+  elseif was and goldRefresh then goldRefresh() end
+end
+
 -- Open the Gold pane on a period: "session", "previous", "all", a session id or a day period (Home / Sessions, the
 -- Overview card). view: "sources" (default), "journal", "days" or "chars"; flags: true lists the flagged rows.
 function Gold.open(scope, view, flags)
@@ -2071,6 +2938,210 @@ function Gold.filter(src)
   local st = goldContent.st
   st.view, st.src, st.flags = "journal", src, false
   if goldRefresh then goldRefresh() end
+end
+
+-- ── Settings > Gold (0.9.45, everbuff-wow-addon #43) ────────────────────────────────────────────────────────────
+-- Built into the Gold sub-tab of Settings by Emitter (ns.BuildGoldSettings). The main page holds the eight
+-- controls most players touch; the rest sits behind "More". A choice of several values is a button that opens the
+-- addon's own list (Gold.ownMenu).
+function ns.BuildGoldSettings(pane)
+  local X1, X2 = 14, 340
+  local main, more = CreateFrame("Frame", nil, pane), CreateFrame("Frame", nil, pane)
+  main:SetAllPoints(pane); more:SetAllPoints(pane); more:Hide()
+  pane.main, pane.more = main, more
+  local checks, loading = {}, false
+  local function refresh() if pane.refresh then pane.refresh() end end
+  local function header(parent, text, x, y)
+    local h = UI.FS(parent, "GameFontNormal", C.gold); h:SetPoint("TOPLEFT", x, y); h:SetText(text); return h
+  end
+  local function label(parent, text, x, y)
+    local l = UI.FS(parent, "GameFontHighlightSmall", C.dim); l:SetPoint("TOPLEFT", x, y); l:SetJustifyH("LEFT"); l:SetText(text); return l
+  end
+  local function checkbox(parent, text, x, y, get, set)
+    local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate"); cb:SetPoint("TOPLEFT", x, y); cb:SetSize(22, 22)
+    local lbl = UI.FS(parent, "GameFontHighlightSmall"); lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0); lbl:SetJustifyH("LEFT"); lbl:SetText(text)
+    cb.label, cb.get = lbl, get
+    cb:SetScript("OnClick", function(self) set(self:GetChecked() and true or false); refresh() end)
+    checks[#checks + 1] = cb
+    return cb
+  end
+  -- a button that opens a list of choices { key, label }; `get` names the current key, `set` takes the picked one
+  local function picker(parent, x, y, choices, get, set)
+    local b
+    b = UI.Button(parent, "", 44, ROW_H, function(bb)
+      local items = {}
+      for _, ch in ipairs(choices) do
+        items[#items + 1] = { kind = "radio", text = ch[2], checked = function() return get() == ch[1] end, pick = function() set(ch[1]); refresh() end }
+      end
+      Gold.ownMenu(bb, items)
+    end)
+    b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    b.choices, b.get = choices, get
+    return b
+  end
+  local function slider(parent, name, text, x, y, lo, hi, step, get, set, fmt)
+    local lbl = label(parent, text, x + 4, y)
+    local s = CreateFrame("Slider", name, parent, "OptionsSliderTemplate")
+    s:SetOrientation("HORIZONTAL"); s:SetWidth(240); s:SetHeight(16); s:SetPoint("TOPLEFT", x + 4, y - 18)
+    s:SetMinMaxValues(lo, hi); s:SetValueStep(step); s:SetObeyStepOnDrag(true)
+    for _, part in ipairs({ "Low", "High", "Text" }) do local fs = _G[name .. part]; if fs and fs.SetText then fs:SetText("") end end
+    s.label, s.caption, s.get, s.fmt = lbl, text, get, fmt
+    s:SetScript("OnValueChanged", function(_, v)
+      if loading then return end
+      set(v)
+      lbl:SetText(text .. ": " .. fmt(get()))
+    end)
+    return s
+  end
+
+  -- ── the main page ──
+  header(main, "Gold on screen", X1, -6)
+  pane.cbTips = checkbox(main, "Show gold in tooltips", X1, -28,
+    function() local cfg = Gold.cfg(); return not (cfg and cfg.tips == false) end,
+    function(v) Gold.cfg(true).tips = v end)
+  pane.cbPill = checkbox(main, "Gold pill on screen", X1, -52,
+    function() return (Gold.pillCfg() or {}).on == true end,
+    function(v) Gold.pillOn(v) end)
+  label(main, "Pill shows", X1 + 4, -84)
+  pane.pick1 = picker(main, X1 + 116, -80, Gold.GLANCE, function() return Gold.pillMetrics()[1] end, function(k) Gold.pillSet(1, k) end)
+  label(main, "Second value", X1 + 4, -110)
+  local second = { { "none", "None" } }
+  for _, g in ipairs(Gold.GLANCE) do second[#second + 1] = g end
+  pane.pick2 = picker(main, X1 + 116, -106, second, function() return Gold.pillMetrics()[2] or "none" end, function(k) Gold.pillSet(2, k ~= "none" and k or nil) end)
+  label(main, "Per hour shows", X1 + 4, -136)
+  pane.rateBtns = {}
+  local prev
+  for _, m in ipairs(Gold.RATE_MODES) do
+    local b = UI.Button(main, m[2], 44, ROW_H, function() Gold.cfg(true).rateMode = m[1]; Gold.fire(); refresh() end)
+    b.mode = m[1]
+    UI.FitButton(b, 44)
+    if prev then b:SetPoint("LEFT", prev, "RIGHT", SP.XS, 0) else b:SetPoint("TOPLEFT", main, "TOPLEFT", X1 + 116, -132) end
+    pane.rateBtns[#pane.rateBtns + 1] = b; prev = b
+  end
+  pane.rateNote = label(main, "", X1 + 4, -158)
+  pane.rateNote:SetWidth(310)
+  if pane.rateNote.SetWordWrap then pane.rateNote:SetWordWrap(true) end
+  label(main, "Show gold from", X1 + 4, -200)
+  pane.pickFilter = picker(main, X1 + 116, -196, FILTERS, function() local f = (Gold.cfg() or {}).filter; return labelOf(FILTERS, f) and f or "all" end,
+    function(k) Gold.cfg(true).filter = k; Gold.fire() end)
+  pane.cbIcons = checkbox(main, "Coin icons", X1, -222,
+    function() return (Gold.cfg() or {}).icons == true end, function(v) Gold.cfg(true).icons = v; Gold.fire() end)
+  pane.cbCompact = checkbox(main, "Compact numbers", X1, -246,
+    function() return (Gold.cfg() or {}).compact == true end, function(v) Gold.cfg(true).compact = v; Gold.fire() end)
+  pane.barText = label(main, "", X1 + 4, -278)
+  pane.barText:SetWidth(310)
+  if pane.barText.SetWordWrap then pane.barText:SetWordWrap(true) end
+  pane.moreBtn = UI.Button(main, "More", 44, ROW_H, function() main:Hide(); more:Show(); refresh() end)
+  pane.moreBtn:SetPoint("TOPLEFT", main, "TOPLEFT", X1, -316); UI.FitButton(pane.moreBtn, 44)
+  -- hidden characters, each with "Show again"
+  header(main, "Hidden characters", X2, -6)
+  pane.hiddenNone = label(main, "None. Hide a character in Loot, Gold, Characters.", X2 + 4, -30)
+  pane.hiddenRows = {}
+  for i = 1, 6 do
+    local y = -30 - (i - 1) * (ROW_H + SP.XS)
+    local name = UI.FS(main, "GameFontHighlightSmall"); name:SetPoint("TOPLEFT", X2 + 4, y - 3); name:SetWidth(170); name:SetJustifyH("LEFT")
+    if name.SetWordWrap then name:SetWordWrap(false) end
+    local b = UI.Button(main, "Show again", 44, ROW_H, function(bb)
+      local cfg = Gold.cfg(true)
+      if type(cfg.hidden) == "table" and bb.guid then
+        cfg.hidden[bb.guid] = nil
+        if next(cfg.hidden) == nil then cfg.hidden = nil end
+      end
+      Gold.fire(); refresh()
+    end)
+    b:SetPoint("TOPLEFT", main, "TOPLEFT", X2 + 184, y); UI.FitButton(b, 44)
+    pane.hiddenRows[i] = { name = name, btn = b }
+  end
+  pane.hiddenMore = label(main, "", X2 + 4, -30 - 6 * (ROW_H + SP.XS) - 3)
+
+  -- ── behind "More" ──
+  header(more, "More gold settings", X1, -6)
+  pane.backBtn = UI.Button(more, "Back", 44, ROW_H, function() more:Hide(); main:Show(); refresh() end)
+  pane.backBtn:SetPoint("TOPLEFT", more, "TOPLEFT", X1, -28); UI.FitButton(pane.backBtn, 44)
+  pane.cbLock = checkbox(more, "Lock the pill", X1, -56,
+    function() return (Gold.pillCfg() or {}).locked == true end, function(v) Gold.pillOpt("locked", v) end)
+  local function pct(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
+  pane.slScale = slider(more, "EverbuffGoldPillScaleSlider", "Pill text size", X1, -88, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2], 0.05,
+    function() return tonumber((Gold.pillCfg() or {}).scale) or 1 end,
+    function(v) if not Gold.inCombat() then Gold.pillOpt("scale", v) end end, pct)
+  pane.slAlpha = slider(more, "EverbuffGoldPillAlphaSlider", "Pill opacity", X1, -136, Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2], 0.05,
+    function() return tonumber((Gold.pillCfg() or {}).alpha) or 1 end,
+    function(v) if not Gold.inCombat() then Gold.pillOpt("alpha", v) end end, pct)
+  pane.slRows = slider(more, "EverbuffGoldTipRowsSlider", "Characters in tooltips", X1, -184, 5, 30, 1,
+    function() return math.max(5, math.min(30, tonumber((Gold.tipCfg() or {}).limit) or Gold.TIP_ROWS)) end,
+    function(v) Gold.tipCfg(true).limit = math.max(5, math.min(30, math.floor((tonumber(v) or Gold.TIP_ROWS) + 0.5))) end,
+    function(v) return tostring(v) end)
+  pane.cbWeek = checkbox(more, "This week in tooltips", X1, -232,
+    function() return (Gold.tipCfg() or {}).week == true end, function(v) Gold.tipCfg(true).week = v end)
+  pane.cbMonth = checkbox(more, "This month in tooltips", X1, -256,
+    function() return (Gold.tipCfg() or {}).month == true end, function(v) Gold.tipCfg(true).month = v end)
+  pane.cbFlag = checkbox(more, "Gold on the flag's tooltip", X1, -280,
+    function() return (Gold.tipCfg() or {}).flag == true end, function(v) Gold.tipCfg(true).flag = v end)
+  header(more, "Reset", X2, -6)
+  pane.resetPos = UI.Button(more, "Reset pill position", 44, ROW_H, function() if not (ns.blockedInCombat and ns.blockedInCombat()) then Gold.pillOpt("pos") end end)
+  pane.resetPos:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30); UI.FitButton(pane.resetPos, 44)
+  pane.resetRate = UI.Button(more, "Reset per hour", 44, ROW_H, function() Gold.resetRate(); refresh() end)
+  pane.resetRate:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30 - (ROW_H + SP.S)); UI.FitButton(pane.resetRate, 44)
+  -- two clicks: the first names what goes, the second within 3 s deletes it
+  local RESET, CONFIRM = "Reset gold history", "Confirm: delete this character's day history"
+  pane.resetHist = UI.Button(more, RESET, 44, ROW_H)
+  pane.resetHist:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30 - 2 * (ROW_H + SP.S)); UI.FitButton(pane.resetHist, 44)
+  pane.resetHist:SetScript("OnClick", function(bb)
+    local function rest()
+      bb.armed = false
+      bb.text:SetText(RESET); bb.text:SetTextColor(C.ink[1], C.ink[2], C.ink[3]); UI.FitButton(bb, 44)
+    end
+    if not bb.armed then
+      bb.armed = true
+      bb.text:SetText(CONFIRM); bb.text:SetTextColor(C.red[1], C.red[2], C.red[3]); UI.FitButton(bb, 44)
+      if C_Timer and type(C_Timer.After) == "function" then C_Timer.After(3, function() if bb.armed then rest() end end) end
+    else
+      rest()
+      Gold.resetHistory()
+      refresh()
+    end
+  end)
+  pane.resetNote = label(more, "Reset gold history deletes this character's day rows, its per hour window and its farm timer. The balance and the lifetime totals stay, and no other character is touched.",
+    X2 + 4, -30 - 3 * (ROW_H + SP.S) - SP.XS)
+  pane.resetNote:SetWidth(310)
+  if pane.resetNote.SetWordWrap then pane.resetNote:SetWordWrap(true) end
+
+  function pane.refresh()
+    loading = true
+    for _, cb in ipairs(checks) do cb:SetChecked(cb.get() and true or false) end
+    for _, b in ipairs({ pane.pick1, pane.pick2, pane.pickFilter }) do
+      b.text:SetText(labelOf(b.choices, b.get()) or b.choices[1][2]); UI.FitButton(b, 44)
+    end
+    local mode = Gold.rateMode()
+    for _, b in ipairs(pane.rateBtns) do UI.SetButtonSelected(b, b.mode == mode) end
+    pane.rateNote:SetText(Gold.RATE_NOTE[mode])
+    pane.barText:SetText(Gold._broker and "Bar text: detected" or "Bar text needs a bar addon such as Titan Panel or ElvUI")
+    for _, s in ipairs({ pane.slScale, pane.slAlpha, pane.slRows }) do
+      s:SetValue(s.get())
+      s.label:SetText(s.caption .. ": " .. s.fmt(s.get()))
+    end
+    -- the hidden characters by name, the first six; the rest as a count
+    local cfg = Gold.cfg()
+    local hidden = {}
+    for guid in pairs(cfg and type(cfg.hidden) == "table" and cfg.hidden or {}) do
+      local blk = ns.DB and type(ns.DB.characters) == "table" and ns.DB.characters[guid]
+      local nm = type(blk) == "table" and type(blk.name) == "string" and blk.name or "No longer in the save file"
+      if type(blk) == "table" and type(blk.surname) == "string" then nm = nm .. " " .. blk.surname end
+      hidden[#hidden + 1] = { guid = guid, name = nm }
+    end
+    table.sort(hidden, function(a, b) if a.name ~= b.name then return a.name < b.name end return tostring(a.guid) < tostring(b.guid) end)
+    for i, row in ipairs(pane.hiddenRows) do
+      local h = hidden[i]
+      if h then row.name:SetText(h.name); row.name:Show(); row.btn.guid = h.guid; row.btn:Show()
+      else row.name:SetText(""); row.name:Hide(); row.btn:Hide() end
+    end
+    if #hidden == 0 then pane.hiddenNone:Show() else pane.hiddenNone:Hide() end
+    pane.hiddenMore:SetText(#hidden > #pane.hiddenRows and ("and %d more"):format(#hidden - #pane.hiddenRows) or "")
+    loading = false
+  end
+  pane:HookScript("OnShow", function() pcall(pane.refresh) end)
+  pane.refresh()
+  return pane.refresh
 end
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──

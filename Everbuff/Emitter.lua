@@ -175,6 +175,8 @@ flag:SetScript("OnEnter", function(self)
   GameTooltip:AddLine("Left-click  ·  open Everbuff", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Drag  ·  move anywhere", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Right-click  ·  snap to a corner", 0.8, 0.8, 0.8)
+  -- the gold block under the four help lines, only when settings.gold.tip.flag is on (0.9.45, #43; off by default)
+  if ns.Gold and ns.Gold.flagTip then pcall(ns.Gold.flagTip, GameTooltip, self) end
   GameTooltip:Show()
 end)
 flag:SetScript("OnLeave", function() emblem:SetSize(30, 30); GameTooltip:Hide() end)
@@ -1912,7 +1914,7 @@ if ns.UI and ns.UI.registerTab then
     sub:SetText("Look and notifications, capture health, stored data.")
 
     -- ── sub-tabs: a real tab control on a bordered pane (UI.Tabs); panes built eagerly so tests cover them
-    local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
+    local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "gold", label = "Gold" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
     content.subtabs = subtabs
     local general, capture, data = subtabs.panes.general, subtabs.panes.capture, subtabs.panes.data
 
@@ -2032,6 +2034,9 @@ if ns.UI and ns.UI.registerTab then
     general.lootToastButtons = ltBtns
     refreshLT()
 
+    -- ═══ Gold: tooltips, the pill, per hour, resets (Economy.lua, 0.9.45) ═══
+    if ns.BuildGoldSettings then content.goldRefresh = ns.BuildGoldSettings(subtabs.panes.gold) end
+
     -- ═══ Capture: health + disconnect protection (Sync.lua) ═══
     if ns.BuildCapturePane then ns.BuildCapturePane(capture) end
 
@@ -2111,7 +2116,7 @@ if ns.UI and ns.UI.registerTab then
     refreshAck()
 
     refreshData()
-    content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end end
+    content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end; if content.goldRefresh then content.goldRefresh() end end
     subtabs.select("general"); refresh()
   end, function() end, nil, "bottom")
 

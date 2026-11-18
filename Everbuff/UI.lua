@@ -107,7 +107,15 @@ UI.WIN_MIN_W, UI.WIN_MIN_H, UI.WIN_MAX_W, UI.WIN_MAX_H = 900, 580, 1600, 1000
 
 -- The one money formatter: "12,345g 6s 7c". Gold is grouped by thousands, a zero part is left out (0 is "0c"), and
 -- the parts are joined by no-break spaces so a wrapping text never breaks inside an amount. A hidden or non-number
--- value reads as 0.
+-- value reads as 0. With no options the text is the full amount without its sign, as every pane shows it.
+-- Options (0.9.45, everbuff-wow-addon #43), `opts` a table:
+--   signed   the sign is always printed: "+" or "-" (a caller can no longer forget it)
+--   short    the glance form: under 1g silver and copper, under 100g gold and silver, from 100g gold only; the
+--            smaller part is zero-padded ("12g 04s") so the width stays steady while the amount moves
+--   compact  from 100,000g "123.4k" and the gold icon, or "123.4k g" in letters (only with `short`)
+--   icons    the coin icons instead of the letters g, s and c: inline textures of height 0, which follow the size
+--            of the font they are drawn in
+--   rate     round half away from zero (a rate); without it the amount is floored (a balance)
 local NBSP = "\194\160"
 UI.NBSP = NBSP
 local function grouped(n)
@@ -115,16 +123,47 @@ local function grouped(n)
   local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
   return (out:gsub("^,", ""))
 end
-function ns.fmtMoney(c)
+local COIN_ICON = {
+  g = "|TInterface\\MoneyFrame\\UI-GoldIcon:0:0:2:0|t",
+  s = "|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t",
+  c = "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t",
+}
+UI.COIN_ICON = COIN_ICON
+function ns.fmtMoney(c, opts)
   if type(c) ~= "number" or (issecretvalue and issecretvalue(c)) then c = 0 end
   if c ~= c or c == math.huge or c == -math.huge then c = 0 end
-  c = math.floor(math.abs(c))
-  local g, s, cp = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
-  local out = {}
-  if g > 0 then out[#out + 1] = grouped(g) .. "g" end
-  if s > 0 then out[#out + 1] = s .. "s" end
-  if cp > 0 or #out == 0 then out[#out + 1] = cp .. "c" end
-  return table.concat(out, NBSP)
+  if type(opts) ~= "table" then opts = nil end
+  local neg = c < 0
+  c = math.abs(c)
+  local unit = (opts and opts.icons) and COIN_ICON or nil
+  local function u(letter) return unit and unit[letter] or letter end
+  local round = (opts and opts.rate) and function(v) return math.floor(v + 0.5) end or math.floor
+  local text
+  if opts and opts.short then
+    -- the amount in the smallest unit its band shows (copper under 1g, silver under 100g, gold from there),
+    -- rounded or floored in that unit; a value rounded up over its band is shown in the next one
+    local gold, silver, copper = round(c / 10000), round(c / 100), round(c)
+    if opts.compact and gold >= 100000 then
+      text = grouped(math.floor(gold / 1000)) .. "." .. (math.floor(gold / 100) % 10) .. "k" .. (unit and unit.g or (NBSP .. "g"))
+    elseif c >= 1000000 or silver >= 10000 then
+      text = grouped(c >= 1000000 and gold or math.floor(silver / 100)) .. u("g")
+    elseif c >= 10000 or copper >= 10000 then
+      if c < 10000 then silver = math.floor(copper / 100) end
+      text = math.floor(silver / 100) .. u("g") .. NBSP .. ("%02d"):format(silver % 100) .. u("s")
+    elseif copper >= 100 then
+      text = math.floor(copper / 100) .. u("s") .. NBSP .. ("%02d"):format(copper % 100) .. u("c")
+    else text = copper .. u("c") end
+  else
+    c = round(c)
+    local g, s, cp = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
+    local out = {}
+    if g > 0 then out[#out + 1] = grouped(g) .. u("g") end
+    if s > 0 then out[#out + 1] = s .. u("s") end
+    if cp > 0 or #out == 0 then out[#out + 1] = cp .. u("c") end
+    text = table.concat(out, NBSP)
+  end
+  if opts and opts.signed then text = (neg and "-" or "+") .. text end
+  return text
 end
 
 -- ── cells and their tooltips ──────────────────────────────────────────────────
@@ -1220,16 +1259,12 @@ function UI.buildMinimapButton()
     GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
     GameTooltip:AddLine("everbuff.gg")
     GameTooltip:AddLine("Left-click: open   Right-click: settings   Drag: move", 0.7, 0.7, 0.7)
-    if ns.Gold and ns.Gold.tooltip then pcall(ns.Gold.tooltip, GameTooltip) end
+    -- (the owner and the redraw: while the button owns the tooltip the block follows the purse and the rate)
+    if ns.Gold and ns.Gold.tooltip then pcall(ns.Gold.tooltip, GameTooltip, { owner = btn, redo = tip }) end
     GameTooltip:Show()
   end
   b:SetScript("OnEnter", tip)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  if ns.Gold and ns.Gold.onChange then
-    ns.Gold.onChange(function()
-      if GameTooltip and type(GameTooltip.IsOwned) == "function" and GameTooltip:IsOwned(b) == true then tip(b) end
-    end)
-  end
   place()
   UI.minimapBtn = b
 end

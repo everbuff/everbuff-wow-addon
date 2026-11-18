@@ -42,7 +42,7 @@ The **everbuff desktop app** installs and updates the addon for you. Manual inst
 2. Extract so that `Interface/AddOns/EverbuffJournal/EverbuffJournal.toc` exists in each WoW flavor you play.
 3. Start WoW. Upgrading from an earlier version needs a full client restart, not `/reload`.
 
-Works on the Midnight beta, Anniversary and Classic Era clients. Open the panel with `/eb`, or click the flag. `/eb gold` prints the balance, today and this session in chat, `/eb gold chars` every character.
+Works on the Midnight beta, Anniversary and Classic Era clients. Open the panel with `/eb`, or click the flag. `/eb gold` prints the balance, today, this session and the rate per hour in chat, `/eb gold chars` every character, `/eb gold stats` today, this week and this month, and `/eb gold timer` starts a farm timer. The gold pill (one line of text on screen, off by default) is turned on in Settings, Gold.
 
 ## Layout
 

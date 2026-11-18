@@ -266,8 +266,9 @@ local handlers = {
 SLASH_EVERBUFF1 = "/eb"
 SLASH_EVERBUFF2 = "/everbuff"
 SlashCmdList.EVERBUFF = function(arg)
-  -- /eb gold and /eb gold chars answer in chat and open, move and change nothing, so they also answer in combat
-  -- (everbuff-wow-addon #43, decision 6). Parsed from the raw argument, before it is lowercased.
+  -- /eb gold, /eb gold chars and /eb gold stats answer in chat and open, move and change nothing, so they also
+  -- answer in combat; /eb gold timer starts the farm timer, which draws nothing either (everbuff-wow-addon #43,
+  -- decision 6). Parsed from the raw argument, before it is lowercased.
   do
     local head, rest = tostring(arg or ""):match("^%s*(%S+)%s*(.-)%s*$")
     if head and head:lower() == "gold" and ns.Gold and ns.Gold.slash then ns.Gold.slash(rest); return end
@@ -349,7 +350,7 @@ SlashCmdList.EVERBUFF = function(arg)
     local on = not arg:match("off")
     if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb gold stats · /eb gold timer · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
   end
 end
 

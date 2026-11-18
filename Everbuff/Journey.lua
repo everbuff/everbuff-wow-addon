@@ -218,8 +218,14 @@ refresh = function(content)
   local sub2 = ""
   if ns.Gold then
     local sub = ("today%s%s"):format(UI.NBSP, ns.Gold.signed(ns.Gold.metric("net", "char", "today")))
+    -- the rolling rate by the per hour setting, named ("Farming 44g 20s/h"), once there is active time for it
+    -- (0.9.45); until then today's net over the time played today, as before
+    local roll = ns.Gold.rate and ns.Gold.rate() or nil
     local rate = ns.Gold.metric("perHour", "char", "today")
-    if rate then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(rate), UI.NBSP, UI.NBSP) end
+    if roll and roll.perHour and not roll.warm then
+      local name, v = ns.Gold.rateParts(roll)
+      sub = sub .. ("  ·  %s%s%s"):format(name, UI.NBSP, v)
+    elseif rate then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(rate), UI.NBSP, UI.NBSP) end
     local ro = ns.Gold.roster("all")
     if ro.count > 1 then sub2 = ("all characters %s"):format(fmtMoney(ro.total)) end
     content.cGold.sub:SetText(sub)
