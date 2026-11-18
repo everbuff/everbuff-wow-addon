@@ -266,6 +266,12 @@ local handlers = {
 SLASH_EVERBUFF1 = "/eb"
 SLASH_EVERBUFF2 = "/everbuff"
 SlashCmdList.EVERBUFF = function(arg)
+  -- /eb gold and /eb gold chars answer in chat and open, move and change nothing, so they also answer in combat
+  -- (everbuff-wow-addon #43, decision 6). Parsed from the raw argument, before it is lowercased.
+  do
+    local head, rest = tostring(arg or ""):match("^%s*(%S+)%s*(.-)%s*$")
+    if head and head:lower() == "gold" and ns.Gold and ns.Gold.slash then ns.Gold.slash(rest); return end
+  end
   if ns.blockedInCombat() then return end
   arg = (arg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   if arg == "" or arg == "show" or arg == "open" then
@@ -343,7 +349,7 @@ SlashCmdList.EVERBUFF = function(arg)
     local on = not arg:match("off")
     if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /eb (open) · /eb status · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
   end
 end
 

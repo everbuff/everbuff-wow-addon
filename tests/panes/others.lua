@@ -142,11 +142,8 @@ return function(P)
   end
 
   -- ── Home / Overview: the card grid fills the width, every row of cards shares one height, the feed sits below
-  for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
-    for _, data in ipairs({ "normal", "long" }) do
-      local tag = ("Overview %dx%d %s"):format(size[1], size[2], data)
-      local c = P.open("home", "overview", size[1], size[2], data)
-      addRun(); reopen("Home", "overview")
+  -- the card checks, run on the data as it is and again with an alt and amounts in the thousands of gold
+  local function overviewCards(tag, c)
       local cb = P.box(c)
       local rows = { { c.cLevel, c.cXP, c.cPlayed }, { c.cGold, c.cKills, c.cPace } }
       local bad = {}
@@ -162,15 +159,69 @@ return function(P)
           if p.value:IsTruncated() then bad[#bad + 1] = "value cut: " .. tostring(p.value.text) end
           local sb = P.box(p.sub)
           if sb.t + select(2, P.G.textSize(p.sub, sb.w)) > P.box(p).t + P.box(p).h - 4 then bad[#bad + 1] = "sub past the card: " .. tostring(p.sub.text) end
+          -- the lines the subtitle needs, counted without its max-lines cap (a wrapped text that needs more lines
+          -- than the cap is cut without spilling)
+          local cap = p.sub._maxLines
+          p.sub._maxLines = nil
+          local _, _, need = P.G.textSize(p.sub, sb.w)
+          p.sub._maxLines = cap
+          if cap and need > cap then bad[#bad + 1] = ("sub needs %d lines of %d: %s"):format(need, cap, tostring(p.sub.text)) end
+          if p.sub2 and p.sub2On then
+            local s2 = P.box(p.sub2)
+            if p.sub2:IsTruncated() then bad[#bad + 1] = "second line cut: " .. tostring(p.sub2.text) end
+            if s2.t < sb.t + select(2, P.G.textSize(p.sub, sb.w)) - 0.5 then bad[#bad + 1] = "second line over the subtitle" end
+            if s2.t + s2.h > P.box(p).t + P.box(p).h - 4 then bad[#bad + 1] = "second line past the card: " .. tostring(p.sub2.text) end
+          end
         end
       end
       check(tag .. ": the cards fill the width in rows of three, M gaps, one height per row, nothing cut", #bad == 0, table.concat(bad, "; "))
-      -- GOLD: each label keeps its amount (a no-break space joins them), so a wrap can only fall at the separator
+      -- GOLD: each label keeps its amount (a no-break space joins them), so a wrap can only fall at the separator.
+      -- Today's net and today's pace are of the same period; what every character holds has a line of its own.
       local gs = tostring(c.cGold.sub.text)
-      check(tag .. ": the Gold card says this session's net and pace, each joined to its amount (#38)", gs:find("^this" .. UI.NBSP .. "session" .. UI.NBSP .. "[%+%-]") ~= nil and gs:find(UI.NBSP .. "per" .. UI.NBSP .. "hour$") ~= nil, gs)
+      local rate = ns.Gold.metric("perHour", "char", "today")
+      local ro = ns.Gold.roster("all")
+      check(tag .. ": the Gold card says today's net and, after 5 minutes played, today's pace, each joined to its amount (#43)", gs:find("^today" .. UI.NBSP .. "[%+%-]") ~= nil
+        and (gs:find(UI.NBSP .. "per" .. UI.NBSP .. "hour") ~= nil) == (rate ~= nil)
+        and (rate == nil or gs:find(ns.Gold.signed(rate) .. UI.NBSP .. "per", 1, true) ~= nil) and gs:find("all", 1, true) == nil, gs)
+      check(tag .. ": with more than one character the Gold card has a second line: what they all hold", (ro.count > 1) == (c.cGold.sub2On == true)
+        and tostring(c.cGold.sub2.text) == (ro.count > 1 and ("all characters " .. ns.fmtMoney(ro.total)) or ""), tostring(c.cGold.sub2.text))
       local words = {}
       for wd in gs:gsub(UI.NBSP, "_"):gmatch("%S+") do words[#words + 1] = wd end
-      check(tag .. ": the only break points left in the Gold subtitle are around the separator", #words == 3 and words[2] == "·", #words)
+      local okWords = #words % 2 == 1
+      for i, wd in ipairs(words) do if (i % 2 == 0) ~= (wd == "·") then okWords = false end end
+      check(tag .. ": the only break points left in the Gold subtitle are around the separators", okWords and #words >= 1, #words)
+  end
+  for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+    for _, data in ipairs({ "normal", "long" }) do
+      local tag = ("Overview %dx%d %s"):format(size[1], size[2], data)
+      local c = P.open("home", "overview", size[1], size[2], data)
+      addRun(); reopen("Home", "overview")
+      overviewCards(tag, c)
+      -- an alt and amounts in the thousands of gold, with enough time played today for the pace (#43): the row of
+      -- cards grows by the lines it needs and nothing is cut, also at 900x580
+      do
+        local G = ns.Gold
+        local me, base = ns.char(), G.baseStored()
+        check(tag .. ": the day base is known in the data", base ~= nil)
+        if base then
+          local kT = G.dayKey(GetServerTime(), base)
+          me.goldDays = me.goldDays or {}
+          local keepRow, keepSince = me.goldDays[kT], me.goldSince
+          me.goldDays[kT] = { g = 87654321, s = 12345678, t = 4000, n = 9, looted = 87654321, other = 12345678 }
+          me.goldSince = me.goldSince or GetServerTime()
+          ns.DB.characters["Player-1-0000C7"] = { name = "Richalt", realm = me.realm, class = "MAGE", faction = me.faction, level = 30, seen = GetServerTime() - 3600,
+            gold = { balance = 123456789 } }
+          reopen("Home", "overview")
+          local gs = tostring(c.cGold.sub.text)
+          check(tag .. " rich: thousands of gold today, a pace and an alt are all on the card", gs:find(ns.fmtMoney(87654321 - 12345678), 1, true) ~= nil and gs:find("per" .. UI.NBSP .. "hour", 1, true) ~= nil
+            and c.cGold.sub2On == true and tostring(c.cGold.sub2.text):find("^all characters %d") ~= nil, gs .. " | " .. tostring(c.cGold.sub2.text))
+          overviewCards(tag .. " rich", c)
+          ns.DB.characters["Player-1-0000C7"] = nil
+          me.goldDays[kT], me.goldSince = keepRow, keepSince
+          reopen("Home", "overview")
+        end
+      end
+      local cb = P.box(c)
       local tb, mb, sb = P.box(c.xpTrack), P.box(c.mhSub), P.box(c.mtbl.sf)
       local r2 = P.box(c.cGold)
       check(tag .. ": the XP bar sits under the cards", tb.t >= r2.t + r2.h + UI.SP.M - 0.5)
@@ -184,9 +235,28 @@ return function(P)
   do
     local c = P.open("home", "overview", 900, 580)
     for _, p in ipairs({ c.cLevel, c.cXP, c.cPlayed, c.cGold, c.cKills, c.cPace }) do p.sub:SetText("short") end
+    c.cGold.sub2:SetText(""); c.cGold.sub2On = false
     c.relayout(c:GetWidth()); M.settle()
     local h0 = P.box(c.cGold).h
     eq("Overview: short subtitles give the base card height", h0, 78)
+    -- the Gold card's second line (what every character holds) adds a line to its row, and one more when the
+    -- subtitle above it wraps
+    c.cGold.sub2:SetText("all characters 12,345g 67s 89c"); c.cGold.sub2On = true
+    c.relayout(c:GetWidth()); M.settle()
+    check("Overview: the Gold card's second line grows its row by one line, under the subtitle and inside the card", near(P.box(c.cGold).h, h0 + 14) and near(P.box(c.cKills).h, h0 + 14) and near(P.box(c.cLevel).h, h0)
+      and P.box(c.cGold.sub2).t >= P.box(c.cGold.sub).t + P.box(c.cGold.sub).h - 0.5 and P.box(c.cGold.sub2).t + P.box(c.cGold.sub2).h <= P.box(c.cGold).t + P.box(c.cGold).h - 4 and not c.cGold.sub2:IsTruncated(), P.box(c.cGold).h)
+    c.cGold.sub:SetText("today" .. UI.NBSP .. "+7,530g 86s 43c  ·  +6,777g 77s 77c" .. UI.NBSP .. "per" .. UI.NBSP .. "hour")
+    c.relayout(c:GetWidth()); M.settle()
+    check("Overview: a wrapped subtitle and the second line together grow the row by two lines, nothing cut", near(P.box(c.cGold).h, h0 + 28) and not c.cGold.sub:IsTruncated() and not c.cGold.sub2:IsTruncated()
+      and P.box(c.cGold.sub2).t >= P.box(c.cGold.sub).t + P.box(c.cGold.sub).h - 0.5 and P.box(c.cGold.sub2).t + P.box(c.cGold.sub2).h <= P.box(c.cGold).t + P.box(c.cGold).h - 4, P.box(c.cGold).h)
+    c.cGold.sub:SetText("short"); c.cGold.sub2:SetText(""); c.cGold.sub2On = false
+    c.relayout(c:GetWidth()); M.settle()
+    -- a text that needs more lines than its cap is reported as cut (the check the card audit relies on)
+    c.cGold.sub:SetText("one" .. UI.NBSP .. "111,111g 11s 11c  ·  two" .. UI.NBSP .. "222,222g 22s 22c  ·  three" .. UI.NBSP .. "333,333g 33s 33c  ·  four" .. UI.NBSP .. "444,444g 44s 44c")
+    c.relayout(c:GetWidth()); M.settle()
+    check("Overview: a subtitle that needs more lines than its cap is seen as cut by the test geometry", c.cGold.sub:IsTruncated() == true)
+    c.cGold.sub:SetText("short")
+    c.relayout(c:GetWidth()); M.settle()
     c.cGold.sub:SetText("looted 123,456,789g 99s 99c  ·  spent 987,654,321g 99s 99c")
     c.relayout(c:GetWidth()); M.settle()
     check("Overview: a long subtitle wraps, the card row grows by one line", P.box(c.cGold).h > h0 and not c.cGold.sub:IsTruncated() and near(P.box(c.cKills).h, P.box(c.cGold).h), P.box(c.cGold).h)

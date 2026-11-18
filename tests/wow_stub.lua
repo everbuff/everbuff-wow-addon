@@ -159,6 +159,7 @@ do
   function tip:ClearLines() self.lines = {}; return self end
   function tip:NumLines() return #self.lines end
   function tip:Hide() self.shown = false; self.owner = nil; return self end
+  function tip:IsOwned(frame) return self.owner ~= nil and self.owner == frame end
 end
 _G.C_Timer = {
   After = function(_, fn) M.timers[#M.timers + 1] = fn end,
@@ -170,6 +171,21 @@ _G.GetTime = function() return M.now end
 M.secrets = {}
 _G.issecretvalue = function(v) return M.secrets[v] == true end
 _G.GetServerTime = function() return M.epoch end
+-- the daily and weekly reset as the client answers them (gold day rows, everbuff-wow-addon #43): the server day
+-- starts at M.resetAt seconds into the UTC day, the week on a Tuesday. M.resetSecs and M.weekStart override the
+-- answers (false: the client answers nothing).
+M.resetAt = 7 * 3600
+_G.C_DateAndTime = {
+  GetSecondsUntilDailyReset = function()
+    if M.resetSecs ~= nil then return M.resetSecs or nil end
+    return 86400 - ((M.epoch - M.resetAt) % 86400)
+  end,
+  GetWeeklyResetStartTime = function()
+    if M.weekStart ~= nil then return M.weekStart or nil end
+    local first = 5 * 86400 + M.resetAt   -- Tuesday 1970-01-06
+    return first + math.floor((M.epoch - first) / 604800) * 604800
+  end,
+}
 _G.time, _G.date = os.time, os.date
 _G.tinsert, _G.wipe, _G.format = table.insert, function(t) for k in pairs(t) do t[k] = nil end return t end, string.format
 _G.strupper, _G.strlower, _G.strtrim = string.upper, string.lower, function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end

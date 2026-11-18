@@ -214,6 +214,14 @@ function G.install(M, opts)
     if k == "IsTruncated" then return function(self)
       local b = resolve(self); if not b or not self.text then return false end
       if self._wrap == false then return G.naturalWidth(self) > b.w + 0.5 end
+      -- a wrapped text that needs more lines than its max-lines cap allows is cut, whatever its box is
+      local cap = self._maxLines
+      if cap and cap > 0 then
+        self._maxLines = nil
+        local _, _, need = G.textSize(self, b.w)
+        self._maxLines = cap
+        if need > cap then return true end
+      end
       return select(2, G.textSize(self, b.w)) > b.h + 0.5
     end end
     if k == "GetFrameLevel" then return function(self) return levelOf(self) end end
