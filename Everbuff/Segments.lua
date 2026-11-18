@@ -49,7 +49,8 @@ end
 -- The session's gold ledger (everbuff-backend #46): the keys of the character's lifetime gold ledger (characters[guid].gold) except balance, in copper,
 -- all present from the start so a zero is a known zero. Emitter's money handler credits it.
 R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",
-  "flights", "auctions", "mailSpent", "other", "trade", "tradeSpent", "away", "awayIn", "awayOut" }
+  "flights", "auctions", "mailSpent", "other", "trade", "tradeSpent", "away", "awayIn", "awayOut",
+  "xferIn", "xferOut", "mailSent", "auctionRefund" }   -- (0.9.48, #43: transfers and refunds)
 function R.newGoldLedger()
   local g = {}
   for _, k in ipairs(R.GOLD_KEYS) do g[k] = 0 end
@@ -86,6 +87,9 @@ function R.start()
     gold = R.newGoldLedger(),   -- this session's own gold ledger, credited with the lifetime one (everbuff-backend #46)
     -- the gold journal (everbuff-wow-addon #36): one TAB row per purse change, the completed trades, rows past the cap
     goldLog = {}, trades = {}, goldLogDropped = 0,
+    -- transfers and refunds are booked apart (0.9.48, #43): only a session started on this version says so, and
+    -- only such a session gets the keys xferIn, xferOut, mailSent and auctionRefund credited
+    goldV = 2,
   }
   ns.DB.sessions[sess.id] = sess
   ns.DB.active = sess.id

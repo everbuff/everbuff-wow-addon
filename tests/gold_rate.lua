@@ -175,7 +175,7 @@ return function(P)
     M.fire("TRAINER_SHOW"); money(-20000); M.fire("TRAINER_CLOSED")
     check("modes: the spend was booked as training", (me().gold.training or 0) == tr0 + 20000, me().gold.training)
     check("modes: a training spend does not move Farming or Earned, and Net falls by it", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0 + 70000 - 20000, G.rate("net").sum)
-    check("modes: the note of Net says what it is", G.RATE_NOTE.net == "Net: everything gained minus everything spent, per hour of active time", G.RATE_NOTE.net)
+    check("modes: the note of Net says what it is", G.RATE_NOTE.net == "Net: everything gained minus everything spent, without what moved between your characters, per hour of active time", G.RATE_NOTE.net)
     money(3000)   -- income no source claims: earned, not farmed
     check("modes: unexplained income is earned, not farmed", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 + 3000)
     -- a quest claims it within 3 s: it becomes farmed, in the minute it was booked in

@@ -554,6 +554,16 @@ check("contract: a session record carries its gold ledger with the lifetime keys
     if type(sg[k]) ~= "number" then return false end
   end
   return sg.balance == nil end)())
+-- 0.9.48 (#43): transfers and refunds are four more keys, present at 0 from the start of a session that says goldV = 2
+check("contract: a session started on 0.9.48 carries goldV = 2 and the four transfer keys (#43)", (function()
+  local s = ns.DB.sessions[ns.DB.active]
+  if type(s) ~= "table" or s.goldV ~= 2 or type(s.gold) ~= "table" then return false end
+  for _, k in ipairs({ "xferIn", "xferOut", "mailSent", "auctionRefund" }) do
+    if type(s.gold[k]) ~= "number" then return false end
+  end
+  local n = 0
+  for _ in pairs(s.gold) do n = n + 1 end
+  return n == 23 end)())
 -- 0.9.44 (#43): the gold history and the roster facts on the character block, the day base in settings.gold
 check("contract: the character block carries the roster facts (#43)", (function()
   local c = ns.DB.characters[ns.charGuid()]
@@ -2317,7 +2327,9 @@ end
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
 -- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
+-- #43 (0.9.48): transfers and refunds: the four ledger keys, the send hooks and the postage split, own characters,
+-- returned bids, the banks, the netted figures
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show", "gold_xfer" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end

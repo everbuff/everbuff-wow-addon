@@ -18,7 +18,8 @@ end
 _G.print = function() end   -- the addon's chat lines are not part of the result
 
 local NEW_EVENTS = { "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_PURCHASE_COMPLETED",
-  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR" }
+  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR",
+  "MAIL_FAILED", "ACCOUNT_MONEY" }   -- (0.9.48)
 if mode == "forever" or mode == "bare" then M.profile("forever") end
 if mode == "bare" then
   M.unknownEvents = {}
@@ -28,6 +29,9 @@ if mode == "bare" then
   C_AuctionHouse.CalculateItemDeposit, C_AuctionHouse.CalculateCommodityDeposit, C_AuctionHouse.GetCancelCost = nil, nil, nil
   LOOT_MONEY_SPLIT, YOU_LOOT_MONEY, YOU_LOOT_MONEY_GUILD = nil, nil, nil
   TakeTaxiNode = nil
+  -- (0.9.48) no send hooks, no outbid subject, no banks
+  SetSendMailMoney, SetSendMailCOD, SendMail, GetSendMailPrice, AUCTION_OUTBID_MAIL_SUBJECT = nil, nil, nil, nil, nil
+  C_Bank, DepositGuildBankMoney, WithdrawGuildBankMoney, C_PlayerInfo = nil, nil, nil, nil
   ReloadUI, GOLD_AMOUNT, SILVER_AMOUNT, COPPER_AMOUNT, ERR_TAXINOTENOUGHMONEY, ERR_TAXINOPATHS = nil, nil, nil, nil, nil, nil
 end
 
@@ -91,11 +95,19 @@ if mode == "bare" then
   M.fire("CONFIRM_TALENT_WIPE", 700); money(-700); is("no talent wipe event: unexplained spending", "other", -700, "")
   M.fire("MAIL_SHOW"); M.inbox = { { sender = "Rando", subject = "gold", money = 90 } }
   TakeInboxMoney(1); money(90); is("mail", "mail", 90, "sender=Rando;rel=stranger;cod=0")
-  M.fire("MAIL_CLOSED"); M.runTimers()
+  -- (0.9.48) with no send hook, no outbid subject and no bank functions every rule is the behavior of 0.9.47
+  M.inbox = { { sender = "Stormwind Auction House", subject = "Outbid on Linen Cloth", money = 70, canReply = false } }
+  TakeInboxMoney(1); money(70); is("no outbid subject on this client: a returned bid stays mail", "mail", 70, "sender=Stormwind Auction House;rel=system;cod=0")
+  M.now = M.now + 10
+  money(-1030); is("no send hooks: gold mailed is one mailSpent row, as before", "mailSpent", -1030, "")
+  M.fire("MAIL_CLOSED"); M.runTimers(); M.now = M.now + 10
+  money(-500); is("no bank functions: a deposit is unexplained spending, as before", "other", -500, "")
+  check("the session still says transfers are apart, with every key at 0", ns.Recorder.current().goldV == 2 and ns.Recorder.current().gold.xferOut == 0 and ns.Recorder.current().gold.mailSent == 0)
   check("no handler threw on the bare client", #M.errors == 0, M.errors[1])
 else
   suite("gold_journal")
   suite("gold_sources")
+  suite("gold_xfer")   -- (0.9.48) transfers and refunds
   check("no handler threw", #M.errors == 0, M.errors[1])
 end
 

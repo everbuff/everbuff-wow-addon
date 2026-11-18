@@ -424,6 +424,22 @@ _G.ERR_TAXINOTENOUGHMONEY, _G.ERR_TAXINOPATHS = "You don't have enough money!", 
 -- a /reload: the client fires PLAYER_LOGOUT and writes the save file after this returns (a test fires the event itself)
 _G.ReloadUI = function() end
 _G.GetCoinTextureString = function(c) return tostring(c) end
+-- transfers and refunds (everbuff-wow-addon #43, 0.9.48): sending mail (M.sendPrice: what GetSendMailPrice answers,
+-- nil for nothing), the client's outbid subject, the banks (M.accountBank: the account bank is on; M.bankMoney: what
+-- it holds), and the bankers the interaction manager knows
+M.sent = {}
+_G.SetSendMailMoney = function(c) M.sendMoney = c; return true end
+_G.SetSendMailCOD = function(c) M.sendCOD = c end
+_G.SendMail = function(to) M.sent[#M.sent + 1] = to end
+_G.GetSendMailPrice = function() return M.sendPrice end
+_G.AUCTION_OUTBID_MAIL_SUBJECT = "Outbid on %s"
+_G.Enum.BankType = { Character = 0, Guild = 1, Account = 2 }
+_G.C_Bank = { DepositMoney = function() end, WithdrawMoney = function() end,
+  FetchDepositedMoney = function(t) if t == 2 then return M.bankMoney end end }
+_G.DepositGuildBankMoney, _G.WithdrawGuildBankMoney = function() end, function() end
+_G.C_PlayerInfo = _G.C_PlayerInfo or {}
+_G.C_PlayerInfo.IsAccountBankEnabled = function() return M.accountBank == true end
+_G.Enum.PlayerInteractionType.Banker, _G.Enum.PlayerInteractionType.GuildBanker, _G.Enum.PlayerInteractionType.AccountBanker = 8, 10, 68
 -- The WoW Forever profile (#43, 0.9.46): the globals the Midnight engine documents a namespaced replacement for are
 -- gone (C_MerchantFrame.GetItemInfo, C_Item.GetItemInfo, C_Container.GetContainerItemInfo, C_CurrencyInfo); the
 -- ones without a replacement stay. Applied before the addon loads (tests/gold_profile.lua).

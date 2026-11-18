@@ -315,11 +315,11 @@ return function(P)
     check("Gold periods: an earlier session is picked from More", pick(c, c.moreBtn, Gold.sessionLabel(prev)))
     check("Gold periods: an earlier session shows its numbers and its balance at the end", c.moreBtn.ebSelected and c.moreBtn.text.text == Gold.sessionLabel(prev) and c.cBalance.title.text == "BALANCE AT ITS END" and c.cIn.value.text == fmt(prev.gained)
       and c.caption.text:find(Gold.sessionLabel(prev), 1, true) == 1, c.caption.text)
-    check("Gold periods: gold from the player's own character is shown as moved, not subtracted", c.status.text:find("Moved between your characters: " .. fmt(15000) .. " in", 1, true) ~= nil and c.cIn.value.text == fmt(prev.gained), c.status.text)
+    check("Gold periods: gold from the player's own character is shown as moved, not subtracted", c.status.text:find("Mail with your characters, not separated: " .. fmt(15000) .. " in", 1, true) ~= nil and c.cIn.value.text == fmt(prev.gained), c.status.text)
     Gold.open("previous"); M.settle()
     check("Gold periods: the Previous period is that session", c.cIn.value.text == fmt(prev.gained) and c.caption.text:find("^Previous session, ") ~= nil, c.caption.text)
     click(c.scopeBtns[3])
-    check("Gold periods: All time reads the lifetime ledger and names what changed while away", c.cIn.value.text == fmt(ns.char().gold.gained) and c.cRate.title.text == "CHANGED WHILE AWAY" and c.cRate.value.text == Gold.signed(ns.char().gold.away or 0))
+    check("Gold periods: All time reads the lifetime ledger and names what changed while away", c.cIn.value.text == fmt(Gold.figure("earned", ns.char().gold)) and c.cRate.title.text == "CHANGED WHILE AWAY" and c.cRate.value.text == Gold.signed(ns.char().gold.away or 0))
     pick(c, c.viewBtn, "Journal")
     local secs = c.tblJrn.sections()
     check("Gold periods: the All time journal has one section per session, the running one first", #secs >= 2 and secs[1].text:find("  ·  running  ·  net ", 1, true) ~= nil and secs[2].text:find("running", 1, true) == nil and c.caption.text:find("sessions since addon 0.9.40", 1, true) ~= nil, #secs)
@@ -553,7 +553,7 @@ return function(P)
           if v == nil then okSlots = false
           elseif v then
             bars = bars + 1
-            if v.key ~= k or me.goldDays[k] == nil or v.v ~= me.goldDays[k].g - me.goldDays[k].s then okSlots = false end
+            if v.key ~= k or me.goldDays[k] == nil or v.v ~= Gold.rowNet(me.goldDays[k]) then okSlots = false end
             if not (c.dayStrip.bars[i] and c.dayStrip.bars[i].shown ~= false) then okSlots = false end
           else
             if me.goldDays[k] ~= nil then okSlots = false end
@@ -626,7 +626,7 @@ return function(P)
         and ro.total == me.gold.balance + 961000 + 150000 and c.status.text:find("3 characters, oldest balance from " .. Gold.fmtDate(now - 3 * DAY), 1, true) ~= nil, c.status.text)
       check(tag .. ": a character with a change not seen on this PC in the period is named first in the status line", c.status.text:find("1 character with changes not seen on this PC in this period", 1, true) == 1, c.status.text)
       check(tag .. ": the account's sums and its total are of the same characters; the one not seen in 90 days is named as left out", c.status.text:find("1 not seen in 90 days left out", 1, true) ~= nil
-        and Gold.metric("earned", "account", "all") == (me.gold.gained or 0) + 961000 + (ns.DB.characters["Player-1-0000A1"].gold.gained or 0), c.status.text)
+        and Gold.metric("earned", "account", "all") == Gold.figure("earned", me.gold) + 961000 + (ns.DB.characters["Player-1-0000A1"].gold.gained or 0), c.status.text)
       check(tag .. ": the rate of an account names its definition in the card's title", c.cRate.title.text == "NET PER HOUR PLAYED" and c.status.text:find("per hour over", 1, true) == nil, c.cRate.title.text)
       check(tag .. ": the account's status line (gaps, away, roster, left out, history) is shown in full", statusFull(c) and c.status.text:find("Not seen: ", 1, true) ~= nil and c.status.text:find("History starts ", 1, true) ~= nil, c.status.text)
       check(tag .. ": an account has totals only, and the caption says so", #c.entries == 0 and c.caption.text:find("totals only: journal rows are kept per character", 1, true) ~= nil and not P.visible(c.flagBtn), c.caption.text)
