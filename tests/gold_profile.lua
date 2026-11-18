@@ -17,7 +17,8 @@ local function check(name, cond, detail)
 end
 _G.print = function() end   -- the addon's chat lines are not part of the result
 
-local NEW_EVENTS = { "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED" }
+local NEW_EVENTS = { "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_PURCHASE_COMPLETED",
+  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR" }
 if mode == "forever" or mode == "bare" then M.profile("forever") end
 if mode == "bare" then
   M.unknownEvents = {}
@@ -27,6 +28,7 @@ if mode == "bare" then
   C_AuctionHouse.CalculateItemDeposit, C_AuctionHouse.CalculateCommodityDeposit, C_AuctionHouse.GetCancelCost = nil, nil, nil
   LOOT_MONEY_SPLIT, YOU_LOOT_MONEY, YOU_LOOT_MONEY_GUILD = nil, nil, nil
   TakeTaxiNode = nil
+  ReloadUI, GOLD_AMOUNT, SILVER_AMOUNT, COPPER_AMOUNT, ERR_TAXINOTENOUGHMONEY, ERR_TAXINOPATHS = nil, nil, nil, nil, nil, nil
 end
 
 local ns, ADDON = {}, "EverbuffJournal"

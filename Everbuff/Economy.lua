@@ -50,7 +50,8 @@ Gold.WORD = { looted = "Loot", quests = "Quest", sold = "Vendor sale", auctionSa
   trade = "Trade", unexplained = "Unexplained", repairs = "Repair", vendor = "Vendor buy", training = "Training",
   flights = "Flight", auctions = "Auction house", mailSpent = "Mail", tradeSpent = "Trade", other = "Unexplained", away = "Away" }
 -- what a journal row says for the refs of 0.9.46 (#43)
-Gold.AUCTION_KIND = { deposit = "Deposit", bid = "Bid", buyout = "Buyout", cancel = "Auction cancelled" }
+-- (a `bid` claim comes from C_AuctionHouse.PlaceBid, which is also how an item is bought out)
+Gold.AUCTION_KIND = { deposit = "Deposit", bid = "Bid or buyout", buyout = "Buyout", cancel = "Auction cancelled" }
 Gold.CRASH_LABEL = "Unattributed (game closed without saving)"
 local IS_IN, IS_OUT = {}, {}
 for _, k in ipairs(Gold.IN) do IS_IN[k] = true end
@@ -201,7 +202,7 @@ local function describe(e)
     e.detail = Gold.AUCTION_KIND[r.kind or ""] or "bid, buyout or deposit"
     e.group = Gold.AUCTION_KIND[r.kind or ""]
   elseif src == "away" then
-    -- (0.9.46: the session before never closed, so what the purse did after its last save was never seen)
+    -- (0.9.46: the last save was a /reload and the client then ended without saving, so what the purse did after it was never seen)
     e.detail = (r.crash and Gold.CRASH_LABEL or "while the addon was not running") .. (r.mailWaiting and ", mail was waiting" or "")
   elseif src == "unexplained" then
     e.detail = r.drift and "the purse changed and the client sent no event" or "no source seen"; e.flag = "unexplained"
@@ -2298,6 +2299,20 @@ local function daysOf(sc, st)
   return out
 end
 
+-- The NET card of the Gold pane (0.9.46, #43 rule 9). Gold from a play stretch that never saved (away rows with
+-- crash=1) is part of the period's net here: the card then is the closing balance minus the opening one, less only
+-- what truly changed while away. `entries` are the journal rows of the period, so this holds for one character's
+-- periods in this pane only: the glance figures (Gold.figure "net": the pill, the bar, the tooltip, /eb, the Days
+-- view) stay gained minus spent, because a day row carries no crash amount (no new ledger key in 0.9.46), and so
+-- does a realm or account period (no journal rows: the amount stays in "changed while away"). The status line says
+-- where the amount counts. Returns { net, crash, away = changed while away without the crash rows, line }.
+function Gold.netCard(ledger, entries)
+  local crash = 0
+  for _, e in ipairs(entries or {}) do if e.src == "away" and e.ref and e.ref.crash then crash = crash + e.delta end end
+  return { net = num(ledger.gained) - num(ledger.spent) + crash, crash = crash, away = num(ledger.away) - crash,
+    line = crash ~= 0 and ("%s: %s, counted in the net of this pane"):format(Gold.CRASH_LABEL, signed(crash)) or nil }
+end
+
 local function refresh(c)
   if not c or not c.cBalance then return end
   local st = c.st
@@ -2348,14 +2363,11 @@ local function refresh(c)
   end
   c.cIn.value:SetText(fmtMoney(g.gained))
   c.cOut.value:SetText(fmtMoney(g.spent))
-  -- gold from a play stretch that never saved (away rows with crash=1, 0.9.46) is part of the period's net: the net
-  -- card then is the closing balance minus the opening one, less only what truly changed while away
-  local crash = 0
-  for _, e in ipairs(entries) do if e.src == "away" and e.ref and e.ref.crash then crash = crash + e.delta end end
+  local card = Gold.netCard(g, entries)
+  local crash, shown = card.crash, card.net
   c.crash = crash
-  local shown = net + crash
   c.cNet.value:SetText((shown < 0 and "-" or "+") .. fmtMoney(math.abs(shown)))
-  if crash ~= 0 then status[#status + 1] = ("%s: %s, counted in net"):format(Gold.CRASH_LABEL, signed(crash)) end
+  if card.line then status[#status + 1] = card.line end
   local nc = shown < 0 and C.red or C.green
   c.cNet.value:SetTextColor(nc[1], nc[2], nc[3])
   c.cRate.value:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
@@ -2395,7 +2407,7 @@ local function refresh(c)
   if not mine and sc.days and sc.period.gaps > 0 then
     warn[#warn + 1] = ("%d character%s with changes not seen on this PC in this period"):format(sc.period.gaps, sc.period.gaps == 1 and "" or "s")
   end
-  if not sc.lifetime and num(g.away) - crash ~= 0 then warn[#warn + 1] = ("Not seen: %s changed while away"):format(signed(num(g.away) - crash)) end
+  if not sc.lifetime and card.away ~= 0 then warn[#warn + 1] = ("Not seen: %s changed while away"):format(signed(card.away)) end
   local base = Gold.baseStored()
   local since = ns.DB and ns.charGuid() and plainN(ns.char().goldSince) or nil
   local historyNote, historyShown

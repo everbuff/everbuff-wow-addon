@@ -410,7 +410,7 @@ return function(P)
     local t = reset - 2
     _G.GetServerTime = function() t = t + 1; return t end   -- the server second ticks over between two readings
     money(500)                                      -- gained, its source (unexplained) and the open claim's time
-    local og = E._openGain
+    local og = E._openGain and E._openGain[#E._openGain]   -- (0.9.46: the gains still open are a list)
     M.now = M.now + 1
     M.fire("QUEST_TURNED_IN", 4323, 0, 500)         -- the late claim moves on the row the income was booked on
     _G.GetServerTime = realST

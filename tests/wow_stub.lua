@@ -419,6 +419,10 @@ _G.C_AuctionHouse.CalculateItemDeposit = function() return M.ahDeposit end
 _G.C_AuctionHouse.CalculateCommodityDeposit = function() return M.ahDeposit end
 _G.C_AuctionHouse.GetCancelCost = function() return M.ahCancelCost end
 _G.LOOT_MONEY_SPLIT, _G.YOU_LOOT_MONEY, _G.YOU_LOOT_MONEY_GUILD = "Your share of the loot is %s.", "You loot %s", "You loot %s (%s deposited to guild bank)"
+_G.GOLD_AMOUNT, _G.SILVER_AMOUNT, _G.COPPER_AMOUNT = "%d Gold", "%d Silver", "%d Copper"
+_G.ERR_TAXINOTENOUGHMONEY, _G.ERR_TAXINOPATHS = "You don't have enough money!", "You don't know any flight locations connected to this one."
+-- a /reload: the client fires PLAYER_LOGOUT and writes the save file after this returns (a test fires the event itself)
+_G.ReloadUI = function() end
 _G.GetCoinTextureString = function(c) return tostring(c) end
 -- The WoW Forever profile (#43, 0.9.46): the globals the Midnight engine documents a namespaced replacement for are
 -- gone (C_MerchantFrame.GetItemInfo, C_Item.GetItemInfo, C_Container.GetContainerItemInfo, C_CurrencyInfo); the

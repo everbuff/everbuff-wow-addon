@@ -5,7 +5,8 @@
 -- queue with its summed split, the client's coin lines (and their prefixes in the 13 mined locales), repairs by the
 -- drop of the repair cost, flights from the TakeTaxiNode hook, merchant sales that need a pending sale, buyback as
 -- a reversal, purchase prices, combined purse changes, auction house claims, the talent reset cost, the drift
--- check, the crash tag on away rows and the interaction manager's context. No new ledger key: amounts only move
+-- check, the crash tag on away rows (read from the save file as the client would hold it) and the interaction
+-- manager's context. No new ledger key: amounts only move
 -- between the existing ones, and every identity of the journal and the day rows still holds at the end.
 return function(P)
   local check, M, ns = P.check, P.M, P.ns
@@ -102,6 +103,21 @@ return function(P)
     -- a take the server never answered is forgotten after 3 s
     TakeInboxMoney(1); later(4); money(500)
     is("a take older than 3 s names no sender", row(), "mail", 500, "")
+    later()
+    -- a take still waiting, the mailbox closed: a gain of another amount is not the mail's (the loot window says
+    -- what it is), and the mail's own amount still is
+    M.inbox = { { sender = "Rando", subject = "gold", money = 500 } }
+    TakeInboxMoney(1); money(123)
+    is("an unmatched gain at the mailbox is still a mail row", row(), "mail", 123, "x=unmatched")
+    M.fire("MAIL_CLOSED"); M.runTimers(); M.now = M.now + 1
+    M.fire("LOOT_OPENED"); money(77)
+    is("a take still waiting, the mailbox closed, a corpse looted: looted, not mail", row(), "looted", 77, "")
+    money(500)
+    is("the mail's own amount is still the mail's after the mailbox closed", row(), "mail", 500, "sender=Rando;rel=stranger;cod=0")
+    later()
+    TakeInboxMoney(1); M.now = M.now + 1; money(9)
+    is("a take still waiting, the mailbox closed, no loot window: unexplained, not mail", row(), "unexplained", 9, "")
+    later(); M.fire("MAIL_SHOW")
     check("#43 sources: the mail chain holds", chain(s0))
   end
   M.fire("MAIL_CLOSED"); M.inbox = {}; M.runTimers(); later()
@@ -178,6 +194,58 @@ return function(P)
     M.fire("CHAT_MSG_MONEY", "Rando loots 5 Copper."); money(5)
     is("another player's coin line is not ours", row(), "unexplained", 5, "")
     later()
+    -- several lines at once (a pull of several mobs in a group): every line finds its purse change, in either order
+    do
+      local A, B, C = "Your share of the loot is 3 Silver, 40 Copper.", "Your share of the loot is 2 Silver, 10 Copper.", "Your share of the loot is 7 Copper."
+      local m0 = rows()
+      M.fire("CHAT_MSG_MONEY", A); M.fire("CHAT_MSG_MONEY", B)
+      money(340); is("two share lines, then the purse: the first", row(), "looted", 340, "share=1")
+      money(210); is("two share lines, then the purse: the second", row(), "looted", 210, "share=1")
+      later()
+      money(340); money(210)
+      M.fire("CHAT_MSG_MONEY", B); M.fire("CHAT_MSG_MONEY", A)
+      local a, b = row(m0 + 3), row(m0 + 4)
+      check("#43 sources: two purse changes, then their two lines (in the other order): both are shares", rows() == m0 + 4 and a.src == "looted" and a.delta == 340 and a.ref == "share=1" and b.src == "looted" and b.delta == 210 and b.ref == "share=1",
+        ("%d %s %s [%s] [%s]"):format(rows() - m0, tostring(a.src), tostring(b.src), tostring(a.ref), tostring(b.ref)))
+      later()
+      M.fire("CHAT_MSG_MONEY", A); M.fire("CHAT_MSG_MONEY", B); M.fire("CHAT_MSG_MONEY", C)
+      money(7); money(340); money(210)
+      check("#43 sources: three lines, then three purse changes in another order", rows() == m0 + 7 and row(m0 + 5).ref == "share=1" and row(m0 + 5).delta == 7 and row(m0 + 6).delta == 340 and row(m0 + 6).src == "looted"
+        and row(m0 + 7).src == "looted" and row(m0 + 7).ref == "share=1", rows() - m0)
+      later()
+      money(210); M.fire("CHAT_MSG_MONEY", A); money(340); money(7); M.fire("CHAT_MSG_MONEY", C); M.fire("CHAT_MSG_MONEY", B)
+      local un = 0
+      for i = m0 + 8, rows() do if row(i).src ~= "looted" or row(i).ref ~= "share=1" then un = un + 1 end end
+      check("#43 sources: lines and purse changes mixed: three rows, all shares", rows() == m0 + 10 and un == 0, ("%d %d"):format(rows() - m0, un))
+      check("#43 sources: the waiting lists are empty again", #E.qList("_coin") == 0 and #E.qList("_openGain") == 0)
+      later()
+    end
+    -- the line names the coin of each figure: 1 Gold, 5 Silver is not a purse change of 1g 5c
+    M.fire("CHAT_MSG_MONEY", "Your share of the loot is 1 Gold, 5 Silver."); money(10005)
+    is("a line that names other coins than the purse change claims nothing (line first)", row(), "unexplained", 10005, "")
+    later()
+    money(105); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 1 Gold, 5 Silver.")
+    is("a line that names other coins than the purse change claims nothing (purse first)", row(), "unexplained", 105, "")
+    later()
+    M.fire("CHAT_MSG_MONEY", "Your share of the loot is 1 Gold, 5 Silver."); money(10500)
+    is("the same line and the amount it names", row(), "looted", 10500, "share=1")
+    later()
+    do
+      -- (read without a purse change: the purse of this suite stays small, the pane tests after it draw its numbers)
+      local big = E.coinLine("You loot 1,234 Gold, 5 Silver")
+      check("#43 sources: a large gold figure with a thousands separator", big ~= nil and E.coinMatches(big.groups, 12340500, big.den) and not E.coinMatches(big.groups, 10002345, big.den) and not E.coinMatches(big.groups, 12340005, big.den),
+        big and table.concat(big.groups, " "))
+    end
+    check("#43 sources: digits: with the coins named, the amount is compared exactly", E.coinMatches({ "1", "5" }, 10500, { "g", "s" }) and not E.coinMatches({ "1", "5" }, 10005, { "g", "s" })
+      and not E.coinMatches({ "1", "5" }, 105, { "g", "s" }) and E.coinMatches({ "1", "5" }, 105, { "s", "c" }) and E.coinMatches({ "1", "234", "5" }, 12340500, { [2] = "g", [3] = "s" }))
+    check("#43 sources: digits: a figure that names no coin falls back to the order of the figures", E.coinMatches({ "1", "5" }, 10005, { "g" }) and E.coinMatches({ "1", "5" }, 10500, {}))
+    -- the client's grammar escapes left in the text are not amounts
+    do
+      local raw = E.coinLine("You loot 3 |4Silver:Silvers; 12 |4Copper:Coppers;")
+      check("#43 sources: an unresolved |4 escape is not a figure", raw ~= nil and table.concat(raw.groups, " ") == "3 12" and E.coinMatches(raw.groups, 312, raw.den), raw and table.concat(raw.groups, " "))
+      raw = E.coinLine("You loot 3 Silver|1a;b; 12 Copper|1a;b;")
+      check("#43 sources: an unresolved |1 escape is not a figure", raw ~= nil and table.concat(raw.groups, " ") == "3 12", raw and table.concat(raw.groups, " "))
+    end
     -- the digit matcher on its own
     check("#43 sources: digits: gold, silver, copper in order", E.coinMatches({ "1", "20", "5" }, 12005) and not E.coinMatches({ "1", "20", "5" }, 12050))
     check("#43 sources: digits: a denomination of 0 left out or written", E.coinMatches({ "1", "5" }, 10005) and E.coinMatches({ "1", "0", "5" }, 10005) and not E.coinMatches({ "1", "5" }, 10600) and not E.coinMatches({ "1", "0", "5" }, 10500))
@@ -204,6 +272,21 @@ return function(P)
         if copper > 0 then out[#out + 1] = L.COPPER_AMOUNT:format(copper) end
         return table.concat(out, ", ")
       end
+      -- the text as the event may carry it, with the grammar escapes unresolved: the same figures
+      local keepAmt = { GOLD_AMOUNT, SILVER_AMOUNT, COPPER_AMOUNT }
+      GOLD_AMOUNT, SILVER_AMOUNT, COPPER_AMOUNT = L.GOLD_AMOUNT, L.SILVER_AMOUNT, L.COPPER_AMOUNT
+      for _, form in ipairs({ "raw", "resolved" }) do
+        local function text(s) return form == "raw" and s or grammar(s) end
+        local rs = E.coinLine(text(L.LOOT_MONEY_SPLIT:format(coins(30412))))
+        check(("#43 sources: locale %s, %s text: a share line gives the three figures and matches only its amount"):format(name, form),
+          rs ~= nil and rs.share == true and table.concat(rs.groups, " ") == "3 4 12" and E.coinMatches(rs.groups, 30412, rs.den) and not E.coinMatches(rs.groups, 30421, rs.den),
+          rs and table.concat(rs.groups, " "))
+        local ro = E.coinLine(text(L.YOU_LOOT_MONEY:format(coins(30012))))
+        check(("#43 sources: locale %s, %s text: 3 gold 12 copper is never 3 gold 12 silver"):format(name, form),
+          ro ~= nil and ro.share == nil and ro.den[1] == "g" and ro.den[2] == "c" and E.coinMatches(ro.groups, 30012, ro.den) and not E.coinMatches(ro.groups, 31200, ro.den),
+          ro and (table.concat(ro.groups, " ") .. " " .. tostring(ro.den[1]) .. tostring(ro.den[2])))
+      end
+      GOLD_AMOUNT, SILVER_AMOUNT, COPPER_AMOUNT = keepAmt[1], keepAmt[2], keepAmt[3]
       local share = E.coinLine(grammar(L.LOOT_MONEY_SPLIT:format(coins(30412))))
       check(("#43 sources: locale %s: a group share line is a share with the purse's digits"):format(name), share ~= nil and share.share == true and E.coinMatches(share.groups, 30412) and not E.coinMatches(share.groups, 30421),
         share and table.concat(share.groups, " "))
@@ -309,7 +392,32 @@ return function(P)
     is("no GetRepairAllCost: a guild repair arms nothing", row(), "vendor", -75, "npc=Smith Sam")
     GetRepairAllCost = getter
     M.fire("MERCHANT_CLOSED"); M.runTimers(); later()
-    check("#43 sources: repairs counted", (g.repairs or 0) == rep0 + 200 + 300 + 450 + 600 + 80 + 500 + 75, (g.repairs or 0) - rep0)
+    -- a spend waiting when the merchant window opens again is booked then, never dropped
+    M.repairCost = 1000; M.fire("MERCHANT_SHOW")
+    n0 = rows()
+    local spent0, vend0 = g.spent, g.vendor or 0
+    money(-100)
+    check("#43 sources: a spend waits for its repair cost", rows() == n0 and g.spent == spent0 + 100)
+    M.fire("MERCHANT_SHOW")
+    is("a waiting spend is booked when the merchant window opens again", row(), "vendor", -100, "npc=Smith Sam")
+    M.runTimers()
+    check("#43 sources: one row for it, and the spend keys follow spent", rows() == n0 + 1 and (g.vendor or 0) == vend0 + 100)
+    M.fire("MERCHANT_CLOSED"); M.runTimers(); later()
+    -- the timer of an earlier wait does not end a later one: the second spend still sees its durability event
+    M.repairCost = 900; M.fire("MERCHANT_SHOW"); M.runTimers()
+    money(-50)                                      -- waits (its timer is among the first `mine`)
+    local mine = #M.timers
+    money(-60)                                      -- books the first as a purchase, waits itself (a later timer)
+    local timers = M.timers; M.timers = {}
+    n0 = rows()
+    for i = 1, mine do timers[i]() end
+    check("#43 sources: the timer of the first wait does not book the second", rows() == n0 and mine >= 1 and #timers > mine, ("%d %d"):format(mine, #timers))
+    M.repairCost = 840; M.fire("UPDATE_INVENTORY_DURABILITY")
+    is("the second spend is the repair its durability event shows", row(), "repairs", -60, "npc=Smith Sam;kind=repairOne")
+    for i = mine + 1, #timers do timers[i]() end
+    check("#43 sources: and its own timer books nothing twice", rows() == n0 + 1)
+    M.fire("MERCHANT_CLOSED"); M.runTimers(); later()
+    check("#43 sources: repairs counted", (g.repairs or 0) == rep0 + 200 + 300 + 450 + 600 + 80 + 500 + 75 + 60, (g.repairs or 0) - rep0)
     M.units.NPC = nil
   end
 
@@ -327,6 +435,31 @@ return function(P)
     M.fire("TAXIMAP_OPENED"); money(-13)
     is("the 5 s window of the map still works", row(), "flights", -13)
     later()
+    local ev0 = #ns.DB.story.events
+    -- a flight that never starts: the client says why, and the next spend is no fare
+    TakeTaxiNode(4); M.fire("UI_ERROR_MESSAGE", 1, ERR_TAXINOTENOUGHMONEY); M.now = M.now + 2; money(-30)
+    is("a flight the client refused arms nothing", row(), "other", -30, "")
+    M.runTimers(); later(20)
+    -- another error message changes nothing
+    TakeTaxiNode(4); M.fire("UI_ERROR_MESSAGE", 1, "Inventory is full."); money(-31)
+    is("an error that is not about the flight leaves it armed", row(), "flights", -31)
+    later(20)
+    -- a flight that costs nothing: once on the taxi the wait ends, a spend 12 s later is no fare
+    TakeTaxiNode(4); M.onTaxi = true; M.fire("PLAYER_CONTROL_LOST"); later(12); money(-32)
+    is("a free flight, a spend 12 s after boarding: not a flight", row(), "other", -32, "")
+    M.onTaxi = false; M.fire("PLAYER_CONTROL_GAINED"); later(20)
+    -- the fare reaching the purse a moment after the taxi flag is still the fare
+    TakeTaxiNode(4); M.onTaxi = true; M.fire("PLAYER_CONTROL_LOST"); M.now = M.now + 1; money(-33)
+    is("the fare a moment after boarding", row(), "flights", -33)
+    M.onTaxi = false; M.fire("PLAYER_CONTROL_GAINED"); later(20)
+    -- (the two short trips of this block are not part of the story the pane tests draw later)
+    do
+      local ev, trips = ns.DB.story.events, 0
+      for i = #ev, 1, -1 do
+        if ev[i].kind == "FLIGHTTRIP" and trips < 2 and #ev - i < 10 then table.remove(ev, i); trips = trips + 1 end
+      end
+      check("#43 sources: the two flights of the block were recorded as trips", trips == 2 and #ev <= ev0 + 2, trips)
+    end
   end
 
   -- ── rules 26, 27, 28 and 14: the merchant ─────────────────────────────────────────────────────────────────────
@@ -395,7 +528,33 @@ return function(P)
     -- one sale waiting and another amount: the item is named and the difference shows, as before
     sell(4, 4306, 2, 400); money(1200)
     is("one sale waiting, paid more than the vendor price: the item stays named", row(), "sold", 1200, "item=4306;n=2;unit=400;npc=Merchant Bob")
-    check("#43 sources: merchant ledger: sold, vendor", (g.sold or 0) == sold0 + 65 + 895 + 895 + 900 + 1200 and (g.vendor or 0) == vendor0 + 65 + 225 + 225, ("%s %s"):format((g.sold or 0) - sold0, (g.vendor or 0) - vendor0))
+    later()
+    -- a buyback of an item no sale of this session covers (sold before a /reload, or never seen sold): a purchase.
+    -- sold and gained never go below what the session's own sales put there
+    do
+      local s1, g1, sp1 = g.sold or 0, g.gained, g.spent
+      M.buyback[3] = { id = 7777, name = "Old Sword", price = 900, qty = 1 }
+      BuybackItem(3); money(-900)
+      is("a buyback with no sale of the item in this session is a purchase", row(), "vendor", -900, "item=7777;n=1;npc=Merchant Bob")
+      check("#43 sources: it leaves sold and gained alone and counts in spent", (g.sold or 0) == s1 and g.gained == g1 and g.spent == sp1 + 900)
+      -- the same item sold once for 65 and bought back twice: the second buyback is a purchase
+      sell(3, 6001, 1, 65); money(65)
+      M.buyback[4] = { id = 6001, name = "Bent Staff", price = 65, qty = 1 }
+      BuybackItem(4); money(-65)
+      is("the sale of this session taken back", row(), "sold", -65, "item=6001;n=1;npc=Merchant Bob;kind=buyback")
+      BuybackItem(4); money(-65)
+      is("a second buyback of it has no sale left to take back: a purchase", row(), "vendor", -65, "item=6001;n=1;npc=Merchant Bob")
+      check("#43 sources: session sold and gained are not below their start", (g.sold or 0) == s1 and g.gained == g1 and s0.gold.sold >= 0 and s0.gold.gained >= 0)
+    end
+    later()
+    -- three sales asked for at once, answered 3 s apart: each answer restarts the wait of the rest
+    n0 = rows()
+    sell(3, 2589, 5, 13); sell(4, 4306, 2, 400); sell(5, 2770, 3, 10)
+    money(65); M.now = M.now + 3; money(800); M.now = M.now + 3; money(30)
+    check("#43 sources: three sales answered 3 s apart are three sales", rows() == n0 + 3 and row(n0 + 1).src == "sold" and row(n0 + 2).src == "sold" and row(n0 + 3).src == "sold" and row(n0 + 3).refT.item == "2770",
+      ("%s %s %s"):format(row(n0 + 1).src, row(n0 + 2).src, row(n0 + 3).src))
+    later()
+    check("#43 sources: merchant ledger: sold, vendor", (g.sold or 0) == sold0 + 65 + 895 + 895 + 900 + 1200 + 895 and (g.vendor or 0) == vendor0 + 65 + 225 + 225 + 900 + 65, ("%s %s"):format((g.sold or 0) - sold0, (g.vendor or 0) - vendor0))
     M.fire("MERCHANT_CLOSED"); M.runTimers(); M.units.NPC = nil; later()
     check("#43 sources: the merchant chain holds", chain(s0))
   end
@@ -425,6 +584,20 @@ return function(P)
     is("a spend that equals no claim stays plain", row(), "auctions", -701, "")
     later(31); money(-700)
     is("a claim older than 30 s is gone", row(), "auctions", -700, "")
+    -- the client says the action is over: the claim has 2 s left for its purse change
+    M.ahDeposit = 60
+    C_AuctionHouse.PostItem("h1", 2, 1, 5000, 9000); M.fire("AUCTION_HOUSE_AUCTION_CREATED", 1); M.now = M.now + 1; money(-60)
+    is("the purse change just after the completion event keeps its kind", row(), "auctions", -60, "kind=deposit")
+    C_AuctionHouse.PostItem("h1", 2, 1, 5000, 9000); M.fire("AUCTION_HOUSE_AUCTION_CREATED", 1); M.now = M.now + 3; money(-60)
+    is("a claim whose action ended 3 s ago is gone", row(), "auctions", -60, "")
+    C_AuctionHouse.PostItem("h1", 2, 1, 5000, 9000); C_AuctionHouse.PlaceBid(79, 800)
+    M.fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 79); M.now = M.now + 3; money(-60)
+    is("a completion event ends only the claims of its kind", row(), "auctions", -60, "kind=deposit")
+    money(-800)
+    is("the bid it ended is a plain row", row(), "auctions", -800, "")
+    C_AuctionHouse.PlaceBid(80, 800); M.fire("AUCTION_HOUSE_SHOW_ERROR", 3); M.now = M.now + 3; money(-800)
+    is("an auction house error ends every claim", row(), "auctions", -800, "")
+    M.ahDeposit = nil
     M.fire("AUCTION_HOUSE_CLOSED"); M.runTimers(); later()
   end
 
@@ -439,7 +612,17 @@ return function(P)
     is("another amount is not the reset", row(), "other", -9999, "")
     later(61); money(-10000)
     is("a reset asked for over a minute ago is not claimed", row(), "other", -10000, "")
-    check("#43 sources: training counted once", (g.training or 0) == t0 + 10000)
+    -- asked, the question left open or declined: 50 s later a spend of that amount elsewhere is not the reset
+    later()
+    M.fire("CONFIRM_TALENT_WIPE", 10000, 0); later(50); money(-10000)
+    is("a reset asked for 50 s ago, no trainer open: not claimed", row(), "other", -10000, "")
+    later(20)
+    -- at the trainer the question may stay open for a minute
+    M.units.NPC = { name = "Trainer Tom" }; M.fire("TRAINER_SHOW")
+    M.fire("CONFIRM_TALENT_WIPE", 10000, 0); later(50); money(-10000)
+    is("a reset confirmed 50 s after the question at the trainer", row(), "training", -10000, "npc=Trainer Tom;kind=respec")
+    M.fire("TRAINER_CLOSED"); M.runTimers(); M.units.NPC = nil
+    check("#43 sources: training counted for the two resets", (g.training or 0) == t0 + 20000)
     later()
   end
 
@@ -520,7 +703,8 @@ return function(P)
     E.refStr({ drift = 1, to = "Mira", crash = 1, bank = "guild", share = 1, kind = "deposit", gap = 9, npc = "Bob" }))
   do
     local known = M.unknownEvents or {}
-    for _, ev in ipairs({ "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED", "UPDATE_INVENTORY_DURABILITY", "TRAINER_CLOSED", "MAIL_CLOSED", "AUCTION_HOUSE_CLOSED", "PLAYER_LOGOUT" }) do
+    for _, ev in ipairs({ "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED", "UPDATE_INVENTORY_DURABILITY", "TRAINER_CLOSED", "MAIL_CLOSED", "AUCTION_HOUSE_CLOSED", "PLAYER_LOGOUT",
+      "UI_ERROR_MESSAGE", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_PURCHASE_COMPLETED", "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR" }) do
       local on = false
       for _, fr in ipairs(ns.eventFrames) do if fr.events[ev] then on = true end end
       check("#43 sources: " .. ev .. " is registered on one of the addon's frames", on or known[ev] == true)
@@ -535,6 +719,7 @@ return function(P)
     check("#43 sources: no event handler has more than 60 upvalues", worst <= 60, worst)
     check("#43 sources: the money handler is under the limit too", debug.getinfo(ns._test.onMoney, "u").nups <= 60, debug.getinfo(ns._test.onMoney, "u").nups)
     check("#43 sources: Emitter.lua still loads (the upvalue and local limits)", loadfile("Everbuff/Emitter.lua") ~= nil)
+    check("#43 sources: the helpers of 0.9.46 are on the Emitter table, not file-level locals", type(E.prunePending) == "function" and type(E.coinForm) == "function")
   end
 
   -- ── what the Gold pane says for these rows ────────────────────────────────────────────────────────────────────
@@ -543,14 +728,14 @@ return function(P)
     local function find(src, pat) for _, e in ipairs(entries) do if e.src == src and e.detail:find(pat, 1, true) then return e end end end
     check("#43 sources: journal: a group share says so", find("looted", "Group share") ~= nil)
     check("#43 sources: journal: a repair of one item, a repair", find("repairs", "Repair, one item at Smith Sam") ~= nil and find("repairs", "Repair at Smith Sam") ~= nil)
-    check("#43 sources: journal: deposit, bid, buyout, cancelled", find("auctions", "Deposit") and find("auctions", "Bid") and find("auctions", "Buyout") and find("auctions", "Auction cancelled") and find("auctions", "bid, buyout or deposit") and true)
+    check("#43 sources: journal: deposit, bid or buyout, buyout, cancelled", find("auctions", "Deposit") and find("auctions", "Bid or buyout") and find("auctions", "Buyout") and find("auctions", "Auction cancelled") and find("auctions", "bid, buyout or deposit") and true)
     local back = find("sold", "Bought back: ")
     check("#43 sources: journal: a buyback says bought back, with no price flag", back ~= nil and back.delta == -65 and back.flag == nil, back and back.detail)
     local cloth = 0
     for _, top in ipairs(G.contributors((function() local t = {} for _, e in ipairs(entries) do if e.src == "sold" then t[#t + 1] = e end end return t end)())) do
       if top.name:lower() == "item 2589" then cloth = top.amount end
     end
-    check("#43 sources: journal: the buyback counts against the item's sales (sold 4 times for 65, bought back once)", cloth == 65 * 3, cloth)
+    check("#43 sources: journal: the buyback counts against the item's sales (sold 5 times for 65, bought back once)", cloth == 65 * 4, cloth)
     check("#43 sources: journal: a talent reset", find("training", "Talent reset") ~= nil)
     local dr = find("unexplained", "the client sent no event")
     check("#43 sources: journal: drift is flagged unexplained", dr ~= nil and dr.flag == "unexplained" and find("other", "the client sent no event") ~= nil)
@@ -587,23 +772,116 @@ return function(P)
   end
 
   -- ── rule 9: the crash tag ─────────────────────────────────────────────────────────────────────────────────────
+  -- The client writes the save file only after PLAYER_LOGOUT (a logout, an exit, a /reload), and there the session is
+  -- always closed with endedBy = "logout". So every login below starts from the save file as the client would hold
+  -- it: a copy of the DB taken right after a PLAYER_LOGOUT, put back over whatever the session did afterwards.
   do
+    local function deepcopy(v)
+      if type(v) ~= "table" then return v end
+      local out = {}
+      for k, x in pairs(v) do out[k] = deepcopy(x) end
+      return out
+    end
+    local function putBack(dst, src)
+      for k in pairs(dst) do if src[k] == nil then dst[k] = nil end end
+      for k, v in pairs(src) do
+        if type(v) == "table" and type(dst[k]) == "table" then putBack(dst[k], v) else dst[k] = deepcopy(v) end
+      end
+    end
+    -- the client died: nothing since `file` was saved, and nothing of the running session is in memory
+    local function died(file) putBack(ns.DB, file); ns.Recorder.discard(); ns._test.newLoad() end
+    local function login() M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers(); return ses() end
+    local function reload()
+      ReloadUI(); M.fire("PLAYER_LOGOUT")
+      local file = deepcopy(ns.DB)
+      ns._test.newLoad(); M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers()
+      return file
+    end
+    local function me() return ns.DB.characters[ns.charGuid()] end
+    local function crashSum(s)
+      local sum, n = 0, 0
+      for _, e in ipairs(G.entries(s)) do if e.src == "away" and e.ref and e.ref.crash then sum, n = sum + e.delta, n + 1 end end
+      return sum, n
+    end
+
     -- a clean logout, the purse changed elsewhere: away, no crash
-    M.fire("PLAYER_LOGOUT"); later(60)
-    ns._test.newLoad(); M.money = M.money + 500; M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
-    local s1 = ses()
+    M.fire("PLAYER_LOGOUT")
+    local file = deepcopy(ns.DB)
+    check("#43 sources: a logout leaves no open mark in the save file", me().goldOpen == nil)
+    later(60)
+    ns._test.newLoad(); M.money = M.money + 500
+    local s1 = login()
     is("away after a clean logout carries no crash", row(1, s1), "away", 500, "gap=60")
     later()
-    -- the game closed without saving: the session never ended, and the next login finds another purse
-    ns._test.newLoad(); M.money = M.money + 1234; M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
-    local s2 = ses()
-    check("#43 sources: the session before never closed", s2 ~= s1 and s1.endedBy == nil)
-    is("away after a session that never closed carries crash=1", row(1, s2), "away", 1234, "gap=10;crash=1")
-    local e = G.entries(s2)[1]
+    -- the client dies in a session with no /reload: the save file is still the one of the logout, and nothing in it
+    -- says a session ran. A plain away row (the limit of what a save file can tell)
+    M.fire("LOOT_OPENED"); money(40); later()
+    died(file)
+    local s2 = login()
+    local r2 = row(1, s2)
+    check("#43 sources: a crash with no /reload before it leaves no trace: a plain away row for all of it", s2 ~= s1 and r2.src == "away" and r2.delta == 540 and r2.refT.crash == nil and r2.refT.gap ~= nil, r2.ref)
+    later()
+
+    -- a /reload, then the client dies: the save of the reload holds the session closed (endedBy = "logout") and the mark
+    local n2 = #s2.goldLog
+    local file2 = reload()
+    check("#43 sources: the save of a /reload closes the session in the file, as a logout does", file2.sessions[file2.active] ~= nil and file2.sessions[file2.active].endedBy == "logout")
+    check("#43 sources: and carries the open mark for this character", type(file2.characters[ns.charGuid()].goldOpen) == "number")
+    check("#43 sources: the reload resumes the session, no away row, the mark stays", ses() == s2 and s2.endedBy == nil and #s2.goldLog == n2 and type(me().goldOpen) == "number")
+    M.fire("LOOT_OPENED"); money(1234); later()
+    died(file2)
+    check("#43 sources: after the crash the file says the session ended by logout (no orphan to find)", ns.DB.sessions[ns.DB.active].endedBy == "logout")
+    local s3 = login()
+    is("away after a /reload and a crash carries crash=1", row(1, s3), "away", 1234, "gap=10;crash=1")
+    local e = G.entries(s3)[1]
     check("#43 sources: the journal calls it unattributed", e and e.detail == "Unattributed (game closed without saving)", e and e.detail)
-    -- a 0 the client corrects is taken back without the tag
-    check("#43 sources: Emitter.prevOrphan is false with no session of this character before", E.prevOrphan(nil) == true and (function()
-      local real = ns.DB.sessions; ns.DB.sessions = {}; local v = E.prevOrphan(nil); ns.DB.sessions = real; return v end)() == false)
+    check("#43 sources: the mark is read once", s3 ~= s2 and me().goldOpen == nil)
+    -- what the Gold pane says: the amount is in the NET card of the pane (the glance figures stay gained minus spent)
+    do
+      local sum, n = crashSum(s3)
+      check("#43 sources: the crash rows of the session sum to the row", sum == 1234 and n == 1, sum)
+      local sc = G.scope("session", "char")
+      local t = G.netCard(sc.ledger, G.scopeEntries(sc))
+      check("#43 sources: pane: the NET card counts the crash amount", t.crash == 1234 and t.net == sc.ledger.gained - sc.ledger.spent + 1234, ("%s %s"):format(tostring(t.crash), tostring(t.net)))
+      check("#43 sources: pane: the status line names it and says where it counts", t.line ~= nil and t.line:find("Unattributed (game closed without saving): +", 1, true) == 1 and t.line:find(", counted in the net of this pane", 1, true) ~= nil, t.line)
+      check("#43 sources: pane: it is not also listed as changed while away", t.away == 0, t.away)
+      check("#43 sources: the glance net stays gained minus spent (day rows carry no crash amount)", G.figure("net", sc.ledger) == sc.ledger.gained - sc.ledger.spent)
+    end
+    later()
+
+    -- a /reload, then a real logout: the mark is gone, the next login is a plain one
+    reload()
+    check("#43 sources: the mark is set again by the next /reload", type(me().goldOpen) == "number")
+    M.fire("PLAYER_LOGOUT")
+    check("#43 sources: a real logout after a /reload removes the mark", me().goldOpen == nil)
+    later(60)
+    ns._test.newLoad(); M.money = M.money + 5
+    local s4 = login()
+    is("away after a /reload and a clean logout carries no crash", row(1, s4), "away", 5, "gap=60")
+    later()
+
+    -- a 0 read at the login after a crash, then corrected: the booking and its take-back carry the same tag and cancel
+    local file5 = reload()
+    later()
+    died(file5)
+    local saved = me().gold.balance
+    local real = M.money
+    check("#43 sources: 0-read after a crash: the test starts with gold saved", saved > 0 and saved == real, saved)
+    M.money = 0
+    local s5 = login()
+    M.now = M.now + 15; M.fire("PLAYER_MONEY"); M.runTimers()
+    local r5 = row(#s5.goldLog, s5)
+    check("#43 sources: 0-read after a crash: the 0 is booked with crash=1", r5.src == "away" and r5.delta == -saved and r5.refT.crash == "1", r5.ref)
+    M.money = real; M.fire("PLAYER_MONEY"); M.runTimers()
+    local r6 = row(#s5.goldLog, s5)
+    check("#43 sources: 0-read after a crash: the take-back carries the same tag", r6.src == "away" and r6.delta == saved and r6.refT.crash == "1" and r6.bal == saved, r6.ref)
+    local sum5 = crashSum(s5)
+    check("#43 sources: 0-read after a crash: the crash rows sum to 0, so does away", sum5 == 0 and (s5.gold.away or 0) == 0, sum5)
+    do
+      local sc = G.scope("session", "char")
+      local t = G.netCard(sc.ledger, G.scopeEntries(sc))
+      check("#43 sources: 0-read after a crash: the pane shows no crash amount and nothing changed while away", t.crash == 0 and t.net == sc.ledger.gained - sc.ledger.spent and t.line == nil and t.away == 0, tostring(t.line))
+    end
     later()
     M.fire("PLAYER_LOGOUT"); later(60)
     ns._test.newLoad(); M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers(); later()
