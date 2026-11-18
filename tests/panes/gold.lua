@@ -173,8 +173,9 @@ return function(P)
       eq(tag .. ": BALANCE", c.cBalance.value.text, fmt(ns.char().gold.balance))
       eq(tag .. ": IN / OUT", c.cIn.value.text .. " / " .. c.cOut.value.text, fmt(ses.gained) .. " / " .. fmt(ses.spent))
       eq(tag .. ": NET", c.cNet.value.text, Gold.signed(net))
-      check(tag .. ": NET PER HOUR is a signed rate, the label names the definition and the status line its time", c.cRate.title.text == "NET PER HOUR" and c.cRate.value.text:find("^[%+%-]%d") ~= nil
-        and c.status.text:find("per hour over %d+h? ?%d*m? ?of the session") ~= nil and P.visible(c.statusRow), c.cRate.value.text .. " | " .. tostring(c.status.text))
+      -- (0.9.45: the running session shows the rolling rate by the per hour setting; tests/panes/goldglance.lua)
+      check(tag .. ": PER HOUR is the rolling rate, the label names the definition and the status line its window", c.cRate.title.text == "FARMING PER HOUR" and c.cRate.value.text:find("^%d") ~= nil and c.cRate.value.text:sub(-2) == "/h"
+        and c.status.text:find("Farming per hour, [%w :]+: looted coin, vendor sales and quest rewards over active time") ~= nil and P.visible(c.statusRow), c.cRate.value.text .. " | " .. tostring(c.status.text))
       local stb = P.box(c.statusRow)
       local lowest = 0
       for _, k in ipairs(KEYS) do local b = P.box(c[k]); lowest = math.max(lowest, b.t + b.h) end
@@ -516,7 +517,9 @@ return function(P)
         and c.scopeBtns[1].ebSelected == true and c.moreBtn.text.text == "More" and c.moreBtn.ebSelected == nil and today ~= nil)
       check(tag .. ": the cards read the day row: EARNED, SPENT, NET, the live balance", c.cIn.value.text == fmt(today.g) and c.cOut.value.text == fmt(today.s) and c.cNet.value.text == Gold.signed(today.g - today.s)
         and c.cBalance.title.text == "BALANCE" and c.cBalance.value.text == fmt(me.gold.balance), c.cIn.value.text)
-      check(tag .. ": under 5 minutes played the rate says so", c.cRate.title.text == "NET PER HOUR" and c.cRate.value.text == "after 5 min played", c.cRate.value.text)
+      -- (0.9.45: Today is a running period, so its card is the rolling rate, dimmed under 5 active minutes)
+      check(tag .. ": under 5 minutes played the rate says it is warming up", c.cRate.title.text == "FARMING PER HOUR" and c.cRate.value.text:sub(-2) == "/h" and c.cRate.value._color[1] == UI.C.dim[1]
+        and c.status.text:find("Farming per hour, warming up %d:%d%d: ") ~= nil, c.cRate.value.text .. " | " .. tostring(c.status.text))
       check(tag .. ": the status line says what changed while away and where the history starts", (today.away or 0) ~= 0 and c.status.text:find("Not seen: " .. Gold.signed(today.away) .. " changed while away", 1, true) ~= nil
         and c.status.text:find("History starts " .. Gold.fmtDate(me.goldSince) .. ". Days follow the server reset.", 1, true) ~= nil, c.status.text)
       check(tag .. ": the status line is shown in full, inside its row", statusFull(c), c.status.text)

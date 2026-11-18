@@ -175,6 +175,9 @@ flag:SetScript("OnEnter", function(self)
   GameTooltip:AddLine("Left-click  ·  open Everbuff", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Drag  ·  move anywhere", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Right-click  ·  snap to a corner", 0.8, 0.8, 0.8)
+  -- the gold block under the four help lines: built, and switched off in code (ns.Gold.FLAG_TIP) until the desktop
+  -- has replayed its fixtures with the taller tooltip (0.9.45, #43, decision 3c)
+  if ns.Gold and ns.Gold.flagTip then pcall(ns.Gold.flagTip, GameTooltip, self) end
   GameTooltip:Show()
 end)
 flag:SetScript("OnLeave", function() emblem:SetSize(30, 30); GameTooltip:Hide() end)
@@ -216,6 +219,7 @@ function Emitter.setFlagScale(v)
   if v < FLAG_MIN then v = FLAG_MIN elseif v > FLAG_MAX then v = FLAG_MAX end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagScale = math.floor(v * 20 + 0.5) / 20 end
   applyFlagPrefs()
+  if ns.Gold and ns.Gold.flagMoved then pcall(ns.Gold.flagMoved) end   -- the gold pill stays clear of the bigger flag
 end
 local function place()
   local key = (ns.DB and ns.DB.settings and ns.DB.settings.emitCorner) or "TOPLEFT"
@@ -270,7 +274,11 @@ function Emitter.setFlagPos(point, x, y)
   if ns.blockedInCombat() then return end
   if ns.DB and ns.DB.settings then ns.DB.settings.flagPos = point and { point = point, x = x or 0, y = y or 0 } or nil end
   place()
+  if ns.Gold and ns.Gold.flagMoved then pcall(ns.Gold.flagMoved) end   -- the gold pill makes way for the flag
 end
+-- the widest the notification line gets, in the panel's own units (times the flag's size on screen); the gold pill
+-- keeps clear of this reach (ns.Gold.flagRect)
+Emitter.TOAST_MAX_W = 600
 
 -- ── curated toast (human) ──
 local hideAt = 0
@@ -283,7 +291,7 @@ local function show(kind, human, rec)
   local col = COLORS[kind] or GOLD
   accent:SetColorTexture(col[1], col[2], col[3], 1)
   hero:SetTextColor(BONE[1], BONE[2], BONE[3]); hero:SetText(human or kind)   -- the kind's color is the tick only
-  panel:SetWidth(math.min(600, (hero:GetStringWidth() or 0) + ICON_INSET + 16)); panel:SetHeight(40)
+  panel:SetWidth(math.min(Emitter.TOAST_MAX_W, (hero:GetStringWidth() or 0) + ICON_INSET + 16)); panel:SetHeight(40)
   place()
   panel:SetAlpha(0); panel:Show()
   panel:SetFrameStrata("FULLSCREEN_DIALOG"); panel:SetFrameLevel(9999); panel:Raise(); flag:Raise()
@@ -421,6 +429,7 @@ function Emitter.setCorner(key)
   if not CORNERS[key] then return false end
   if ns.DB and ns.DB.settings then ns.DB.settings.emitCorner = key end
   place()
+  if ns.Gold and ns.Gold.flagMoved then pcall(ns.Gold.flagMoved) end   -- the gold pill makes way for the flag
   return true
 end
 
@@ -1912,7 +1921,7 @@ if ns.UI and ns.UI.registerTab then
     sub:SetText("Look and notifications, capture health, stored data.")
 
     -- ── sub-tabs: a real tab control on a bordered pane (UI.Tabs); panes built eagerly so tests cover them
-    local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
+    local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "gold", label = "Gold" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
     content.subtabs = subtabs
     local general, capture, data = subtabs.panes.general, subtabs.panes.capture, subtabs.panes.data
 
@@ -2032,6 +2041,9 @@ if ns.UI and ns.UI.registerTab then
     general.lootToastButtons = ltBtns
     refreshLT()
 
+    -- ═══ Gold: tooltips, the pill, per hour, resets (Economy.lua, 0.9.45) ═══
+    if ns.BuildGoldSettings then content.goldRefresh = ns.BuildGoldSettings(subtabs.panes.gold) end
+
     -- ═══ Capture: health + disconnect protection (Sync.lua) ═══
     if ns.BuildCapturePane then ns.BuildCapturePane(capture) end
 
@@ -2111,7 +2123,7 @@ if ns.UI and ns.UI.registerTab then
     refreshAck()
 
     refreshData()
-    content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end end
+    content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end; if content.goldRefresh then content.goldRefresh() end end
     subtabs.select("general"); refresh()
   end, function() end, nil, "bottom")
 

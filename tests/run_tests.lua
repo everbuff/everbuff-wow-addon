@@ -2311,7 +2311,8 @@ do
 end
 
 -- #43 (0.9.44): the gold day rows, the roster and the glance (each on a save file of its own, the suite's put back)
-for _, name in ipairs({ "gold_days", "gold_roster" }) do
+-- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end

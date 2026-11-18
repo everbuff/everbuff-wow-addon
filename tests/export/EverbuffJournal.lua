@@ -28,6 +28,23 @@ EverbuffDB = {
 					["t"] = 0,
 				},
 			},
+			["goldRate"] = {
+				["last"] = 1793000181,
+				["m"] = {
+					[29883334] = {
+						["a"] = 0,
+						["e"] = 542,
+						["f"] = 542,
+						["s"] = 0,
+					},
+					[29883336] = {
+						["a"] = 0,
+						["e"] = 95,
+						["f"] = 95,
+						["s"] = 0,
+					},
+				},
+			},
 			["goldSince"] = 1793000042,
 			["ilvl"] = 18,
 			["level"] = 13,
@@ -407,7 +424,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.44",
+			["addonVersion"] = "0.9.45",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -541,37 +558,40 @@ EverbuffDB = {
 				"GetZoneText", -- [45]
 				"GuildRoster", -- [46]
 				"IsSpellKnown", -- [47]
-				"PlaceAuctionBid", -- [48]
-				"PlaySound", -- [49]
-				"RaidNotice_AddMessage", -- [50]
-				"ReloadUI", -- [51]
-				"StartAuction", -- [52]
-				"UIErrorsFrame.AddMessage", -- [53]
-				"UnitAura", -- [54]
-				"UnitDefense", -- [55]
-				"C_AddOns", -- [56]
-				"C_AddOns.GetAddOnMetadata", -- [57]
-				"C_ChallengeMode", -- [58]
-				"C_ClassTalents", -- [59]
-				"C_DamageMeter", -- [60]
-				"C_NamePlate", -- [61]
-				"C_PlayerInfo", -- [62]
-				"C_Reputation", -- [63]
-				"C_SpecializationInfo", -- [64]
-				"C_Spell", -- [65]
-				"C_ToyBox", -- [66]
-				"C_Traits", -- [67]
-				"C_UI", -- [68]
-				"ChatTypeInfo", -- [69]
-				"ChatTypeInfo.RAID_WARNING", -- [70]
-				"FACTION_STANDING_INCREASED", -- [71]
-				"NUM_BAG_SLOTS", -- [72]
-				"RaidWarningFrame", -- [73]
-				"SECONDARY_SKILLS", -- [74]
-				"TRADE_SKILLS", -- [75]
-				"UIErrorsFrame", -- [76]
+				"MenuUtil.CreateContextMenu", -- [48]
+				"PlaceAuctionBid", -- [49]
+				"PlaySound", -- [50]
+				"RaidNotice_AddMessage", -- [51]
+				"ReloadUI", -- [52]
+				"StartAuction", -- [53]
+				"UIErrorsFrame.AddMessage", -- [54]
+				"UnitAura", -- [55]
+				"UnitDefense", -- [56]
+				"UnitIsAFK", -- [57]
+				"C_AddOns", -- [58]
+				"C_AddOns.GetAddOnMetadata", -- [59]
+				"C_ChallengeMode", -- [60]
+				"C_ClassTalents", -- [61]
+				"C_DamageMeter", -- [62]
+				"C_NamePlate", -- [63]
+				"C_PlayerInfo", -- [64]
+				"C_Reputation", -- [65]
+				"C_SpecializationInfo", -- [66]
+				"C_Spell", -- [67]
+				"C_ToyBox", -- [68]
+				"C_Traits", -- [69]
+				"C_UI", -- [70]
+				"ChatTypeInfo", -- [71]
+				"ChatTypeInfo.RAID_WARNING", -- [72]
+				"FACTION_STANDING_INCREASED", -- [73]
+				"MenuUtil", -- [74]
+				"NUM_BAG_SLOTS", -- [75]
+				"RaidWarningFrame", -- [76]
+				"SECONDARY_SKILLS", -- [77]
+				"TRADE_SKILLS", -- [78]
+				"UIErrorsFrame", -- [79]
 			},
-			["addon"] = "0.9.44",
+			["addon"] = "0.9.45",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",
