@@ -16,6 +16,16 @@ EverbuffDB = {
 				["quests"] = 350,
 				["spent"] = 0,
 			},
+			["goldBest"] = {
+				["day"] = {
+					["key"] = "20261026",
+					["net"] = 637,
+				},
+				["session"] = {
+					["at"] = 1793000000,
+					["net"] = 637,
+				},
+			},
 			["goldDays"] = {
 				["20261026"] = {
 					["c"] = 2157,
@@ -46,6 +56,15 @@ EverbuffDB = {
 				},
 			},
 			["goldSince"] = 1793000042,
+			["goldZones"] = {
+				[37] = {
+					["last"] = 1793000181,
+					["looted"] = 287,
+					["name"] = "Elwynn Forest",
+					["quests"] = 350,
+					["secs"] = 0,
+				},
+			},
 			["ilvl"] = 18,
 			["level"] = 13,
 			["name"] = "Hart",
@@ -424,7 +443,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.46",
+			["addonVersion"] = "0.9.47",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -597,7 +616,7 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [84]
 				"UIErrorsFrame", -- [85]
 			},
-			["addon"] = "0.9.46",
+			["addon"] = "0.9.47",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",

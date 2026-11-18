@@ -250,7 +250,11 @@ local function buildDetail(content)
     end
     -- loot: totals plus every rare-and-better drop
     y = heading(y, "Loot")
-    line(y, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0)), C.gold); y = y + 20
+    -- the run's own gold record when it has one (0.9.47, #43): items, coin (looted coin and quest rewards), the
+    -- vendor value of the loot as an estimate, and coin per hour played in the run; else the counts of the loot log
+    local rec = ns.Gold and ns.Gold.runFor and ns.Gold.runFor(run.name, run.startT, run.endT) or nil
+    v.lootLine = rec and ns.Gold.runLine(rec) or ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0))
+    line(y, v.lootLine, C.gold); y = y + 20
     if run.notable and #run.notable > 0 then
       for _, l in ipairs(run.notable) do
         local icon = l.icon and ("|T" .. tostring(l.icon) .. ":14:14:0:0|t ") or ""

@@ -2316,7 +2316,8 @@ end
 -- #43 (0.9.44): the gold day rows, the roster and the glance (each on a save file of its own, the suite's put back)
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources" }) do
+-- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end

@@ -515,6 +515,8 @@ function Emitter.checkInstance()
     if ns.DB then ns.char().inInstance = nil end
     Emitter.event("DUNGEONLEAVE", { name = announced })
   end
+  -- the gold of a dungeon run follows the same answer (0.9.47, #43: characters[guid].goldRun and goldRuns)
+  if ns.Gold and ns.Gold.runSync then pcall(ns.Gold.runSync) end
   return kind ~= nil
 end
 
@@ -2540,6 +2542,8 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
       -- drops at or above the loot-toast threshold get the on-screen flag; the rest stay off-screen
       if ns.Recorder and ns.Recorder.bump then ns.Recorder.bump("items") end
+      -- an item looted inside a dungeon run counts on the run, with its vendor price as an estimate (0.9.47, #43)
+      if ns.Gold and ns.Gold.runItem then pcall(ns.Gold.runItem, id, count) end
       Emitter.event("LOOT", { name = item, count = count }, lootQuiet(q))
     end
   end
