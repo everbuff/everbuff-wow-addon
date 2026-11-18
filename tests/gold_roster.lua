@@ -155,6 +155,37 @@ return function(P)
   tip = fake(); G.tooltip(tip)
   check("tooltip: the saved filter names the block", find(tip, "^THIS REALM AND FACTION  ·  ") ~= nil)
   G.cfg(true).filter = nil
+  -- the current character hidden from totals: still listed first, marked, and the header counts what the Total sums
+  G.cfg(true).hidden = { [ME] = true }
+  do
+    local hidRo = G.roster("all")
+    tip = fake(); G.tooltip(tip)
+    local hl, hi = find(tip, "^ACCOUNT")
+    check("tooltip: with the current character hidden the header counts the characters in the Total", hl ~= nil and hl.left == ("ACCOUNT  ·  %d characters"):format(hidRo.count) and hidRo.count == big.count - 1, hl and hl.left)
+    check("tooltip: the hidden current character is still pinned, and says it is not in the total", hi and tip.lines[hi + 1].left:find("^> Hart Hammershield") ~= nil and tip.lines[hi + 1].right:find("not in total", 1, true) ~= nil
+      and find(tip, "^Total$").right:find(ns.fmtMoney(hidRo.total), 1, true) == 1 and hidRo.total == big.total - myBal, hi and tip.lines[hi + 1].right)
+    -- two characters, the current one hidden: one counted, and the header says one
+    local keep = {}
+    for k2, v in pairs(chars) do if k2 ~= ME and k2 ~= "A" then keep[k2] = v; chars[k2] = nil end end
+    tip = fake(); G.tooltip(tip)
+    hl, hi = find(tip, "^ACCOUNT")
+    check("tooltip: one counted character beside the hidden current one reads 1 character", hl ~= nil and hl.left == "ACCOUNT  ·  1 character" and find(tip, "^Total$").right:find(ns.fmtMoney(961000), 1, true) == 1, hl and hl.left)
+    for k2, v in pairs(keep) do chars[k2] = v end
+  end
+  G.cfg(true).hidden = nil
+  -- a realm or account sum is of the characters its total counts: one not seen in 90 days is in neither, or in both
+  do
+    local x = chars.X30
+    x.gold.gained, x.goldDays = 900000, { [kT] = { g = 900000, s = 0, o = 0, c = 900000, t = 600, n = 1, looted = 900000 } }
+    local plain, with = G.roster("all"), G.roster("all", true)
+    check("who: a stale character is left out of the account's balance, its all-time sums and its day sums alike", row(plain, "X30").counted == false
+      and G.metric("balance", "account") == plain.total and G.metric("earned", "account", "all") == c.gold.gained
+      and G.period("today", "account").ledger.gained == 380000 + 50000 and G.scope("all", "account").ledger.gained == c.gold.gained, G.metric("earned", "account", "all"))
+    check("who: with the stale ones included they are in the total and in every sum", with.total == plain.total + staleSum
+      and G.scope("all", "account", true).ledger.gained == c.gold.gained + 900000 and G.period("today", "account", nil, true).ledger.gained == 380000 + 50000 + 900000
+      and G.scope("today", "account", true).ledger.gained == 380000 + 50000 + 900000, G.scope("all", "account", true).ledger.gained)
+    x.gold.gained, x.goldDays = nil, nil
+  end
   -- one character: no account block
   local saved = {}
   for k, v in pairs(chars) do if k ~= ME then saved[k] = v; chars[k] = nil end end

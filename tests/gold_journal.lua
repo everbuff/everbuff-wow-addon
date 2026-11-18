@@ -224,6 +224,79 @@ return function(P)
     is("after the correction a gain is a gain", row(), "unexplained", 25, "")
     later()
   end
+  -- The 0 rule's edges (#43, review of 0.9.44): the take-back is bound to the first minute after the booking and to a
+  -- read nothing explains as income; a gain something explains on a 0 that is still waiting is income; and the last
+  -- re-read may fire a few milliseconds early.
+  do
+    later()
+    local g = ns.char().gold
+    local saved = g.balance
+    local function relog0() ns._test.newLoad(); M.money = 0; M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers() end
+    local function book0() relog0(); M.now = M.now + 15; M.fire("PLAYER_MONEY"); M.runTimers() end
+    -- (1) a true 0, booked; an hour later a mail of exactly the saved balance is taken
+    local gained0, away0, mail0 = g.gained, g.away or 0, g.mail or 0
+    check("#43 0 edges: the test starts with gold saved", saved > 100 and saved == M.money, saved)
+    book0()
+    check("#43 0 edges: the 0 is booked as changed while away", g.balance == 0 and (g.away or 0) == away0 - saved)
+    M.now = M.now + 3600
+    M.fire("MAIL_SHOW"); M.inbox = { { sender = "Rando", subject = "gold", money = saved } }
+    TakeInboxMoney(1); money(saved); M.runTimers()
+    check("#43 0 edges: an hour later a mail of exactly the saved balance is income, not a take-back", g.gained == gained0 + saved and (g.mail or 0) == mail0 + saved and (g.away or 0) == away0 - saved
+      and row().src == "mail" and row().delta == saved, ("%s %s"):format(g.gained - gained0, (g.away or 0) - away0))
+    M.fire("MAIL_CLOSED"); M.inbox = {}; later()
+    -- (2) inside the first minute, but the mailbox explains it: income too
+    gained0, away0, mail0 = g.gained, g.away or 0, g.mail or 0
+    book0()
+    M.now = M.now + 5
+    M.fire("MAIL_SHOW"); M.inbox = { { sender = "Rando", subject = "gold", money = saved } }
+    TakeInboxMoney(1); money(saved); M.runTimers()
+    check("#43 0 edges: inside the first minute a mail of the saved balance taken at the mailbox is income", g.gained == gained0 + saved and (g.mail or 0) == mail0 + saved and (g.away or 0) == away0 - saved and row().src == "mail",
+      ("%s %s"):format(g.gained - gained0, (g.away or 0) - away0))
+    M.fire("MAIL_CLOSED"); M.inbox = {}; later()
+    -- (3) after the first minute an equal amount nothing explains is a gain with no source, never a take-back
+    gained0, away0 = g.gained, g.away or 0
+    book0()
+    M.now = M.now + 61
+    money(saved); M.runTimers()
+    check("#43 0 edges: after a minute the same amount is unexplained income, the away booking stays", g.gained == gained0 + saved and (g.away or 0) == away0 - saved and row().src == "unexplained", row().src)
+    later()
+    -- (4) the last re-read fires a few milliseconds early: the 0 is still booked
+    away0 = g.away or 0
+    ns._test.newLoad(); M.money = 0; M.fire("PLAYER_ENTERING_WORLD", false, true)
+    M.now = M.now + 14.9995; M.runTimers(); M.runTimers()
+    check("#43 0 edges: a last re-read that fires a few milliseconds early still books the 0", g.balance == 0 and (g.away or 0) == away0 - saved, g.balance)
+    M.now = M.now + 2
+    money(saved); M.runTimers()                    -- the client corrects itself: taken back
+    check("#43 0 edges: the saved balance back within the minute, unexplained, takes the booking back", g.balance == saved and (g.away or 0) == away0 and row().src == "away" and row().delta == saved, g.away)
+    later()
+    -- (5) a 0 still waiting, and coin looted from a corpse: the purse really was 0, the coin is income
+    gained0, away0 = g.gained, g.away or 0
+    local looted0 = g.looted or 0
+    relog0()
+    M.now = M.now + 5
+    M.fire("LOOT_OPENED"); M.money = 40; M.fire("PLAYER_MONEY"); M.runTimers()
+    local s = ses()
+    local r1, r2 = row(#s.goldLog - 1, s), row(#s.goldLog, s)
+    check("#43 0 edges: coin looted while a 0 is waiting is looted income; the 0 is booked against the saved balance", g.balance == 40 and g.gained == gained0 + 40 and (g.looted or 0) == looted0 + 40 and (g.away or 0) == away0 - saved,
+      ("%s %s"):format(g.gained - gained0, (g.away or 0) - away0))
+    check("#43 0 edges: the away row comes first, then the loot, and the chain holds", r1.src == "away" and r1.delta == -saved and r1.bal == 0 and r2.src == "looted" and r2.delta == 40 and r2.bal == 40 and chain(s), r1.src .. " " .. r2.src)
+    do
+      local G = ns.Gold
+      local dayRow = ns.char().goldDays[G.dayKey(GetServerTime(), G.baseStored())]
+      check("#43 0 edges: the day row closes on the purse", dayRow ~= nil and dayRow.c == 40, dayRow and dayRow.c)
+    end
+    later()
+    -- (6) a 0 still waiting, and a read nothing explains: the client's first real answer seeds the baseline
+    gained0, away0 = g.gained, g.away or 0
+    ns._test.newLoad(); M.money = 0
+    local before = g.balance
+    M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers()
+    M.now = M.now + 5
+    M.money = saved + 9; M.fire("PLAYER_MONEY"); M.runTimers()
+    check("#43 0 edges: a read nothing explains while a 0 is waiting is the purse as it is: away, never income", g.balance == saved + 9 and g.gained == gained0 and (g.away or 0) == away0 + (saved + 9 - before), (g.away or 0) - away0)
+    check("#43 0 edges: the chain holds over all of it, no error in the day writer", chain(ses()) and E._dayErr == nil, E._dayErr)
+    later()
+  end
   -- The character is not known yet (the client gives no GUID for a moment at login): no baseline is seeded, so the
   -- comparison with the saved balance is still made once the GUID is there.
   do

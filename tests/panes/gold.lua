@@ -424,7 +424,7 @@ return function(P)
       gold = { balance = 961000, gained = 961000, spent = 0 },
       goldDays = { [Gold.dayKey(now, base)] = { g = 50000, s = 20000, o = 931000, c = 961000, t = 900, n = 3, looted = 50000, repairs = 20000, away = 0 } } }
     ns.DB.characters[ORG] = { name = "Orgrim", realm = "Forever Realm [EU] - Other Shore", class = "SHAMAN", faction = "Horde", level = 40, seen = now - 100 * DAY,
-      gold = { balance = 5000000 } }
+      gold = { balance = 5000000, gained = 5000000, spent = 0 } }
     ns.DB.characters["Player-1-0000A1"].gold = { balance = 150000 }
   end
   local function audit(tag)
@@ -448,6 +448,19 @@ return function(P)
     check(tag .. ": header x == cell x, numbers in full, every row inside the list", #bad == 0, table.concat(bad, "; "):sub(1, 300))
     check(tag .. ": the list ends inside the pane", sfb.t + sfb.h <= cb.t + cb.h + 0.5 and sfb.l >= cb.l - 0.5)
   end
+  -- the status line under the cards wraps: every line of it is shown, inside its row, above the caption
+  local statusWhy = ""
+  local function statusFull(c)
+    statusWhy = ""
+    if not P.visible(c.statusRow) then statusWhy = "the row is hidden"; return false end
+    if c.status:IsTruncated() then statusWhy = "cut"; return false end
+    local sb, rb, capb = P.box(c.status), P.box(c.statusRow), P.box(c.capRow)
+    local _, th = P.G.textSize(c.status, sb.w)
+    if sb.t < rb.t - 0.5 or sb.t + th > rb.t + rb.h + 0.5 then statusWhy = ("text %s to %s, row %s to %s"):format(sb.t, sb.t + th, rb.t, rb.t + rb.h) end
+    if rb.t + rb.h > capb.t + UI.SP.XS + 0.5 then statusWhy = statusWhy .. (" row ends %s, caption starts %s"):format(rb.t + rb.h, capb.t) end
+    if sb.l + sb.w > rb.l + rb.w + 0.5 then statusWhy = statusWhy .. (" text right %s, row right %s"):format(sb.l + sb.w, rb.l + rb.w) end
+    return statusWhy == ""
+  end
   local function keys(tbl) local t = {}; for i, col in ipairs(tbl.spec) do t[i] = col.key end; return table.concat(t, ",") end
 
   for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
@@ -463,16 +476,41 @@ return function(P)
       local today = me.goldDays[kT]
       local wide = (cb.w - UI.SCROLLBAR) >= 980
       check(tag .. ": the optional columns show from 980 px of list on: not at 900 px, at 1250 and 1600", (size[1] == 900) == (not wide), cb.w)
-      -- every period's label fits on the More button without running into who
-      local fits = {}
+      -- every period's label fits on the More button without running into who, for every view and every who (the
+      -- widest view label beside the widest period label). The search box takes what is left: 90 px or more, down to
+      -- 64 px when the buttons need the room, and under that it is left out of every view but the Journal.
+      local fits, hidden, hiddenWide = {}, 0, 0
       local prevS = Gold.scope("previous").sessions[1]
-      for _, key in ipairs({ "session", "yesterday", "month", "last30", prevS and prevS.id or "session", "day:" .. kT }) do
-        Gold.open(key); M.settle()
-        local mb, wb, vb, sb = P.box(c.moreBtn), P.box(c.whoBtn), P.box(c.viewBtn), P.box(c.search)
-        if mb.l + mb.w > wb.l or wb.l + wb.w > vb.l or vb.l + vb.w > sb.l or sb.w < 90 or c.search.placeholder:IsTruncated() then fits[#fits + 1] = c.moreBtn.text.text end
+      for _, key in ipairs({ "today", "all", "session", "yesterday", "month", "last30", prevS and prevS.id or "session", "day:" .. kT }) do
+        for _, v in ipairs(Gold.VIEWS) do
+          for _, wh in ipairs(Gold.WHO) do
+            Gold.open(key, v[1]); M.settle()
+            c.setWho(wh[1]); M.settle()
+            -- (a session is one character's: picking a realm or the account moves the period to Today)
+            if wh[1] == "char" or c.st.scope == key then
+              local what = ("%s / %s / %s"):format(c.moreBtn.text.text, c.whoBtn.text.text, c.viewBtn.text.text)
+              local mb, wb, vb = P.box(c.moreBtn), P.box(c.whoBtn), P.box(c.viewBtn)
+              if mb.l + mb.w > wb.l + 0.5 or wb.l + wb.w > vb.l + 0.5 then fits[#fits + 1] = what end
+              if c.moreBtn.text:IsTruncated() or c.whoBtn.text:IsTruncated() or c.viewBtn.text:IsTruncated() then fits[#fits + 1] = what .. " (a label cut)" end
+              if P.visible(c.search) then
+                local sb = P.box(c.search)
+                if vb.l + vb.w > sb.l + 0.5 or sb.w < 64 or c.search.placeholder:IsTruncated() then fits[#fits + 1] = what .. " (search)" end
+                if size[1] > 900 and sb.w < 90 then fits[#fits + 1] = what .. " (search under 90 px)" end
+              else
+                hidden = hidden + 1
+                if size[1] > 900 then hiddenWide = hiddenWide + 1 end
+                if v[1] == "journal" then fits[#fits + 1] = what .. " (no search box in the Journal)" end
+                if vb.l + vb.w > cb.l + cb.w - UI.SCROLLBAR + 0.5 then fits[#fits + 1] = what .. " (view past the edge)" end
+              end
+            end
+          end
+        end
       end
-      check(tag .. ": the toolbar holds every period's label, the search box takes what is left", #fits == 0, table.concat(fits, ", "))
+      c.setWho("char"); M.settle()
+      check(tag .. ": the toolbar holds every period's label beside every view and who; the search box takes what is left", #fits == 0, table.concat(fits, ", "):sub(1, 400))
+      check(tag .. ": the search box is only ever left out at the narrowest window", hiddenWide == 0, hiddenWide)
       Gold.open("today"); M.settle()
+      check(tag .. ": back on Today and Sources the search box is there", P.visible(c.search) and P.box(c.search).w >= 64)
       -- Today: the first quick period, the day row's numbers on the cards
       check(tag .. ": Today is a quick period and the day row of the character", c.scopeBtns[1].text.text == "Today" and c.scopeBtns[2].text.text == "This week" and c.scopeBtns[3].text.text == "All time"
         and c.scopeBtns[1].ebSelected == true and c.moreBtn.text.text == "More" and c.moreBtn.ebSelected == nil and today ~= nil)
@@ -481,6 +519,7 @@ return function(P)
       check(tag .. ": under 5 minutes played the rate says so", c.cRate.title.text == "NET PER HOUR" and c.cRate.value.text == "after 5 min played", c.cRate.value.text)
       check(tag .. ": the status line says what changed while away and where the history starts", (today.away or 0) ~= 0 and c.status.text:find("Not seen: " .. Gold.signed(today.away) .. " changed while away", 1, true) ~= nil
         and c.status.text:find("History starts " .. Gold.fmtDate(me.goldSince) .. ". Days follow the server reset.", 1, true) ~= nil, c.status.text)
+      check(tag .. ": the status line is shown in full, inside its row", statusFull(c), c.status.text)
       local src = c.sourceData
       local okSrc = src.inTotal == today.g and src.outTotal == today.s
       for _, r in ipairs(src.rows) do if r.dir ~= 0 and r.amount ~= (today[r.key] or 0) then okSrc = false end end
@@ -501,7 +540,25 @@ return function(P)
       end
       local stb, hb = P.box(c.dayStrip), P.box(dt.header)
       check(tag .. ": the strip of the last 30 days sits above the table, as wide as the list", P.visible(c.dayStrip) and c.dayStrip.n == 30 and stb.t + stb.h <= hb.t + 0.5 and stb.l >= cb.l and stb.l + stb.w <= cb.l + cb.w - UI.SCROLLBAR + 0.5
-        and c.dayStrip.title.text == "NET PER DAY, LAST 30 DAYS" and #c.dayStrip.values >= 2, stb.w)
+        and c.dayStrip.title.text == "NET PER DAY, LAST 30 DAYS", stb.w)
+      -- the strip is 30 fixed day slots ending today: a day's bar sits in its own slot, a day without a row has none
+      do
+        local vals, okSlots, bars = c.dayStrip.values, true, 0
+        for i = 1, 30 do
+          local k = Gold.dayKey(now - (30 - i) * DAY, base)
+          local v = vals[i]
+          if v == nil then okSlots = false
+          elseif v then
+            bars = bars + 1
+            if v.key ~= k or me.goldDays[k] == nil or v.v ~= me.goldDays[k].g - me.goldDays[k].s then okSlots = false end
+            if not (c.dayStrip.bars[i] and c.dayStrip.bars[i].shown ~= false) then okSlots = false end
+          else
+            if me.goldDays[k] ~= nil then okSlots = false end
+            if c.dayStrip.bars[i] and c.dayStrip.bars[i].shown ~= false then okSlots = false end
+          end
+        end
+        check(tag .. ": the strip has 30 day slots ending today, each bar in its day's slot", okSlots and bars >= 1 and vals[30] and vals[30].key == kT and vals[30].live == true, bars)
+      end
       check(tag .. ": the caption counts the days and their net", c.caption.text:find("^Today  ·  1 day  ·  net " .. Gold.signed(today.g - today.s):gsub("%p", "%%%0")) ~= nil, c.caption.text)
       tableChecks(tag .. " Days", dt, c)
       audit(tag .. " Days")
@@ -552,18 +609,29 @@ return function(P)
       check(tag .. ": a day older than the journals in the file keeps its totals and says why it has no rows", looted and looted.c.amount.text == fmt(9000) and looted.c.what.text == "totals only, no rows" and looted.c.go.text == ""
         and c.caption.text:find("Rows are kept until the desktop app has uploaded the session. Totals stay.", 1, true) ~= nil, c.caption.text)
 
+      -- Days under a session: whole days, and the caption says so (the cards above stay the session's own)
+      Gold.open("session", "days"); M.settle()
+      check(tag .. ": the Days of a session are captioned as whole-day totals", c.caption.text:find("^This session  ·  %d+ days? it touched, whole%-day totals  ·  net ") ~= nil and not c.caption:IsTruncated(), c.caption.text)
+      Gold.open("today"); M.settle()
+
       -- ── who ──
       click(c.scopeBtns[1])
       check(tag .. ": Account is picked from the who list", pick(c, c.whoBtn, "Account") and c.whoBtn.text.text == "Account" and c.st.who == "account")
       local ro = Gold.roster("all")
       check(tag .. ": the account's Today sums the characters' day rows on read", c.cIn.value.text == fmt(today.g + 50000) and c.cOut.value.text == fmt(today.s + 20000), c.cIn.value.text)
       check(tag .. ": BALANCE becomes TOTAL GOLD, the status line counts the characters and dates the oldest balance", c.cBalance.title.text == "TOTAL GOLD" and c.cBalance.value.text == fmt(ro.total)
-        and ro.total == me.gold.balance + 961000 + 150000 and c.status.text:find("3 characters, oldest balance from " .. Gold.fmtDate(now - 3 * DAY), 1, true) == 1, c.status.text)
-      check(tag .. ": a character with a change not seen on this PC in the period is named in the status line", c.status.text:find("1 character with changes not seen on this PC in this period", 1, true) ~= nil, c.status.text)
+        and ro.total == me.gold.balance + 961000 + 150000 and c.status.text:find("3 characters, oldest balance from " .. Gold.fmtDate(now - 3 * DAY), 1, true) ~= nil, c.status.text)
+      check(tag .. ": a character with a change not seen on this PC in the period is named first in the status line", c.status.text:find("1 character with changes not seen on this PC in this period", 1, true) == 1, c.status.text)
+      check(tag .. ": the account's sums and its total are of the same characters; the one not seen in 90 days is named as left out", c.status.text:find("1 not seen in 90 days left out", 1, true) ~= nil
+        and Gold.metric("earned", "account", "all") == (me.gold.gained or 0) + 961000 + (ns.DB.characters["Player-1-0000A1"].gold.gained or 0), c.status.text)
+      check(tag .. ": the rate of an account names its definition in the card's title", c.cRate.title.text == "NET PER HOUR PLAYED" and c.status.text:find("per hour over", 1, true) == nil, c.cRate.title.text)
+      check(tag .. ": the account's status line (gaps, away, roster, left out, history) is shown in full", statusFull(c) and c.status.text:find("Not seen: ", 1, true) ~= nil and c.status.text:find("History starts ", 1, true) ~= nil, c.status.text)
       check(tag .. ": an account has totals only, and the caption says so", #c.entries == 0 and c.caption.text:find("totals only: journal rows are kept per character", 1, true) ~= nil and not P.visible(c.flagBtn), c.caption.text)
       audit(tag .. " Account")
       pick(c, c.whoBtn, "This realm")
       check(tag .. ": This realm leaves the other realm out", c.cBalance.value.text == fmt(Gold.roster("realm").total) and c.whoBtn.text.text == "This realm")
+      local okRealm = statusFull(c)
+      check(tag .. ": the realm's status line is shown in full", okRealm and c.status.text:find("with changes not seen on this PC", 1, true) ~= nil, statusWhy .. " | " .. c.status.text)
       pick(c, c.moreBtn, "This session")
       check(tag .. ": a session is one character's: who goes back to This character", c.st.who == "char" and c.whoBtn.text.text == "This character" and c.cBalance.title.text == "BALANCE")
       click(c.scopeBtns[1])
@@ -584,8 +652,8 @@ return function(P)
         and mira.c.today.text == "+3g" and mira.c.d7.text == "+3g" and mira.c.seen.text == "3 d ago" and mira.c.balance.text == fmt(961000), mira.c.name.text .. " " .. mira.c.seen.text)
       check(tag .. ": a character not seen in 90 days is listed, dimmed, and says it is not in the total", org.c.seen.text:find(", not in total$") ~= nil and near(org.c.name._color[1], UI.C.dim[1]) and org.item.counted == false, org.c.seen.text)
       check(tag .. ": a character not seen since the update says log in once to refresh", bank.c.seen.text == "log in once to refresh" and near(bank.c.name._color[1], UI.C.dim[1]))
-      check(tag .. ": the caption names the filter, the count, the total and who still needs a login", c.caption.text:find("^All characters  ·  3 characters, oldest balance from ") ~= nil and c.caption.text:find("total " .. fmt(ro.total), 1, true) ~= nil
-        and c.caption.text:find("1 character not seen since the update: log in once on each to refresh", 1, true) ~= nil, c.caption.text)
+      check(tag .. ": the caption says what a click does and is shown in full beside its buttons", c.caption.text == "Click a character to hide or show it in totals" and not c.caption:IsTruncated(), c.caption.text)
+      check(tag .. ": who still needs a login is said first on the status line, in full", c.status.text:find("1 character not seen since the update: log in once on each to refresh", 1, true) == 1 and statusFull(c), c.status.text)
       if wide then
         check(tag .. ": the wide table adds realm (short), faction, level and share", org.c.realm.text == "Other Shore" and org.c.faction.text == "Horde" and org.c.level.text == "40" and mira.c.level.text == "21"
           and org.c.share.text == "" and mira.c.share.text == ("%d%%"):format(math.floor(961000 / ro.total * 100 + 0.5)) and cr[1].c.share.text == "100%", org.c.realm.text)
@@ -611,14 +679,35 @@ return function(P)
       click(c.menu.btns[1])
       check(tag .. ": hidden, it leaves the TOTAL row and every account figure at once", ns.DB.settings.gold.hidden[MIRA] == true and shown(ct.rows)[1].c.balance.text == fmt(ro.total - 961000)
         and shown(ct.rows)[1].c.name.text == "TOTAL  ·  2 characters" and rowOf(MIRA).c.seen.text == "hidden from totals" and Gold.metric("balance", "account") == ro.total - 961000
-        and Gold.metric("earned", "account", "today") == today.g and ns.DB.characters[MIRA].hidden == nil and c.caption.text:find("1 hidden from totals", 1, true) ~= nil, shown(ct.rows)[1].c.balance.text)
+        and Gold.metric("earned", "account", "today") == today.g and ns.DB.characters[MIRA].hidden == nil and c.status.text:find("1 hidden from totals", 1, true) ~= nil, shown(ct.rows)[1].c.balance.text)
+      -- the longest caption row: the longest filter label, the 90 days button, and needLogin, hidden and stale all
+      -- above zero (a character of this realm and faction not seen in 90 days is added for the check)
+      do
+        local OLD = "Player-1-0000B9"
+        ns.DB.characters[OLD] = { name = "Oldtimer", realm = me.realm, class = "ROGUE", faction = me.faction, level = 9, seen = now - 200 * DAY, gold = { balance = 77 } }
+        ns.DB.characters["Player-1-0000A1"].faction = me.faction
+        local mira = ns.DB.characters[MIRA]
+        local keepRealm, keepFaction = mira.realm, mira.faction
+        mira.realm, mira.faction = me.realm, me.faction
+        pick(c, c.filterBtn, "This realm and faction")
+        local rd = c.rosterData
+        check(tag .. ": with the longest filter label, needLogin, hidden and stale all above zero the caption and the status line are shown in full", rd.needLogin > 0 and rd.hidden > 0 and rd.stale > 0
+          and P.visible(c.staleBtn) and c.filterBtn.text.text == "This realm and faction" and not c.caption:IsTruncated() and P.box(c.caption).l + P.box(c.caption).w <= P.box(c.staleBtn).l + 0.5
+          and statusFull(c) and c.status.text:find("not seen since the update", 1, true) ~= nil and c.status.text:find("1 hidden from totals", 1, true) ~= nil,
+          ("%d %d %d | %s | %s"):format(rd.needLogin, rd.hidden, rd.stale, c.caption.text, c.status.text))
+        audit(tag .. " Characters, longest caption row")
+        ns.DB.characters[OLD] = nil
+        mira.realm, mira.faction = keepRealm, keepFaction
+        ns.DB.characters["Player-1-0000A1"].faction = nil
+        pick(c, c.filterBtn, "All characters")
+      end
       click(rowOf(MIRA))
       check(tag .. ": a hidden character offers to be shown again", c.menu.btns[1].text.text == "Show in totals")
       click(c.menu.btns[1])
       check(tag .. ": shown again, the total is back and no empty table is left in the settings", shown(ct.rows)[1].c.balance.text == fmt(ro.total) and ns.DB.settings.gold.hidden == nil)
       -- the filter is saved and is the roster's
       check(tag .. ": This realm is picked from the filter list", pick(c, c.filterBtn, "This realm") and ns.DB.settings.gold.filter == "realm" and c.filterBtn.text.text == "This realm")
-      check(tag .. ": the filter leaves the other realm's character out of the list and the 90 days button with it", rowOf(ORG) == nil and #shown(ct.rows) == 4 and not P.visible(c.staleBtn) and c.caption.text:find("^This realm  ·  ") ~= nil)
+      check(tag .. ": the filter leaves the other realm's character out of the list and the 90 days button with it", rowOf(ORG) == nil and #shown(ct.rows) == 4 and not P.visible(c.staleBtn) and not c.caption:IsTruncated())
       pick(c, c.filterBtn, "All characters")
       -- sort by name: the TOTAL row stays first
       local hbN = ct.head.name; hbN.scripts.OnClick(hbN); M.settle()
@@ -643,7 +732,7 @@ return function(P)
     check("Gold first run: nothing claims a history that does not exist", not tostring(c.status.text):find("History starts", 1, true))
     pick(c, c.viewBtn, "Days")
     check("Gold first run: Days says when rows begin and that days follow the server reset", c.tblDaysNarrow.empty.shown and c.tblDaysNarrow.header.shown == false
-      and c.tblDaysNarrow.empty.text == "No days yet. Each day with a gold change gets a row from addon 0.9.44 on. Days follow the server reset." and c.caption.text == "Today  ·  no days recorded", c.caption.text)
+      and c.tblDaysNarrow.empty.text == "No days yet. Each day you play gets a row from addon 0.9.44 on. Days follow the server reset." and c.caption.text == "Today  ·  no days recorded", c.caption.text)
     pick(c, c.viewBtn, "Characters")
     local cr = shown(c.tblCharsNarrow.rows)
     check("Gold first run: Characters lists the one character under its TOTAL row", #cr == 2 and cr[1].c.name.text == "TOTAL  ·  1 character" and cr[1].c.balance.text == fmt(me.gold.balance) and cr[2].c.name.text:find("  ·  You$") ~= nil and not P.visible(c.staleBtn), #cr)

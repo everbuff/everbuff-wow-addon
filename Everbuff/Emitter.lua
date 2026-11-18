@@ -1006,8 +1006,10 @@ end
 -- this file's PLAYER_ENTERING_WORLD handler has run. A quiet GOLDAWAY story row says how much; nothing shows in game.
 -- The row is written into the day it is discovered on, with ref `gap`: the seconds since the character was last seen
 -- (0.9.44, #43). `undo` takes back a 0 the client answered at login and then corrected: the same amount the other
--- way, taken out of awayIn or awayOut again, so away, awayIn and awayOut end where they were.
-function Emitter.goldAway(d, bal, mailWaiting, undo)
+-- way, taken out of awayIn or awayOut again, so away, awayIn and awayOut end where they were. `sync` books at once: a
+-- change that follows in the same call (a gain on a purse that really was 0) must find the away row before it.
+-- Both credits of the booking land on one day row: the clock is read once (Emitter._dayAt).
+function Emitter.goldAway(d, bal, mailWaiting, undo, sync)
   local seen = ns.Gold and ns.Gold.seenBefore and ns.Gold.seenBefore() or nil
   local nowS = (GetServerTime and GetServerTime()) or time()
   local gap = (not undo and seen and nowS > seen) and math.floor(nowS - seen) or nil
@@ -1016,13 +1018,15 @@ function Emitter.goldAway(d, bal, mailWaiting, undo)
     local g, ses = goldDB(), sessionDB()
     Emitter._gbal = bal
     Emitter._gref = (mailWaiting or gap) and { mailWaiting = mailWaiting and 1 or nil, gap = gap } or nil
+    Emitter._dayAt = (GetServerTime and GetServerTime()) or time()
     credit(g, ses, "away", d)
     if undo then credit(g, ses, d > 0 and "awayOut" or "awayIn", -math.abs(d))
     else credit(g, ses, d > 0 and "awayIn" or "awayOut", math.abs(d)) end
+    Emitter._dayAt, Emitter._gref = nil, nil
     Emitter.event("GOLDAWAY", { money = d }, true)
     if ns.Gold and ns.Gold.fire then ns.Gold.fire() end
   end
-  if C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
+  if not sync and C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
 end
 
 -- Coin and items traded with another player (#31, #36). The window is open, or closed under 3 s ago (the purse can
@@ -1116,35 +1120,55 @@ local function onMoney()
     end
     local g = goldDB(); local prev = plainNum(g.balance)
     -- a 0 at load with gold saved may be the client not ready yet (0.9.44, #43): it is not trusted until a money
-    -- event brings a read that is not 0, or 15 s have passed (read again after 3 s and after 15 s)
+    -- event brings a read that is not 0, or 15 s have passed (read again after 3 s and after 15.5 s; the wait is
+    -- compared against 14.5 s, so a timer that fires a few milliseconds early still books the 0)
+    local z = Emitter._zero
     if c == 0 and prev and prev > 0 and C_Timer and C_Timer.After then
-      local z = Emitter._zero
       if not z then
         Emitter._zero = { at = GetTime() }
-        C_Timer.After(3, onMoney); C_Timer.After(15, onMoney)
+        C_Timer.After(3, onMoney); C_Timer.After(15.5, onMoney)
         return
-      elseif GetTime() - z.at < 15 then return end
+      elseif GetTime() - z.at < 14.5 then return end
     end
-    lastMoney = c; g.balance = c
-    if prev and c ~= prev then
-      -- a 0 booked after the wait: if the very next read brings the saved balance back, the booking is taken back
-      if c == 0 then Emitter._zeroSeed = { prev = prev } end
-      Emitter.goldAway(c - prev, c, rd(HasNewMail) == true)
+    -- A read that is not 0 while a 0 was waiting. It is the client's first real answer and seeds the baseline, with
+    -- one exception: a gain that something explains (a quest reward of this amount, an open trade, merchant or
+    -- mailbox, a mail just taken, a loot window) is income on a purse that really was 0. Then the 0 is booked
+    -- against the saved balance at once, and the read is the next change like any other.
+    local qm = Emitter._questMoney
+    if z and c > 0 and prev and prev > 0 and c ~= prev and lastMoney == nil
+      and ((qm and qm.amount == c and GetTime() - qm.at < 3) or inTrade() or merchantOpen or mailOpen
+        or GetTime() < mailMoneyUntil or GetTime() < lootWindowUntil) then
+      lastMoney = 0; g.balance = 0
+      Emitter.goldAway(-prev, 0, rd(HasNewMail) == true, nil, true)
+    else
+      lastMoney = c; g.balance = c
+      if prev and c ~= prev then
+        -- a 0 booked after the wait: if the next read of this load, within 60 s, brings the saved balance back and
+        -- nothing explains it as income, the booking is taken back
+        if c == 0 then Emitter._zeroSeed = { prev = prev, at = GetTime() } end
+        Emitter.goldAway(c - prev, c, rd(HasNewMail) == true)
+      end
+      return
     end
-    return
   end
   local delta = c - lastMoney; lastMoney = c
   if delta == 0 then return end
   local zs = Emitter._zeroSeed
   Emitter._zeroSeed = nil
-  if zs and c == zs.prev then
-    goldDB().balance = c
-    Emitter.goldAway(delta, c, false, true)
-    return
+  if zs and c == zs.prev and GetTime() - zs.at < 60 then
+    local qm = Emitter._questMoney
+    if not ((qm and qm.amount == delta and GetTime() - qm.at < 3) or inTrade() or merchantOpen or mailOpen
+      or GetTime() < mailMoneyUntil or GetTime() < lootWindowUntil) then
+      goldDB().balance = c
+      Emitter.goldAway(delta, c, false, true)
+      return
+    end
   end
   local g = goldDB(); g.balance = c
   local ses = sessionDB()
   Emitter._gbal, Emitter._gref = c, nil
+  -- one reading of the clock for every credit of this change, so they land on one day row (0.9.44, #43)
+  Emitter._dayAt = (GetServerTime and GetServerTime()) or time()
   local npc = Emitter._npc
   if delta > 0 then
     credit(g, ses, "gained", delta); ses.gained = (ses.gained or 0) + delta
@@ -1192,7 +1216,7 @@ local function onMoney()
       -- no category yet: a quest turn-in may claim it; until then the journal and the day row say unexplained
       Emitter.goldDay("unexplained", delta)
       local i = Emitter.goldRow(ses, "unexplained", delta)
-      Emitter._openGain = { amount = delta, at = GetTime(), epoch = (GetServerTime and GetServerTime()) or time(), ses = ses, i = i, row = i and ses.goldLog[i] }
+      Emitter._openGain = { amount = delta, at = GetTime(), epoch = Emitter._dayAt, ses = ses, i = i, row = i and ses.goldLog[i] }
     end
   else
     local spent = -delta
@@ -1209,7 +1233,7 @@ local function onMoney()
       credit(g, ses, "mailSpent", spent)
     else credit(g, ses, "other", spent) end
   end
-  Emitter._gref = nil
+  Emitter._gref, Emitter._dayAt = nil, nil
   if ns.Gold and ns.Gold.fire then ns.Gold.fire() end   -- the open tooltip and the open Gold pane follow the purse
 end
 

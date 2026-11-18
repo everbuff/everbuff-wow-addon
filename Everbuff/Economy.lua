@@ -283,15 +283,16 @@ end
 -- ...). who: "char" (default), "realm" or "account"; a session belongs to one character, so its who is "char".
 -- Returns { key, who, label, sessions, ledger, lifetime, elapsed, balance, noJournal (sessions of the scope recorded
 -- before 0.9.40), dropped (rows past the cap) }; a day period also carries days = true, period, from, to. Journal
--- rows are the logged-in character's: a realm or account scope has totals only.
-function Gold.scope(key, who)
+-- rows are the logged-in character's: a realm or account scope has totals only, of the characters the roster total
+-- counts (`withStale` adds the ones not seen in 90 days, as in Gold.roster).
+function Gold.scope(key, who, withStale)
   who = (who == "realm" or who == "account") and who or "char"
-  local sc = { key = key, who = who, sessions = {}, ledger = {}, elapsed = 0, noJournal = 0, dropped = 0 }
+  local sc = { key = key, who = who, withStale = withStale and true or false, sessions = {}, ledger = {}, elapsed = 0, noJournal = 0, dropped = 0 }
   local all, cur = Gold.sessions(), current()
   local charGold = (ns.DB and ns.char and ns.char().gold) or {}
   if Gold.isDayScope(key) then
     local now = nowT()
-    local p = Gold.period(key, who, now)
+    local p = Gold.period(key, who, now, withStale)
     sc.label, sc.days, sc.period, sc.from, sc.to, sc.elapsed = p.label, true, p, p.from, p.to, p.t
     for k, v in pairs(p.ledger) do sc.ledger[k] = v end
     if who == "char" then
@@ -310,7 +311,7 @@ function Gold.scope(key, who)
     end
   elseif key == "all" and who ~= "char" then
     sc.label, sc.lifetime = "All time", true
-    for _, blk in ipairs(Gold.whoBlocks(who)) do
+    for _, blk in ipairs(Gold.whoBlocks(who, nil, withStale)) do
       for k, v in pairs(type(blk.gold) == "table" and blk.gold or {}) do
         if k ~= "balance" then sc.ledger[k] = (sc.ledger[k] or 0) + num(v) end
       end
@@ -598,11 +599,17 @@ function Gold.weekStart(dayStart, base)
 end
 local function noZero(s) return (s:gsub(" 0", " ")) end
 function Gold.fmtDate(t) return noZero(date("%b %d", t or 0)) end
--- "Nov 18" for a day key (the middle of the day, so the PC's time zone cannot move it to a neighbour)
-function Gold.dayLabel(key, base)
-  local s = Gold.keyStart(key, base)
-  return s and Gold.fmtDate(s + DAY / 2) or tostring(key)
+-- A day key as a date text, read from the key itself (the UTC date it names), so a label and its key always agree
+-- whatever the PC's time zone and the day base are. fmt as for date(), without the "!".
+function Gold.fmtKey(key, fmt)
+  local y, m, d = tostring(key):match("^(%d%d%d%d)(%d%d)(%d%d)$")
+  if not y then return tostring(key) end
+  return noZero(date("!" .. (fmt or "%b %d"), civilDays(tonumber(y), tonumber(m), tonumber(d)) * DAY + DAY / 2))
 end
+-- "Nov 18" for a day key
+function Gold.dayLabel(key) return Gold.fmtKey(key) end
+-- the same for the start of a day (a week's first day, the edge of a gap)
+function Gold.startLabel(start, base) return Gold.fmtKey(Gold.dayKey(start, base)) end
 function Gold.fmtAge(seen, now)
   seen = plainN(seen)
   if not seen then return "before the update" end
@@ -688,8 +695,9 @@ function Gold.tick()
   local dk = Gold.dayKey(at, base)
   local r = c.goldDays[dk]
   if type(r) ~= "table" then
-    local bal = type(c.gold) == "table" and plainN(c.gold.balance) or nil
-    r = { g = 0, s = 0, t = 0, n = 0, o = bal, c = bal }
+    -- no opening or closing balance is invented here: the day's first change sets them (o = balance before it), so
+    -- a tick between the login read and the booking of a change while away cannot open the row on the new balance
+    r = { g = 0, s = 0, t = 0, n = 0 }
     c.goldDays[dk] = r
     c.goldSince = plainN(c.goldSince) or at
   end
@@ -859,12 +867,14 @@ function Gold.range(key, base, now)
   if s then return s, s + DAY, Gold.dayLabel(dk, base) end
   return nil
 end
--- the character blocks a "who" means: "char" (the logged-in one), "realm" or "account" (never a hidden one)
-local function whoBlocks(who, now)
+-- the character blocks a "who" means: "char" (the logged-in one), "realm" or "account". Realm and account are the
+-- characters the roster total counts, so a sum and the total beside it are of the same set: never a hidden one,
+-- and one not seen in 90 days only with `withStale`.
+local function whoBlocks(who, now, withStale)
   local out = {}
   if who == "realm" or who == "account" then
-    for _, row in ipairs(Gold.roster(who == "realm" and "realm" or "all", true, now).rows) do
-      if not row.hidden then out[#out + 1] = row.block end
+    for _, row in ipairs(Gold.roster(who == "realm" and "realm" or "all", withStale, now).rows) do
+      if row.counted then out[#out + 1] = row.block end
     end
   elseif ns.DB and ns.charGuid() then out[1] = ns.char() end
   return out
@@ -874,7 +884,7 @@ Gold.whoBlocks = whoBlocks
 -- "day:YYYYMMDD" or "history" (every row); who "char", "realm" or "account". Returns { key, who, label, from, to,
 -- ledger { gained, spent, away, unexplained, <sources> }, t, n, chars, gaps (characters with a change not seen on
 -- this PC in the period), days[] newest first { key, start, g, s, t, n, away, o, c, src {} }, open, close }.
-function Gold.period(key, who, now)
+function Gold.period(key, who, now, withStale)
   who = who or "char"
   now = now or nowT()
   local p = { key = key, who = who, label = DAYKEYS[key] or "History", ledger = { gained = 0, spent = 0, away = 0 },
@@ -889,7 +899,7 @@ function Gold.period(key, who, now)
     fromK, toK = Gold.dayKey(from, base), Gold.dayKey(to - 1, base)
   end
   local byDay = {}
-  local blocks = whoBlocks(who, now)
+  local blocks = whoBlocks(who, now, withStale)
   for _, blk in ipairs(blocks) do
     local had, gap = false, false
     for k, r in pairs(type(blk.goldDays) == "table" and blk.goldDays or {}) do
@@ -915,6 +925,19 @@ function Gold.period(key, who, now)
     if gap then p.gaps = p.gaps + 1 end
   end
   table.sort(p.days, function(a, b) return a.key > b.key end)
+  -- a day that was played with no purse change stores no balance of its own (the 10 s ticker invents none): the
+  -- purse stood where the last row before it closed
+  if #blocks == 1 and type(blocks[1].goldDays) == "table" then
+    for _, d in ipairs(p.days) do
+      if d.c == nil then
+        local bk
+        for k, r in pairs(blocks[1].goldDays) do
+          if type(k) == "string" and type(r) == "table" and k < d.key and plainN(r.c) and (not bk or k > bk) then bk = k end
+        end
+        if bk then d.o, d.c = plainN(blocks[1].goldDays[bk].c), plainN(blocks[1].goldDays[bk].c) end
+      end
+    end
+  end
   for _, d in ipairs(p.days) do
     p.ledger.gained, p.ledger.spent, p.ledger.away = p.ledger.gained + d.g, p.ledger.spent + d.s, p.ledger.away + d.away
     p.t, p.n = p.t + d.t, p.n + d.n
@@ -922,6 +945,24 @@ function Gold.period(key, who, now)
   p.ledger.unexplained = p.ledger.unexplained or 0
   if #p.days > 0 then p.close, p.open = p.days[1].c, p.days[#p.days].o end
   return p
+end
+-- The Days strip: 30 fixed day slots ending today, oldest first. A slot is { v (net), label, key, live } or false
+-- when the day has no row, so the 30 bars always span 30 days.
+Gold.STRIP_DAYS = 30
+function Gold.stripDays(who, now, withStale)
+  local out = {}
+  local base = Gold.baseStored()
+  if not base then return out end
+  now = now or nowT()
+  local byKey = {}
+  for _, d in ipairs(Gold.period("last30", who, now, withStale).days) do byKey[d.key] = d end
+  local d0 = Gold.dayStart(now, base)
+  for i = 1, Gold.STRIP_DAYS do
+    local k = Gold.dayKey(d0 - (Gold.STRIP_DAYS - i) * DAY, base)
+    local d = byKey[k]
+    out[i] = d and { v = d.g - d.s, label = Gold.dayLabel(k), key = k, live = i == Gold.STRIP_DAYS } or false
+  end
+  return out
 end
 -- the biggest source of a day's `src`, by amount: key, amount
 function Gold.topSource(src)
@@ -1029,14 +1070,17 @@ function Gold.tipLines(opts)
     local room = budget - #L - #tail - 2
     local n = math.max(1, math.min(limit, #shown, room))
     if n < #shown and n == room then n = math.max(1, n - 1) end
-    add(("%s  ·  %d characters"):format(HEAD[filter] or HEAD.all, #shown), nil, C.dim, true)
+    -- the header counts what the Total sums; the current character is listed even when it is not counted
+    add(("%s  ·  %d character%s"):format(HEAD[filter] or HEAD.all, ro.count, ro.count == 1 and "" or "s"), nil, C.dim, true)
     for i = 1, n do
       local row = shown[i]
       local left = (row.me and "> " or "   ") .. row.label .. (row.level and ("  " .. row.level) or "")
       local right = fmtMoney(row.balance)
-      if not row.me then right = right .. "   seen " .. Gold.fmtAge(row.seen, now) end
+      if not row.me then right = right .. "   seen " .. Gold.fmtAge(row.seen, now)
+      elseif not row.counted then right = right .. "   not in total" end
       local col = row.facts and C.ink or C.dim
-      if row.class and UI.ClassColor then col = { UI.ClassColor(row.class) } end
+      if not row.counted then col = C.dim
+      elseif row.class and UI.ClassColor then col = { UI.ClassColor(row.class) } end
       add(left, right, col)
     end
     if n < #shown then add(("and %d more"):format(#shown - n), nil, C.dim) end
@@ -1133,7 +1177,7 @@ local NARROW = 760   -- a list narrower than this leaves the Balance column out 
 local WIDE = 980     -- Days and Characters show their optional columns from this width on
 Gold.MAX_ROWS = 500  -- journal rows listed at once (a row is a frame): the newest, the caption says how many more
 Gold.MORE_SESSIONS = 8   -- earlier sessions offered under "More"
-local STRIP_DAYS = 30
+local STRIP_DAYS = Gold.STRIP_DAYS
 
 local function textW(fs)
   local ok, w = pcall(fs.GetStringWidth, fs)
@@ -1185,11 +1229,24 @@ local function relayout(c, w, h)
     local used = SP.S
     for _, b in ipairs(c.scopeBtns) do used = used + bw(b) + SP.XS end
     used = used + bw(c.moreBtn) + SP.M + bw(c.whoBtn) + SP.XS + bw(c.viewBtn) + SP.S
-    local sw = math.max(90, math.min(170, math.floor(w - UI.SCROLLBAR - used)))
+    -- When the buttons leave less than 90 px (a session's date on the More button beside "Characters" at the
+    -- narrowest window) the box gives way: down to 64 px, and under that it is left out of every view but the
+    -- Journal, the only one it filters (anywhere else it only switches to the Journal).
+    local room = math.floor(w - UI.SCROLLBAR - used)
+    local sw = math.max(room < 90 and 64 or 90, math.min(170, room))
+    local hide = room < 64 and not (c.st and c.st.view == "journal")
+    if hide ~= (c.searchHidden or false) then
+      c.searchHidden = hide
+      c.viewBtn:ClearAllPoints()
+      if hide then c.search:Hide(); c.viewBtn:SetPoint("TOPRIGHT", c, "TOPRIGHT", -UI.SCROLLBAR, 0)
+      else c.search:Show(); c.viewBtn:SetPoint("RIGHT", c.search, "LEFT", -SP.S, 0) end
+    end
     if sw ~= c.searchW then
       c.searchW = sw
       c.search:SetWidth(sw)
-      c.search:SetPlaceholder(sw >= 150 and "search quest, item, player" or "search")
+      -- the long hint only when it fits the box in full, else one word
+      c.search:SetPlaceholder("search quest, item, player")
+      if sw < 150 or (c.search.placeholder and textW(c.search.placeholder) > sw - 2 * SP.S) then c.search:SetPlaceholder("search") end
     end
   end
   -- cards: five in a row when each holds its value, else three over two; a row fills the width
@@ -1216,10 +1273,16 @@ local function relayout(c, w, h)
   end
   -- the status line (only when it says something), the caption line and its buttons, then the list in the rest
   if (c.statusText or "") ~= "" then
+    -- the text gets its width first, then the row the height of the wrapped text (one line sits as before)
     c.statusRow:ClearAllPoints()
     c.statusRow:SetPoint("TOPLEFT", c, "TOPLEFT", 0, y + SP.XS); c.statusRow:SetPoint("TOPRIGHT", c, "TOPRIGHT", -UI.SCROLLBAR, y + SP.XS)
+    -- (the row leaves a third of a line of air per line: the client's line is a little taller than the font)
+    c.status:SetWidth(math.max(10, w - UI.SCROLLBAR - 2 * SP.S))
+    local th = lineH(c.status, 10)
+    local rh = math.max(ROW_H, SP.XS + math.ceil(th * 1.3))
+    c.statusRow:SetHeight(rh)
     c.statusRow:Show()
-    y = y - ROW_H
+    y = y - rh
   else c.statusRow:Hide() end
   c.capRow:ClearAllPoints()
   c.capRow:SetPoint("TOPLEFT", c, "TOPLEFT", 0, y); c.capRow:SetPoint("TOPRIGHT", c, "TOPRIGHT", -UI.SCROLLBAR, y)
@@ -1323,7 +1386,7 @@ end
 -- the days a scope covers, newest first: a day period's own, every day for All time, a session's days
 local function daysOf(sc, st)
   if sc.days then return sc.period.days end
-  local hist = Gold.period("history", sc.who)
+  local hist = Gold.period("history", sc.who, nil, sc.withStale)
   if sc.lifetime then return hist.days end
   local base, sess = Gold.baseStored(), sc.sessions[1]
   if not (base and sess) then return {} end
@@ -1342,10 +1405,10 @@ local function refresh(c)
   local now = nowT()
   local isSession = not Gold.isDayScope(st.scope) and st.scope ~= "all"
   if isSession then st.who = "char" end
-  local sc = Gold.scope(st.scope, st.who)
+  local sc = Gold.scope(st.scope, st.who, st.withStale)
   -- a picked session that is no longer in the save file
   if isSession and #sc.sessions == 0 and st.scope ~= "session" and st.scope ~= "previous" then
-    st.scope = "today"; sc = Gold.scope("today", st.who)
+    st.scope = "today"; sc = Gold.scope("today", st.who, st.withStale)
   end
   local mine = sc.who == "char"
   local entries = mine and Gold.scopeEntries(sc) or {}
@@ -1365,7 +1428,8 @@ local function refresh(c)
   -- cards
   local g = sc.ledger
   local net = g.gained - g.spent
-  local status = {}
+  -- the status line: `warn` goes first (what the sums leave out), then what the cards do not say
+  local status, warn = {}, {}
   if mine then
     local ended = (sc.days and not sc.live and sc.balance ~= nil) or (not sc.days and not sc.lifetime and not sc.live and #sc.sessions > 0)
     c.cBalance.title:SetText(ended and "BALANCE AT ITS END" or "BALANCE")
@@ -1373,10 +1437,12 @@ local function refresh(c)
     if bal == nil and sc.days then bal = Gold.metric("balance") end
     c.cBalance.value:SetText(fmtMoney(bal or 0))
   else
-    local ro = Gold.roster(sc.who == "realm" and "realm" or "all", false, now)
+    -- the total and every sum beside it are of the same characters (the ones Gold.roster counts)
+    local ro = Gold.roster(sc.who == "realm" and "realm" or "all", st.withStale, now)
     c.cBalance.title:SetText("TOTAL GOLD")
     c.cBalance.value:SetText(fmtMoney(ro.total))
     status[#status + 1] = Gold.rosterLine(ro)
+    if ro.stale > 0 and not st.withStale then status[#status + 1] = ("%d not seen in 90 days left out"):format(ro.stale) end
   end
   c.cIn.value:SetText(fmtMoney(g.gained))
   c.cOut.value:SetText(fmtMoney(g.spent))
@@ -1387,12 +1453,15 @@ local function refresh(c)
     c.cRate.title:SetText("CHANGED WHILE AWAY")
     c.cRate.value:SetText(signed(num(g.away)))
   else
-    -- the label names the definition: net over the time played (a day period) or the session's length
-    c.cRate.title:SetText("NET PER HOUR")
+    -- the label names the definition: net over the time played (a day period) or the session's length. For one
+    -- character the status line says over how long; a realm or an account says it in the card's title.
+    c.cRate.title:SetText(mine and "NET PER HOUR" or "NET PER HOUR PLAYED")
     local need = sc.days and 300 or 120
     if sc.elapsed >= need then
       c.cRate.value:SetText(signed(net / (sc.elapsed / 3600)))
-      status[#status + 1] = sc.days and ("per hour over %s played"):format(fmtLen(sc.elapsed)) or ("per hour over %s of the session"):format(fmtLen(sc.elapsed))
+      if mine then
+        status[#status + 1] = sc.days and ("per hour over %s played"):format(fmtLen(sc.elapsed)) or ("per hour over %s of the session"):format(fmtLen(sc.elapsed))
+      end
     else c.cRate.value:SetText(sc.days and "after 5 min played" or "after 2 min") end
   end
   -- shown, never subtracted: gold that moved between the player's own characters (rows with rel=alt)
@@ -1408,20 +1477,18 @@ local function refresh(c)
     if movedOut > 0 then parts[#parts + 1] = fmtMoney(movedOut) .. " out" end
     status[#status + 1] = "Moved between your characters: " .. table.concat(parts, ", ")
   end
-  if not sc.lifetime and num(g.away) ~= 0 then status[#status + 1] = ("Not seen: %s changed while away"):format(signed(g.away)) end
   if not mine and sc.days and sc.period.gaps > 0 then
-    status[#status + 1] = ("%d character%s with changes not seen on this PC in this period"):format(sc.period.gaps, sc.period.gaps == 1 and "" or "s")
+    warn[#warn + 1] = ("%d character%s with changes not seen on this PC in this period"):format(sc.period.gaps, sc.period.gaps == 1 and "" or "s")
   end
+  if not sc.lifetime and num(g.away) ~= 0 then warn[#warn + 1] = ("Not seen: %s changed while away"):format(signed(g.away)) end
   local base = Gold.baseStored()
   local since = ns.DB and ns.charGuid() and plainN(ns.char().goldSince) or nil
-  local historyNote
+  local historyNote, historyShown
   if base and since then
     historyNote = ("History starts %s. %s"):format(Gold.fmtDate(since),
       base.kind == "server" and "Days follow the server reset." or "Days follow this PC's midnight: the server reset could not be read.")
-    if (sc.days or st.view == "days") and now - since < 7 * DAY then status[#status + 1] = historyNote end
+    if (sc.days or st.view == "days") and now - since < 7 * DAY then status[#status + 1] = historyNote; historyShown = true end
   end
-  c.statusText = table.concat(status, SEP)
-  c.status:SetText(c.statusText)
   -- the list
   local flagged = 0
   for _, e in ipairs(entries) do if e.flag then flagged = flagged + 1 end end
@@ -1536,19 +1603,14 @@ local function refresh(c)
     local list = {}
     local todayK = base and Gold.dayKey(now, base) or nil
     for _, d in ipairs(daysOf(sc, st)) do
-      d.label = base and Gold.dayLabel(d.key, base) or d.key
+      d.label = Gold.dayLabel(d.key)
       d.today = d.key == todayK
       list[#list + 1] = d
     end
-    -- the strip: the net of each of the last 30 days with a row, oldest left
+    -- the strip: one slot per day of the last 30, today at the right, whatever the period is. A day without a row
+    -- leaves its slot empty (false), so a bar's place says which day it is.
     if c.dayStrip and UI.renderStrip then
-      local vals = {}
-      local hist = sc.days and Gold.period("last30", sc.who).days or list
-      for i = math.min(#hist, STRIP_DAYS), 1, -1 do
-        local d = hist[i]
-        vals[#vals + 1] = { v = d.g - d.s, label = base and Gold.dayLabel(d.key, base) or d.key, live = d.key == todayK }
-      end
-      UI.renderStrip(c.dayStrip, vals, function(v) return signed(v) end, true)
+      UI.renderStrip(c.dayStrip, Gold.stripDays(sc.who, now, sc.withStale), function(v) return signed(v) end, true)
     end
     local sumG, sumS = 0, 0
     for _, d in ipairs(list) do sumG, sumS = sumG + d.g, sumS + d.s end
@@ -1584,13 +1646,13 @@ local function refresh(c)
       rows = {}
       local lastW, lastM
       for i, d in ipairs(list) do
-        if nM > 1 and d.month ~= lastM then lastM = d.month; rows[#rows + 1] = sub(date("%B %Y", d.start + DAY / 2):upper(), months[d.month]) end
-        if nW > 1 and d.week ~= lastW then lastW = d.week; rows[#rows + 1] = sub("Week of " .. Gold.fmtDate(d.week + DAY / 2), weeks[d.week]) end
+        if nM > 1 and d.month ~= lastM then lastM = d.month; rows[#rows + 1] = sub(Gold.fmtKey(d.key, "%B %Y"):upper(), months[d.month]) end
+        if nW > 1 and d.week ~= lastW then lastW = d.week; rows[#rows + 1] = sub("Week of " .. Gold.startLabel(d.week, base), weeks[d.week]) end
         rows[#rows + 1] = d
         local older = list[i + 1]
         if mine and older and d.away ~= 0 and d.start - older.start > DAY then
           local a, b = older.start + DAY, d.start - DAY
-          rows[#rows + 1] = { ebSection = ("%s%snot recorded on this PC"):format(a == b and Gold.fmtDate(a + DAY / 2) or (Gold.fmtDate(a + DAY / 2) .. " to " .. Gold.fmtDate(b + DAY / 2)), SEP),
+          rows[#rows + 1] = { ebSection = ("%s%snot recorded on this PC"):format(a == b and Gold.startLabel(a, base) or (Gold.startLabel(a, base) .. " to " .. Gold.startLabel(b, base)), SEP),
             ebColor = C.dim, ebIndent = SP.M }
         end
       end
@@ -1609,10 +1671,13 @@ local function refresh(c)
       end
       cc.bal:SetText(d.c and fmtMoney(d.c) or "")
     end)
-    caption = ("%s%s%d day%s%snet %s"):format(sc.label, SEP, #list, #list == 1 and "" or "s", SEP, signed(sumG - sumS))
+    -- a session's days are whole days: their figures are the day's, not the session's (the cards above are the
+    -- session's own), and the caption says so
+    if isSession then caption = ("%s%s%d day%s it touched, whole-day totals%snet %s"):format(sc.label, SEP, #list, #list == 1 and "" or "s", SEP, signed(sumG - sumS))
+    else caption = ("%s%s%d day%s%snet %s"):format(sc.label, SEP, #list, #list == 1 and "" or "s", SEP, signed(sumG - sumS)) end
     if #list == 0 then caption = sc.label .. SEP .. "no days recorded" end
     notes = {}
-    if historyNote and not (c.statusText or ""):find(historyNote, 1, true) then notes[#notes + 1] = historyNote end
+    if historyNote and not historyShown then notes[#notes + 1] = historyNote end
     if #list > 0 then notes[#notes + 1] = "click a day to open its sources" end
   else
     -- Characters: the roster for the saved filter, the TOTAL row pinned first
@@ -1670,14 +1735,20 @@ local function refresh(c)
       if cc.level then cc.level:SetText(r.level and tostring(r.level) or "") end
       if cc.share then cc.share:SetText((r.counted and ro.total > 0) and ("%d%%"):format(math.floor(r.balance / ro.total * 100 + 0.5)) or "") end
     end)
-    caption = ("%s%s%s%stotal %s"):format(labelOf(FILTERS, filter), SEP, Gold.rosterLine(ro), SEP, fmtMoney(ro.total))
+    -- the caption shares its row with two buttons and the TOTAL row already says the count, the total and the
+    -- oldest date: it only says what a click does. Who still needs a login and who is hidden go to the status line,
+    -- which has the whole width.
+    caption = "Click a character to hide or show it in totals"
     notes = {}
     if ro.needLogin > 0 then
-      notes[#notes + 1] = ("%d character%s not seen since the update: log in once on each to refresh"):format(ro.needLogin, ro.needLogin == 1 and "" or "s")
+      table.insert(warn, 1, ("%d character%s not seen since the update: log in once on each to refresh"):format(ro.needLogin, ro.needLogin == 1 and "" or "s"))
     end
-    if ro.hidden > 0 then notes[#notes + 1] = ("%d hidden from totals"):format(ro.hidden) end
+    if ro.hidden > 0 then warn[#warn + 1] = ("%d hidden from totals"):format(ro.hidden) end
   end
   if #notes > 0 then caption = caption .. SEP .. table.concat(notes, SEP) end
+  for _, s in ipairs(status) do warn[#warn + 1] = s end
+  c.statusText = table.concat(warn, SEP)
+  c.status:SetText(c.statusText)
   -- the caption's buttons, right to left. Sources and Journal: All rows (a filter is on), Flagged (the period has
   -- flagged rows). Characters: the filter, and the characters not seen in 90 days when there are any.
   local showAll = view == "journal" and (st.src or st.flags or q ~= "") and true or false
@@ -1834,9 +1905,13 @@ function ns.BuildEconomyPane(pane)
   for _, d in ipairs(CARDS) do c[d.key] = card(c, d) end
   -- the status line under the cards: what the cards do not say (who is counted, what moved between the player's own
   -- characters, what changed while away, where the history starts)
+  -- It wraps (up to three lines) and the row takes the height of its text, so no part of it is cut.
   c.statusRow = CreateFrame("Frame", nil, c); c.statusRow:SetHeight(ROW_H)
-  c.status = UI.CellFS(c.statusRow, "GameFontHighlightSmall", C.dim); c.status:SetJustifyH("LEFT")
-  c.status:SetPoint("LEFT", c.statusRow, "LEFT", SP.S, 0); c.status:SetPoint("RIGHT", c.statusRow, "RIGHT", -SP.S, 0)
+  c.status = UI.FS(c.statusRow, "GameFontHighlightSmall", C.dim); c.status:SetJustifyH("LEFT")
+  if c.status.SetJustifyV then c.status:SetJustifyV("TOP") end
+  if c.status.SetWordWrap then c.status:SetWordWrap(true) end
+  if c.status.SetMaxLines then c.status:SetMaxLines(3) end
+  c.status:SetPoint("TOPLEFT", c.statusRow, "TOPLEFT", SP.S, -SP.XS)
   c.statusRow:Hide()
   -- the caption line: what the list shows, with its buttons at the right
   c.capRow = CreateFrame("Frame", nil, c); c.capRow:SetHeight(ROW_H)
@@ -1902,7 +1977,7 @@ function ns.BuildEconomyPane(pane)
     end
     spec[#spec + 1] = { key = "bal", label = "Closing balance", kind = "money", color = "dim" }
     return UI.Table(c.body, spec, { top = c.dayStrip and -(stripH() + SP.S) or 0, sortKey = st.daySort, sortAsc = st.dayAsc, tooltip = dayTip,
-      emptyText = "No days yet. Each day with a gold change gets a row from addon 0.9.44 on. Days follow the server reset.",
+      emptyText = "No days yet. Each day you play gets a row from addon 0.9.44 on. Days follow the server reset.",
       onClick = function(_, d) if d and d.key and not d.ebSection then st.view = "sources"; setScope("day:" .. d.key) end end,
       onSort = function(key, asc)
         st.daySort, st.dayAsc = key, asc

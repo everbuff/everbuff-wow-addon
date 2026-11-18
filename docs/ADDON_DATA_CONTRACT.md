@@ -123,7 +123,7 @@ starts at the first purse change, or the first minute played, after the update.
 | --- | --- |
 | `dayKey` | `'YYYYMMDD'`: the UTC date of the day's start, `date('!%Y%m%d', dayStart)`, so the PC's time zone cannot move it. `dayStart = floor((now - offset) / 86400) * 86400 + offset` with the stored `settings.gold.dayBase.offset` |
 | `g`, `s` | copper gained and spent on the day (the raw purse flow, as `gained` and `spent` of the ledger) |
-| `o`, `c` | the balance before the day's first change and after its last. Absent on a row that never saw a balance |
+| `o`, `c` | the balance before the day's first change and after its last, written by a purse change only. Absent on a row with no purse change (a day that was only played: the 10 s ticker adds `t` and invents no balance) and on a row that never saw a balance. A reader takes the close of the last row before it (`Gold.period` does) |
 | `t` | active seconds: every 10 s the time since the last tick, capped at 10 s, while the character is logged in (AFK time is not excluded yet) |
 | `n` | purse changes on the day. A change while away counts as one |
 | source keys | the non-zero ledger sources by their ledger name: `looted`, `quests`, `sold`, `auctionSales`, `mail`, `trade`, `unexplained`, `repairs`, `vendor`, `training`, `flights`, `auctions`, `mailSpent`, `tradeSpent`, `other`. A source with 0 is absent |
@@ -131,8 +131,20 @@ starts at the first purse change, or the first minute played, after the update.
 | `away` | signed copper that changed while the addon did not see it, written into the day it was discovered on. Neither `g` nor `s`. Absent when 0 |
 
 Every amount is an integer, floored at the write. On every row the income keys sum to `g`, the spend keys sum to `s`,
-and `c - o = g - s + away`; a row opens on the close of the row before it. The rows of a character sum to its
-lifetime ledger since `goldSince`. `tests/gold_days.lua` holds these over 10,000 random purse changes.
+and, on a row with a purse change, `c - o = g - s + away`; such a row opens on the close of the last row before it
+that has one. The rows of a character sum to its lifetime ledger since `goldSince`. `tests/gold_days.lua` holds these
+over 10,000 random purse changes.
+
+One purse change is one moment: the clock is read once per change (`Emitter._dayAt`) and every credit of it (the
+gained or spent credit, its source, the time a late quest claim moves on) uses that reading, so a change at the
+reset second is never split over two rows.
+
+The 0 read at login: with a positive saved balance a 0 is not booked until a non-zero read arrives or 14.5 s have
+passed (re-read after 3 s and after 15.5 s). A non-zero read while the 0 waits seeds the baseline (the difference to
+the saved balance is `away`), unless something explains it as income (a quest reward of that amount, an open trade,
+merchant or mailbox, a mail just taken, a loot window): then the 0 is booked against the saved balance first and the
+read is an ordinary gain. A booked 0 is taken back only when the next read of the same load, within 60 s, restores
+the saved balance and nothing explains it as income.
 
 `characters[guid].goldSince`: server epoch of the first day row. The Gold pane says "History starts <date>".
 
@@ -152,7 +164,9 @@ prune (`applyAck`) never touches `characters`, so the history outlives the sessi
 
 Never stored: week, month, last 7 and last 30 days, realm and account sums, the total of all characters, shares and
 rates. They are sums over the character blocks at read time (`Gold.period`, `Gold.roster`, `Gold.metric` in
-`Everbuff/Economy.lua`), so hiding a character corrects every figure at once.
+`Everbuff/Economy.lua`), so hiding a character corrects every figure at once. A realm or account sum is over the
+characters its total counts and no others: not hidden, and seen within 90 days unless the "Not seen in 90 days"
+toggle of the Characters view is on. The status line names how many are left out.
 
 Size, measured on `tests/export/EverbuffJournal.lua` (0.9.44): the file grows from 14,656 to 15,234 bytes. The one
 day row with two sources is 178 bytes in the save file's layout and each further source adds about 22, so a row is
@@ -166,7 +180,7 @@ and says about gold, and nothing else:
 | Surface | When | What |
 | --- | --- | --- |
 | Loot > Gold pane | the addon window is open | periods by server day, who (character, realm, account), the Days and Characters views. Other characters' names and balances are shown here, and so in recordings |
-| Home > Overview, GOLD card | the addon window is open | today's net, this session's pace, and the total of all characters when more than one is known |
+| Home > Overview, GOLD card | the addon window is open | today's net and today's pace (the day's net over the time played that day, after 5 minutes), and on a second line the total of all characters when more than one is known |
 | Minimap button tooltip | while the mouse is over the button | the gold block (at most 18 lines) under the two help lines; it follows the purse while it is open. Off with `settings.gold.tips = false` |
 | Chat | only as the direct reply to a typed `/eb gold` (four lines) or `/eb gold chars` (the roster) | never a login summary. These two replies also answer in combat: they open, move and change nothing |
 

@@ -207,7 +207,9 @@ return function(P)
     M.now = M.now + 500; G.tick()   -- a tick that came late counts as one tick length
     local kNow = G.dayKey(M.epoch, G.baseStored())
     check("played: each tick adds the time since the last one, capped at the tick length", days()[kNow] and days()[kNow].t == 20, days()[kNow] and days()[kNow].t)
-    check("played: a day with play and no purse change opens and closes on the balance", days()[kNow].g == 0 and days()[kNow].n == 0 and days()[kNow].o == M.money and days()[kNow].c == M.money)
+    check("played: a day with play and no purse change stores no balance of its own", days()[kNow].g == 0 and days()[kNow].n == 0 and days()[kNow].o == nil and days()[kNow].c == nil)
+    local pd = G.period("today", "char").days[1]
+    check("played: read back, such a day stands on the close of the row before it", pd and pd.key == kNow and pd.o == M.money and pd.c == M.money and days()[kA].c == M.money, pd and pd.c)
     money(40)
     check("played: the day's first change keeps the opening balance", days()[kNow].o == M.money - 40 and days()[kNow].c == M.money and days()[kNow].n == 1)
   end
@@ -371,6 +373,105 @@ return function(P)
     check("ack: every acked session is pruned", left == 0, left)
     check("ack: goldDays, goldSince and every character block stay", same(c.goldDays, before) and c.goldSince ~= nil and same(ns.DB.characters, roster))
     check("ack: the history still sums to the lifetime ledger with no session left", G.period("history", "char").ledger.gained == c.gold.gained)
+  end
+
+  -- ── a played tick between the login read and the booking of a change while away ─────────────────────────────
+  -- (the booking runs one frame after the read; the 10 s ticker may land in between and must not open the day's
+  -- row on the new balance)
+  do
+    fresh()
+    M.epoch, M.money = reset - 3600, 1000
+    login()
+    money(100)                                      -- the day before closes on 1100
+    M.fire("PLAYER_LOGOUT"); ns._test.newLoad()
+    M.epoch = reset + 600; M.now = M.now + 50
+    M.money = 700                                   -- 400 spent on another PC
+    G._tickAt = M.now - 10
+    M.fire("PLAYER_ENTERING_WORLD", true, false)    -- the login read; the booking waits for the next frame
+    local seeded = me().gold.balance == 700 and (me().gold.away or 0) == 0
+    G.tick()
+    local mid = days()[kB]
+    check("tick at login: the tick lands between the read and the booking", seeded and mid ~= nil and mid.t == 10 and mid.n == 0, mid and mid.t)
+    check("tick at login: the tick invents no opening or closing balance", mid ~= nil and mid.o == nil and mid.c == nil)
+    M.runTimers()
+    local a, b = days()[kA], days()[kB]
+    check("tick at login: the away change opens the row on the old balance and closes it on the new one", b and b.o == 1100 and b.c == 700 and b.away == -400 and b.n == 1, b and (tostring(b.o) .. " " .. tostring(b.c)))
+    check("tick at login: c - o = g - s + away, and the day opens on the close of the day before", b and b.c - b.o == b.g - b.s + b.away and a.c == b.o)
+  end
+
+  -- ── every credit of one purse change lands on one day row, also at the reset second ─────────────────────────
+  do
+    fresh()
+    M.epoch, M.money = reset - 3600, 1000
+    login()
+    money(1)                                        -- the day base is known
+    local realST = _G.GetServerTime
+    local t = reset - 2
+    _G.GetServerTime = function() t = t + 1; return t end   -- the server second ticks over between two readings
+    money(500)                                      -- gained, its source (unexplained) and the open claim's time
+    local og = E._openGain
+    M.now = M.now + 1
+    M.fire("QUEST_TURNED_IN", 4323, 0, 500)         -- the late claim moves on the row the income was booked on
+    _G.GetServerTime = realST
+    local bad, hit = {}, nil
+    for k, r in pairs(days()) do
+      local inS = 0
+      for _, sk in ipairs(G.IN) do inS = inS + (r[sk] or 0) end
+      if inS ~= r.g then bad[#bad + 1] = k .. " income keys " .. inS .. " ~= g " .. r.g end
+      if r.quests == 500 then hit = k end
+    end
+    check("reset second: the gain and its source are on one row, the income keys sum to g on every row", #bad == 0, table.concat(bad, "; "))
+    check("reset second: the open claim carries the time the gain was booked at, and the quest moved on that row", og ~= nil and hit ~= nil and G.dayKey(og.epoch, G.baseStored()) == hit
+      and days()[hit].unexplained == (hit == kA and 1 or nil), tostring(hit))
+    check("reset second: no error in the day writer", E._dayErr == nil, E._dayErr)
+  end
+
+  -- ── a day's label is read from its key, whatever the PC's time zone ─────────────────────────────────────────
+  do
+    local MON = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+    local function want(k) return MON[tonumber(k:sub(5, 6))] .. " " .. tonumber(k:sub(7, 8)) end
+    local okL, badL = true, nil
+    for _, east in ipairs({ -11, -5, 0, 5, 9, 13 }) do
+      _G.date = function(fmt, tt)
+        fmt = fmt or "%c"
+        if fmt:sub(1, 1) == "!" then return realDate(fmt, tt) end
+        return realDate("!" .. fmt, (tt or M.epoch) + east * 3600)
+      end
+      for _, off in ipairs({ 0, 25200, 54000, 85500 }) do
+        local fb = { offset = off }
+        for i = 0, 40 do
+          local k = G.dayKey(1795000000 + i * 79003, fb)
+          if G.dayLabel(k, fb) ~= want(k) or G.startLabel(G.keyStart(k, fb), fb) ~= want(k) then okL, badL = false, ("%s at UTC%+d, offset %d: %s"):format(k, east, off, G.dayLabel(k, fb)) end
+        end
+      end
+    end
+    _G.date = realDate
+    check("label: a day's label is the date its key names, for a PC far east or west and every day base", okL, badL)
+    check("label: 20261118 reads Nov 18, 20270101 reads Jan 1", G.dayLabel("20261118") == "Nov 18" and G.dayLabel("20270101") == "Jan 1" and G.fmtKey("20261118", "%B %Y") == "November 2026", G.dayLabel("20261118"))
+  end
+
+  -- ── the Days strip: 30 fixed day slots ending today, a day without a row leaves its slot empty ──────────────
+  do
+    fresh()
+    M.epoch, M.money = reset + 3600, 1000
+    login()
+    money(10); money(-4)
+    local b0 = G.baseStored()
+    local function k(n) return G.dayKey(M.epoch - n * DAY, b0) end
+    local d = days()
+    d[k(5)] = { g = 500, s = 100, t = 60, n = 2, o = 100, c = 500, looted = 500, other = 100 }
+    d[k(29)] = { g = 0, s = 70, t = 60, n = 1, o = 170, c = 100, other = 70 }
+    d[k(30)] = { g = 9, s = 0, t = 60, n = 1, o = 161, c = 170, looted = 9 }      -- one day too old for the strip
+    d[k(150)] = { g = 9000, s = 0, t = 60, n = 1, o = 0, c = 9000, looted = 9000 }
+    local sv = G.stripDays("char")
+    local filled, holes = 0, 0
+    for i = 1, 30 do if sv[i] == false then holes = holes + 1 elseif type(sv[i]) == "table" then filled = filled + 1 end end
+    check("strip: 30 slots, one per day, never fewer", filled + holes == 30 and #sv == 30, filled + holes)
+    check("strip: today is the last slot, 5 days ago the 25th, 29 days ago the first", sv[30] and sv[30].key == k(0) and sv[30].v == 6 and sv[30].live == true
+      and sv[25] and sv[25].key == k(5) and sv[25].v == 400 and sv[1] and sv[1].key == k(29) and sv[1].v == -70, sv[25] and sv[25].key)
+    check("strip: a day without a row leaves its slot empty, an older day is not packed in", filled == 3 and holes == 27 and sv[29] == false and sv[2] == false)
+    check("strip: a slot's label is its day's", sv[25].label == G.dayLabel(k(5)))
+    check("strip: the same 30 days whatever the period shown", #G.period("history", "char").days == 5)
   end
 
   -- ── a 0.9.43 save file loads with no invented history ───────────────────────────────────────────────────────
