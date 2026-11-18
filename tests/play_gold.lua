@@ -54,7 +54,7 @@ return function(M, ns)
       M.merchant[i] = { id = b[1], name = b[2], price = b[3], qty = b[4] }
       BuyMerchantItem(i, b[4]); money(-b[3]); wait(1)
     end
-    if repair then M.repairCost = repair; RepairAllItems(); money(-repair) end
+    if repair then M.repairCost = repair; M.fire("UPDATE_INVENTORY_DURABILITY"); RepairAllItems(); money(-repair) end
     wait(6); M.fire("MERCHANT_CLOSED"); M.units.NPC = nil; wait(30)
   end
   local function trainer(npc, costs)

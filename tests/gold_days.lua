@@ -284,7 +284,8 @@ return function(P)
       M.fire("MERCHANT_CLOSED"); M.units.NPC = nil
     elseif op == 6 then
       M.units.NPC = { name = "Merchant Bob" }; M.fire("MERCHANT_SHOW")
-      RepairAllItems(); money(-math.min(n, M.money))
+      M.repairCost = math.min(n, M.money); M.fire("UPDATE_INVENTORY_DURABILITY")
+      RepairAllItems(); money(-M.repairCost); M.repairCost = 0
       M.fire("MERCHANT_CLOSED"); M.units.NPC = nil
     elseif op == 7 then M.units.NPC = { name = "Trainer Tom" }; M.fire("TRAINER_SHOW"); money(-math.min(n, M.money)); M.fire("TRAINER_CLOSED"); M.units.NPC = nil
     elseif op == 8 then M.fire("MAIL_SHOW"); M.inbox = { { sender = "Rando", subject = "gold", money = n } }; TakeInboxMoney(1); money(n); M.fire("MAIL_CLOSED"); M.inbox = {}
@@ -409,7 +410,7 @@ return function(P)
     local t = reset - 2
     _G.GetServerTime = function() t = t + 1; return t end   -- the server second ticks over between two readings
     money(500)                                      -- gained, its source (unexplained) and the open claim's time
-    local og = E._openGain
+    local og = E._openGain and E._openGain[#E._openGain]   -- (0.9.46: the gains still open are a list)
     M.now = M.now + 1
     M.fire("QUEST_TURNED_IN", 4323, 0, 500)         -- the late claim moves on the row the income was booked on
     _G.GetServerTime = realST
