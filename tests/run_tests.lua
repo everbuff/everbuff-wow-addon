@@ -817,7 +817,7 @@ check("event search still respects the filter tab", not ns._test.eventMatches({ 
 M.tick()
 check("loot search matches item", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "linen"))
 check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "auction"))
-check("loot search matches coin rows", ns._test.lootMatches({ money = 120, src = "Defias Thug" }, "gold"))
+check("#38 the Items pane never lists a coin row (coin is the Gold pane's)", not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, "gold") and not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, ""))
 check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "wool"))
 -- ── dungeon run detail: boss-by-boss attempts, deaths, notable loot ──
 do
@@ -2100,7 +2100,7 @@ do
   check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
   lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Undertaker: Loot / Items shows only his item and coin", #lr == 2 and lr[1].nm:GetText() == T.fmtMoney(777) and lr[2].nm:GetText() == "Undertaker Shroud", #lr)
+  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].nm:GetText() == "Undertaker Shroud", #lr)
   ns.UI.Open("Combat", "fights"); M.tick()
   fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
@@ -2295,16 +2295,17 @@ end
 
 -- ── pane tests: every tests/panes/*.lua returns function(P), run here in name order. P carries the suite's helpers:
 --   P.check(name, cond, detail), P.eq(name, got, want), P.M (the stub), P.ns, P.G (tests/geometry.lua), P.Lay
---   P.open(host, pane, w, h, data)  window at w x h, data "normal" (the suite's) or "long" (tests/layout.lua
---                                   L.stretch), the pane opened and settled; returns the pane's content frame
+--   P.open(host, pane, w, h, data)  window at w x h, data "normal" (the suite's), "long" (tests/layout.lua
+--                                   L.stretch), "gold" (normal plus tests/play_gold.lua) or "goldlong", the pane
+--                                   opened and settled; returns the pane's content frame
 --   P.box(region)                   its absolute box { l, t, w, h } (G.resolve), nil when it cannot be placed
 --   P.visible(region)               shown, and every parent up to the window shown
 --   P.scrollFrames(root)            the visible UI.ScrollChild frames under `root`
 --   P.descendants(root)             every frame and region under `root`
 do
-  local longDB
+  local longDB, goldDB, goldLongDB
   local function useData(which)
-    local src = deepcopy(which == "long" and longDB or normalDB)
+    local src = deepcopy(({ long = longDB, gold = goldDB, goldlong = goldLongDB })[which] or normalDB)
     for k in pairs(ns.DB) do ns.DB[k] = nil end
     for k, v in pairs(src) do ns.DB[k] = v end
   end
@@ -2319,6 +2320,15 @@ do
   M.inCombat = false
   normalDB = deepcopy(ns.DB)
   longDB = deepcopy(normalDB); Lay.stretch(longDB)
+  -- "gold" and "goldlong": two more evenings with a name behind every gold row (tests/play_gold.lua), for the Gold
+  -- pane and the Sessions gold band; kept apart so the other panes' sweeps stay as fast as they were
+  print = function() end
+  local okGold, errGold = pcall(dofile("tests/play_gold.lua"), M, ns)
+  print = realPrint
+  check("pane tests: tests/play_gold.lua played", okGold, errGold)
+  M.inCombat = false
+  goldDB = deepcopy(ns.DB)
+  goldLongDB = deepcopy(goldDB); Lay.stretch(goldLongDB)
   local kids
   local function index()
     kids = {}

@@ -10,7 +10,7 @@ return function(P)
   local function near(a, b) return a and b and math.abs(a - b) < 0.51 end
   local function right(b) return b.l + b.w end
   local function overlaps(a, b) return a.l < right(b) - 0.5 and b.l < right(a) - 0.5 and a.t < b.t + b.h - 0.5 and b.t < a.t + a.h - 0.5 end
-  local EMPTY = "No loot yet. Items and coin you pick up show here."
+  local EMPTY = "No items yet. Items you pick up show here."
 
   -- the pane keeps its mode, filter and search between opens: every check starts from Newest, All, no search
   local function reset(content)
@@ -229,12 +229,12 @@ return function(P)
       check("Items tooltip: leaving hides it", tip.shown == false)
       tip.SetHyperlink = orig
     end
-    -- a coin row with nothing to say shows no empty tooltip box
+    -- a row with no item id and nothing to say shows no empty tooltip box
     local coin
     for _, r in ipairs(shown(content.lootRows)) do if not r.itemId and not r.c.item:IsTruncated() and not r.c.from:IsTruncated() and not r.c.loc:IsTruncated() then coin = r; break end end
     if coin then
       coin.scripts.OnEnter(coin)
-      check("Items tooltip: a coin row shows no empty tooltip", tip.shown == false or tip:NumLines() > 0)
+      check("Items tooltip: a row with no item id shows no empty tooltip", tip.shown == false or tip:NumLines() > 0)
       coin.scripts.OnLeave(coin)
     end
     check("Items: the icons are cropped to their art", content.lootRows[1].c.icon._tc and content.lootRows[1].c.icon._tc[1] == 0.08)

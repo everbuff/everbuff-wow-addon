@@ -167,7 +167,7 @@ return function(P)
       check(tag .. ": the cards fill the width in rows of three, M gaps, one height per row, nothing cut", #bad == 0, table.concat(bad, "; "))
       -- GOLD: each label keeps its amount (a no-break space joins them), so a wrap can only fall at the separator
       local gs = tostring(c.cGold.sub.text)
-      check(tag .. ": the Gold card joins 'looted' and 'spent' to their amounts", gs:find("^looted" .. UI.NBSP) ~= nil and gs:find("  ·  spent" .. UI.NBSP, 1, true) ~= nil, gs)
+      check(tag .. ": the Gold card says this session's net and pace, each joined to its amount (#38)", gs:find("^this" .. UI.NBSP .. "session" .. UI.NBSP .. "[%+%-]") ~= nil and gs:find(UI.NBSP .. "per" .. UI.NBSP .. "hour$") ~= nil, gs)
       local words = {}
       for wd in gs:gsub(UI.NBSP, "_"):gmatch("%S+") do words[#words + 1] = wd end
       check(tag .. ": the only break points left in the Gold subtitle are around the separator", #words == 3 and words[2] == "·", #words)

@@ -201,7 +201,13 @@ refresh = function(content)
   local gold = db.gold or {}   -- the character's own ledger (#23); loot.gold is retired
   content.cGold.value:SetText(fmtMoney(gold.balance or 0)); content.cGold.value:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
   -- a label and its amount are joined by a no-break space, so a wrap can only fall at the separator
-  content.cGold.sub:SetText(("looted%s%s  ·  spent%s%s"):format(UI.NBSP, fmtMoney(gold.looted or 0), UI.NBSP, fmtMoney(gold.spent or 0)))
+  -- the balance, then this session's net and pace: the same numbers the Gold pane opens on (#38)
+  local gs = ns.Gold and ns.Gold.summary(ns.Recorder and ns.Recorder.current and ns.Recorder.current())
+  if gs then
+    local sub = ("this%ssession%s%s"):format(UI.NBSP, UI.NBSP, ns.Gold.signed(gs.net))
+    if gs.perHour then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(gs.perHour), UI.NBSP, UI.NBSP) end
+    content.cGold.sub:SetText(sub)
+  else content.cGold.sub:SetText("no session yet") end
 
   -- Combat (from the event timeline: every kill/death lands there)
   local kills, deaths = 0, 0
@@ -335,6 +341,8 @@ end
 ns._test = ns._test or {}
 ns._test.stripValues = stripValues
 
+local BAND_H = 104          -- the selected session's gold band under the list
+local sel = {}              -- sel.id: the session clicked; sel.shown: the session the band shows
 local function buildSessions(content)
   sessionsView = content
   local xpStrip = makeStrip(content, "XP per session")
@@ -372,18 +380,86 @@ local function buildSessions(content)
     { key = "deaths", label = "Deaths", kind = "num", color = "dim", measure = { "999" } },
     { key = "dung", label = "Dungeons", kind = "num", measure = { "99" } },
     { key = "items", label = "Items", kind = "num", measure = { "9999" } },
-  }, { top = -(4 + STRIP_H + 18 + UI.SP.M), emptyText = "Your first session starts when you log in." })
+  }, { top = -(4 + STRIP_H + 18 + UI.SP.M), bottom = BAND_H + UI.SP.M, emptyText = "Your first session starts when you log in.",
+    onClick = function(_, sess) if sess and sess.id then sel.id = sess.id; if sessionsRebuild then sessionsRebuild() end end end })
   content.tbl = tbl
+  -- the selected session's gold (#38): the running session until a row is clicked. One title line (net and pace) and
+  -- four blocks of three lines: top sources, best earners, biggest sinks, flags. The button opens its journal.
+  local SP = UI.SP
+  local band = UI.Panel(content)
+  band:SetPoint("BOTTOMLEFT", content, "BOTTOMLEFT", 0, 0); band:SetPoint("BOTTOMRIGHT", content, "BOTTOMRIGHT", 0, 0); band:SetHeight(BAND_H)
+  band.open = UI.Button(band, "Open gold journal", 120, UI.ROW_H, function() if ns.Gold and sel.shown then ns.Gold.open(sel.shown, "journal") end end)
+  band.open:SetPoint("TOPRIGHT", band, "TOPRIGHT", -SP.S, -SP.S)
+  band.title = UI.CellFS(band, "GameFontNormalSmall", C.gold); band.title:SetJustifyH("LEFT")
+  band.title:SetPoint("LEFT", band, "TOPLEFT", SP.M, -(SP.S + UI.ROW_H / 2)); band.title:SetPoint("RIGHT", band.open, "LEFT", -SP.M, 0)
+  band.blocks = {}
+  for i, label in ipairs({ "TOP SOURCES", "BEST EARNERS", "BIGGEST SINKS", "FLAGS" }) do
+    local b = CreateFrame("Frame", nil, band); b:SetHeight(BAND_H - UI.ROW_H - 2 * SP.S - SP.XS)
+    b.head = UI.CellFS(b, "GameFontNormalSmall", C.dim); b.head:SetJustifyH("LEFT"); b.head:SetText(label)
+    b.head:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.head:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
+    b.lines = {}
+    for j = 1, 3 do
+      local fs = UI.CellFS(b, "GameFontHighlightSmall", C.ink); fs:SetJustifyH("LEFT")
+      fs:SetPoint("TOPLEFT", b, "TOPLEFT", 0, -(j * 16)); fs:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, -(j * 16))
+      b.lines[j] = fs
+    end
+    band.blocks[i] = b
+  end
+  local function placeBand(w)
+    w = tonumber(w) or 0
+    if w <= 1 then return end
+    local bw = math.floor((w - 2 * SP.M - 3 * SP.L) / 4)
+    for i, b in ipairs(band.blocks) do
+      b:ClearAllPoints(); b:SetPoint("TOPLEFT", band, "TOPLEFT", SP.M + (i - 1) * (bw + SP.L), -(SP.S + UI.ROW_H + SP.XS)); b:SetWidth(bw)
+    end
+  end
+  content:HookScript("OnSizeChanged", function(_, w) pcall(placeBand, w) end)
+  pcall(placeBand, content:GetWidth())
+  content.goldBand = band
+  local function fillBand(rows)
+    local sess
+    for _, s in ipairs(rows) do if s.id == sel.id then sess = s end end
+    sess = sess or rows[1]
+    sel.shown = sess and sess.id or nil
+    local sum = sess and ns.Gold and ns.Gold.summary(sess)
+    if not sum then band:Hide(); return end
+    band:Show()
+    local title = ("GOLD  ·  %s  ·  %s  ·  net %s"):format(date("%b %d, %H:%M", sess.startedEpoch or 0),
+      fmtTime(sum.elapsed), ns.Gold.signed(sum.net))
+    if sum.perHour then title = title .. ("  ·  %s per hour"):format(ns.Gold.signed(sum.perHour)) end
+    band.title:SetText(title)
+    local L = { {}, {}, {}, {} }
+    for i, r in ipairs(sum.topIn) do L[1][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
+    local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, fmtMoney(t.amount)) } end end
+    best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
+    for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
+    if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.red } end
+    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. fmtMoney(sum.unexplained), C.red } end
+    if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.red } end
+    if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. ns.Gold.signed(sum.away) } end
+    if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%d rows past the cap not kept"):format(sum.dropped) } end
+    local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing flagged" }
+    for i, b in ipairs(band.blocks) do
+      for j, fs in ipairs(b.lines) do
+        local l = L[i][j] or (j == 1 and #L[i] == 0 and { EMPTY[i], C.dim }) or nil
+        fs:SetText(l and l[1] or "")
+        local col = (l and l[2]) or C.ink
+        fs:SetTextColor(col[1], col[2], col[3])
+      end
+    end
+  end
   sessionsRebuild = function()
     local rows = sessionRows()
     renderStrip(xpStrip, stripValues(rows, "xp"), function(v) return commas(v) .. " XP" end, false)
     renderStrip(goldStrip, stripValues(rows, nil, true), function(v) return (v < 0 and "-" or "+") .. fmtMoney(math.abs(v)) end, true)
     local nowT = (GetServerTime and GetServerTime()) or time()
+    pcall(fillBand, rows)
     tbl.setRows(rows, function(row, sess)
       local c = row.c
       local live = (sess.endedEpoch == nil)
       local endT = sess.endedEpoch or nowT
       c.date:SetText(date("%b %d, %H:%M", sess.startedEpoch or 0))
+      if sess.id == sel.shown then c.date:SetTextColor(C.cyan[1], C.cyan[2], C.cyan[3]) end   -- the row the gold band shows
       c.live:SetText(live and "•" or "")
       c.len:SetText(fmtTime(math.max(0, endT - (sess.startedEpoch or endT))))
       local l0, l1 = tonumber(sess.level0) or tonumber(sess.level) or 0, tonumber(sess.level) or 0
