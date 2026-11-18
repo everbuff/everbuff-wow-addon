@@ -459,7 +459,12 @@ function UI.PendingResizes() local n = 0; for _ in pairs(resizeQueue.set) do n =
 -- between columns and `inset` px before the first. Returns { [key] = { x, w } }.
 -- A flex column never gets less than its minimum (its `min`, its header label and its `measure` values): a column
 -- whose share would fall under it is held at it and the others share what is left by weight, so the minimums are
--- kept whenever the row has room for them all.
+-- kept whenever the row has room for them all. When it has not (the fixed columns grew with their values: balances
+-- in the millions of gold, #49), the flex columns give way below their `min` in proportion to what each has above
+-- its floor (UI.COL_FLOOR px, or its header label and `measure` values when those are wider), so the row still ends
+-- at the inset and it is a name that shortens, never a header or a number that runs past the list. Only when every
+-- flex column is at its floor can a row still be wider than `w`.
+UI.COL_FLOOR = 48
 function UI.LayoutColumns(spec, w, widthOf, gap, inset)
   local cols, fixed, n = {}, 0, #spec
   local flexCols = {}
@@ -489,6 +494,24 @@ function UI.LayoutColumns(spec, w, widthOf, gap, inset)
     local used = 0
     for _, col in ipairs(flexCols) do if col ~= last then used = used + (widths[col] or minOf(col)) end end
     widths[last] = math.max(minOf(last), free - used)
+  end
+  local over = -free
+  for _, col in ipairs(flexCols) do over = over + (widths[col] or minOf(col)) end
+  if over > 0 then
+    local function floorOf(col) return math.min(minOf(col), math.max(UI.COL_FLOOR, col.headMin or 0)) end
+    local slack = 0
+    for _, col in ipairs(flexCols) do widths[col] = widths[col] or minOf(col); slack = slack + math.max(0, widths[col] - floorOf(col)) end
+    local take = math.min(over, slack)
+    local left = take
+    for _, col in ipairs(flexCols) do
+      local cut = math.floor(take * math.max(0, widths[col] - floorOf(col)) / math.max(1, slack))
+      widths[col] = widths[col] - cut; left = left - cut
+    end
+    -- the rounding, a pixel at a time from the columns that still have some to give
+    for _, col in ipairs(flexCols) do
+      local cut = math.min(left, math.max(0, widths[col] - floorOf(col)))
+      widths[col] = widths[col] - cut; left = left - cut
+    end
   end
   local x = inset
   for _, col in ipairs(spec) do

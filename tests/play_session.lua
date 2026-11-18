@@ -3,8 +3,10 @@
 -- every list. The suite ends on a nearly empty character; tests/render_html.lua and the pane tests (tests/panes/) play
 -- this first so their panes show real data.
 --   dofile("tests/play_session.lua")(M, ns)
+-- The purse is the size a player really has (#49): 12,345g here, so every pane is laid out around a balance in the
+-- tens of thousands of gold and, on the long data (tests/layout.lua L.stretch), in the millions.
 return function(M, ns)
-  ns._test.newLoad(); M.money = 1234567; M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
+  ns._test.newLoad(); M.money = 123456789; M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
   M.money = GetMoney(); M.fire("PLAYER_MONEY")
   local px_, py_ = 0.30, 0.55
   _G.C_Map.GetPlayerMapPosition = function() return { GetXY = function() return px_, py_ end } end
