@@ -175,7 +175,7 @@ return function(P)
     M.fire("TRAINER_SHOW"); money(-20000); M.fire("TRAINER_CLOSED")
     check("modes: the spend was booked as training", (me().gold.training or 0) == tr0 + 20000, me().gold.training)
     check("modes: a training spend does not move Farming or Earned, and Net falls by it", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0 + 70000 - 20000, G.rate("net").sum)
-    check("modes: the note of Net says what it is", G.RATE_NOTE.net == "Net: everything gained minus everything spent, per hour of active time", G.RATE_NOTE.net)
+    check("modes: the note of Net says what it is", G.RATE_NOTE.net == "Net: everything gained minus everything spent, without what moved between your characters, per hour of active time", G.RATE_NOTE.net)
     money(3000)   -- income no source claims: earned, not farmed
     check("modes: unexplained income is earned, not farmed", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 + 3000)
     -- a quest claims it within 3 s: it becomes farmed, in the minute it was booked in
@@ -272,8 +272,10 @@ return function(P)
   check("timer: it starts", G.timerStart() == true and me().goldTimer.at == M.epoch)
   do
     local snapOk = true
-    for k, v in pairs(me().gold) do if k ~= "balance" and me().goldTimer.ledger[k] ~= v then snapOk = false end end
-    check("timer: the snapshot holds every key of the lifetime ledger, not the balance", snapOk and me().goldTimer.ledger.balance == nil and me().goldTimer.ledger.gained == 5000)
+    -- (0.9.48: the ledger's marks v and since are not copper sums and are not in the snapshot)
+    for k, v in pairs(me().gold) do if k ~= "balance" and not G.LEDGER_MARKS[k] and me().goldTimer.ledger[k] ~= v then snapOk = false end end
+    check("timer: the snapshot holds every key of the lifetime ledger, not the balance and not its marks", snapOk and me().goldTimer.ledger.balance == nil and me().goldTimer.ledger.gained == 5000
+      and me().goldTimer.ledger.v == nil and me().goldTimer.ledger.since == nil)
     check("timer: starting it touches no session record", same(ns.Recorder.current(), sessBefore))
   end
   loot(120000)

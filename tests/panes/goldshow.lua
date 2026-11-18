@@ -225,7 +225,7 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
         and lastData == folded[2], (folded[1] and folded[1].c.day.text or "?") .. " / " .. tostring(lastData and lastData.c.day.text))
       check(tag .. ": a month row reads earned, spent, net and its closing balance", folded[2].c.earned.text == fmt(900000) and folded[2].c.spent.text == fmt(100000) and folded[2].c.net.text == Gold.signed(800000)
         and folded[2].c.bal.text == fmt(o - 200000))
-      check(tag .. ": All time sums the months with the days", c.cIn.value.text == fmt(me.gold.gained) and Gold.period("history", "char").ledger.gained >= 1200000)
+      check(tag .. ": All time sums the months with the days", c.cIn.value.text == fmt(Gold.figure("earned", me.gold)) and Gold.period("history", "char").ledger.gained >= 1200000)
       local scopeBefore = c.st.scope
       folded[1].scripts.OnClick(folded[1], "LeftButton"); M.settle()
       check(tag .. ": a click on a month row opens nothing", c.st.scope == scopeBefore and c.st.view == "days")

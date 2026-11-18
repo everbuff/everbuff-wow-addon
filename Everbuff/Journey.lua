@@ -358,7 +358,8 @@ local function stripValues(rows, key, signed)
   local n = math.min(#rows, STRIP_N)
   for i = n, 1, -1 do
     local sess = rows[i]
-    local v = signed and ((tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)) or (tonumber(sess[key]) or 0)
+    -- (0.9.48: the net without what moved between the player's own characters, Gold.sessionNet)
+    local v = signed and ((ns.Gold and ns.Gold.sessionNet and ns.Gold.sessionNet(sess)) or ((tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0))) or (tonumber(sess[key]) or 0)
     out[#out + 1] = { v = v, label = date("%b %d, %H:%M", sess.startedEpoch or 0), live = (sess.endedEpoch == nil) }
   end
   return out
@@ -460,6 +461,9 @@ local function buildSessions(content)
     local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, fmtMoney(t.amount)) } end end
     best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
     for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
+    -- (0.9.48) gold moved between the player's own characters is not in the net: a bank run does not look like a
+    -- loss. First in the column, so no flag line pushes it out.
+    if (sum.moved or 0) ~= 0 then L[4][#L[4] + 1] = { "Moved between your characters: " .. fmtMoney(math.abs(sum.moved)) .. (sum.moved < 0 and " out" or " in") } end
     if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.red } end
     if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. fmtMoney(sum.unexplained), C.red } end
     if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.red } end
@@ -493,7 +497,7 @@ local function buildSessions(content)
       c.lvl:SetText(l1 > l0 and (l0 .. " > " .. l1) or tostring(l1))
       if l1 > l0 then c.lvl:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end
       c.xp:SetText(commas(sess.xp or 0))
-      local net = (tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)
+      local net = (ns.Gold and ns.Gold.sessionNet and ns.Gold.sessionNet(sess)) or ((tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0))
       c.gold:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net)))
       if net < 0 then c.gold:SetTextColor(C.red[1], C.red[2], C.red[3]) end
       c.kills:SetText(tostring(sess.kills or 0))

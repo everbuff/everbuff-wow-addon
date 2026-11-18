@@ -14,7 +14,9 @@ EverbuffDB = {
 				["gained"] = 637,
 				["looted"] = 287,
 				["quests"] = 350,
+				["since"] = 1793000042,
 				["spent"] = 0,
+				["v"] = 2,
 			},
 			["goldBest"] = {
 				["day"] = {
@@ -443,7 +445,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.47",
+			["addonVersion"] = "0.9.48",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -457,6 +459,7 @@ EverbuffDB = {
 			["flavor"] = "mainline",
 			["gained"] = 637,
 			["gold"] = {
+				["auctionRefund"] = 0,
 				["auctionSales"] = 0,
 				["auctions"] = 0,
 				["away"] = 0,
@@ -466,6 +469,7 @@ EverbuffDB = {
 				["gained"] = 637,
 				["looted"] = 287,
 				["mail"] = 0,
+				["mailSent"] = 0,
 				["mailSpent"] = 0,
 				["other"] = 0,
 				["quests"] = 350,
@@ -476,6 +480,8 @@ EverbuffDB = {
 				["tradeSpent"] = 0,
 				["training"] = 0,
 				["vendor"] = 0,
+				["xferIn"] = 0,
+				["xferOut"] = 0,
 			},
 			["goldLog"] = {
 				"831042.5	80	looted	1600	", -- [1]
@@ -484,6 +490,7 @@ EverbuffDB = {
 				"831181.5	95	looted	2157	", -- [4]
 			},
 			["goldLogDropped"] = 0,
+			["goldV"] = 2,
 			["guid"] = "Player-1-000001",
 			["guild"] = "",
 			["id"] = "261026073319-8b60",
@@ -575,48 +582,46 @@ EverbuffDB = {
 				"GuildRoster", -- [43]
 				"IsSpellKnown", -- [44]
 				"MenuUtil.CreateContextMenu", -- [45]
-				"PlaceAuctionBid", -- [46]
-				"PlaySound", -- [47]
-				"RaidNotice_AddMessage", -- [48]
-				"StartAuction", -- [49]
-				"UIErrorsFrame.AddMessage", -- [50]
-				"UnitAura", -- [51]
-				"UnitDefense", -- [52]
-				"UnitIsAFK", -- [53]
-				"C_AddOns", -- [54]
-				"C_AddOns.GetAddOnMetadata", -- [55]
-				"C_ChallengeMode", -- [56]
-				"C_ClassTalents", -- [57]
-				"C_DamageMeter", -- [58]
-				"C_NamePlate", -- [59]
-				"C_PlayerInfo", -- [60]
-				"C_Reputation", -- [61]
-				"C_SpecializationInfo", -- [62]
-				"C_Spell", -- [63]
-				"C_ToyBox", -- [64]
-				"C_Traits", -- [65]
-				"C_UI", -- [66]
-				"ChatTypeInfo", -- [67]
-				"ChatTypeInfo.RAID_WARNING", -- [68]
-				"ERR_TAXINOSUCHPATH", -- [69]
-				"ERR_TAXINOTVISITED", -- [70]
-				"ERR_TAXINOVENDOR", -- [71]
-				"ERR_TAXIPLAYERALREADYMOUNTED", -- [72]
-				"ERR_TAXIPLAYERBUSY", -- [73]
-				"ERR_TAXIPLAYERMOVING", -- [74]
-				"ERR_TAXIPLAYERSHAPESHIFTED", -- [75]
-				"ERR_TAXISAMENODE", -- [76]
-				"ERR_TAXITOOFARAWAY", -- [77]
-				"ERR_TAXIUNSPECIFIEDSERVERERROR", -- [78]
-				"FACTION_STANDING_INCREASED", -- [79]
-				"MenuUtil", -- [80]
-				"NUM_BAG_SLOTS", -- [81]
-				"RaidWarningFrame", -- [82]
-				"SECONDARY_SKILLS", -- [83]
-				"TRADE_SKILLS", -- [84]
-				"UIErrorsFrame", -- [85]
+				"PlaySound", -- [46]
+				"RaidNotice_AddMessage", -- [47]
+				"StartAuction", -- [48]
+				"UIErrorsFrame.AddMessage", -- [49]
+				"UnitAura", -- [50]
+				"UnitDefense", -- [51]
+				"UnitIsAFK", -- [52]
+				"C_AddOns", -- [53]
+				"C_AddOns.GetAddOnMetadata", -- [54]
+				"C_ChallengeMode", -- [55]
+				"C_ClassTalents", -- [56]
+				"C_DamageMeter", -- [57]
+				"C_NamePlate", -- [58]
+				"C_Reputation", -- [59]
+				"C_SpecializationInfo", -- [60]
+				"C_Spell", -- [61]
+				"C_ToyBox", -- [62]
+				"C_Traits", -- [63]
+				"C_UI", -- [64]
+				"ChatTypeInfo", -- [65]
+				"ChatTypeInfo.RAID_WARNING", -- [66]
+				"ERR_TAXINOSUCHPATH", -- [67]
+				"ERR_TAXINOTVISITED", -- [68]
+				"ERR_TAXINOVENDOR", -- [69]
+				"ERR_TAXIPLAYERALREADYMOUNTED", -- [70]
+				"ERR_TAXIPLAYERBUSY", -- [71]
+				"ERR_TAXIPLAYERMOVING", -- [72]
+				"ERR_TAXIPLAYERSHAPESHIFTED", -- [73]
+				"ERR_TAXISAMENODE", -- [74]
+				"ERR_TAXITOOFARAWAY", -- [75]
+				"ERR_TAXIUNSPECIFIEDSERVERERROR", -- [76]
+				"FACTION_STANDING_INCREASED", -- [77]
+				"MenuUtil", -- [78]
+				"NUM_BAG_SLOTS", -- [79]
+				"RaidWarningFrame", -- [80]
+				"SECONDARY_SKILLS", -- [81]
+				"TRADE_SKILLS", -- [82]
+				"UIErrorsFrame", -- [83]
 			},
-			["addon"] = "0.9.47",
+			["addon"] = "0.9.48",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["events"] = "unchecked",

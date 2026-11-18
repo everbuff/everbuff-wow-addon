@@ -86,8 +86,9 @@ return function(P)
   later()
 
   -- mail: who the sender is to the player
-  ns.DB.characters["Player-1-000009"] = { name = "Alty", realm = "Realm" }
-  ns.DB.characters["Player-1-000010"] = { name = "Faraway", realm = "Other Realm" }
+  -- (0.9.48: both have logged in since 0.9.44 and have one name, so the name alone is certain)
+  ns.DB.characters["Player-1-000009"] = { name = "Alty", realm = "Realm", class = "MAGE", seen = M.epoch - 3600 }
+  ns.DB.characters["Player-1-000010"] = { name = "Faraway", realm = "Other Realm", class = "ROGUE", seen = M.epoch - 3600 }
   E.loadAlts()
   M.guild = { "Guildie-Realm" }; M.fire("GUILD_ROSTER_UPDATE")
   M.friends = { "Pal" }; M.fire("FRIENDLIST_UPDATE")
@@ -101,7 +102,8 @@ return function(P)
     { sender = "Stormwind Auction House", subject = "Auction successful: Linen Cloth", money = 1005, invoice = { "seller", "Linen Cloth", "Buyerguy", 100, 120, 5, 6 } },
     { sender = "The Postmaster", subject = "Recovered items", money = 1006, canReply = false },
   }
-  local want = { { "mail", "alt" }, { "mail", "guild" }, { "mail", "friend" }, { "mail", "stranger" }, { "mail", "stranger" }, { "auctionSales", "system" }, { "mail", "system" } }
+  -- (0.9.48: coin from an own character is xferIn, booked instead of mail)
+  local want = { { "xferIn", "alt" }, { "mail", "guild" }, { "mail", "friend" }, { "mail", "stranger" }, { "mail", "stranger" }, { "auctionSales", "system" }, { "mail", "system" } }
   for i, w in ipairs(want) do
     TakeInboxMoney(i); money(M.inbox[i].money)
     is(("mail from %s"):format(M.inbox[i].sender), row(), w[1], M.inbox[i].money, ("sender=%s;rel=%s;cod=0"):format(M.inbox[i].sender, w[2]))
