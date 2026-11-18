@@ -416,17 +416,23 @@ return function(P)
   local DAY = 86400
   local MIRA, ORG = "Player-1-0000B1", "Player-1-0000B2"
   -- two more characters in the data in use: one seen three days ago with a day row today, one of another realm and
-  -- faction not seen for 100 days; Hartbank (tests/play_gold.lua) has never logged in with 0.9.44
-  local function addAlts()
+  -- faction not seen for 100 days; Hartbank (tests/play_gold.lua) has never logged in with 0.9.44. The purses are the
+  -- size a player really has (#49): above 10,000g on the data as played (Orgrim at the Classic cap of 214,748g), above
+  -- 1,000,000g on the long data (Orgrim at the 9,999,999g cap), so a column that only fits a small balance fails here
+  local ALT
+  local function addAlts(data)
+    local rich = data == "goldlong"
+    ALT = rich and { mira = 12345678912, org = 99999999999, bank = 15000007777, g = 5000000000, s = 2000000000 }
+      or { mira = 123456789, org = 2147483647, bank = 150000000, g = 50000000, s = 20000000 }
     local base = Gold.baseStored()
     local now = GetServerTime()
     for guid in pairs(ns.DB.characters) do if guid ~= ns.charGuid() and guid ~= "Player-1-0000A1" then ns.DB.characters[guid] = nil end end
     ns.DB.characters[MIRA] = { name = "Mira", surname = "Dawnfall", realm = GetRealmName(), class = "WARRIOR", faction = "Alliance", level = 21, seen = now - 3 * DAY,
-      gold = { balance = 961000, gained = 961000, spent = 0 },
-      goldDays = { [Gold.dayKey(now, base)] = { g = 50000, s = 20000, o = 931000, c = 961000, t = 900, n = 3, looted = 50000, repairs = 20000, away = 0 } } }
+      gold = { balance = ALT.mira, gained = ALT.mira, spent = 0 },
+      goldDays = { [Gold.dayKey(now, base)] = { g = ALT.g, s = ALT.s, o = ALT.mira - (ALT.g - ALT.s), c = ALT.mira, t = 900, n = 3, looted = ALT.g, repairs = ALT.s, away = 0 } } }
     ns.DB.characters[ORG] = { name = "Orgrim", realm = "Forever Realm [EU] - Other Shore", class = "SHAMAN", faction = "Horde", level = 40, seen = now - 100 * DAY,
-      gold = { balance = 5000000, gained = 5000000, spent = 0 } }
-    ns.DB.characters["Player-1-0000A1"].gold = { balance = 150000 }
+      gold = { balance = ALT.org, gained = ALT.org, spent = 0 } }
+    ns.DB.characters["Player-1-0000A1"].gold = { balance = ALT.bank }
   end
   local function audit(tag)
     local found = {}
@@ -468,7 +474,7 @@ return function(P)
     for _, data in ipairs({ "gold", "goldlong" }) do
       local tag = ("Gold 0.9.44 %dx%d %s"):format(size[1], size[2], data)
       local c = open(size[1], size[2], data, "today")
-      addAlts(); Gold.open("today"); M.settle()
+      addAlts(data); Gold.open("today"); M.settle()
       local cb = P.box(c)
       local me = ns.char()
       local base = Gold.baseStored()
@@ -621,12 +627,12 @@ return function(P)
       click(c.scopeBtns[1])
       check(tag .. ": Account is picked from the who list", pick(c, c.whoBtn, "Account") and c.whoBtn.text.text == "Account" and c.st.who == "account")
       local ro = Gold.roster("all")
-      check(tag .. ": the account's Today sums the characters' day rows on read", c.cIn.value.text == fmt(today.g + 50000) and c.cOut.value.text == fmt(today.s + 20000), c.cIn.value.text)
+      check(tag .. ": the account's Today sums the characters' day rows on read", c.cIn.value.text == fmt(today.g + ALT.g) and c.cOut.value.text == fmt(today.s + ALT.s), c.cIn.value.text)
       check(tag .. ": BALANCE becomes TOTAL GOLD, the status line counts the characters and dates the oldest balance", c.cBalance.title.text == "TOTAL GOLD" and c.cBalance.value.text == fmt(ro.total)
-        and ro.total == me.gold.balance + 961000 + 150000 and c.status.text:find("3 characters, oldest balance from " .. Gold.fmtDate(now - 3 * DAY), 1, true) ~= nil, c.status.text)
+        and ro.total == me.gold.balance + ALT.mira + ALT.bank and c.status.text:find("3 characters, oldest balance from " .. Gold.fmtDate(now - 3 * DAY), 1, true) ~= nil, c.status.text)
       check(tag .. ": a character with a change not seen on this PC in the period is named first in the status line", c.status.text:find("1 character with changes not seen on this PC in this period", 1, true) == 1, c.status.text)
       check(tag .. ": the account's sums and its total are of the same characters; the one not seen in 90 days is named as left out", c.status.text:find("1 not seen in 90 days left out", 1, true) ~= nil
-        and Gold.metric("earned", "account", "all") == (me.gold.gained or 0) + 961000 + (ns.DB.characters["Player-1-0000A1"].gold.gained or 0), c.status.text)
+        and Gold.metric("earned", "account", "all") == (me.gold.gained or 0) + ALT.mira + (ns.DB.characters["Player-1-0000A1"].gold.gained or 0), c.status.text)
       check(tag .. ": the rate of an account names its definition in the card's title", c.cRate.title.text == "NET PER HOUR PLAYED" and c.status.text:find("per hour over", 1, true) == nil, c.cRate.title.text)
       check(tag .. ": the account's status line (gaps, away, roster, left out, history) is shown in full", statusFull(c) and c.status.text:find("Not seen: ", 1, true) ~= nil and c.status.text:find("History starts ", 1, true) ~= nil, c.status.text)
       check(tag .. ": an account has totals only, and the caption says so", #c.entries == 0 and c.caption.text:find("totals only: journal rows are kept per character", 1, true) ~= nil and not P.visible(c.flagBtn), c.caption.text)
@@ -647,19 +653,19 @@ return function(P)
       local cr = shown(ct.rows)
       local function rowOf(guid) for _, r in ipairs(shown(ct.rows)) do if r.item and r.item.guid == guid then return r end end end
       check(tag .. ": the TOTAL row is pinned first and sums the characters counted", cr[1].item.total == true and cr[1].c.name.text == "TOTAL  ·  3 characters" and cr[1].c.balance.text == fmt(ro.total)
-        and cr[1].c.today.text == Gold.signed(today.g - today.s + 30000), cr[1].c.name.text .. " " .. cr[1].c.today.text)
+        and cr[1].c.today.text == Gold.signed(today.g - today.s + ALT.g - ALT.s), cr[1].c.name.text .. " " .. cr[1].c.today.text)
       check(tag .. ": every character of the save file is listed, by balance", #cr == 5 and cr[2].item.balance >= cr[3].item.balance and cr[3].item.balance >= cr[4].item.balance and cr[4].item.balance >= cr[5].item.balance, #cr)
       local meRow, mira, org, bank = rowOf(ns.charGuid()), rowOf(MIRA), rowOf(ORG), rowOf("Player-1-0000A1")
       check(tag .. ": the current character says You and now", meRow.c.name.text:find("  ·  You$") ~= nil and meRow.c.seen.text == "now", meRow.c.name.text)
       check(tag .. ": a two-name character in its class colour, with today, 7 days and its age", mira.c.name.text == "Mira Dawnfall" and math.abs(mira.c.name._color[1] - RAID_CLASS_COLORS.WARRIOR.r) < 0.01 and math.abs(UI.C.ink[1] - RAID_CLASS_COLORS.WARRIOR.r) > 0.01
-        and mira.c.today.text == "+3g" and mira.c.d7.text == "+3g" and mira.c.seen.text == "3 d ago" and mira.c.balance.text == fmt(961000), mira.c.name.text .. " " .. mira.c.seen.text)
+        and mira.c.today.text == Gold.signed(ALT.g - ALT.s) and mira.c.d7.text == Gold.signed(ALT.g - ALT.s) and mira.c.seen.text == "3 d ago" and mira.c.balance.text == fmt(ALT.mira), mira.c.name.text .. " " .. mira.c.seen.text)
       check(tag .. ": a character not seen in 90 days is listed, dimmed, and says it is not in the total", org.c.seen.text:find(", not in total$") ~= nil and near(org.c.name._color[1], UI.C.dim[1]) and org.item.counted == false, org.c.seen.text)
       check(tag .. ": a character not seen since the update says log in once to refresh", bank.c.seen.text == "log in once to refresh" and near(bank.c.name._color[1], UI.C.dim[1]))
       check(tag .. ": the caption says what a click does and is shown in full beside its buttons", c.caption.text == "Click a character to hide or show it in totals" and not c.caption:IsTruncated(), c.caption.text)
       check(tag .. ": who still needs a login is said first on the status line, in full", c.status.text:find("1 character not seen since the update: log in once on each to refresh", 1, true) == 1 and statusFull(c), c.status.text)
       if wide then
         check(tag .. ": the wide table adds realm (short), faction, level and share", org.c.realm.text == "Other Shore" and org.c.faction.text == "Horde" and org.c.level.text == "40" and mira.c.level.text == "21"
-          and org.c.share.text == "" and mira.c.share.text == ("%d%%"):format(math.floor(961000 / ro.total * 100 + 0.5)) and cr[1].c.share.text == "100%", org.c.realm.text)
+          and org.c.share.text == "" and mira.c.share.text == ("%d%%"):format(math.floor(ALT.mira / ro.total * 100 + 0.5)) and cr[1].c.share.text == "100%", org.c.realm.text)
       end
       check(tag .. ": the filter and the 90 days button sit at the caption's right, the caption ends before them", P.visible(c.filterBtn) and c.filterBtn.text.text == "All characters" and P.visible(c.staleBtn)
         and c.staleBtn.text.text == "Not seen in 90 days: 1" and P.box(c.staleBtn).l + P.box(c.staleBtn).w <= P.box(c.filterBtn).l and P.box(c.caption).l + P.box(c.caption).w <= P.box(c.staleBtn).l + 0.5
@@ -674,14 +680,14 @@ return function(P)
       org.scripts.OnLeave(org)
       -- the characters not seen in 90 days, included on request
       click(c.staleBtn)
-      check(tag .. ": included, the stale character is in the TOTAL row", shown(ct.rows)[1].c.balance.text == fmt(ro.total + 5000000) and shown(ct.rows)[1].c.name.text == "TOTAL  ·  4 characters" and c.staleBtn.ebSelected == true)
+      check(tag .. ": included, the stale character is in the TOTAL row", shown(ct.rows)[1].c.balance.text == fmt(ro.total + ALT.org) and shown(ct.rows)[1].c.name.text == "TOTAL  ·  4 characters" and c.staleBtn.ebSelected == true)
       click(c.staleBtn)
       -- hide from totals: the row menu
       click(rowOf(MIRA))
       check(tag .. ": a click on a character offers to hide it from totals", P.visible(c.menu) and c.menu.btns[1].text.text == "Hide from totals" and c.menu.btns[2].shown == false)
       click(c.menu.btns[1])
-      check(tag .. ": hidden, it leaves the TOTAL row and every account figure at once", ns.DB.settings.gold.hidden[MIRA] == true and shown(ct.rows)[1].c.balance.text == fmt(ro.total - 961000)
-        and shown(ct.rows)[1].c.name.text == "TOTAL  ·  2 characters" and rowOf(MIRA).c.seen.text == "hidden from totals" and Gold.metric("balance", "account") == ro.total - 961000
+      check(tag .. ": hidden, it leaves the TOTAL row and every account figure at once", ns.DB.settings.gold.hidden[MIRA] == true and shown(ct.rows)[1].c.balance.text == fmt(ro.total - ALT.mira)
+        and shown(ct.rows)[1].c.name.text == "TOTAL  ·  2 characters" and rowOf(MIRA).c.seen.text == "hidden from totals" and Gold.metric("balance", "account") == ro.total - ALT.mira
         and Gold.metric("earned", "account", "today") == today.g and ns.DB.characters[MIRA].hidden == nil and c.status.text:find("1 hidden from totals", 1, true) ~= nil, shown(ct.rows)[1].c.balance.text)
       -- the longest caption row: the longest filter label, the 90 days button, and needLogin, hidden and stale all
       -- above zero (a character of this realm and faction not seen in 90 days is added for the check)

@@ -20,6 +20,20 @@ return function(P)
     }, 400, function() return 0 end, 12, 8)
     check("LayoutColumns: a flex column under its minimum is held at it, the rest share what is left",
       cols.b.w == 150 and cols.a.w + cols.b.w + cols.c.w == 400 - 16 - 24 and cols.a.w > cols.c.w, ("%d %d %d"):format(cols.a.w, cols.b.w, cols.c.w))
+    -- #49: fixed columns that grew with their values leave less than the flex minimums: the flex columns give way,
+    -- the row ends at the inset, and none goes under the floor
+    local spec = { { key = "name", flex = 3, min = 150 }, { key = "realm", flex = 2, min = 80 }, { key = "bal" }, { key = "seen" } }
+    local function fixed(w) return function() return w end end
+    local function right(c) return c.seen.x + c.seen.w + 8 end
+    local roomy, tight, none = UI.LayoutColumns(spec, 700, fixed(100), 12, 8), UI.LayoutColumns(spec, 700, fixed(250), 12, 8), UI.LayoutColumns(spec, 700, fixed(320), 12, 8)
+    check("LayoutColumns: with room every flex column keeps its minimum and the row ends at the inset", roomy.name.w >= 150 and roomy.realm.w >= 80 and right(roomy) == 700, ("%d %d %d"):format(roomy.name.w, roomy.realm.w, right(roomy)))
+    check("LayoutColumns: without room the flex columns shrink under their minimums and the row still ends at the inset",
+      right(tight) == 700 and tight.name.w < 150 and tight.realm.w < 80 and tight.name.w >= UI.COL_FLOOR and tight.realm.w >= UI.COL_FLOOR and tight.bal.w == 250 and tight.seen.w == 250,
+      ("%d %d %d"):format(tight.name.w, tight.realm.w, right(tight)))
+    check("LayoutColumns: no flex column goes under the floor, however little room there is", none.name.w == UI.COL_FLOOR and none.realm.w == UI.COL_FLOOR and none.bal.w == 320, ("%d %d"):format(none.name.w, none.realm.w))
+    spec[1].headMin = 90
+    local head = UI.LayoutColumns(spec, 700, fixed(320), 12, 8)
+    check("LayoutColumns: nor under its header label and measured values", head.name.w == 90 and head.realm.w == UI.COL_FLOOR, ("%d %d"):format(head.name.w, head.realm.w))
   end
   for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
     local tag = ("%dx%d"):format(size[1], size[2])
