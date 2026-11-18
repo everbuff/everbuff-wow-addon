@@ -461,11 +461,12 @@ local function buildSessions(content)
     local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, fmtMoney(t.amount)) } end end
     best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
     for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
+    -- (0.9.48) gold moved between the player's own characters is not in the net: a bank run does not look like a
+    -- loss. First in the column, so no flag line pushes it out.
+    if (sum.moved or 0) ~= 0 then L[4][#L[4] + 1] = { "Moved between your characters: " .. fmtMoney(math.abs(sum.moved)) .. (sum.moved < 0 and " out" or " in") } end
     if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.red } end
     if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. fmtMoney(sum.unexplained), C.red } end
     if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.red } end
-    -- (0.9.48) gold moved between the player's own characters is not in the net: a bank run does not look like a loss
-    if #L[4] < 3 and (sum.moved or 0) ~= 0 then L[4][#L[4] + 1] = { "Moved between your characters: " .. fmtMoney(math.abs(sum.moved)) .. (sum.moved < 0 and " out" or " in") } end
     if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. ns.Gold.signed(sum.away) } end
     if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%d rows past the cap not kept"):format(sum.dropped) } end
     local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing flagged" }

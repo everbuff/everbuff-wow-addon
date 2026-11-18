@@ -240,7 +240,8 @@ _G.LoggingCombat = function(v) if v ~= nil then M.logging = v end return M.loggi
 _G.GetRealmName = function() return "Realm" end
 _G.GetGuildInfo = function(u) local x = u ~= "player" and M.units[u]; return x and x.guild or nil end
 _G.UnitFactionGroup = function() return "Alliance" end
-_G.UnitName = function(u) if u == "player" then return "Hart", "Realm" end local x = M.units[u]; return x and x.name end
+-- (a unit's second value is M.units[u].surname: the second name on WoW Forever, read only where the client shows surnames)
+_G.UnitName = function(u) if u == "player" then return "Hart", "Realm" end local x = M.units[u]; return x and x.name, x and x.surname end
 _G.UnitGUID = function(u) if u == "player" then return "Player-1-000001" end local x = M.units[u]; return x and x.guid end
 _G.UnitExists = function(u) return u == "player" or M.units[u] ~= nil end
 _G.UnitCanAttack = function(_, u) local x = M.units[u]; return x and x.hostile or false end
@@ -432,6 +433,7 @@ _G.SetSendMailMoney = function(c) M.sendMoney = c; return true end
 _G.SetSendMailCOD = function(c) M.sendCOD = c end
 _G.SendMail = function(to) M.sent[#M.sent + 1] = to end
 _G.GetSendMailPrice = function() return M.sendPrice end
+_G.PlaceAuctionBid = function() end   -- the legacy bid call (type, index, bid)
 _G.AUCTION_OUTBID_MAIL_SUBJECT = "Outbid on %s"
 _G.Enum.BankType = { Character = 0, Guild = 1, Account = 2 }
 _G.C_Bank = { DepositMoney = function() end, WithdrawMoney = function() end,

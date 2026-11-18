@@ -6,7 +6,9 @@
 -- session and ledger marks, who counts as an own character (full name only, never the logged-in one), sending mail
 -- with the postage split in one and in two purse changes, mail from an own character, a trade with a colliding
 -- name, "This is my character", a failed send, a returned bid, the banks, a session from before the update, the
--- netted figures on every surface, the unmatched line, and every identity of the journal and the day rows.
+-- netted figures on every surface, the unmatched line, and every identity of the journal and the day rows. From the
+-- review of the draft: a trade partner read with both names, a COD between own characters, a small spend beside an
+-- open send, the farm timer and the ledger's marks, the legs with no second side (xferSolo), the legacy bid hook.
 return function(P)
   local check, M, ns = P.check, P.M, P.ns
   local E, G = ns.Emitter, ns.Gold
@@ -98,7 +100,17 @@ return function(P)
     check(T .. "a session started on this version carries goldV = 2", s.goldV == 2)
     check(T .. "its ledger has the four new keys from the start, at 0", s.gold.xferIn == 0 and s.gold.xferOut == 0 and s.gold.mailSent == 0 and s.gold.auctionRefund == 0)
     check(T .. "the character's ledger is not marked before the first purse change", g.v == nil and g.since == nil)
+    -- a farm timer started before the mark (it survives a relog): the marks are not copper, the timer never has them
+    G.timerStart()
     M.fire("LOOT_OPENED"); money(100); later()
+    local tm = G.timer()
+    check(T .. "a farm timer started before the mark has neither v nor since in its ledger", tm ~= nil and tm.ledger.v == nil and tm.ledger.since == nil and tm.ledger.gained == 100 and tm.net == 100,
+      ("%s %s"):format(tostring(tm and tm.ledger.v), tostring(tm and tm.ledger.since)))
+    G.timerStart()
+    check(T .. "a farm timer started after it keeps neither in its snapshot", c.goldTimer.ledger.v == nil and c.goldTimer.ledger.since == nil and G.timer().ledger.v == nil)
+    check(T .. "an all time scope does not sum the marks either", G.scope("all").ledger.v == nil and G.scope("all", "account").ledger.since == nil)
+    c.goldTimer = nil
+    money(-100); M.fire("LOOT_OPENED"); money(100)
     check(T .. "the first purse change marks the ledger: gold.v = 2 and gold.since", g.v == 2 and g.since == M.epoch - 10, tostring(g.since))
     local since = g.since
     M.fire("LOOT_OPENED"); money(100); later()
@@ -218,6 +230,61 @@ return function(P)
     M.fire("MAIL_SHOW"); M.inbox = {}; later()
   end
 
+  -- ── a small spend beside a send still waiting for its postage (no price named by the client) ─────────────────
+  do
+    M.sendPrice = nil
+    local n0 = rows()
+    SetSendMailMoney(100000); SendMail("Grok", "gold", "")
+    money(-100000)
+    is("no price named: the gold alone is booked, the postage is still waited for", row(), "xferOut", -100000, "rel=alt;to=Grok")
+    check(T .. "the send stays open for its postage", E._send ~= nil and E._send.moneyDone == true)
+    M.inbox = { { sender = "Rando", subject = "ore", cod = 300, items = { { name = "Copper Ore", id = 2770, count = 10, quality = 1 } } } }
+    TakeInboxItem(1, 1); money(-300)
+    is("a COD payment taken beside it is not the send's postage", row(), "mailSpent", -300, "sender=Rando;rel=stranger;cod=300")
+    check(T .. "the send still waits", E._send ~= nil and rows() == n0 + 2)
+    M.fire("MAIL_SEND_SUCCESS")
+    check(T .. "MAIL_SEND_SUCCESS closes a send whose gold is booked", E._send == nil)
+    later(4); money(-30)
+    is("a small spend after it is booked as before 0.9.48", row(), "mailSpent", -30, "")
+    M.inbox = {}; later()
+    -- a mail with no gold: the success event does not close it before its postage came
+    SendMail("Someone Else", "hello", "")
+    M.fire("MAIL_SEND_SUCCESS")
+    check(T .. "MAIL_SEND_SUCCESS leaves a send with nothing booked yet", E._send ~= nil)
+    money(-60)
+    is("no price named, nothing else explains the spend: it is the postage", row(), "mailSpent", -60, "kind=postage;to=Someone Else")
+    later()
+    -- a purchase of that price asked for, and a trade, are not the postage either
+    SendMail("Someone Else", "hello", "")
+    E._pend.buy[#E._pend.buy + 1] = { id = 159, n = 1, amount = 25, at = GetTime() }
+    money(-25)
+    check(T .. "a spend a pending purchase explains is not the postage", row().refT.kind ~= "postage", row().src .. " " .. row().ref)
+    E._pend.buy = {}
+    E.sendClear(); later()
+    M.sendPrice = 30
+  end
+
+  -- ── COD between two own characters: both legs are transfers ───────────────────────────────────────────────────
+  do
+    local xo, post0, solo0 = g.xferOut, g.mailSpent or 0, g.xferSolo or 0
+    M.inbox = { { sender = "Grok", subject = "ore", cod = 50000, items = { { name = "Copper Ore", id = 2770, count = 10, quality = 1 } } } }
+    TakeInboxItem(1, 1); money(-50000)
+    is("a COD paid to an own character is a transfer out, named", row(), "xferOut", -50000, "sender=Grok;rel=alt;cod=50000")
+    check(T .. "it is booked instead of mailSpent, and it has a second leg in this save file", g.xferOut == xo + 50000 and (g.mailSpent or 0) == post0 and (g.xferSolo or 0) == solo0)
+    later()
+    M.inbox = { { sender = "Mira", subject = "ore", cod = 700, items = { { name = "Copper Ore", id = 2770, count = 1, quality = 1 } } } }
+    TakeInboxItem(1, 1); money(-700)
+    is("a COD paid to an uncertain name stays mailSpent", row(), "mailSpent", -700, "sender=Mira;rel=alt?;cod=700")
+    later()
+    -- the seller's side: the payment mail the paying character sent is xferIn, so the account's net is unchanged
+    M.inbox = { { sender = "Grok", subject = "COD Payment: Copper Ore", money = 50000 } }
+    local xi = g.xferIn or 0
+    TakeInboxMoney(1); money(50000)
+    is("the COD payment an own character sent is a transfer in", row(), "xferIn", 50000, "sender=Grok;rel=alt;cod=0")
+    check(T .. "the two legs of a COD between own characters cancel: earned, spent and net unchanged", (g.xferIn or 0) - xi == 50000 and g.xferOut - xo == 50000)
+    M.inbox = {}; later()
+  end
+
   -- ── mail from an own character (rule 20) ──────────────────────────────────────────────────────────────────────
   do
     local mail0, xi, gained0 = g.mail or 0, g.xferIn or 0, g.gained
@@ -295,6 +362,14 @@ return function(P)
     check(T .. "a bid older than 7 days is forgotten", #c.goldBids == 1 and c.goldBids[1].amount == 999, #c.goldBids)
     M.epoch = M.epoch - 8 * DAY
     c.goldBids = nil
+    -- the legacy call PlaceAuctionBid(type, index, bid) notes the bid too, where the client still has it
+    if type(PlaceAuctionBid) == "function" then
+      PlaceAuctionBid("list", 3, 8800)
+      check(T .. "the legacy PlaceAuctionBid notes an open bid from its third argument", type(c.goldBids) == "table" and #c.goldBids == 1 and c.goldBids[1].amount == 8800)
+      PlaceAuctionBid("list", 3, 0); PlaceAuctionBid("list", 3)
+      check(T .. "a bid of nothing notes nothing", #c.goldBids == 1)
+      c.goldBids = nil
+    end
     E._ah = { claims = {} }
     -- no outbid subject on this client: nothing is a refund
     _G.AUCTION_OUTBID_MAIL_SUBJECT = nil
@@ -314,7 +389,9 @@ return function(P)
   -- ── trades (rule 19) and "This is my character" (decision 11) ─────────────────────────────────────────────────
   do
     local function trade(name, got, gave)
-      M.units.NPC = { name = name }; M.fire("TRADE_SHOW")
+      -- (the client gives a unit's two names as two values, as it does for the player)
+      local first, sur = name:match("^(%S+) (.+)$")
+      M.units.NPC = { name = first or name, surname = sur }; M.fire("TRADE_SHOW")
       M.tradeWin = { gaveMoney = gave or 0, gotMoney = got or 0 }; M.fire("TRADE_MONEY_CHANGED"); M.fire("TRADE_ACCEPT_UPDATE", 1, 1)
       M.tradeWin = nil
       M.fire("UI_INFO_MESSAGE", 0, "Trade complete."); M.fire("TRADE_CLOSED"); M.units.NPC = nil
@@ -346,6 +423,38 @@ return function(P)
     check(T .. "the mark taken back leaves no key and no empty table", ns.DB.settings.gold.mine == nil and rows() == n0)
     trade("Otheracct Banker", 100)
     check(T .. "without the mark the same partner is a trade again", row().src == "trade" and row().refT.rel == "stranger", row().src .. " " .. row().ref)
+    check(T .. "a trade names its partner by both names, in the row and in trades[]", row().refT.partner == "Otheracct Banker" and ses().trades[#ses().trades].partner == "Otheracct Banker")
+    -- the partner is read with both names: a mark set from a mail row matches the trade, a first name never does
+    local xi2, tr2 = g.xferIn, g.trade or 0
+    G.mineSet("Otheracct Banker", true)
+    trade("Otheracct Someoneelse", 800)
+    check(T .. "another player sharing the first name of a marked character stays trade", row().src == "trade" and row().refT.rel == "stranger" and row().refT.partner == "Otheracct Someoneelse"
+      and g.xferIn == xi2 and (g.trade or 0) == tr2 + 800, row().src .. " " .. row().ref)
+    trade("Otheracct", 900)
+    check(T .. "and so does a player who has that first name alone", row().src == "trade" and g.xferIn == xi2, row().src .. " " .. row().ref)
+    trade("Otheracct Banker", 1000)
+    check(T .. "the marked character itself, read as two values, is the transfer", row().src == "xferIn" and row().refT.partner == "Otheracct Banker" and g.xferIn == xi2 + 1000, row().src .. " " .. row().ref)
+    G.mineSet("Otheracct Banker", false)
+    -- a mark of one word where the client shows surnames: whole only for a trade partner who has no second name
+    G.mineSet("Solo", true)
+    check(T .. "a one-word mark is kept, and a mail string with it is uncertain", G.isMine("Solo") and E.isMine("Solo") == false and E.relOf("Solo") == "alt?")
+    M.fire("MAIL_SHOW")
+    M.inbox = { { sender = "Solo", subject = "gold", money = 1500 } }
+    TakeInboxMoney(1); money(1500)
+    is("mail from a one-word mark stays mail, tagged alt?", row(), "mail", 1500, "sender=Solo;rel=alt?;cod=0")
+    M.inbox = {}; M.fire("MAIL_CLOSED"); M.runTimers(); later()
+    trade("Solo Otherguy", 1600)
+    check(T .. "a two-name partner with that first name stays trade", row().src == "trade" and row().refT.rel == "stranger", row().src .. " " .. row().ref)
+    trade("Solo", 1700)
+    check(T .. "a partner with that one name and no second is the marked character", row().src == "xferIn" and row().refT.rel == "alt" and row().refT.partner == "Solo", row().src .. " " .. row().ref)
+    -- where the client shows no surnames the second value is a realm and is not read
+    _G.C_PlayerInfo.ShouldDisplaySurname = function() return false end
+    M.units.NPC = { name = "Solo", surname = "SomeRealm" }
+    check(T .. "with surnames off the unit's second value is not part of the name", E.npcFullName() == "Solo" and E.surnamesShown() == false and E.isMine("Solo") == true)
+    M.units.NPC = nil
+    _G.C_PlayerInfo.ShouldDisplaySurname = function() return true end
+    G.mineSet("Solo", false)
+    check(T .. "the marks are gone again", ns.DB.settings.gold.mine == nil)
   end
 
   -- ── banks (rules 31 to 33) ────────────────────────────────────────────────────────────────────────────────────
@@ -399,6 +508,10 @@ return function(P)
     M.bankMoney = 7770000
     M.fire("BANKFRAME_OPENED")
     check(T .. "the account bank's balance is stored on the logged-in block with its time", type(c.goldBank) == "table" and c.goldBank.balance == 7770000 and c.goldBank.at == M.epoch)
+    M.bankMoney = 7780000; later(5)
+    M.fire("ACCOUNT_MONEY")
+    check(T .. "ACCOUNT_MONEY reads it again", c.goldBank.balance == 7780000 and c.goldBank.at == M.epoch)
+    M.bankMoney = 7770000; M.fire("ACCOUNT_MONEY")
     local ro = G.roster("all")
     local sum = 0
     for _, r in ipairs(ro.rows) do if r.counted then sum = sum + r.balance end end
@@ -442,7 +555,13 @@ return function(P)
     said = {}
     SlashCmdList.EVERBUFF("gold")
     check(T .. "/eb gold says the same", has(said, "today: " .. G.signed(net)) and has(said, G.movedText(moved)) and has(said, "this session: " .. G.signed(G.sessionNet(ses()))), table.concat(said, " | "))
-    check(T .. "the glance values are netted", G.glance("today", true) == "Today " .. G.fmt(net, { signed = true }) and G.glance("session", true) == "Session " .. G.fmt(G.sessionNet(ses()), { signed = true }))
+    check(T .. "the glance values are netted, and Today says what moved", G.glance("today", true) == "Today " .. G.fmt(net, { signed = true }) .. " · " .. G.movedText(moved, G.fmt)
+      and G.glance("session", true) == "Session " .. G.fmt(G.sessionNet(ses()), { signed = true }), G.glance("today", true))
+    check(T .. "several counterparties today: no one is named", G.movedWhoToday() == nil and G.movedText(-1000000) == "moved " .. ns.fmtMoney(1000000) .. " out" and G.movedText(500, nil, "Mira") == "moved " .. ns.fmtMoney(500) .. " from Mira")
+    check(T .. "one counterparty is named, as typed or as the client named it; the account bank by its name",
+      G.movedWho({ { src = "xferOut", ref = { to = "Mira Dawnfall" } }, { src = "xferIn", ref = { sender = "mira dawnfall" } }, { src = "mail", ref = { sender = "Rando" } } }) == "Mira Dawnfall"
+      and G.movedWho({ { src = "xferOut", ref = { bank = "account" } } }) == "the account bank" and G.movedWho({ { src = "xferOut", ref = { to = "A" } }, { src = "xferOut", ref = { bank = "account" } } }) == nil
+      and G.movedWho({}) == nil)
     -- the sources of the period
     local sc = G.scope("today")
     local entries = G.scopeEntries(sc)
@@ -456,6 +575,9 @@ return function(P)
     check(T .. "Sources: the guild bank is shown as a source of its own, both ways", bank["Guild bank: taken out"] and bank["Guild bank: taken out"].amount == 20000 and bank["Guild bank: taken out"].dir == 1
       and bank["Guild bank: put in"] and bank["Guild bank: put in"].amount == 15500 and bank["Guild bank: put in"].dir == -1, bank["Guild bank: put in"] and bank["Guild bank: put in"].amount)
     check(T .. "Sources: what is left in unexplained does not hold the guild bank", by.unexplained and by.unexplained.amount == (L.unexplained or 0) - 20000)
+    check(T .. "Sources: the two rows of a key the guild bank has a share of say which rows a click lists", bank["Guild bank: put in"].bank == "guild" and by.other and by.other.rest == "none" and by.unexplained.rest == "none" and by.looted.rest == nil)
+    check(T .. "Sources: auctions net of returned bids is a derived line of the auction and the bids rows (rule 18)", by.auctions and by.auctions.netBids == L.auctions - L.auctionRefund
+      and by.auctionRefund.netBids == L.auctions - L.auctionRefund and by.looted.netBids == nil and L.auctions == g.auctions, tostring(by.auctions and by.auctions.netBids))
     -- the journal rows read as the plan words them
     local det = {}
     for _, e in ipairs(entries) do det[#det + 1] = e.detail or "" end
@@ -469,6 +591,16 @@ return function(P)
       if e.player then players = players + 1 end
     end
     check(T .. "Journal: a bank row is not flagged unexplained; rows with a player name them", flagged == 0 and players > 5, flagged .. " " .. players)
+    local offered = {}
+    for _, e in ipairs(entries) do
+      local r = e.ref
+      local who = r.partner or r.to or r.sender
+      if who then offered[(r.rel or "") .. ":" .. who:lower()] = e.player ~= nil end
+    end
+    check(T .. "Journal: a character of this account is not offered This is my character; an uncertain name and a stranger are",
+      offered["alt:mira dawnfall"] == false and offered["alt:grok"] == false and offered["alt?:mira"] == true and offered["stranger:mira stonefist"] == true and offered["system:stormwind auction house"] == false,
+      ("%s %s %s %s"):format(tostring(offered["alt:mira dawnfall"]), tostring(offered["alt:grok"]), tostring(offered["alt?:mira"]), tostring(offered["stranger:mira stonefist"])))
+    check(T .. "Journal: a COD paid to an own character reads as a transfer with its COD", has(det, "To your character Grok, COD"), table.concat(det, " | "))
     -- the rate: a transfer moves no mode
     local f0, e0, n0 = G.rate("farm").sum, G.rate("earned").sum, G.rate("net").sum
     M.fire("MAIL_SHOW")
@@ -493,7 +625,20 @@ return function(P)
     local me = G.period("today", "char").ledger
     local eMe, sMe = G.netted(me)
     -- Mira received what Hart sent her today, and looted 5g of her own
-    local sentToMira = me.xferOut - 40000 - 12000   -- (without the account bank and the trade with the other account)
+    -- the legs with a second side in this save file, from the journal: not the account bank, not a trade (a marked
+    -- character on another account), not mail with a marked name
+    local pairedOut, pairedIn = 0, 0
+    for i = 1, rows() do
+      local r = row(i)
+      local who = r.refT.sender or r.refT.to or ""
+      if (r.src == "xferOut" or r.src == "xferIn") and not r.refT.bank and not r.refT.partner and not who:find("Otheracct", 1, true) then
+        if r.src == "xferOut" then pairedOut = pairedOut - r.delta else pairedIn = pairedIn + r.delta end
+      end
+    end
+    check(T .. "xferSolo is the signed sum of the legs with no second side here, on the ledger and on the day row",
+      g.xferSolo == (me.xferIn - pairedIn) - (me.xferOut - pairedOut) and day().xferSolo == g.xferSolo and me.xferSolo == g.xferSolo and ses().gold.xferSolo == nil, tostring(g.xferSolo))
+    check(T .. "one character alone: what it sent to its own less what it got from them", G.unmatched(me) == pairedOut - pairedIn and pairedOut > 0 and pairedIn > 0)
+    local sentToMira = pairedOut
     chars.A.goldDays = { [kT] = { g = sentToMira + 50000, s = 0, o = 961000 - sentToMira - 50000, c = 961000, t = 600, n = 4, xferIn = sentToMira, looted = 50000 } }
     chars.A.gold.gained, chars.A.gold.xferIn, chars.A.gold.looted = sentToMira + 50000, sentToMira, 50000
     local acct = G.period("today", "account")
@@ -502,11 +647,14 @@ return function(P)
     check(T .. "account: the net is each character's own net, summed", netA == G.figure("net", me) + 50000)
     -- what Hart received from Mira (the mails taken above) was never recorded on her side: her sender leg is missing
     local un = G.unmatchedText(acct.ledger)
-    local diff = math.abs(acct.ledger.xferOut - acct.ledger.xferIn)
-    check(T .. "a leg recorded on one side only is said, with its amount", diff > 0 and un ~= nil and un:find("Unmatched transfers: " .. ns.fmtMoney(diff), 1, true) == 1 and un:find("the other side was not recorded here", 1, true) ~= nil, tostring(un))
+    local diff = pairedIn
+    check(T .. "a leg recorded on one side only is said, with its amount: the bank and the other account are not in it", G.unmatched(acct.ledger) == -pairedIn and un ~= nil
+      and un == "Unmatched transfers: " .. ns.fmtMoney(diff) .. " (the other side was not recorded here)", tostring(un))
     check(T .. "the receiver's own figures are right without the sender's leg", G.figure("earned", chars.A.goldDays[kT] and { gained = chars.A.goldDays[kT].g, xferIn = chars.A.goldDays[kT].xferIn }) == 50000)
     -- both legs there: nothing to say
     check(T .. "legs that agree say nothing", G.unmatchedText({ xferIn = 500, xferOut = 500 }) == nil and G.unmatchedText({}) == nil)
+    check(T .. "a bank deposit or a transfer to another account alone says nothing", G.unmatchedText({ xferOut = 40000, xferSolo = -40000 }) == nil and G.unmatchedText({ xferIn = 700, xferSolo = 700 }) == nil
+      and G.unmatchedText({ xferOut = 40500, xferSolo = -40000 }) == "Unmatched transfers: " .. ns.fmtMoney(500) .. " (the other side was not recorded here)")
     said = {}
     SlashCmdList.EVERBUFF("gold stats")
     check(T .. "/eb gold stats says the unmatched amount for the account", has(said, "Unmatched transfers: "), table.concat(said, " | "))
@@ -534,6 +682,48 @@ return function(P)
       check(T .. "pane: Sources has the section MOVED BETWEEN YOUR CHARACTERS, after the rest", movedAt ~= nil and firstMoved == movedAt + 1 and sections[#sections] == "MOVED BETWEEN YOUR CHARACTERS"
         and sections[1]:find("EARNED", 1, true) == 1 and sections[1]:find(ns.fmtMoney(earned), 1, true) ~= nil, table.concat(sections, " | "))
       check(T .. "pane: the audit of the day does not read broken", pane.audit == nil or pane.audit.state ~= "broken", pane.audit and (pane.audit.text or pane.audit.reason))
+      check(T .. "pane: the line says the bids are in the net and not in earned, and the auctions net of them", pane.statusText:find("Bids returned: " .. ns.fmtMoney(p.ledger.auctionRefund) .. " (in the net, not in earned)", 1, true) ~= nil
+        and pane.statusText:find("Auctions net of returned bids: " .. ns.fmtMoney(p.ledger.auctions - p.ledger.auctionRefund), 1, true) ~= nil, pane.statusText)
+      check(T .. "pane: one character's scope has no unmatched line", pane.statusText:find("Unmatched transfers", 1, true) == nil)
+      -- the tooltips of the auction house row and of the guild bank row; a click on the guild bank row lists its rows only
+      local tipF = _G.GameTooltip
+      local function srcRow(pred) for _, r in ipairs(pane.tblSrc.rows or {}) do if r.shown ~= false and r.item and not r.item.ebSection and pred(r.item) then return r end end end
+      local ahRow, gbRow, restRow = srcRow(function(it) return it.key == "auctions" end), srcRow(function(it) return it.bank == "guild" and it.key == "other" end), srcRow(function(it) return it.key == "other" and it.rest == "none" end)
+      check(T .. "pane: Sources lists the auction house, the guild bank and the rest of unexplained spending", ahRow ~= nil and gbRow ~= nil and restRow ~= nil)
+      check(T .. "pane: its rows carry a tooltip and a click", ahRow ~= nil and tipF ~= nil and ahRow.scripts.OnEnter ~= nil and gbRow ~= nil and gbRow.scripts.OnClick ~= nil)
+      if ahRow and gbRow and restRow and tipF and ahRow.scripts.OnEnter then
+        ahRow.scripts.OnEnter(ahRow)
+        check(T .. "pane: the auction house row's tooltip has the derived line", table.concat(tipF.lines or {}, " | "):find("Auctions net of returned bids: " .. ns.fmtMoney(p.ledger.auctions - p.ledger.auctionRefund), 1, true) ~= nil, table.concat(tipF.lines or {}, " | "))
+        if ahRow.scripts.OnLeave then ahRow.scripts.OnLeave(ahRow) end
+        local nGuild, nOther = gbRow.item.n, restRow.item.n
+        gbRow.scripts.OnClick(gbRow, "LeftButton"); M.settle()
+        pane = ns._test.goldPane()
+        local okRows = pane.st.view == "journal" and pane.st.src == "other" and pane.st.bank == "guild" and pane.journalCount == nGuild and nGuild == 2
+        for _, r in ipairs(pane.journalRows or {}) do if r.shown ~= false and r.item and not r.item.ebSection and not (r.item.src == "other" and r.item.ref.bank == "guild") then okRows = false end end
+        check(T .. "pane: a click on the guild bank row lists the guild bank's rows, not every unexplained row", okRows and pane.caption.text:find("Guild bank: put in", 1, true) == 1, ("%s %s %s"):format(tostring(pane.st.bank), tostring(pane.journalCount), tostring(pane.caption.text)))
+        G.filter("other", "none"); M.settle()
+        pane = ns._test.goldPane()
+        okRows = pane.st.bank == "none" and pane.journalCount == nOther
+        for _, r in ipairs(pane.journalRows or {}) do if r.shown ~= false and r.item and not r.item.ebSection and r.item.ref.bank == "guild" then okRows = false end end
+        check(T .. "pane: the other row of that key lists the rows the guild bank did not name", okRows, ("%s %s"):format(tostring(pane.journalCount), nOther))
+        G.filter("looted"); M.settle()
+        check(T .. "pane: another source clears the bank filter", ns._test.goldPane().st.bank == nil and ns._test.goldPane().st.src == "looted")
+      end
+      -- the Days view: a day with a returned bid explains itself
+      G.open("today", "days"); M.settle(); ns._test.goldPane().setWho("char"); M.settle()
+      pane = ns._test.goldPane()
+      local dayRow
+      for _, tb in ipairs({ pane.tblDays, pane.tblDaysNarrow }) do
+        for _, r in ipairs(tb and tb.rows or {}) do if r.shown ~= false and r.item and r.item.today and r.scripts and r.scripts.OnEnter then dayRow = dayRow or r end end
+      end
+      check(T .. "pane: Days lists today", dayRow ~= nil)
+      if dayRow and tipF then
+        dayRow.scripts.OnEnter(dayRow)
+        local text = table.concat(tipF.lines or {}, " | ")
+        check(T .. "pane: the day's tooltip says the bids are in the net and not in earned, and what moved", text:find("Bids returned " .. ns.fmtMoney(p.ledger.auctionRefund) .. " (in the net, not in earned)", 1, true) ~= nil
+          and text:find("Auctions net of returned bids: ", 1, true) ~= nil and text:find("Moved between your characters " .. G.signed(G.figure("moved", p.ledger)), 1, true) ~= nil, text)
+        if dayRow.scripts.OnLeave then dayRow.scripts.OnLeave(dayRow) end
+      end
       -- the row menu of a journal row with a player
       G.open("today", "journal"); M.settle(); ns._test.goldPane().setWho("char"); M.settle()
       pane = ns._test.goldPane()
@@ -665,6 +855,54 @@ return function(P)
     M.inbox = {}; M.fire("MAIL_CLOSED"); M.runTimers()
     check(T .. "only the logged-in character's block was written", chars.A.goldDays == nil and chars.B.goldDays == nil and chars.A.goldBids == nil and chars.B.goldBank == nil and chars.A.gold.xferIn == nil)
     check(T .. "no handler threw", #M.errors == errs0, M.errors[#M.errors])
+  end
+
+  -- ── a save file of its own: the account bank alone leaves no unmatched line (rule 21) ─────────────────────────
+  do
+    M.fire("PLAYER_LOGOUT")
+    fresh()
+    M.money = 900000
+    login(); later()
+    local c2 = ns.DB.characters[ME]
+    ns.DB.characters.B = { name = "Grok", realm = REALM, class = "SHAMAN", faction = "Horde", level = 40, seen = M.epoch - DAY, gold = { balance = 250000 } }
+    E.loadAlts()
+    M.accountBank, M.interact.Banker = true, true
+    C_Bank.DepositMoney(Enum.BankType.Account, 40000); money(-40000)
+    is("a session with one account bank deposit: a transfer out", row(), "xferOut", -40000, "bank=account")
+    local k2 = G.dayKey(GetServerTime(), G.baseStored())
+    check(T .. "its leg is noted as one with no second side", c2.gold.xferSolo == -40000 and c2.goldDays[k2].xferSolo == -40000 and ses().gold.xferSolo == nil)
+    check(T .. "the account shows no unmatched line for it, today and all time", G.unmatchedText(G.period("today", "account").ledger) == nil and G.unmatchedText(G.scope("all", "account").ledger) == nil
+      and G.unmatchedText(G.period("month", "realm").ledger) == nil)
+    check(T .. "the glance says where it went", G.glance("today", true) == "Today " .. G.fmt(0, { signed = true }) .. " · moved " .. G.fmt(40000) .. " to the account bank", G.glance("today", true))
+    said = {}
+    SlashCmdList.EVERBUFF("gold")
+    check(T .. "/eb gold names the one counterparty too", has(said, "moved " .. ns.fmtMoney(40000) .. " to the account bank"), table.concat(said, " | "))
+    said = {}
+    SlashCmdList.EVERBUFF("gold stats")
+    check(T .. "/eb gold stats has no unmatched line", not has(said, "Unmatched transfers"), table.concat(said, " | "))
+    local okPane, errPane = pcall(function()
+      if _G.EverbuffFrame then _G.EverbuffFrame.shown = true end
+      G.open("today", "sources"); M.settle(); ns._test.goldPane().setWho("account"); M.settle()
+      local pane = ns._test.goldPane()
+      check(T .. "pane: the account's status has no unmatched line for a bank deposit", pane.statusText:find("Unmatched transfers", 1, true) == nil and pane.statusText:find("Moved between your characters: " .. ns.fmtMoney(40000) .. " out", 1, true) ~= nil, pane.statusText)
+      -- a mail to an own character not taken yet: the line is there, a plain line after what the sums leave out
+      M.fire("MAIL_SHOW")
+      SetSendMailMoney(5000); SendMail("Grok", "gold", ""); money(-5030)
+      M.fire("MAIL_CLOSED"); M.runTimers()
+      G.open("today", "sources"); M.settle(); ns._test.goldPane().setWho("account"); M.settle()
+      pane = ns._test.goldPane()
+      local at = pane.statusText:find("Unmatched transfers: " .. ns.fmtMoney(5000) .. " (the other side was not recorded here)", 1, true)
+      check(T .. "pane: a leg whose other side is missing is said on the account's status, not first", at ~= nil and at > 1, pane.statusText)
+      if ns.UI.Close then pcall(ns.UI.Close) end
+      if _G.EverbuffFrame and _G.EverbuffFrame.Hide then pcall(_G.EverbuffFrame.Hide, _G.EverbuffFrame) end
+      if _G.EverbuffFrame then _G.EverbuffFrame.shown = false end
+    end)
+    check(T .. "pane: the account scope renders with one-sided legs", okPane, errPane)
+    check(T .. "the mail to the own character is not a solo leg", c2.gold.xferSolo == -40000 and c2.gold.xferOut == 45000)
+    C_Bank.WithdrawMoney(Enum.BankType.Account, 40000); money(40000)
+    check(T .. "taken out again the note is gone, no key left at 0", c2.gold.xferSolo == nil and c2.goldDays[k2].xferSolo == nil and G.unmatched(G.period("today", "account").ledger) == 5000)
+    check(T .. "no handler threw", #M.errors == errs0, M.errors[#M.errors])
+    M.accountBank, M.interact.Banker = nil, nil
   end
 
   -- ── the suite's save file and client back in place ──────────────────────────────────────────────────────────

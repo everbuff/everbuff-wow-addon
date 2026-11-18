@@ -992,15 +992,53 @@ function Emitter.ownKey(name)
   if name == "" then return nil end
   return nameKey(name)
 end
--- a character on another WoW account the player marked as theirs (settings.gold.mine, "This is my character")
-function Emitter.isMine(name)
+-- whether the client shows second names (WoW Forever): UnitName's second value is then the surname (ns.surname)
+function Emitter.surnamesShown()
+  if not (C_PlayerInfo and type(C_PlayerInfo.ShouldDisplaySurname) == "function") then return false end
+  local ok, show = pcall(C_PlayerInfo.ShouldDisplaySurname, "player")
+  return (ok and show == true) or false
+end
+-- The name of the client's "NPC" unit (the trade partner) as the client shows it: "first surname" where surnames
+-- are shown and the unit has one, so a trade row names the same string a mail from that character does and a
+-- first name alone is never what a partner with two names is known by.
+function Emitter.npcFullName()
+  if type(UnitName) ~= "function" then return nil end
+  local ok, first, second = pcall(UnitName, "NPC")
+  first = ok and safeStr(first) or nil
+  if not first or first == "" then return first end
+  second = safeStr(second)
+  if second and second ~= "" and Emitter.surnamesShown() then return first .. " " .. second end
+  return first
+end
+-- A character on another WoW account the player marked as theirs (settings.gold.mine, "This is my character").
+-- Where the client shows surnames a mark of one word is certain only for a name known to be whole (`whole`: the
+-- trade partner, read with both of its names); in a mail string it could be the first name of anyone, so it is
+-- not a match there (Emitter.relOf answers "alt?" for it, shown and never netted).
+function Emitter.isMine(name, whole)
   local cfg = ns.DB and ns.DB.settings and ns.DB.settings.gold
   local mine = type(cfg) == "table" and type(cfg.mine) == "table" and cfg.mine or nil
   local key = mine and Emitter.ownKey(name)
-  return (key and mine[key] == true) or false
+  if not (key and mine[key] == true) then return false end
+  if not whole and Emitter.surnamesShown() and not key:match("^[^%-]* ") then return false, true end
+  return true
 end
 -- whether the session books transfers and refunds apart (it began on 0.9.48 or later)
 function Emitter.v2(ses) return type(ses) == "table" and ses.goldV == 2 and type(ses.gold) == "table" end
+-- A transfer leg whose other side is never written on this PC (rule 21): the account bank, and a character on
+-- another WoW account ("This is my character"). `xferSolo` on the character's ledger and on its day row is the
+-- signed sum of those legs (in positive, out negative), a memo beside xferIn and xferOut and part of no total: the
+-- unmatched transfers line leaves them out, so it speaks only of a character of this save file whose leg is missing.
+function Emitter.xferSolo(g, n)
+  if type(g) ~= "table" or not n or n == 0 then return end
+  local v = (g.xferSolo or 0) + n
+  g.xferSolo = v ~= 0 and v or nil
+  Emitter.goldDay("xferSolo", n)
+end
+-- whether `name` is not a character of this save file (so its leg of a transfer is never written here)
+function Emitter.soloName(name)
+  local key = Emitter.ownKey(name)
+  return not (key and Emitter._alts and Emitter._alts[key])
+end
 function Emitter.loadGuild()
   local set = {}
   local n = (GetNumGuildMembers and plainNum(rd(GetNumGuildMembers))) or 0
@@ -1028,7 +1066,9 @@ function Emitter.relOf(name, guid)
   name = safeStr(name)
   if not name or name == "" then return nil end
   local key = Emitter.ownKey(name) or nameKey(name)
-  if Emitter.isMine(name) then return "alt" end
+  local mine, maybe = Emitter.isMine(name)
+  if mine then return "alt" end
+  if maybe then return "alt?" end
   if not Emitter._alts or Emitter._altsFor ~= (ns.charGuid and ns.charGuid() or nil) then Emitter.loadAlts() end
   if Emitter._alts[key] then return "alt" end
   if Emitter._altsMaybe[key] then return "alt?" end
@@ -1300,6 +1340,12 @@ function Emitter.sendMail(to)
     postage = (price and price > 0) and price or nil, at = GetTime() }
 end
 function Emitter.sendClear() Emitter._send, Emitter._sendStage = nil, {} end
+-- MAIL_SEND_SUCCESS: the mail left. Once its gold is booked nothing more is waited for: a postage that has not
+-- shown by then is booked as before 0.9.48 (mailSpent at the mailbox), and no later spend is taken for it.
+function Emitter.sendSuccess()
+  local p = Emitter._send
+  if p and p.moneyDone then Emitter._send = nil end
+end
 if hooksecurefunc then
   if type(SetSendMailMoney) == "function" then hooksecurefunc("SetSendMailMoney", function(c) pcall(Emitter.sendStage, "money", c) end) end
   if type(SetSendMailCOD) == "function" then hooksecurefunc("SetSendMailCOD", function(c) pcall(Emitter.sendStage, "cod", c) end) end
@@ -1432,14 +1478,15 @@ end
 -- window, or the client said "Trade complete."). A cancelled trade writes nothing.
 Emitter._trade = { open = false, untilT = 0, name = nil }
 function Emitter.tradeShow()
-  local npcName = UnitName and safeStr(UnitName("NPC")) or nil
+  -- (0.9.48: both of the partner's names where the client shows surnames, Emitter.npcFullName)
+  local npcName = Emitter.npcFullName()
   local guild = GetGuildInfo and safeStr(rd(GetGuildInfo, "NPC")) or nil
   local guid = UnitGUID and safeStr(UnitGUID("NPC")) or nil
+  -- (0.9.48, rule 19) a trade is a transfer only with a character the player marked as their own: two
+  -- characters of one account are never online together, so a partner with an alt's name is someone else
+  local mine = Emitter.isMine(npcName, true) or nil
   Emitter._trade = { open = true, untilT = 0, name = npcName, guild = guild ~= "" and guild or nil,
-    rel = Emitter.relOf(npcName, guid),
-    -- (0.9.48, rule 19) a trade is a transfer only with a character the player marked as their own: two
-    -- characters of one account are never online together, so a partner with an alt's name is someone else
-    mine = Emitter.isMine(npcName) or nil }
+    rel = mine and "alt" or Emitter.relOf(npcName, guid), mine = mine }
 end
 -- the ledger key of coin moved in a trade: xferIn or xferOut with a character marked "mine", in a session that
 -- books transfers apart; else trade or tradeSpent as before
@@ -1590,7 +1637,10 @@ function Emitter.creditMail(g, ses, delta, bal)
       if Emitter.bidTake(e.money) and Emitter._gref then Emitter._gref.kind = "bid" end
       credit(g, ses, "auctionRefund", e.money)
     -- coin from one of the player's own characters (rule 20): booked instead of mail, never beside it
-    elseif meta.rel == "alt" and e.src:sub(1, 8) ~= "Auction " and Emitter.v2(ses) then credit(g, ses, "xferIn", e.money)
+    -- (a COD payment by an own character arrives as such a mail: its paying leg is xferOut too, Emitter.creditSpend)
+    elseif meta.rel == "alt" and e.src:sub(1, 8) ~= "Auction " and Emitter.v2(ses) then
+      credit(g, ses, "xferIn", e.money)
+      if Emitter.soloName(meta.sender) then Emitter.xferSolo(g, e.money) end
     else credit(g, ses, "mail", e.money) end
     pushLoot({ t = tnow, money = e.money, src = e.src, mail = e.meta, x = loc.x, y = loc.y, zone = loc.zone })
   end
@@ -1904,7 +1954,8 @@ function Emitter.creditSpend(g, ses, spent, bal)
   -- coin put into a bank (0.9.48, rules 31 to 33): the account bank is a transfer, the guild bank never is
   elseif bank then
     Emitter._gref = { bank = bank }
-    credit(g, ses, (bank == "account" and Emitter.v2(ses)) and "xferOut" or "other", spent)
+    if bank == "account" and Emitter.v2(ses) then credit(g, ses, "xferOut", spent); Emitter.xferSolo(g, -spent)
+    else credit(g, ses, "other", spent) end
   elseif e then
     -- bought back with no sale of it booked in this session (sold before a /reload or in an earlier session, or the
     -- sale was not seen): a purchase, as before 0.9.46
@@ -1917,7 +1968,11 @@ function Emitter.creditSpend(g, ses, spent, bal)
     Emitter._gref = { npc = Emitter.at("trainer") and npc.trainer or nil, kind = "respec" }; credit(g, ses, "training", spent)
   -- a mail just sent (0.9.48, rules 16 and 17): the gold and the postage, each on its own row
   elseif Emitter.creditSend(g, ses, spent, bal) then
-  elseif inTrade() then Emitter._gref = Emitter.tradeRef(-spent); credit(g, ses, Emitter.tradeKey(ses, false), spent); tradeRow(-spent)   -- coin we gave in a trade
+  elseif inTrade() then                                   -- coin we gave in a trade
+    Emitter._gref = Emitter.tradeRef(-spent)
+    credit(g, ses, Emitter.tradeKey(ses, false), spent)
+    if Emitter.tradeKey(ses, false) == "xferOut" then Emitter.xferSolo(g, -spent) end
+    tradeRow(-spent)
   elseif Emitter.at("merchant") then
     Emitter.prunePending(Emitter._pend.buy)
     local exact = false
@@ -1935,8 +1990,14 @@ function Emitter.creditSpend(g, ses, spent, bal)
     credit(g, ses, "auctions", spent)
   elseif Emitter.at("mail") then                          -- COD payments, postage
     local m = Emitter._mailCtx
-    Emitter._gref = (m and now - m.at < 3) and mailRef(m.meta) or nil
-    credit(g, ses, "mailSpent", spent)
+    local ref = (m and now - m.at < 3) and mailRef(m.meta) or nil
+    Emitter._gref = ref
+    -- (0.9.48) a COD paid to one of the player's own characters is a transfer, like the payment mail that character
+    -- takes (Emitter.creditMail books it xferIn): a certain name and exactly the COD asked for, else mailSpent
+    if ref and ref.rel == "alt" and ref.cod > 0 and ref.cod == spent and Emitter.v2(ses) then
+      credit(g, ses, "xferOut", spent)
+      if Emitter.soloName(ref.sender) then Emitter.xferSolo(g, -spent) end
+    else credit(g, ses, "mailSpent", spent) end
   else credit(g, ses, "other", spent) end
 end
 -- The purse change of a mail just sent (0.9.48, rules 16 and 17). A spend within 5 s of SendMail that is exactly
@@ -1959,7 +2020,16 @@ function Emitter.creditSend(g, ses, spent, bal)
   local post, gold
   if money > 0 and spent == money then post, gold = 0, money
   elseif money > 0 and postOk(spent - money) then post, gold = spent - money, money
-  elseif postOk(spent) then post, gold = spent, 0
+  elseif postOk(spent) then
+    -- With no price named a small spend is the postage only when nothing else explains it: no trade, no purchase
+    -- of that price asked for, no mail just taken (a COD payment). Else the spend goes on as before 0.9.48.
+    if not p.postage then
+      if inTrade() then return false end
+      for _, b in ipairs(Emitter._pend.buy) do if b.amount == spent then return false end end
+      local m = Emitter._mailCtx
+      if m and GetTime() - m.at < 3 then return false end
+    end
+    post, gold = spent, 0
   else return false end
   local rel = p.to and Emitter.relOf(p.to) or nil
   if post > 0 then
@@ -1972,6 +2042,7 @@ function Emitter.creditSend(g, ses, spent, bal)
     Emitter._gbal = bal
     Emitter._gref = { to = p.to, rel = rel }
     credit(g, ses, rel == "alt" and "xferOut" or "mailSent", gold)
+    if rel == "alt" and Emitter.soloName(p.to) then Emitter.xferSolo(g, -gold) end
     p.moneyDone = true
   end
   Emitter._gbal = bal
@@ -2108,12 +2179,14 @@ local function onMoney()
       else Emitter.coinRow(delta, coin and coin.share) end
     elseif how == "trade" then
       Emitter._gref = Emitter.tradeRef(delta)
-      credit(g, ses, Emitter.tradeKey(ses, true), delta); tradeRow(delta)     -- coin another player gave us in a trade
+      credit(g, ses, Emitter.tradeKey(ses, true), delta)  -- coin another player gave us in a trade
+      if Emitter.tradeKey(ses, true) == "xferIn" then Emitter.xferSolo(g, delta) end
+      tradeRow(delta)
     elseif how == "bank" then
       -- coin taken out of a bank (0.9.48): the account bank is a transfer; the guild bank's coin stays income with
       -- no source of its own (`bank=guild` names it), and no quest can claim it later
       Emitter._gref = { bank = bank }
-      if bank == "account" and Emitter.v2(ses) then credit(g, ses, "xferIn", delta)
+      if bank == "account" and Emitter.v2(ses) then credit(g, ses, "xferIn", delta); Emitter.xferSolo(g, delta)
       else Emitter.goldDay("unexplained", delta); Emitter.goldRow(ses, "unexplained", delta) end
     elseif how == "quests" then
       Emitter._gref = { quest = Emitter._questMoney.quest }
@@ -2205,7 +2278,7 @@ do
     "TRAINER_CLOSED", "MAIL_CLOSED", "AUCTION_HOUSE_CLOSED", "PLAYER_LOGOUT", "UI_ERROR_MESSAGE",
     "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_PURCHASE_COMPLETED", "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED",
     "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR",
-    "MAIL_FAILED", "BANKFRAME_OPENED", "ACCOUNT_MONEY" }) do pcall(jf.RegisterEvent, jf, e) end   -- (0.9.48)
+    "MAIL_FAILED", "MAIL_SEND_SUCCESS", "BANKFRAME_OPENED", "ACCOUNT_MONEY" }) do pcall(jf.RegisterEvent, jf, e) end   -- (0.9.48)
   local function npcName() return UnitName and safeStr(UnitName("NPC")) or nil end
   jf:SetScript("OnEvent", function(_, event, a1, a2)
     if event == "TRADE_SHOW" then Emitter.tradeShow()
@@ -2239,6 +2312,7 @@ do
       if event == "MAIL_CLOSED" then Emitter.sendClear() end   -- a mail not paid for yet is no longer waited for
       Emitter.driftSoon()
     elseif event == "MAIL_FAILED" then Emitter.sendClear()
+    elseif event == "MAIL_SEND_SUCCESS" then Emitter.sendSuccess()
     elseif event == "BANKFRAME_OPENED" or event == "ACCOUNT_MONEY" then pcall(Emitter.bankRead)
     elseif event == "CHAT_MSG_MONEY" then Emitter.coinChat(a1)
     elseif event == "CONFIRM_TALENT_WIPE" then

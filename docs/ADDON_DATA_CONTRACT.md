@@ -383,7 +383,7 @@ sources):
 | Key | Sign | Meaning |
 | --- | --- | --- |
 | `xferIn` | + | coin received by mail from one of the player's own characters, taken out of the account bank, or received in a trade with a character marked "mine". Booked instead of `mail` or `trade`, never beside it |
-| `xferOut` | - | coin mailed to an own character, put into the account bank, or given in a trade with a character marked "mine". Booked instead of `mailSpent` or `tradeSpent` |
+| `xferOut` | - | coin mailed to an own character, a COD paid to an own character (exactly the COD asked for), put into the account bank, or given in a trade with a character marked "mine". Booked instead of `mailSpent` or `tradeSpent` |
 | `mailSent` | - | coin mailed to anyone else, with ref `to` and `rel` |
 | `auctionRefund` | + | a returned bid |
 
@@ -393,13 +393,26 @@ sum to `gained`, the spending keys (now with `mailSent` and `xferOut`) to `spent
 never stored, per character from its own keys: `earned = gained - xferIn - auctionRefund`,
 `spent (shown) = spent - xferOut`, `net = gained - spent - (xferIn - xferOut)`, `moved = xferIn - xferOut`. A
 returned bid is in the net (the bid it returns is in `auctions`, gross) and in neither headline. Nothing is floored.
+"Auctions net of returned bids" (`auctions - auctionRefund`) is a derived line of the pane, never stored.
+
+**`xferSolo`** (copper, signed, in `characters[guid].gold` and on the day and month rows; never in `sessions.gold`,
+never a journal source): the sum of the transfer legs whose other side is never written into this save file, in
+positive and out negative. Those are the account bank's rows and the rows with a character on another WoW account
+(`settings.gold.mine`). It is a memo beside `xferIn` and `xferOut` and part of no total; the key is absent at 0.
+The unmatched transfers line of a realm or an account is `xferOut - xferIn + xferSolo`, so a bank deposit or a
+transfer to the other account never reads as a missing leg.
+
+**COD between own characters.** The payment is `xferOut` on the paying character (ref `sender, rel=alt, cod`) and
+the payment mail is `xferIn` on the selling one, so the pair moves neither earned, spent nor the net of the
+account. A COD paid to anyone else, or to a name that is not certain (`alt?`), stays `mailSpent`.
 
 **Since when.** `sessions[id].goldV = 2` is written at the start of a session started on 0.9.48 or later, and its
 `gold` ledger carries the four keys from the start, at 0. Only such a session gets them credited: a session that
 began on an older version and was resumed by a `/reload` keeps booking as 0.9.47 did (`mail`, `mailSpent`, `trade`,
 `unexplained`, `other`), so a session's ledger is whole in one definition or the other, never mixed.
 `characters[guid].gold.v = 2` and `characters[guid].gold.since` (server epoch) are written at the first purse change
-of the first `goldV = 2` session of that character. They are not copper amounts. Nothing older is attributed again.
+of the first `goldV = 2` session of that character. They are not copper amounts: no sum of the ledger holds them
+and `goldTimer.ledger` (the farm timer's snapshot) never carries them. Nothing older is attributed again.
 
 **Who is an own character** (`rel` in the journal ref). Every `characters[guid]` block of the save file except the
 logged-in one, on the same realm (a `Name-Realm` name compares its own realm), by the name the client shows, case
@@ -415,12 +428,19 @@ becomes certain only if a probe in game shows the client sends first names only 
 `alt?`). A trade is never a transfer by name: two characters of one account are never online together. It is one
 only with a name in `settings.gold.mine`.
 
+The trade partner is read with both of its names where the client shows surnames (`UnitName("NPC")` gives the
+first name and the surname as two values, as for the player; `C_PlayerInfo.ShouldDisplaySurname`): from 0.9.48 the
+journal ref `partner`, `trades[].partner` and the TRADE story row carry "first surname". On a client that shows
+no surnames they carry the one name as before. A mark in `settings.gold.mine` matches a trade partner only by that
+whole name. A mark of one word, where the client shows surnames, is whole only for a trade partner that has no
+second name; in a mail's sender or recipient string it could be anyone's first name, so there it is `alt?`.
+
 **Journal refs of the new rows.**
 
 | Source | ref |
 | --- | --- |
 | `xferIn` | `sender, rel, cod` (mail); `bank=account`; `partner, guild?, rel, trade` (a trade with a marked character) |
-| `xferOut` | `rel, to` (mail); `bank=account`; `partner, guild?, rel, trade` |
+| `xferOut` | `rel, to` (mail); `sender, rel, cod` (a COD paid to an own character); `bank=account`; `partner, guild?, rel, trade` |
 | `mailSent` | `rel, to` |
 | `mailSpent` | from 0.9.48 also `kind=postage` and `to` on the postage of a mail whose send was seen |
 | `auctionRefund` | `sender, rel, cod`, and `kind=bid` when the amount was an open bid in `goldBids` |
@@ -431,8 +451,10 @@ function) read the amount and the recipient from the call's own arguments; `GetS
 where it exists. A spend within 5 s of `SendMail` that is exactly the gold plus the postage (the named price, else
 any amount up to 30c x 13) is written as two rows, the postage first with the balance between the two: the one
 case where one purse change is two journal rows (the day row's `n` counts it once). A client that answers with two
-purse changes gets each part on its own, in either order. MAIL_FAILED and MAIL_CLOSED forget the pending send. A
-spend that fits nothing exactly is one `mailSpent` row as before.
+purse changes gets each part on its own, in either order. MAIL_FAILED and MAIL_CLOSED forget the pending send, and
+MAIL_SEND_SUCCESS closes one whose gold is booked. Where the client names no price, a small spend on its own is
+the postage only when nothing else explains it (no trade, no purchase of that price asked for, no mail taken in
+the last 3 s). A spend that fits nothing exactly is one `mailSpent` row as before.
 
 **Returned bids.** `auctionRefund` is booked only for a mail whose subject starts with the text before the `%s` of
 the client's own `AUCTION_OUTBID_MAIL_SUBJECT` (no fallback text; a format with nothing before its `%s` gives no
@@ -453,10 +475,12 @@ written into the block of the character logged in only.
 **`settings.gold.mine`**: `{ [nameKey] = true }`, characters on another WoW account the player marked ("This is my
 character" on a journal row; "Not mine" in Settings > Gold > More). `nameKey` is the lower-case name, `-`, the realm
 without spaces, dashes and apostrophes. Applied to what is booked from then on; rows already written keep their
-source. Absent when empty.
+source. Absent when empty. A row whose player is a character of this account (`rel=alt` with no mark) does not
+offer the mark. Settings lists a mark by its name with its words capitalised ("Otheracct Banker"), with the realm
+part only beside a name marked on two realms.
 
-The backend ignores `goldV`, `gold.v`, `gold.since`, `goldBids`, `goldBank` and `settings.gold.mine` until its own
-gate. The four `sessions.gold` keys and the narrowed `mailSpent` are the part the backend note covers.
+The backend ignores `goldV`, `gold.v`, `gold.since`, `gold.xferSolo`, `goldBids`, `goldBank` and `settings.gold.mine`
+until its own gate. The four `sessions.gold` keys and the narrowed `mailSpent` are the part the backend note covers.
 
 ## Gold display (0.9.44 and 0.9.45, everbuff-wow-addon #43, decision 5)
 
@@ -482,9 +506,9 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 | Loot > Gold pane, Days view | the addon window is open | 0.9.47: a button in the caption row ("Balance line" / "Net per day") puts a 30 day balance line in the strip's place (one step per day from the day row's closing balance, a day with no row carried forward and drawn dashed); folded months are rows under the days; the status line names the best day and the best session |
 | Loot > Gold pane, status line | the addon window is open | 0.9.47: for a period of the character logged in that reconciles, a check mark and "Reconciled" at the end of the line, the identities on hover; when the records do not add up, "The gold records do not add up: hover for where" in red; nothing more when the period cannot be checked |
 | Combat > Dungeons, a run's Loot line | the addon window is open | 0.9.47: "N items · coin · loot value about X · Y/h" from the run's gold record when it has one (coin is looted coin and quest rewards, the rate is coin per hour played and never counts the loot value), else the loot log's counts as before. The record stands for the run only when it began with it (within 90 s of the run's start: a record opened later, by an update in the middle of a run, counted a part of it). The run's row in the list reads its items and coin from the same record, so list and page agree |
-| Loot > Gold pane, cards, Sources, Journal, Days, Characters | the addon window is open | 0.9.48: EARNED, SPENT and NET (and every Earned, Spent and Net of the Days view, the roster's Today and 7 days, the strip, the records, the tooltip, the pill, the bar text and `/eb gold`) are the figures with the transfers taken out. The line under the cards says "Moved between your characters: X in, Y out", "Bids returned: X" (in the net, not in earned), for a realm or account "Unmatched transfers: X (the other side was not recorded here)" when the legs differ, on All time "Transfers separated since <date>", for a session from before the update "Began before addon 0.9.48: transfers not separated", and "Mail with your characters, not separated: X in" for mail with a name that is not certain or from before the update. Sources gains the section MOVED BETWEEN YOUR CHARACTERS ("From your characters", "To your characters", "Bids returned"), "Mail: gold sent" under SPENT and the guild bank as rows of its own. A click on a journal row with a player offers "This is my character" (or "Not my character"). Characters lists the account bank as a row of its own under TOTAL while the client says it is on |
-| Home > Sessions, gold band | the addon window is open | 0.9.48: the net is without what moved; a session with transfers says "Moved between your characters: X out" in its flags block |
-| Settings > Gold > More | the addon window is open | 0.9.48: "My characters on other accounts", each with "Not mine" |
+| Loot > Gold pane, cards, Sources, Journal, Days, Characters | the addon window is open | 0.9.48: EARNED, SPENT and NET (and every Earned, Spent and Net of the Days view, the roster's Today and 7 days, the strip, the records, the tooltip, the pill, the bar text and `/eb gold`) are the figures with the transfers taken out. The line under the cards says "Moved between your characters: X in, Y out", "Bids returned: X (in the net, not in earned)" and "Auctions net of returned bids: X", for a realm or account "Unmatched transfers: X (the other side was not recorded here)" as a plain line when the legs differ (the account bank and characters on another account are not counted), on All time "Transfers separated since <date>", for a session from before the update "Began before addon 0.9.48: transfers not separated", and "Mail with your characters, not separated: X in" for mail with a name that is not certain or from before the update. Sources gains the section MOVED BETWEEN YOUR CHARACTERS ("From your characters", "To your characters", "Bids returned"), "Mail: gold sent" under SPENT and the guild bank as rows of its own (a click on one lists the guild bank's journal rows only); the tooltip of the Auction house row, of the Bids returned row and of a day with a returned bid carries "Auctions net of returned bids". The Today value of the pill, the bar text and the tooltip adds "moved X to <name>" (or "from", or "out" / "in" when the day's transfers have more than one counterparty). A click on a journal row with a player offers "This is my character" (or "Not my character"). Characters lists the account bank as a row of its own under TOTAL while the client says it is on |
+| Home > Sessions, gold band | the addon window is open | 0.9.48: the net is without what moved; a session with transfers says "Moved between your characters: X out" as the first line of its flags block |
+| Settings > Gold > More | the addon window is open | 0.9.48: "My characters on other accounts", each by its name with "Not mine" |
 | Chat, `/eb gold audit` | only as the direct reply to the typed command | 0.9.47: one line, "Gold ledger reconciled.", "Gold ledger does not add up: <the first break>" or "Not checkable: <reason>"; with a period (`today`, `yesterday`, `week`, `month`, `last30`, `session`) for that period. It answers in combat like the other gold replies |
 
 A rate on screen is drawn again every 10 s, by one ticker that exists only while the pill shows a rate or the farm

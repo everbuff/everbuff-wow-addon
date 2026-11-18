@@ -115,17 +115,43 @@ function Gold.sessionNet(sess)
   local sg = type(sess.gold) == "table" and sess.gold or {}
   return num(sess.gained) - num(sess.spent) - num(sg.xferIn) + num(sg.xferOut)
 end
--- "moved 100g out": one wording on every surface
-function Gold.movedText(moved, fmt) return ("moved %s %s"):format((fmt or fmtMoney)(math.abs(moved)), moved < 0 and "out" or "in") end
+-- "moved 100g to Mira Dawnfall" when the transfers have one counterparty (`who`), else "moved 100g out": one
+-- wording on every surface
+function Gold.movedText(moved, fmt, who)
+  local amount = (fmt or fmtMoney)(math.abs(moved))
+  if who then return ("moved %s %s %s"):format(amount, moved < 0 and "to" or "from", who) end
+  return ("moved %s %s"):format(amount, moved < 0 and "out" or "in")
+end
+-- the one counterparty of the transfers among journal rows (a character as the client named it, or "the account
+-- bank"), nil when there are several or none
+function Gold.movedWho(entries)
+  local who
+  for _, e in ipairs(entries or {}) do
+    if e.src == "xferIn" or e.src == "xferOut" then
+      local r = e.ref or {}
+      local w = r.bank and "the account bank" or r.partner or r.sender or r.to
+      if not w or (who and who:lower() ~= w:lower()) then return nil end
+      who = who or w
+    end
+  end
+  return who
+end
+-- the counterparty of today's transfers of the logged-in character (read only when something moved today)
+function Gold.movedWhoToday()
+  local ok, who = pcall(function() return Gold.movedWho(Gold.scopeEntries(Gold.scope("today"))) end)
+  return ok and who or nil
+end
 -- "in 51g · out 12g", then the bids returned and what moved when there is any
-function Gold.inOutText(l, fmt, sep)
+function Gold.inOutText(l, fmt, sep, who)
   fmt = fmt or fmtMoney
   local e, s, _, moved, ref = Gold.netted(l)
   local parts = { "in " .. fmt(e), "out " .. fmt(s) }
   if ref ~= 0 then parts[#parts + 1] = "bids returned " .. fmt(ref) end
-  if moved ~= 0 then parts[#parts + 1] = Gold.movedText(moved, fmt) end
+  if moved ~= 0 then parts[#parts + 1] = Gold.movedText(moved, fmt, who) end
   return table.concat(parts, sep or ", ")
 end
+-- the keys of characters[guid].gold that are not copper sums: the marks of 0.9.48 (`balance` is read on its own)
+Gold.LEDGER_MARKS = { v = true, since = true }
 local function person(name, guild, rel)
   if not name or name == "" then return nil end
   local out = name
@@ -178,7 +204,12 @@ local function describe(e)
   local r, src = e.ref, e.src
   local npc = r.npc
   -- the player on the other side of the row, as the client named them ("This is my character" marks that name)
-  if r.rel ~= "system" then e.player = r.partner or r.to or r.sender end
+  -- (not a character of this account, rel=alt with no mark: marking it would turn trades with that name into
+  -- transfers, the collision rule 19 rules out)
+  if r.rel ~= "system" then
+    local who = r.partner or r.to or r.sender
+    if who and not (r.rel == "alt" and not Gold.isMine(who)) then e.player = who end
+  end
   if src == "quests" then
     e.detail = e.quest or (r.quest and ("Quest " .. r.quest)) or "a quest"
     e.group = e.detail
@@ -242,8 +273,9 @@ local function describe(e)
       e.detail = into and "Taken out of the account bank" or "Put into the account bank"
       e.group = "Account bank"
     else
-      local who = r.partner or (into and r.sender) or r.to
+      local who = r.partner or r.sender or r.to
       e.detail = (into and "From your character " or "To your character ") .. (who or "the client did not name") .. (r.partner and ", in a trade" or "")
+        .. ((not into and num(tonumber(r.cod)) > 0) and ", COD" or "")
       e.group = who or "not named"
       local t = tonumber(r.trade)
       e.tradeRec = t and e.sess.trades and e.sess.trades[t] or nil
@@ -399,13 +431,13 @@ function Gold.scope(key, who, withStale)
     sc.label, sc.lifetime = "All time", true
     for _, blk in ipairs(Gold.whoBlocks(who, nil, withStale)) do
       for k, v in pairs(type(blk.gold) == "table" and blk.gold or {}) do
-        if k ~= "balance" and k ~= "v" and k ~= "since" then sc.ledger[k] = (sc.ledger[k] or 0) + num(v) end
+        if k ~= "balance" and not Gold.LEDGER_MARKS[k] then sc.ledger[k] = (sc.ledger[k] or 0) + num(v) end
       end
     end
   elseif key == "all" then
     sc.label, sc.lifetime = "All time", true
     for _, s in ipairs(all) do if type(s.goldLog) == "table" and #s.goldLog > 0 then sc.sessions[#sc.sessions + 1] = s end end
-    for k, v in pairs(charGold) do if k ~= "v" and k ~= "since" then sc.ledger[k] = num(v) end end
+    for k, v in pairs(charGold) do if not Gold.LEDGER_MARKS[k] then sc.ledger[k] = num(v) end end
     sc.balance = num(charGold.balance)
   else
     local sess
@@ -492,6 +524,7 @@ function Gold.sources(sc, entries)
   local function add(key, dir, total)
     local amount, list = num(g[key]), bySrc[key] or {}
     if amount == 0 and #list == 0 then return end
+    local split
     -- The guild bank is a source of its own (#43 decision 12) with no ledger key of its own: its coin is in
     -- `unexplained` (taken out) and `other` (put in), and the journal rows that carry `bank=guild` say how much of
     -- it. Shown apart while those rows are in the save file, never taken out of earned or spent.
@@ -506,10 +539,14 @@ function Gold.sources(sc, entries)
           dir = dir, amount = sum, n = #bank, share = total > 0 and sum / total or 0, top = contributors(bank) }
         amount, list = amount - sum, rest
         if amount == 0 and #list == 0 then return end
+        split = true
       end
     end
+    -- (`rest = "none"`: the rows of this key the guild bank row above does not hold; `netBids`, rule 18: the
+    -- auction house spending less the bids it gave back, a derived line of the row's tooltip)
     out.rows[#out.rows + 1] = { key = key, label = Gold.LABEL[key], dir = dir, amount = amount, n = #list,
-      share = total > 0 and amount / total or 0, top = contributors(list) }
+      share = total > 0 and amount / total or 0, top = contributors(list), rest = split and "none" or nil,
+      netBids = (key == "auctions" and refund ~= 0) and (amount - refund) or nil }
   end
   for _, k in ipairs(Gold.IN) do if not Gold.MOVED[k] then add(k, 1, out.inTotal) end end
   for _, k in ipairs(Gold.OUT) do if not Gold.MOVED[k] then add(k, -1, out.outTotal) end end
@@ -520,7 +557,8 @@ function Gold.sources(sc, entries)
     local amount, list = num(g[k]), bySrc[k] or {}
     if amount ~= 0 or #list > 0 then
       out.rows[#out.rows + 1] = { key = k, label = Gold.LABEL[k], dir = 0, moved = true, amount = k == "xferOut" and -amount or amount,
-        n = #list, share = 0, top = contributors(list) }
+        n = #list, share = 0, top = contributors(list),
+        netBids = (k == "auctionRefund" and num(g.auctions) ~= 0) and (num(g.auctions) - amount) or nil }
     end
   end
   return out
@@ -1074,6 +1112,7 @@ function Gold.period(key, who, now, withStale)
             p.ledger[sk] = (p.ledger[sk] or 0) + v
           end
         end
+        p.ledger.xferSolo = num(p.ledger.xferSolo) + num(r.xferSolo)
       end
     end
     -- the whole history also reads the months the oldest days were folded into (0.9.47): a row { key = "YYYYMM",
@@ -1098,6 +1137,7 @@ function Gold.period(key, who, now, withStale)
               p.ledger[sk] = (p.ledger[sk] or 0) + v
             end
           end
+          p.ledger.xferSolo = num(p.ledger.xferSolo) + num(r.xferSolo)
         end
       end
     end
@@ -1250,7 +1290,8 @@ function Gold.tipLines(opts)
   add("Balance", fmtMoney(Gold.metric("balance")), C.gold)
   local p = Gold.period("today", "char", now)
   local _, _, todayNet = Gold.netted(p.ledger)
-  add("Today", ("%s   (%s)"):format(signed(todayNet), Gold.inOutText(p.ledger, fmtMoney, "  ·  ")), todayNet < 0 and C.red or C.ink)
+  local who = Gold.figure("moved", p.ledger) ~= 0 and Gold.movedWhoToday() or nil
+  add("Today", ("%s   (%s)"):format(signed(todayNet), Gold.inOutText(p.ledger, fmtMoney, "  ·  ", who)), todayNet < 0 and C.red or C.ink)
   local cur = current()
   if cur then add("This session", signed(Gold.sessionNet(cur))) end
   for _, pk in ipairs({ { "week", "This week" }, { "month", "This month" } }) do
@@ -1345,13 +1386,16 @@ function Gold.tooltip(tip, opts)
 end
 
 -- Transfers one side of which was not recorded here (0.9.48, #43 rule 21): what the characters of a realm or account
--- scope sent to their own minus what they received from them. Nil when the two agree.
+-- scope sent to their own minus what they received from them. The legs that never have a second side in this save
+-- file are left out (`xferSolo`: the account bank, and characters on another WoW account), so the line speaks of a
+-- character's missing leg only: a mail not taken yet, a crash, a leg played on another PC. Nil when the two agree.
+function Gold.unmatched(ledger)
+  return num(ledger.xferOut) - num(ledger.xferIn) + num(ledger.xferSolo)
+end
 function Gold.unmatchedText(ledger)
-  local d = num(ledger.xferOut) - num(ledger.xferIn)
+  local d = Gold.unmatched(ledger)
   if d == 0 then return nil end
-  local E = ns.Emitter
-  local bank = E and E.accountBankOn and E.accountBankOn()
-  return ("Unmatched transfers: %s (the other side was not recorded here%s)"):format(fmtMoney(math.abs(d)), bank and ", or it is in the account bank" or "")
+  return ("Unmatched transfers: %s (the other side was not recorded here)"):format(fmtMoney(math.abs(d)))
 end
 -- "This is my character" (0.9.48, #43 decision 11): settings.gold.mine[nameKey] = true for a character on another
 -- WoW account. Applied forward only: rows already written keep their source. Returns the key, or nil.
@@ -1366,9 +1410,17 @@ function Gold.mineSet(name, on)
   Gold.fire()
   return key
 end
+-- (whether the name carries the mark at all; Emitter.isMine decides what a mail may be booked on it)
 function Gold.isMine(name)
   local E = ns.Emitter
-  return (E and E.isMine and E.isMine(name)) or false
+  return (E and E.isMine and E.isMine(name, true)) or false
+end
+-- A marked name as it is shown: the key is "name-realm" in lower case with the realm's spaces taken out, so the
+-- name is the part before the last "-" with its words capitalised; the realm part is returned beside it.
+function Gold.mineLabel(key)
+  local base, realm = tostring(key):match("^(.*)%-([^%-]*)$")
+  base = base or tostring(key)
+  return (base:gsub("(%a)([%w']*)", function(a, b) return a:upper() .. b end)), realm
 end
 -- the marked names, sorted (the keys as stored: "name-realm")
 function Gold.mineList()
@@ -1391,7 +1443,8 @@ function Gold.slash(sub)
     if ro.count > 1 then line = line .. ("  ·  all characters %s (%s)"):format(fmtMoney(ro.total), Gold.rosterLine(ro)) end
     ns.msg(line)
     local p = Gold.period("today", "char", now)
-    ns.msg(("today: %s (%s)"):format(signed(Gold.figure("net", p.ledger)), Gold.inOutText(p.ledger)))
+    ns.msg(("today: %s (%s)"):format(signed(Gold.figure("net", p.ledger)), Gold.inOutText(p.ledger, nil, nil,
+      Gold.figure("moved", p.ledger) ~= 0 and Gold.movedWhoToday() or nil)))
     local sum = Gold.summary(current())
     ns.msg(sum and ("this session: %s"):format(signed(sum.net)) or "this session: no session yet")
     -- the rolling rate once there is active time for it (0.9.45), else the session's net over its length
@@ -1668,7 +1721,7 @@ function Gold.timerStart(now)
   local c = ns.char()
   local snap = {}
   for k, v in pairs(type(c.gold) == "table" and c.gold or {}) do
-    if k ~= "balance" and plainN(v) then snap[k] = v end
+    if k ~= "balance" and not Gold.LEDGER_MARKS[k] and plainN(v) then snap[k] = v end
   end
   c.goldTimer = { at = now or nowT(), ledger = snap }
   Gold.fire()
@@ -1685,7 +1738,7 @@ function Gold.timer(now)
   local out = { at = t.at, elapsed = math.max(0, now - t.at), ledger = {} }
   local snap = type(t.ledger) == "table" and t.ledger or {}
   for k, v in pairs(type(c.gold) == "table" and c.gold or {}) do
-    if k ~= "balance" then out.ledger[k] = num(v) - num(snap[k]) end
+    if k ~= "balance" and not Gold.LEDGER_MARKS[k] then out.ledger[k] = num(v) - num(snap[k]) end
   end
   local L = out.ledger
   L.gained, L.spent = num(L.gained), num(L.spent)
@@ -1739,7 +1792,11 @@ function Gold.glance(id, label)
     local cur = current()
     return named("Session", Gold.fmt(cur and Gold.sessionNet(cur) or 0, { signed = true }))
   elseif id == "today" then
-    return named("Today", Gold.fmt(Gold.metric("net", "char", "today"), { signed = true }))
+    -- (0.9.48, #43 principle 3) "Today +38g · moved 100g to Mira": gold that left for an own character is said
+    local s = named("Today", Gold.fmt(Gold.metric("net", "char", "today"), { signed = true }))
+    local moved = Gold.metric("moved", "char", "today")
+    if moved ~= 0 then s = s .. " · " .. Gold.movedText(moved, Gold.fmt, Gold.movedWhoToday()) end
+    return s
   elseif id == "rate" then
     local name, v, _, dim = Gold.rateParts()
     return dim and dimText(name .. " " .. v) or (name .. " " .. v)
@@ -2568,7 +2625,7 @@ function Gold.fold()
     if type(m) ~= "table" then m = { g = 0, s = 0, t = 0, n = 0, d = 0 }; c.goldMonths[mk] = m end
     m.g, m.s, m.t, m.n, m.d = num(m.g) + num(r.g), num(m.s) + num(r.s), num(m.t) + num(r.t), num(m.n) + num(r.n), num(m.d) + 1
     for sk, v in pairs(r) do
-      if (IS_IN[sk] or IS_OUT[sk] or sk == "away") and type(v) == "number" then
+      if (IS_IN[sk] or IS_OUT[sk] or sk == "away" or sk == "xferSolo") and type(v) == "number" then
         local x = num(m[sk]) + v
         m[sk] = x ~= 0 and x or nil
       end
@@ -3140,6 +3197,7 @@ local function sourceTip(row, r, tip)
   tip:AddLine(("%s  %s"):format(r.label, r.dir == 0 and signed(r.amount) or fmtMoney(r.amount)), 1, 1, 1)
   if r.moved then tip:AddLine(r.key == "auctionRefund" and "A bid the auction house gave back. Not earned: the bid itself is in what was spent." or "Gold moved between your own characters. Neither earned nor spent.", C.dim[1], C.dim[2], C.dim[3], true) end
   if r.bank then tip:AddLine("The guild bank is not one of your characters: this stays in what was earned and spent.", C.dim[1], C.dim[2], C.dim[3], true) end
+  if r.netBids then tip:AddLine("Auctions net of returned bids: " .. fmtMoney(r.netBids), C.dim[1], C.dim[2], C.dim[3]) end
   for i = 1, math.min(8, #r.top) do
     local t = r.top[i]
     tip:AddLine(("%s  %s%s"):format(t.name, fmtMoney(t.amount), t.n > 1 and ("  (" .. t.n .. ")") or ""), C.dim[1], C.dim[2], C.dim[3])
@@ -3182,6 +3240,12 @@ end
 local function dayTip(row, d, tip)
   if not d or d.ebSection then return end
   tip:AddLine(("%s  %s"):format(d.label or d.key, signed(d.net or (d.g - d.s))), 1, 1, 1)
+  -- (0.9.48) a returned bid is in the net and not in earned: the row says so, and what the auctions cost without it
+  if num(d.src.auctionRefund) ~= 0 then
+    tip:AddLine(("Bids returned %s (in the net, not in earned)"):format(fmtMoney(d.src.auctionRefund)), C.dim[1], C.dim[2], C.dim[3], true)
+    if num(d.src.auctions) ~= 0 then tip:AddLine("Auctions net of returned bids: " .. fmtMoney(num(d.src.auctions) - d.src.auctionRefund), C.dim[1], C.dim[2], C.dim[3]) end
+  end
+  if (d.moved or 0) ~= 0 then tip:AddLine(("Moved between your characters %s (in neither earned, spent nor the net)"):format(signed(d.moved)), C.dim[1], C.dim[2], C.dim[3], true) end
   for _, list in ipairs({ Gold.IN, Gold.OUT }) do
     for _, k in ipairs(list) do
       if num(d.src[k]) ~= 0 then tip:AddLine(("%s  %s"):format(Gold.LABEL[k], fmtMoney(d.src[k])), C.dim[1], C.dim[2], C.dim[3]) end
@@ -3349,11 +3413,15 @@ local function refresh(c)
     if num(g.xferOut) ~= 0 then parts[#parts + 1] = fmtMoney(num(g.xferOut)) .. " out" end
     status[#status + 1] = "Moved between your characters: " .. table.concat(parts, ", ")
   end
-  if refund ~= 0 then status[#status + 1] = ("Bids returned: %s"):format(fmtMoney(refund)) end
-  -- a realm or an account: each character is netted by its own legs, a difference is said (rule 21)
+  if refund ~= 0 then
+    status[#status + 1] = ("Bids returned: %s (in the net, not in earned)"):format(fmtMoney(refund))
+    if num(g.auctions) ~= 0 then status[#status + 1] = "Auctions net of returned bids: " .. fmtMoney(num(g.auctions) - refund) end
+  end
+  -- a realm or an account: each character is netted by its own legs, a difference is said (rule 21). A plain
+  -- line, not a warning: a mail not taken yet is the usual reason.
   if not mine then
     local un = Gold.unmatchedText(g)
-    if un then warn[#warn + 1] = un end
+    if un then status[#status + 1] = un end
   end
   -- mail with the player's own characters that is not a transfer: from before transfers were booked apart, or with
   -- a name that is not certain (rel=alt?, rule 20). Shown, never subtracted.
@@ -3459,7 +3527,9 @@ local function refresh(c)
     local rows, sum = {}, 0
     for i = #entries, 1, -1 do
       local e = entries[i]
-      if (not st.src or e.src == st.src) and (not st.flags or e.flag) and (q == "" or hay(e):find(q, 1, true)) then
+      local isGuild = (e.ref and e.ref.bank == "guild") or false
+      if (not st.src or e.src == st.src) and (not st.bank or (st.bank == "guild") == isGuild)
+        and (not st.flags or e.flag) and (q == "" or hay(e):find(q, 1, true)) then
         rows[#rows + 1] = e; sum = sum + e.delta
       end
     end
@@ -3508,7 +3578,8 @@ local function refresh(c)
       if cc.bal then cc.bal:SetText(fmtMoney(e.bal or 0)) end
     end)
     c.journalRows, c.journalCount = jrn.rows, #rows
-    local what = st.flags and "Flagged rows" or (st.src and Gold.LABEL[st.src]) or "Every row"
+    local what = st.flags and "Flagged rows" or (st.src and st.bank == "guild" and (st.src == "unexplained" and "Guild bank: taken out" or "Guild bank: put in"))
+      or (st.src and Gold.LABEL[st.src]) or "Every row"
     local nRows = matched
     caption = ("%s%s%d row%s%s%s"):format(what, SEP, nRows, nRows == 1 and "" or "s", SEP, signed(sum))
     if matched > Gold.MAX_ROWS then caption = caption .. SEP .. ("the first %d listed: pick a source or search to narrow"):format(Gold.MAX_ROWS) end
@@ -3894,10 +3965,10 @@ function ns.BuildEconomyPane(pane)
   c.st = st
   local function again() refresh(c) end
   c.refresh = again
-  local function setScope(key) st.scope = key; st.src, st.flags = nil, false; again() end
+  local function setScope(key) st.scope = key; st.src, st.bank, st.flags = nil, nil, false; again() end
   local function setView(key)
     st.view = key
-    if key ~= "journal" then st.src, st.flags = nil, false; c.search:SetText("") end
+    if key ~= "journal" then st.src, st.bank, st.flags = nil, nil, false; c.search:SetText("") end
     again()
   end
   local function setWho(key)
@@ -3981,9 +4052,9 @@ function ns.BuildEconomyPane(pane)
   -- the caption line: what the list shows, with its buttons at the right
   c.capRow = CreateFrame("Frame", nil, c); c.capRow:SetHeight(ROW_H)
   c.caption = UI.CellFS(c.capRow, "GameFontHighlightSmall", C.gold); c.caption:SetJustifyH("LEFT")
-  c.allBtn = UI.Button(c.capRow, "All rows", 44, ROW_H, function() st.src, st.flags = nil, false; c.search:SetText(""); again() end)
+  c.allBtn = UI.Button(c.capRow, "All rows", 44, ROW_H, function() st.src, st.bank, st.flags = nil, nil, false; c.search:SetText(""); again() end)
   c.flagBtn = UI.Button(c.capRow, "Flagged", 44, ROW_H, function()
-    st.flags = not (st.view == "journal" and st.flags); st.view = "journal"; st.src = nil; again()
+    st.flags = not (st.view == "journal" and st.flags); st.view = "journal"; st.src, st.bank = nil, nil; again()
   end)
   c.filterBtn = UI.Button(c.capRow, FILTERS[1][2], 44, ROW_H, function(bb)
     local cur = (Gold.cfg() or {}).filter or "all"
@@ -4005,7 +4076,7 @@ function ns.BuildEconomyPane(pane)
     { key = "amount", label = "Amount", kind = "money" },
     { key = "go", label = "", kind = "tag", color = "dim", measure = { "›" } },
   }, { tooltip = sourceTip, emptyText = "No gold moved in this period yet.",
-    onClick = function(_, r) if r and r.key and r.n > 0 then Gold.filter(r.key) end end })
+    onClick = function(_, r) if r and r.key and r.n > 0 then Gold.filter(r.key, r.bank or r.rest) end end })
   -- Journal: text columns at the left, the numbers together at the right; Location and Coords are two columns
   local function journal(withBalance)
     local spec = {
@@ -4191,18 +4262,21 @@ function Gold.open(scope, view, flags)
   UI.Open("Loot", "gold")
   if not (goldContent and goldContent.st) then return end
   local st = goldContent.st
-  st.scope, st.src, st.flags = scope or "session", nil, flags and true or false
+  st.scope, st.src, st.bank, st.flags = scope or "session", nil, nil, flags and true or false
   st.view = flags and "journal" or (labelOf(VIEWS, view) and view or "sources")
   if not Gold.isDayScope(st.scope) and st.scope ~= "all" then st.who = "char" end
   if goldContent.search then goldContent.search:SetText("") end
   if goldRefresh then goldRefresh() end
 end
 
--- the journal of the open period, one source only (a click on its Sources row does the same)
-function Gold.filter(src)
+-- the journal of the open period, one source only (a click on its Sources row does the same). `bank`: "guild"
+-- lists the rows of that source the guild bank named, "none" the ones it did not (the two Sources rows of a key
+-- the guild bank has a share of).
+function Gold.filter(src, bank)
   if not (goldContent and goldContent.st and Gold.LABEL[src]) then return end
   local st = goldContent.st
   st.view, st.src, st.flags = "journal", src, false
+  st.bank = (bank == "guild" or bank == "none") and bank or nil
   if goldRefresh then goldRefresh() end
 end
 
@@ -4426,9 +4500,15 @@ function ns.BuildGoldSettings(pane)
     if #hidden == 0 then pane.hiddenNone:Show() else pane.hiddenNone:Hide() end
     pane.hiddenMore:SetText(#hidden > #pane.hiddenRows and ("and %d more"):format(#hidden - #pane.hiddenRows) or "")
     local marked = Gold.mineList()
+    local times = {}
+    for _, k in ipairs(marked) do local nm = Gold.mineLabel(k); times[nm] = (times[nm] or 0) + 1 end
     for i, row in ipairs(pane.mineRows) do
       local k = marked[i]
-      if k then row.name:SetText(k); row.name:Show(); row.btn.key = k; row.btn:Show()
+      -- (the name as the player knows it, not the storage key: "Otheracct Banker"; the realm part only beside a
+      -- name marked on two realms)
+      local nm, realm = Gold.mineLabel(k or "")
+      if k and times[nm] > 1 and realm and realm ~= "" then nm = ("%s (%s)"):format(nm, realm) end
+      if k then row.name:SetText(nm); row.name:Show(); row.btn.key = k; row.btn:Show()
       else row.name:SetText(""); row.name:Hide(); row.btn:Hide() end
     end
     if #marked == 0 then pane.mineNone:Show() else pane.mineNone:Hide() end

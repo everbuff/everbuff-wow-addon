@@ -357,6 +357,7 @@ ns.deps = {
   { "event", "LOOT_OPENED", "guarded" },
   { "event", "MAIL_CLOSED", "required" },
   { "event", "MAIL_FAILED", "guarded" },
+  { "event", "MAIL_SEND_SUCCESS", "guarded" },
   { "event", "MAIL_SHOW", "required" },
   { "event", "MERCHANT_CLOSED", "required" },
   { "event", "MERCHANT_SHOW", "required" },
