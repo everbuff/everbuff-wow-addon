@@ -250,7 +250,12 @@ local function buildDetail(content)
     end
     -- loot: totals plus every rare-and-better drop
     y = heading(y, "Loot")
-    line(y, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0)), C.gold); y = y + 20
+    -- the run's own gold record when it has one (0.9.47, #43): items, coin (looted coin and quest rewards), the
+    -- vendor value of the loot as an estimate, and coin per hour played in the run; else the counts of the loot log
+    -- (the list row of the run reads the same record, so the two never show different counts)
+    local rec = ns.Gold and ns.Gold.runFor and ns.Gold.runFor(run.name, run.startT, run.endT) or nil
+    v.lootLine = rec and ns.Gold.runLine(rec) or ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmtMoney(run.gold or 0))
+    line(y, v.lootLine, C.gold); y = y + 20
     if run.notable and #run.notable > 0 then
       for _, l in ipairs(run.notable) do
         local icon = l.icon and ("|T" .. tostring(l.icon) .. ":14:14:0:0|t ") or ""
@@ -329,7 +334,10 @@ local function buildList(content)
       row.c.boss:SetText(tostring(run.bossesDown or 0))
       row.c.death:SetText(tostring(run.deaths or 0))
       if (run.deaths or 0) > 0 then row.c.death:SetTextColor(C.red[1], C.red[2], C.red[3]) end
-      row.c.loot:SetText(((run.items or 0) > 0 and (run.items .. " · ") or "") .. fmtMoney(run.gold or 0))
+      -- items and coin from the run's gold record when it has one, as on its page (0.9.47, #43); else the loot log's
+      local rec = ns.Gold and ns.Gold.runFor and ns.Gold.runFor(run.name, run.startT, run.endT) or nil
+      local items, coin = rec and rec.items or run.items or 0, rec and rec.coin or run.gold or 0
+      row.c.loot:SetText((items > 0 and (items .. " · ") or "") .. fmtMoney(coin))
     end)
   end
 
@@ -356,4 +364,5 @@ ns._test.buildRuns = buildRuns
 ns._test.dungeonsLockText = function() return listView and listView.lockText and listView.lockText() or nil end
 ns._test.renderRun = function(run) if detailView then detailView.render(run); detailView:Show(); detailView:Hide() end end
 ns._test.dungeonDetail = function() return detailView end
+ns._test.dungeonList = function() if listRebuild then listRebuild() end; return listView end
 ns._test.openRun = function(run) openRun(run) end

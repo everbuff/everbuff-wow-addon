@@ -2316,7 +2316,8 @@ end
 -- #43 (0.9.44): the gold day rows, the roster and the glance (each on a save file of its own, the suite's put back)
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources" }) do
+-- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end
@@ -2428,6 +2429,19 @@ do
   -- the suite's data as it was before the sweep, plus one more session played (tests/play_session.lua), so every
   -- list has rows: that is "normal"; "long" is the same made long
   useData("normal")
+  -- The steps above moved the purse without the handlers more than once (a balance set by hand, a save file put in
+  -- the place of another), so the oldest day row of a character does not open where its own sums put it, and every
+  -- pane that audits the history would read "do not add up" for a break the suite made itself. The pane data starts
+  -- on a row that adds up: its opening balance is its closing balance minus what the row says moved. Nothing after
+  -- it is touched, so a break the handlers make in the sessions played below still shows.
+  for _, cb in pairs(ns.DB.characters or {}) do
+    local first
+    for k, r in pairs(type(cb) == "table" and type(cb.goldDays) == "table" and cb.goldDays or {}) do
+      if type(k) == "string" and type(r) == "table" and (not first or k < first) then first = k end
+    end
+    local r = first and cb.goldDays[first]
+    if r and type(r.o) == "number" and type(r.c) == "number" then r.o = r.c - ((r.g or 0) - (r.s or 0) + (r.away or 0)) end
+  end
   local realPrint = print
   print = function() end
   local okPlay, errPlay = pcall(dofile("tests/play_session.lua"), M, ns)

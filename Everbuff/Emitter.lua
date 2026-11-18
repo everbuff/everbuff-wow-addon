@@ -515,6 +515,8 @@ function Emitter.checkInstance()
     if ns.DB then ns.char().inInstance = nil end
     Emitter.event("DUNGEONLEAVE", { name = announced })
   end
+  -- the gold of a dungeon run follows the same answer (0.9.47, #43: characters[guid].goldRun and goldRuns)
+  if ns.Gold and ns.Gold.runSync then pcall(ns.Gold.runSync) end
   return kind ~= nil
 end
 
@@ -1240,7 +1242,11 @@ function Emitter.goldAway(d, bal, mailWaiting, undo, sync)
   local seen = ns.Gold and ns.Gold.seenBefore and ns.Gold.seenBefore() or nil
   local nowS = (GetServerTime and GetServerTime()) or time()
   local gap = (not undo and seen and nowS > seen) and math.floor(nowS - seen) or nil
+  local waits = not sync and C_Timer and C_Timer.After and true or nil
+  -- (the balance is already the new one: until the row is booked, one frame later, the audit does not judge)
+  if waits then Emitter._awayWait = (Emitter._awayWait or 0) + 1 end
   local function book()
+    if waits then Emitter._awayWait = (Emitter._awayWait or 1) > 1 and Emitter._awayWait - 1 or nil end
     if not ns.DB then return end
     local g, ses = goldDB(), sessionDB()
     -- (the row that takes a 0 read back carries the same tag as its booking, so the two cancel in every sum)
@@ -1255,7 +1261,7 @@ function Emitter.goldAway(d, bal, mailWaiting, undo, sync)
     Emitter.event("GOLDAWAY", { money = d }, true)
     if ns.Gold and ns.Gold.fire then ns.Gold.fire() end
   end
-  if not sync and C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
+  if waits then C_Timer.After(0, book) else book() end
 end
 
 -- Coin and items traded with another player (#31, #36). The window is open, or closed under 3 s ago (the purse can
@@ -2540,6 +2546,8 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
       -- drops at or above the loot-toast threshold get the on-screen flag; the rest stay off-screen
       if ns.Recorder and ns.Recorder.bump then ns.Recorder.bump("items") end
+      -- an item looted inside a dungeon run counts on the run, with its vendor price as an estimate (0.9.47, #43)
+      if ns.Gold and ns.Gold.runItem then pcall(ns.Gold.runItem, id, count) end
       Emitter.event("LOOT", { name = item, count = count }, lootQuiet(q))
     end
   end
@@ -3247,7 +3255,7 @@ ns._test.newLoad = function()
   lastMoney = nil
   Emitter._zero, Emitter._zeroSeed, Emitter._guidWait = nil, nil, nil
   Emitter._repair, Emitter._mailQ, Emitter._coin, Emitter._lastLoot, Emitter._respec = {}, {}, nil, nil, nil
-  Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading = nil, nil, nil, nil, nil
+  Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading, Emitter._awayWait = nil, nil, nil, nil, nil, nil
   Emitter._pend, Emitter._ah = { sell = {}, buy = {}, back = {} }, { claims = {} }
   if ns.Gold then ns.Gold._seenRead, ns.Gold._seenBefore = nil, nil end
 end
