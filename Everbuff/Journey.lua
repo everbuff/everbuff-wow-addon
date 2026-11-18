@@ -201,13 +201,16 @@ refresh = function(content)
   local gold = db.gold or {}   -- the character's own ledger (#23); loot.gold is retired
   content.cGold.value:SetText(fmtMoney(gold.balance or 0)); content.cGold.value:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
   -- a label and its amount are joined by a no-break space, so a wrap can only fall at the separator
-  -- the balance, then this session's net and pace: the same numbers the Gold pane opens on (#38)
-  local gs = ns.Gold and ns.Gold.summary(ns.Recorder and ns.Recorder.current and ns.Recorder.current())
-  if gs then
-    local sub = ("this%ssession%s%s"):format(UI.NBSP, UI.NBSP, ns.Gold.signed(gs.net))
-    if gs.perHour then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(gs.perHour), UI.NBSP, UI.NBSP) end
+  -- the balance, then today's net (the period the Gold pane opens on) and this session's pace; with more than one
+  -- character known, what they hold together (0.9.44, everbuff-wow-addon #43)
+  if ns.Gold then
+    local sub = ("today%s%s"):format(UI.NBSP, ns.Gold.signed(ns.Gold.metric("net", "char", "today")))
+    local gs = ns.Gold.summary(ns.Recorder and ns.Recorder.current and ns.Recorder.current())
+    if gs and gs.perHour then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(gs.perHour), UI.NBSP, UI.NBSP) end
+    local ro = ns.Gold.roster("all")
+    if ro.count > 1 then sub = sub .. ("  ·  all%scharacters%s%s"):format(UI.NBSP, UI.NBSP, fmtMoney(ro.total)) end
     content.cGold.sub:SetText(sub)
-  else content.cGold.sub:SetText("no session yet") end
+  else content.cGold.sub:SetText("") end
 
   -- Combat (from the event timeline: every kill/death lands there)
   local kills, deaths = 0, 0
@@ -288,8 +291,9 @@ end
 -- the pane gives it (placeStrips): each of the STRIP_N slots is stripW / STRIP_N wide and holds a bar of at most
 -- BAR_MAX px, centred in it.
 local STRIP_N, STRIP_H, BAR_W, BAR_GAP, BAR_MAX = 10, 44, 28, 4, 56
-local function makeStrip(parent, label)
-  local st = CreateFrame("Frame", nil, parent); st:SetSize(STRIP_N * (BAR_W + BAR_GAP), STRIP_H + 18)
+local function makeStrip(parent, label, n)
+  local st = CreateFrame("Frame", nil, parent); st:SetSize((n or STRIP_N) * (BAR_W + BAR_GAP), STRIP_H + 18)
+  st.n = n or STRIP_N
   st.slot, st.barW = BAR_W + BAR_GAP, BAR_W
   st.title = UI.FS(st, "GameFontNormalSmall", C.dim); st.title:SetPoint("TOPLEFT", 0, 0); st.title:SetText(label:upper())
   st.base = st:CreateTexture(nil, "ARTWORK"); st.base:SetPoint("BOTTOMLEFT", 0, 0); st.base:SetPoint("BOTTOMRIGHT", 0, 0); st.base:SetHeight(1)
@@ -306,7 +310,7 @@ local function renderStrip(st, values, fmt, signed)
   local baseY = signed and STRIP_H / 2 or 0
   st.base:ClearAllPoints(); st.base:SetPoint("BOTTOMLEFT", 0, baseY); st.base:SetPoint("BOTTOMRIGHT", 0, baseY)
   local span = signed and STRIP_H / 2 or STRIP_H
-  for i = 1, STRIP_N do
+  for i = 1, st.n or STRIP_N do
     local e = values[i]
     local bar = st.bars[i]; local hit = st.hits[i]
     if not bar then
@@ -340,6 +344,8 @@ local function stripValues(rows, key, signed)
 end
 ns._test = ns._test or {}
 ns._test.stripValues = stripValues
+-- the strip is also the Days view's (Loot > Gold, Economy.lua): one bar per day
+UI.makeStrip, UI.renderStrip, UI.STRIP_H = makeStrip, renderStrip, STRIP_H + 18
 
 local BAND_H = 104          -- the selected session's gold band under the list
 local sel = {}              -- sel.id: the session clicked; sel.shown: the session the band shows

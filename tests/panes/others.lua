@@ -167,10 +167,13 @@ return function(P)
       check(tag .. ": the cards fill the width in rows of three, M gaps, one height per row, nothing cut", #bad == 0, table.concat(bad, "; "))
       -- GOLD: each label keeps its amount (a no-break space joins them), so a wrap can only fall at the separator
       local gs = tostring(c.cGold.sub.text)
-      check(tag .. ": the Gold card says this session's net and pace, each joined to its amount (#38)", gs:find("^this" .. UI.NBSP .. "session" .. UI.NBSP .. "[%+%-]") ~= nil and gs:find(UI.NBSP .. "per" .. UI.NBSP .. "hour$") ~= nil, gs)
+      check(tag .. ": the Gold card says today's net, this session's pace and what every character holds, each joined to its amount (#43)", gs:find("^today" .. UI.NBSP .. "[%+%-]") ~= nil and gs:find(UI.NBSP .. "per" .. UI.NBSP .. "hour") ~= nil
+        and (ns.Gold.roster("all").count < 2 or gs:find("all" .. UI.NBSP .. "characters" .. UI.NBSP .. "%d") ~= nil), gs)
       local words = {}
       for wd in gs:gsub(UI.NBSP, "_"):gmatch("%S+") do words[#words + 1] = wd end
-      check(tag .. ": the only break points left in the Gold subtitle are around the separator", #words == 3 and words[2] == "·", #words)
+      local okWords = #words % 2 == 1
+      for i, wd in ipairs(words) do if (i % 2 == 0) ~= (wd == "·") then okWords = false end end
+      check(tag .. ": the only break points left in the Gold subtitle are around the separators", okWords and #words >= 3, #words)
       local tb, mb, sb = P.box(c.xpTrack), P.box(c.mhSub), P.box(c.mtbl.sf)
       local r2 = P.box(c.cGold)
       check(tag .. ": the XP bar sits under the cards", tb.t >= r2.t + r2.h + UI.SP.M - 0.5)

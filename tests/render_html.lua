@@ -294,7 +294,8 @@ for _, dataTag in ipairs({ "normal", "long" }) do
     _G.UIParent._w, _G.UIParent._h = sz[1], sz[2]
     VIEW.w, VIEW.h = sz[1], sz[2]
     for _, key in ipairs(PAGES) do
-      -- "loot/gold:journal", ":flagged", ":all", ":previous" or ":<source key>" open the Gold pane in that state
+      -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":days", ":chars" or ":<source key>" open the
+      -- Gold pane in that state
       local host, pane, state = key:match("^(%w+)/(%w+):?(%w*)$")
       ns.UI.Open(HOSTS[host] or host, pane); M.tick()
       ns.UI.Open(HOSTS[host] or host, pane)       -- a second open: the panes read sizes their first build set
@@ -304,6 +305,9 @@ for _, dataTag in ipairs({ "normal", "long" }) do
         elseif state == "flagged" then ns.Gold.open("session", "journal", true)
         elseif state == "all" then ns.Gold.open("all", "journal")
         elseif state == "previous" then ns.Gold.open("previous")
+        elseif state == "today" then ns.Gold.open("today")
+        elseif state == "days" then ns.Gold.open("all", "days")
+        elseif state == "chars" then ns.Gold.open("today", "chars")
         else ns.Gold.open("session", "journal"); ns.Gold.filter(state) end
       end
       if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, capture, data)

@@ -37,13 +37,13 @@ fights, loot rows and events of the sessions it clears and opens a new session w
 | key | type | notes |
 | --- | --- | --- |
 | `schema` | int | 2 |
-| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load. Diagnostics, not settings: `blocked[]` (0.9.22, the last 10 `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` the client raised, `{ t, kind, addon, func, combat, stack }`) and `selftest` (0.9.24, the client self-test, below) |
+| `settings` | object | UI prefs only: `emitCorner, autoSave, statSample, flagMute{}, winPos{}, winScale, minimapAngle, welcomed, lootToast, flagScale (1.0 to 1.5), flagPos{point,x,y}, onboarded, winSize{w,h}`. From 0.9.19 the flag cannot be hidden or faded (desktop #90): an older `flagHidden` or `flagAlpha` is dropped on load. Diagnostics, not settings: `blocked[]` (0.9.22, the last 10 `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` the client raised, `{ t, kind, addon, func, combat, stack }`) and `selftest` (0.9.24, the client self-test, below). `gold?` (0.9.44, everbuff-wow-addon #43, created on first use): the day base and week anchor of the gold history and the gold display settings, see "Gold history" below |
 | `debug` | object or nil | diagnostics: `errors[]` (the last 50 Lua errors the client raised, any addon's, `{ at, err, stack?, n?, last? }`; from 0.9.23 a repeat of the row before it counts up in `n` and `last` instead of adding a row), `snapshot` (`/eb debug`) |
 | `sessions` | map id -> session | HOME. One record per login -> logout (a `/reload` resumes it: PLAYER_LOGOUT, which a reload also fires, writes `endedEpoch` and `endedBy = "logout"` into the save file, and the reload clears them again and adds a RESUME row; a real login leaves them; everbuff-wow-addon #14, 0.9.20): identity (`player, realm, class, guild, build, flavor, addonVersion`), `surname?` (the second name of a WoW Forever character, "Hammershield" for Hart Hammershield; from 0.9.17, absent where the client shows no surname; everbuff-backend #85), `guid` (player GUID), `schema` (4, the session record's own version), `project` (`WOW_PROJECT_ID`), `startedEpoch`, `startedLocal`, `startedMono` (the client's `GetTime()` at the start), `endedEpoch?`, `endedLocal?`, `endedMono?`, `endedBy?` (`"logout"`, written at PLAYER_LOGOUT, which a /reload also fires; absent on a session `/eb export` closed), `recovered?` (closed on the next login after a crash), `level0 -> level`, `context`, `logging`, TAB-delimited `segments[]` (Segments.lua beacon), live counters `xp, gained, spent, kills, deaths, fights, items, dungeons`, and `gold?` (0.9.23, everbuff-backend #46): this session's own gold ledger in copper, `{ gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` (`trade` to `awayOut` from 0.9.37, everbuff-wow-addon #31; a session resumed by a /reload into 0.9.37 gets them on first use), the keys of the character's `gold` ledger (`characters[guid].gold`) without `balance`, every key present from the session's start and credited at the same moment as the lifetime totals. Absent on a session that began before 0.9.23 (a /reload into 0.9.23 does not add a partial one). `goldLog?`, `trades?` and `goldLogDropped?` (0.9.40, everbuff-wow-addon #36): the gold journal, below; absent on a session that began before 0.9.40 (a /reload into 0.9.40 does not add a partial one) |
 | `active` | id or nil | the session in progress |
 | `combat` | object | COMBAT. `fights[]` (below; oldest first, capped at 5000 since 0.9.38, 1000 before (founder, 2026-11-11); at the cap an uploaded fight goes first, an unread one only as a last resort, counted and said in chat on the first loss and every 50th, everbuff-business #38), `fightSeq`, `uploadedThrough?`, `lastAck? { at, through?, fights, sessions?, source }` |
 | `loot` | object | LOOT. `log[]` = every pickup, item rows and coin rows (below; capped at 2000); item row `q` is the 8-hex quality color (`ff9d9d9d` poor .. `ffe6cc80` artifact), read from the link's `|cff` color or its `|cnIQ<n>:` named color (11.0+ and Forever), else from `C_Item.GetItemQualityByID`; white rows with an id are backfilled on login (0.8.2); the gold totals live in `characters[guid].gold` (0.9.30, #23; the old account-wide `loot.gold` is deleted on load, 0.9.33); `history`, `reserves` reserved for raid loot council; `ah` (0.9.0) `{ posted[] { s, t, item, id, icon, count, bid, buyout, unit, hours, kind }, bought[] { s, t, item, id, count, price, unit, auctionId, seller, kind }, sold[] { s, t, item, buyer, bid, buyout, deposit, cut, net }, returned[] { s, t, item, id, count, reason } }` in copper, from the auction house hooks and the mail invoices |
-| `characters` | map GUID -> block | CHARACTER, one block per character (0.9.30, everbuff-wow-addon #23, approved 2026-10-04, option A). The key is the player GUID (`UnitGUID("player")`, the same value as the session records' `guid`); the addon writes only the block of the character logged in, and a GUID the client hides or has not given yet writes nothing. Each block: `name`, `realm` (when the block was created); `crafts[]` `{ s, t, item, id, icon, count, prof, zone, x, y }` and `recipes[]` `{ s, t, name, prof }` (0.9.0); `xp { cur, max, rested, gained, fromQuests, fromKills, last, lastMax }`, `played { total, level, atEpoch }`, `playedAtLevel { level -> seconds }`, `professions { name -> { rank, max } }`, `reputation { faction -> { standing, label } }`, `durability { pct, at }`, `ilvl`, `seenZones { zone -> epoch }`, `itemUses { name -> count }` (the client's internal all-caps effects such as LOGINEFFECT are not counted, 0.9.3), `flightTime` (seconds on taxis), `lockouts[] { name, id, resetAt (epoch), difficulty, raid?, players, bosses, down, extended? }`, `gold` totals `{ balance, gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` in copper (`quests`, 0.9.3: a quest's money reward, matched to QUEST_TURNED_IN in either order within 3 s, exact amount only; 0.9.37, everbuff-wow-addon #31: `trade` and `tradeSpent` are coin received and given while the trade window was open or closed under 3 s ago, part of `gained` and `spent`; `away` is gold that changed while the addon did not see it, signed, booked at the first read of a load as the purse minus the `balance` the save file kept, with its size in `awayIn` or `awayOut`, never part of `gained` or `spent`, so `balance = gained - spent + away` holds from the first 0.9.37 load on; a 0 read at load with gold saved is read once more 3 s later; a block without a `balance` is seeded silently), `inInstance?` (the DUNGEON / DUNGEONLEAVE dedupe state) |
+| `characters` | map GUID -> block | CHARACTER, one block per character (0.9.30, everbuff-wow-addon #23, approved 2026-10-04, option A). The key is the player GUID (`UnitGUID("player")`, the same value as the session records' `guid`); the addon writes only the block of the character logged in, and a GUID the client hides or has not given yet writes nothing. Each block: `name`, `realm` (written when the block is created and, from 0.9.44, refreshed at every login); `surname?`, `class?` (class token, `WARRIOR`), `faction?` (`Alliance`, `Horde` or `Neutral`), `level?`, `seen?` (server epoch of the last login, level-up or logout), written from 0.9.44 (#43) at PLAYER_ENTERING_WORLD, PLAYER_LEVEL_UP and PLAYER_LOGOUT, each read tested and protected, a value the client hides leaves the stored one; a block that has none of them is a character not logged in since the update; `goldDays?` and `goldSince?` (0.9.44, the gold history, below; siblings of `gold`, never inside it); `crafts[]` `{ s, t, item, id, icon, count, prof, zone, x, y }` and `recipes[]` `{ s, t, name, prof }` (0.9.0); `xp { cur, max, rested, gained, fromQuests, fromKills, last, lastMax }`, `played { total, level, atEpoch }`, `playedAtLevel { level -> seconds }`, `professions { name -> { rank, max } }`, `reputation { faction -> { standing, label } }`, `durability { pct, at }`, `ilvl`, `seenZones { zone -> epoch }`, `itemUses { name -> count }` (the client's internal all-caps effects such as LOGINEFFECT are not counted, 0.9.3), `flightTime` (seconds on taxis), `lockouts[] { name, id, resetAt (epoch), difficulty, raid?, players, bosses, down, extended? }`, `gold` totals `{ balance, gained, spent, looted, sold, quests, auctionSales, mail, repairs, vendor, training, flights, auctions, mailSpent, other, trade, tradeSpent, away, awayIn, awayOut }` in copper (`quests`, 0.9.3: a quest's money reward, matched to QUEST_TURNED_IN in either order within 3 s, exact amount only; 0.9.37, everbuff-wow-addon #31: `trade` and `tradeSpent` are coin received and given while the trade window was open or closed under 3 s ago, part of `gained` and `spent`; `away` is gold that changed while the addon did not see it, signed, booked at the first read of a load as the purse minus the `balance` the save file kept, with its size in `awayIn` or `awayOut`, never part of `gained` or `spent`, so `balance = gained - spent + away` holds from the first 0.9.37 load on; from 0.9.44 (#43) a 0 read at load with gold saved is not trusted until a PLAYER_MONEY brings a read that is not 0 or 15 s have passed (read again after 3 s and 15 s), and when a 0 was booked and the very next read brings the saved balance back, the booking is taken back by a second `away` row the other way, taken out of `awayIn` or `awayOut` again, so `away`, `awayIn` and `awayOut` end where they were; while the GUID is not known no baseline is seeded, so the comparison with the saved balance is still made; a block without a `balance` is seeded silently; "Clear loot" in Settings no longer zeroes `looted`), `inInstance?` (the DUNGEON / DUNGEONLEAVE dedupe state) |
 | `story` | object | the feed behind Home. `events[]` (below; capped at 500), `rep[]` (0.9.10: every reputation gain `{ t, s, faction, amount, src?, zone?, sub?, map?, x?, y? }`, `src` is "Quest: <name>" when a quest was turned in within 5 s or "Kill: <name>" after a kill; capped at 2000) (`inInstance` moved to the character block, 0.9.30) |
 
 ## Gold journal (session `goldLog`, `trades`, 0.9.40, everbuff-wow-addon #36, option A, approved 2026-11-17)
@@ -66,7 +66,14 @@ optional; nothing is drawn in game, nothing goes to chat, no new story kind.
 `training`, the flight master on `flights`, read from the `NPC` unit when the window opened), `sender`, `partner`,
 `guild` (the trade partner's guild, `GetGuildInfo("NPC")`), `rel`, `cod` (copper, 0 when none), `trade` (1-based
 index into this session's `trades[]`), `quest` (quest id), `mailWaiting` (1 when `HasNewMail()` was true at the first
-read of the load, on `away` rows), `x` (rows merged past the cap).
+read of the load, on `away` rows), `x` (rows merged past the cap), `gap` (0.9.44, #43: on `away` rows, the seconds
+since the character was last seen, `characters[guid].seen` before this load; absent when that is not known).
+
+Which source an income is, in this order (0.9.44, #43; the order matters because day rows are kept): a quest reward
+of exactly this amount (QUEST_TURNED_IN within 3 s), an open trade (or one closed under 3 s ago), a sale asked for at
+a merchant in the last 5 s, a mail taken in the last 3 s, the loot window (3 s from LOOT_OPENED), any gain while a
+merchant window is open, any gain while the mailbox is open, else `unexplained`. Before 0.9.44 the loot window came
+first, so a quest reward or a sale within 3 s of a corpse loot was booked as `looted`. Spending is unchanged.
 
 | Source | ref |
 | --- | --- |
@@ -77,7 +84,7 @@ read of the load, on `away` rows), `x` (rows merged past the cap).
 | `mail`, `auctionSales` | `sender, rel, cod` of the mail the coin came from (absent when the mailbox was open but no take was seen) |
 | `mailSpent` | `sender, rel, cod` for a COD payment (the item taken in the 3 s before); empty for postage |
 | `trade`, `tradeSpent` | `partner, guild?, rel, trade` |
-| `away` | `mailWaiting` when true |
+| `away` | `mailWaiting` when true, `gap` when known. From 0.9.44 a 0 the client answered at login and then corrected is two `away` rows that cancel (the booking and its taking back), both kept |
 | `looted`, `auctions`, `other`, `unexplained` | empty |
 
 `rel`, who the player is to this character: `alt` (a `characters[guid]` block of this save file with that `name` on the
@@ -101,6 +108,69 @@ A trade is written once it completed: a purse change while the window is open or
 client's `ERR_TRADE_COMPLETE` (UI_INFO_MESSAGE), so an items-only trade is written too. When gold moved but no
 snapshot was taken the money comes from the purse change. A cancelled trade (closed with nothing moved, or
 `ERR_TRADE_CANCELLED`) is not written. The `trade` ref of the gold row is the entry's index.
+
+## Gold history (`characters[guid].goldDays`, `goldSince`, `settings.gold`, 0.9.44, everbuff-wow-addon #43)
+
+Approved 2026-11-18 with every recommended decision of the plan in #43. All keys are optional and created on first
+use; there is no schema bump. The backend ignores these keys until its own gate: no `sessions.gold` key changes, and
+the new keys ride along in the uploaded save file.
+
+`characters[guid].goldDays`: map `dayKey -> row`, written at the moment of the ledger credit, into the block of the
+character logged in and no other (the rule of the `characters` row above). Nothing is reconstructed: the history
+starts at the first purse change, or the first minute played, after the update.
+
+| Field | Meaning |
+| --- | --- |
+| `dayKey` | `'YYYYMMDD'`: the UTC date of the day's start, `date('!%Y%m%d', dayStart)`, so the PC's time zone cannot move it. `dayStart = floor((now - offset) / 86400) * 86400 + offset` with the stored `settings.gold.dayBase.offset` |
+| `g`, `s` | copper gained and spent on the day (the raw purse flow, as `gained` and `spent` of the ledger) |
+| `o`, `c` | the balance before the day's first change and after its last. Absent on a row that never saw a balance |
+| `t` | active seconds: every 10 s the time since the last tick, capped at 10 s, while the character is logged in (AFK time is not excluded yet) |
+| `n` | purse changes on the day. A change while away counts as one |
+| source keys | the non-zero ledger sources by their ledger name: `looted`, `quests`, `sold`, `auctionSales`, `mail`, `trade`, `unexplained`, `repairs`, `vendor`, `training`, `flights`, `auctions`, `mailSpent`, `tradeSpent`, `other`. A source with 0 is absent |
+| `unexplained` | income no source claimed, credited on the row itself (the session and lifetime ledgers still derive it). A quest that claims it within 3 s moves it to `quests` on the row of the day the income was booked on, also after a rollover |
+| `away` | signed copper that changed while the addon did not see it, written into the day it was discovered on. Neither `g` nor `s`. Absent when 0 |
+
+Every amount is an integer, floored at the write. On every row the income keys sum to `g`, the spend keys sum to `s`,
+and `c - o = g - s + away`; a row opens on the close of the row before it. The rows of a character sum to its
+lifetime ledger since `goldSince`. `tests/gold_days.lua` holds these over 10,000 random purse changes.
+
+`characters[guid].goldSince`: server epoch of the first day row. The Gold pane says "History starts <date>".
+
+Cap: 400 day rows per character (`Gold.DAY_CAP`). No row can reach that age before late 2027 and nothing is dropped
+before the fold into month rows exists (planned for 0.9.48), so the cap is not enforced yet. The acknowledgement
+prune (`applyAck`) never touches `characters`, so the history outlives the sessions it came from.
+
+`settings.gold` (account-wide, nothing per character is stored in it):
+
+| Key | Meaning |
+| --- | --- |
+| `dayBase` | `{ kind = "server" or "local", offset, since, changes? }`, written once, so every character's day keys line up when summed. `offset = (GetServerTime() + secs) % 86400` rounded to the nearest 900 s, where `secs` is `C_DateAndTime.GetSecondsUntilDailyReset()` (or the legacy `GetQuestResetTime()`), accepted only as a plain number with `0 < secs <= 86400`. When no valid reading arrives within 30 s of the first credit ever (or by the logout), the base is the PC's midnight and `kind = "local"`; credits before that are held in memory and written once the base is known, on the day they happened. A later reading more than 900 s away appends `{ at, offset }` to `changes` (at most 50); the stored `offset` and every existing key stay |
+| `weekAnchor` | server epoch of one weekly reset, written once: `C_DateAndTime.GetWeeklyResetStartTime()`, else now plus `GetSecondsUntilWeeklyReset()`. A week is 7 day keys from it. Without it a week starts on a Monday of the day base |
+| `filter` | which characters the Characters view and the tooltip list: `all` (default), `realm`, `faction`, `realmFaction`, relative to the character logged in |
+| `hidden` | `{ [guid] = true }`: characters left out of every total ("Hide from totals"). A display setting, never a flag on the character's block; absent when empty |
+| `tips` | `false` turns the gold block of the tooltips off (default on) |
+
+Never stored: week, month, last 7 and last 30 days, realm and account sums, the total of all characters, shares and
+rates. They are sums over the character blocks at read time (`Gold.period`, `Gold.roster`, `Gold.metric` in
+`Everbuff/Economy.lua`), so hiding a character corrects every figure at once.
+
+Size, measured on `tests/export/EverbuffJournal.lua` (0.9.44): the file grows from 14,656 to 15,234 bytes. The one
+day row with two sources is 178 bytes in the save file's layout and each further source adds about 22, so a row is
+180 to 250 bytes and 400 rows are 70 to 100 KB per character (the plan estimated 50 KB).
+
+## Gold display (0.9.44, everbuff-wow-addon #43, decision 5)
+
+The sentence "nothing is drawn in game, nothing goes to chat" above scopes the gold journal of #36. What 0.9.44 draws
+and says about gold, and nothing else:
+
+| Surface | When | What |
+| --- | --- | --- |
+| Loot > Gold pane | the addon window is open | periods by server day, who (character, realm, account), the Days and Characters views. Other characters' names and balances are shown here, and so in recordings |
+| Home > Overview, GOLD card | the addon window is open | today's net, this session's pace, and the total of all characters when more than one is known |
+| Minimap button tooltip | while the mouse is over the button | the gold block (at most 18 lines) under the two help lines; it follows the purse while it is open. Off with `settings.gold.tips = false` |
+| Chat | only as the direct reply to a typed `/eb gold` (four lines) or `/eb gold chars` (the roster) | never a login summary. These two replies also answer in combat: they open, move and change nothing |
+
+Nothing is drawn near the flag, and the flag's tooltip is unchanged.
 
 ## Fight record (`schema = 1`)
 
@@ -223,6 +293,10 @@ takes the same facts from rows it does ingest. Measured on the save file of 2026
 | `loot.ah` | 24 | 2.7 KB | Loot, Auctions | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
 | `characters[guid].crafts` | 0 | 0 KB | Character, Crafting | `story.events` SKILLUP with `craft` and `crafted` |
 | `characters[guid].recipes` | 2 | 0.1 KB | Character, Crafting | `story.events` RECIPE |
+
+From 0.9.44 `characters[guid].goldDays`, `goldSince`, the roster facts and `settings.gold` are a fifth such store
+(the Gold pane's periods, Days and Characters): uploaded with the save file, not read by ingest until a backend gate
+of its own. They were not in the file measured here.
 
 Together 14.4 KB, 0.7 % of the file; the fights are 1.47 MB (71 %). Dropping them would remove in-game panes and save
 almost nothing, so they stay. Reading them on the backend (per-gain reputation, auction postings) needs a place in

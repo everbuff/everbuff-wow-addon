@@ -1214,13 +1214,22 @@ function UI.buildMinimapButton()
   b:SetScript("OnDragStop", function(btn) btn:SetScript("OnUpdate", nil) end)
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   b:SetScript("OnClick", function(_, which) if which == "RightButton" then UI.Open("Settings") else UI.Toggle() end end)
-  b:SetScript("OnEnter", function(btn)
+  -- the two help lines, then the gold block (Gold.tooltip, Economy.lua: balance, today, the characters; off with
+  -- settings.gold.tips = false). Nothing is drawn until the hover; while it is open it follows the purse.
+  local function tip(btn)
     GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
     GameTooltip:AddLine("everbuff.gg")
     GameTooltip:AddLine("Left-click: open   Right-click: settings   Drag: move", 0.7, 0.7, 0.7)
+    if ns.Gold and ns.Gold.tooltip then pcall(ns.Gold.tooltip, GameTooltip) end
     GameTooltip:Show()
-  end)
+  end
+  b:SetScript("OnEnter", tip)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  if ns.Gold and ns.Gold.onChange then
+    ns.Gold.onChange(function()
+      if GameTooltip and type(GameTooltip.IsOwned) == "function" and GameTooltip:IsOwned(b) == true then tip(b) end
+    end)
+  end
   place()
   UI.minimapBtn = b
 end

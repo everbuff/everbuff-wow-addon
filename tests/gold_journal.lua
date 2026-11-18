@@ -192,6 +192,91 @@ return function(P)
   is("gold lost while away, no mail", row(), "away", -50, "")
   check("#36 away rows chain inside one session too", chain(s1))
 
+  -- 0.9.44 (everbuff-wow-addon #43) ─────────────────────────────────────────────────────────────────────────────
+  -- A 0 the client answers at login with gold saved is not trusted for 15 s, and when it was booked and the next read
+  -- brings the saved balance back, the booking is taken back: saved balance, reads 0, 0, balance gives gained 0 and
+  -- away 0.
+  do
+    later()
+    local g = ns.char().gold
+    local s = ses()
+    local saved = g.balance
+    local gained0, away0, in0, out0, rows0 = g.gained, g.away or 0, g.awayIn or 0, g.awayOut or 0, #s.goldLog
+    local sa0, si0, so0, sg0 = s.gold.away, s.gold.awayIn, s.gold.awayOut, s.gold.gained
+    check("#43 0-read: the test starts with gold saved", saved > 0 and saved == M.money, saved)
+    ns._test.newLoad(); M.money = 0; M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers()   -- read 1 and the read 3 s later: 0
+    check("#43 0-read: a 0 inside the first 15 s is not booked", g.balance == saved and (g.away or 0) == away0 and #s.goldLog == rows0)
+    M.now = M.now + 15; M.fire("PLAYER_MONEY"); M.runTimers()                                       -- read 2, after 15 s: still 0
+    check("#43 0-read: a 0 that stays for 15 s is booked as gold changed while away", g.balance == 0 and g.away == away0 - saved and g.awayOut == out0 + saved and #s.goldLog == rows0 + 1, g.away)
+    M.money = saved; M.fire("PLAYER_MONEY"); M.runTimers()                                          -- read 3: the saved balance
+    check("#43 0-read: saved balance, reads 0, 0, balance: gained 0 and away 0", g.gained == gained0 and (g.away or 0) == away0 and (g.awayIn or 0) == in0 and (g.awayOut or 0) == out0 and g.balance == saved,
+      ("%s %s %s %s"):format(g.gained - gained0, (g.away or 0) - away0, (g.awayIn or 0) - in0, (g.awayOut or 0) - out0))
+    local r1, r2 = row(rows0 + 1, s), row(rows0 + 2, s)
+    check("#43 0-read: the journal keeps both rows, the chain holds", #s.goldLog == rows0 + 2 and r1.src == "away" and r1.delta == -saved and r2.src == "away" and r2.delta == saved and r2.bal == saved and chain(s))
+    do
+      local G = ns.Gold
+      local dayRow = ns.char().goldDays[G.dayKey(GetServerTime(), G.baseStored())]
+      check("#43 0-read: the day row closes on the saved balance again", dayRow ~= nil and dayRow.c == saved, dayRow and dayRow.c)
+    end
+    check("#43 0-read: the session's ledger is back where it was too", s.gold.away == sa0 and s.gold.awayIn == si0 and s.gold.awayOut == so0 and s.gold.gained == sg0, s.gold.away)
+    later()
+    money(25)
+    is("after the correction a gain is a gain", row(), "unexplained", 25, "")
+    later()
+  end
+  -- The character is not known yet (the client gives no GUID for a moment at login): no baseline is seeded, so the
+  -- comparison with the saved balance is still made once the GUID is there.
+  do
+    local g = ns.char().gold
+    local realGUID = _G.UnitGUID
+    local away0, gained0, bal0 = g.away or 0, g.gained, g.balance
+    ns._test.newLoad()
+    _G.UnitGUID = function(u) if u == "player" then return nil end return realGUID(u) end
+    local scratch = ns.char()
+    local sBal, sGained = scratch.gold.balance, scratch.gold.gained
+    M.money = bal0 + 40; M.fire("PLAYER_MONEY")
+    M.money = M.money + 2; M.fire("PLAYER_MONEY")          -- two money events before the character is known
+    check("#43 no GUID: two money events seed nothing and book nothing, not even on the scratch block", g.balance == bal0 and (g.away or 0) == away0 and g.gained == gained0
+      and scratch ~= ns.DB.characters["Player-1-000001"] and scratch.gold.balance == sBal and scratch.gold.gained == sGained)
+    _G.UnitGUID = realGUID
+    M.runTimers(); M.runTimers()                           -- the read one second later, then the booking tick
+    check("#43 no GUID: once the character is known the purse is compared with the saved balance: away, not gained", g.balance == bal0 + 42 and g.away == away0 + 42 and g.gained == gained0, g.away - away0)
+    later()
+  end
+  -- Which source a gain is: a quest reward, a sale just asked for and a mail just taken come before the loot window.
+  do
+    M.fire("LOOT_OPENED"); money(30)
+    is("coin in the loot window is looted coin", row(), "looted", 30, "")
+    M.now = M.now + 1
+    M.fire("QUEST_TURNED_IN", 4400, 0, 250); money(250)
+    is("#43 a quest reward within 3 s of a corpse loot is the quest's", row(), "quests", 250, "quest=4400")
+    M.now = M.now + 1
+    money(41)
+    is("#43 the next coin in the same loot window is still looted", row(), "looted", 41, "")
+    later()
+    M.units.NPC = { name = "Merchant Bob" }; M.fire("MERCHANT_SHOW"); M.fire("LOOT_OPENED")
+    M.bags[0][3] = { itemID = 2589, quality = 1, stackCount = 5 }; M.sellPrice[2589] = 13
+    C_Container.UseContainerItem(0, 3); M.bags[0][3] = nil
+    money(65)
+    is("#43 a sale just asked for at a merchant comes before the loot window", row(), "sold", 65, "item=2589;n=5;unit=13;npc=Merchant Bob")
+    money(11)
+    is("#43 with no sale asked for, coin in the loot window at a merchant is looted", row(), "looted", 11, "")
+    M.fire("MERCHANT_CLOSED"); M.units.NPC = nil; later()
+    M.fire("MAIL_SHOW"); M.fire("LOOT_OPENED")
+    M.inbox = { { sender = "Rando", subject = "gold", money = 77 } }
+    TakeInboxMoney(1); money(77)
+    is("#43 a mail just taken comes before the loot window", row(), "mail", 77, "sender=Rando;rel=stranger;cod=0")
+    M.fire("MAIL_CLOSED"); M.inbox = {}; later()
+    M.units.NPC = { name = "Pal" }; M.fire("TRADE_SHOW"); M.fire("LOOT_OPENED")
+    M.tradeWin = { gaveMoney = 0, gotMoney = 300 }; M.fire("TRADE_MONEY_CHANGED")
+    money(300)
+    check("#43 coin in an open trade comes before the loot window", row().src == "trade" and row().delta == 300, row().src)
+    M.fire("UI_INFO_MESSAGE", 0, "Trade complete."); M.tradeWin = nil; M.fire("TRADE_CLOSED"); M.units.NPC = nil
+    later()
+    check("#43 the chain holds over the reordered sources", chain(ses()))
+    check("#43 no error in the day writer over the whole journal suite", E._dayErr == nil, E._dayErr)
+  end
+
   -- ref: separators stripped from values, numbers plain, empty when nothing is known
   check("#36 ref strips TAB, ; and = from values", E.refStr({ sender = "Bad\tNa;me=x|y", cod = 0 }) == "sender=BadNamexy;cod=0", E.refStr({ sender = "Bad\tNa;me=x|y", cod = 0 }))
   check("#36 ref is empty when nothing is known", E.refStr(nil) == "" and E.refStr({}) == "")

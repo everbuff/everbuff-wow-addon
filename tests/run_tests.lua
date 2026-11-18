@@ -553,6 +553,29 @@ check("contract: a session record carries its gold ledger with the lifetime keys
     if type(sg[k]) ~= "number" then return false end
   end
   return sg.balance == nil end)())
+-- 0.9.44 (#43): the gold history and the roster facts on the character block, the day base in settings.gold
+check("contract: the character block carries the roster facts (#43)", (function()
+  local c = ns.DB.characters[ns.charGuid()]
+  return c.name == "Hart" and c.realm == "Realm" and c.class == "WARRIOR" and c.faction == "Alliance" and type(c.level) == "number" and type(c.seen) == "number" end)())
+check("contract: goldDays rows are keyed YYYYMMDD and carry g, s, o, c, t, n and their sources as integers; goldSince dates the first (#43)", (function()
+  local c = ns.DB.characters[ns.charGuid()]
+  if type(c.goldDays) ~= "table" or type(c.goldSince) ~= "number" or c.gold.goldDays ~= nil then return false end
+  local n = 0
+  local known = { g = true, s = true, o = true, c = true, t = true, n = true, away = true, unexplained = true }
+  for _, k in ipairs(ns.Gold.IN) do known[k] = true end
+  for _, k in ipairs(ns.Gold.OUT) do known[k] = true end
+  for key, r in pairs(c.goldDays) do
+    n = n + 1
+    if type(key) ~= "string" or not key:match("^%d%d%d%d%d%d%d%d$") or type(r) ~= "table" then return false end
+    for _, f in ipairs({ "g", "s", "o", "c", "t", "n" }) do if type(r[f]) ~= "number" then return false end end
+    for f, v in pairs(r) do if not known[f] or type(v) ~= "number" or v ~= math.floor(v) then return false end end
+  end
+  return n >= 1 end)())
+check("contract: settings.gold holds the write-once day base and week anchor (#43)", (function()
+  local sg = ns.DB.settings.gold
+  local b = type(sg) == "table" and sg.dayBase
+  return type(b) == "table" and (b.kind == "server" or b.kind == "local") and type(b.offset) == "number" and b.offset >= 0 and b.offset < 86400 and b.offset % 900 == 0
+    and type(b.since) == "number" and type(sg.weekAnchor) == "number" end)())
 -- v1 -> v2 migration of an old save file
 do
   local old = { fights = { { id = 1 } }, fightSeq = 1, lootlog = { { item = "x" }, { item = "y", s = "a" } }, gold = { balance = 5 }, eventlog = { { kind = "ZONE" } }, xp = { cur = 1 }, seenZones = { Elwynn = 1 }, settings = { emitCorner = "TOPLEFT" }, sessions = {}, session = { xp = 3 } }
@@ -2214,6 +2237,15 @@ do
   for _, e in ipairs(db.story and db.story.events or {}) do mine = mine and e.s == ids[1] end
   check("export: every loot row and story event carries the session id", mine and #db.loot.log == 5 and #db.story.events == 5, #(db.loot and db.loot.log or {}))
   check("export: the character block sits under the player GUID", db.characters["Player-1-000001"] and db.characters["Player-1-000001"].xp.fromQuests == 600)
+  -- 0.9.44 (#43): the scripted session is one server day; its row sums to the ledger, the reorder moved nothing
+  local ch = db.characters["Player-1-000001"]
+  local days, row = 0, nil
+  for _, r in pairs(ch.goldDays or {}) do days = days + 1; row = r end
+  check("export: one day row, equal to the character's ledger: 287 looted, 350 from the quest, nothing unexplained", days == 1 and row.g == ch.gold.gained and row.s == ch.gold.spent and row.looted == ch.gold.looted
+    and row.looted == 287 and row.quests == 350 and row.unexplained == nil and row.o == 1520 and row.c == ch.gold.balance and row.n == 4, row and row.g)
+  check("export: roster facts, goldSince and the server day base are in the file", ch.class == "WARRIOR" and ch.faction == "Alliance" and ch.level == 13 and type(ch.seen) == "number" and type(ch.goldSince) == "number"
+    and db.settings.gold.dayBase.kind == "server" and db.settings.gold.dayBase.offset == 25200 and type(db.settings.gold.weekAnchor) == "number")
+  check("export: the session's gold ledger is what it was before the source order changed", sess.gold.looted == 287 and sess.gold.quests == 350 and sess.gold.gained == 637 and #sess.goldLog == 4)
 end
 
 -- #31: gold changed while the addon did not see it, booked at the first read of a load; coin traded with a player
@@ -2243,9 +2275,15 @@ do
   check("#31 a 0 read at load with gold saved is not booked at once", g.away == aBefore and g.balance == bal)
   M.money = bal; M.runTimers()
   check("#31 the read 3 s later finds the purse: nothing booked", g.away == aBefore and g.balance == bal)
-  ns._test.newLoad(); M.money = 0; M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers(); M.runTimers()   -- the re-read, then its booking tick
-  check("#31 a purse that really is 0 is booked after the second read", g.away == aBefore - bal and g.balance == 0, g.away)
-  M.money = bal; M.fire("PLAYER_MONEY")   -- back to where it was, as seen income
+  -- 0.9.44 (#43): a 0 with gold saved is trusted only after 15 s, or when a money event brings another amount
+  ns._test.newLoad(); M.money = 0; M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers(); M.runTimers()   -- the re-reads, inside the 15 s
+  check("#43 a 0 read with gold saved is not booked inside 15 s", g.away == aBefore and g.balance == bal, g.away)
+  M.now = M.now + 15; M.fire("PLAYER_MONEY"); M.runTimers()   -- a read after 15 s, then its booking tick
+  check("#31 a purse that really is 0 is booked after 15 s", g.away == aBefore - bal and g.balance == 0, g.away)
+  local gainedZ = g.gained
+  M.money = bal + 5; M.fire("PLAYER_MONEY"); M.runTimers()   -- an amount that is not the saved balance: seen income
+  check("#43 income after a real 0 is income", g.gained == gainedZ + bal + 5 and g.away == aBefore - bal and g.balance == bal + 5, g.gained - gainedZ)
+  M.money = bal; M.fire("PLAYER_MONEY")
   check("#31 the identity holds through a real 0", drift() == d0, drift() - d0)
   local savedBal = g.balance; g.balance = nil; aBefore = g.away
   ns._test.newLoad(); M.money = bal; M.fire("PLAYER_ENTERING_WORLD", false, true); M.runTimers()
@@ -2270,6 +2308,35 @@ end
 do
   local ok, err = pcall(dofile("tests/gold_journal.lua"), { check = check, M = M, ns = ns })
   check("#36 tests/gold_journal.lua runs to its end", ok, err)
+end
+
+-- #43 (0.9.44): the gold day rows, the roster and the glance (each on a save file of its own, the suite's put back)
+for _, name in ipairs({ "gold_days", "gold_roster" }) do
+  local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
+  check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
+end
+
+-- copy lint: no em dash in anything the addon ships (every string the player can see is in these files)
+do
+  local dash = "\226\128\148"
+  local bad = {}
+  local files = { "Everbuff/EverbuffJournal.toc" }
+  for line in io.lines("Everbuff/EverbuffJournal.toc") do
+    local f = line:match("^([%w_]+%.lua)%s*$")
+    if f then files[#files + 1] = "Everbuff/" .. f end
+  end
+  for _, path in ipairs(files) do
+    local fh = io.open(path, "rb")
+    local text = fh and fh:read("*a") or ""
+    if fh then fh:close() end
+    local n = 0
+    for line in (text .. "\n"):gmatch("(.-)\r?\n") do
+      n = n + 1
+      if line:find(dash, 1, true) then bad[#bad + 1] = path .. ":" .. n end
+    end
+  end
+  check("copy: the lint read the addon's files", #files >= 19, #files)
+  check("copy: no em dash in any file the addon ships", #bad == 0, table.concat(bad, ", "))
 end
 
 -- tests/render_html.lua runs the suite up to here for its data (loot, mail, auctions, gold, fights) and renders the
