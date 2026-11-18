@@ -403,13 +403,14 @@ return function(P)
     for k, v in pairs(me.gold) do ledger[k] = v end
     click(pane.resetHist)
     check("Settings Gold: Reset gold history asks first, naming what is deleted", me.goldDays ~= nil and pane.resetHist.armed == true and pane.resetHist.text.text == "Confirm: delete this character's day history"
-      and pane.resetNote.text:find("day rows", 1, true) ~= nil and pane.resetNote.text:find("The balance and the lifetime totals stay", 1, true) ~= nil)
+      and pane.resetNote.text:find("day rows", 1, true) ~= nil and pane.resetNote.text:find("its records", 1, true) ~= nil and pane.resetNote.text:find("The balance, the lifetime totals, the places and the dungeon runs stay", 1, true) ~= nil)
     M.runTimers()
     check("Settings Gold: after 3 s without a second click it is as it was", pane.resetHist.armed == false and pane.resetHist.text.text == "Reset gold history" and me.goldDays ~= nil)
     click(pane.resetHist); click(pane.resetHist)
     local same = true
     for k, v in pairs(ledger) do if me.gold[k] ~= v then same = false end end
     check("Settings Gold: the second click deletes the day history and nothing else", me.goldDays == nil and me.goldRate == nil and me.goldTimer == nil and type(me.goldSince) == "number" and same and pane.resetHist.armed == false)
+    check("Settings Gold: the records go with the day rows", me.goldBest == nil)
     M.runTimers()
     click(pane.backBtn)
     tick(pane.cbPill)

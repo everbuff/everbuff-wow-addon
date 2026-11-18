@@ -283,10 +283,13 @@ timer`, or "Start farm timer" in the menu), `ledger` a copy of every key of `cha
 `earnedOwn`, `net`, and `byMode` for the one the setting picks; `earned` is always everything gained). It survives
 a /reload and a relog, and it is not part of any session record.
 
-Reset gold history (Settings, Gold, More; two clicks) removes `goldDays`, `goldMonths`, `goldRate` and `goldTimer`
-of the character logged in and sets `goldSince` to now. `gold` (the lifetime ledger and the balance) is never
-reset, because the backend reads it, and no other character's block is touched. "Reset per hour" removes
-`goldRate` alone.
+Reset gold history (Settings, Gold, More; two clicks) removes `goldDays`, `goldMonths`, `goldRate`, `goldTimer`
+and, from 0.9.47, `goldBest` of the character logged in and sets `goldSince` to now. The records go because they
+are read from the day rows: a record of a day whose row is gone would be rewritten by the first purse change of
+that day. `gold` (the lifetime ledger and the balance) is never reset, because the backend reads it. The places
+and the dungeon runs (`goldZones`, `goldZonesEvicted`, `goldRun`, `goldRuns`, `goldRunsEvicted`) stay: they are
+counted on their own and are not part of the day history, and the note under the button says so. No other
+character's block is touched. "Reset per hour" removes `goldRate` alone.
 
 Size, measured on `tests/export/EverbuffJournal.lua` (0.9.45): the file grows from 15,234 to 15,597 bytes with a
 rate window of two buckets (about 110 bytes a bucket in the save file's layout, so a full window of 91 is about
@@ -308,7 +311,7 @@ seconds, all stored as numbers.
 | `looted`, `quests` | looted coin and quest rewards credited while the player stood there: the same credits as the ledger's `looted` and `quests`, at the same moment. No other source is counted by place: a vendor sale or a repair is never given to a place by time proximity (#43 rule 45) |
 | `secs` | active seconds there, from the 10 s ticker of the rate (AFK and logged-out time are not counted) |
 | `last` | server epoch of the last credit or tick there |
-| `name` | the map's name (`C_Map.GetMapInfo(id).name`), else the zone text; for display only |
+| `name` | the map's name (`C_Map.GetMapInfo(id).name`), else the zone text; for display only. Never stored on row `0`: every place with no map id shares that row, so it reads "Unknown place" and not the name of the last of them (a name an earlier build stored there is removed at the next credit or tick) |
 
 Cap: 300 places (`Gold.ZONE_CAP`). A new place past the cap moves the one with the oldest `last` into
 `characters[guid].goldZonesEvicted = { n, looted, quests, secs }` (the count of places moved and their sums), so
@@ -317,7 +320,8 @@ the places plus the evicted sums still equal what was counted: nothing is droppe
 `characters[guid].goldRun`: the dungeon run that is open, `{ t, inst, secs, looted, quests, lootValue, items,
 wait?, unpriced?, left? }`; absent when none is. `characters[guid].goldRuns[]`: the last 50 closed runs
 (`Gold.RUN_CAP`), oldest first, each `{ t, inst, secs, looted, quests, lootValue, items, unpriced? }`. A run past
-the 50 is summed into `characters[guid].goldRunsEvicted = { n, looted, quests, secs, lootValue, items }`.
+the 50 is summed into `characters[guid].goldRunsEvicted = { n, looted, quests, secs, lootValue, items, unpriced? }`
+(`unpriced`: the items of those runs that never got a price, so the summed loot value still reads "so far").
 
 | Field | Meaning |
 | --- | --- |
@@ -340,7 +344,8 @@ in is folded. `Gold.period("history")` and the All time Days view read them; "Re
 
 `characters[guid].goldBest`: `{ day = { key, net, was? }, session = { at, net, was? } }`, the best day (`key` a day
 key) and the best session (`at` its `startedEpoch`) by net (gained minus spent), stored when set, so a fold or an
-upload cannot change a record. While the running day or session holds the record it follows its own net, and `was`
+upload cannot change a record. "Reset gold history" removes it with the day rows; the records begin again from
+the rows written after the reset. While the running day or session holds the record it follows its own net, and `was`
 (`{ key | at, net }`, the record it took over) gets the record back when it falls under it. The first write reads
 the day rows already kept.
 
@@ -351,7 +356,7 @@ Reconciliation (`Gold.audit(key)`, read only, stores nothing): for the character
 | --- | --- |
 | reconciled | every identity that could be checked holds |
 | broken | one does not; the first break is named (the session and row, the day, or the two days that do not link) |
-| not checkable | a journal in the scope reached its cap (rows merged or not kept), a session has no journal (before 0.9.40), the period begins before `goldSince`, a change while away falls in it, or nothing is recorded. What could be checked did hold |
+| not checkable | a journal in the scope reached its cap (rows merged or not kept), a session has no journal (before 0.9.40), the period begins before `goldSince`, a change while away falls in it (any row with an away amount: two gaps that cancel are still two gaps), nothing is recorded, or a purse change is still being booked (a merchant spend waiting up to 0.3 s for its repair cost, or the change while away read at login, booked one frame later: "a purse change is still being booked"). What could be checked did hold |
 
 The identities: (1) in a journal, a row's balance minus the balance of the row before it is the row's `delta`; (2)
 the rows of each source sum to `session.gold[source]`, unexplained income to `gained` minus the income sources;
@@ -389,7 +394,7 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 | Loot > Gold pane, Zones and Runs views | the addon window is open | 0.9.47: the places and the dungeon runs of the character logged in (whatever "who" is picked): looted coin and quest rewards, time played, coin per hour played, last visit; a run also its items and "Loot value (est.)" in a column of its own, "so far" while an item has no price. Coin per hour and Items are left out of a narrow list |
 | Loot > Gold pane, Days view | the addon window is open | 0.9.47: a button in the caption row ("Balance line" / "Net per day") puts a 30 day balance line in the strip's place (one step per day from the day row's closing balance, a day with no row carried forward and drawn dashed); folded months are rows under the days; the status line names the best day and the best session |
 | Loot > Gold pane, status line | the addon window is open | 0.9.47: for a period of the character logged in that reconciles, a check mark and "Reconciled" at the end of the line, the identities on hover; when the records do not add up, "The gold records do not add up: hover for where" in red; nothing more when the period cannot be checked |
-| Combat > Dungeons, a run's Loot line | the addon window is open | 0.9.47: "N items · coin · loot value about X · Y/h" from the run's gold record when it has one (coin is looted coin and quest rewards, the rate is coin per hour played and never counts the loot value), else the loot log's counts as before |
+| Combat > Dungeons, a run's Loot line | the addon window is open | 0.9.47: "N items · coin · loot value about X · Y/h" from the run's gold record when it has one (coin is looted coin and quest rewards, the rate is coin per hour played and never counts the loot value), else the loot log's counts as before. The record stands for the run only when it began with it (within 90 s of the run's start: a record opened later, by an update in the middle of a run, counted a part of it). The run's row in the list reads its items and coin from the same record, so list and page agree |
 | Chat, `/eb gold audit` | only as the direct reply to the typed command | 0.9.47: one line, "Gold ledger reconciled.", "Gold ledger does not add up: <the first break>" or "Not checkable: <reason>"; with a period (`today`, `yesterday`, `week`, `month`, `last30`, `session`) for that period. It answers in combat like the other gold replies |
 
 A rate on screen is drawn again every 10 s, by one ticker that exists only while the pill shows a rate or the farm

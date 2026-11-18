@@ -31,6 +31,7 @@ return function(P)
     return true
   end
   local function count(t) local n = 0; for _ in pairs(t or {}) do n = n + 1 end return n end
+  local function num0(v) return type(v) == "number" and v or 0 end
 
   -- the suite's state, put aside
   local main = { db = ns.DB, epoch = M.epoch, now = M.now, money = M.money, zone = M.zone, inst = M.inst, uiMap = M.uiMap, mapType = M.mapType,
@@ -115,7 +116,7 @@ return function(P)
     _G.C_Map = { GetBestMapForUnit = function() return nil end, GetMapInfo = cm.GetMapInfo, GetPlayerMapPosition = cm.GetPlayerMapPosition }
     M.zone = "Somewhere"
     loot(40)
-    check("zones: with no map id the coin is kept under 0 with the zone text", me().goldZones[0] and me().goldZones[0].looted == 40 and me().goldZones[0].name == "Somewhere")
+    check("zones: with no map id the coin is kept under 0, and the row takes no name from the zone text", me().goldZones[0] and me().goldZones[0].looted == 40 and me().goldZones[0].name == nil)
     local secret = 987654
     M.secrets[secret] = true
     _G.C_Map.GetBestMapForUnit = function() return secret end
@@ -130,7 +131,19 @@ return function(P)
     check("zones: a client with no C_Map still counts the coin", me().goldZones[0].looted == 60 and G._placeErr == nil, G._placeErr)
     _G.C_Map = cm
     check("zones: the total still is the ledger's", G.zones().total.looted == me().gold.looted and G.zones().total.quests == me().gold.quests)
-    check("zones: the place without a map is named", (function() for _, r in ipairs(G.zones().rows) do if r.id == 0 then return r.name == "Somewhere" end end end)())
+    -- two different places with no map id share row 0: it reads "Unknown place", never the name of the last one
+    _G.C_Map = { GetBestMapForUnit = function() return nil end, GetMapInfo = cm.GetMapInfo, GetPlayerMapPosition = cm.GetPlayerMapPosition }
+    M.zone = "Blackfathom Deeps"; loot(50)
+    M.zone = "Stormwind City"; play(20)
+    _G.C_Map = cm
+    local r0
+    for _, r in ipairs(G.zones().rows) do if r.id == 0 then r0 = r end end
+    check("zones: places without a map id are one row named \"Unknown place\"", r0 and r0.name == G.NO_MAP and G.NO_MAP == "Unknown place" and r0.looted == 110 and r0.secs == 20, r0 and r0.name)
+    check("zones: no zone text is stored on that row", me().goldZones[0].name == nil)
+    -- a save file written by an early 0.9.47 build: the name it stored there goes at the next credit
+    me().goldZones[0].name = "Somewhere"
+    _G.C_Map = nil; loot(1); _G.C_Map = cm
+    check("zones: a name stored on row 0 before is dropped", me().goldZones[0].name == nil and me().goldZones[0].looted == 111)
   end
 
   -- ── zones: the cap moves the place visited longest ago into the evicted sums ────────────────────────────────
@@ -261,6 +274,10 @@ return function(P)
     check("dungeons: the line reads items, coin, loot value, coin per hour",
       rec and G.runLine(rec) == ("4 items  ·  %s coin  ·  loot value about %s  ·  %s/h"):format(fmt(3300), fmt(1200), G.fmt(3300 * 6, { rate = true })), rec and G.runLine(rec))
     check("dungeons: a run with no record keeps the loot log's line", G.runFor("Uldaman", 5, 10) == nil and G.runFor(nil, 5, 10) == nil)
+    -- a record that began later than the run (the addon was updated in the middle of it) counted a part of the run
+    -- only: the page and the list keep the loot log's fuller line
+    check("dungeons: a record that began after the run started does not stand for it",
+      first and G.runFor(first.name, first.startT - 600, first.endT) == nil and G.runFor(first.name, first.startT - 60, first.endT) ~= nil and G.runFor(first.name, first.startT + 60) ~= nil)
     if first and ns._test.dungeonDetail() then
       ns._test.renderRun(first)
       local dv = ns._test.dungeonDetail()
@@ -285,6 +302,9 @@ return function(P)
   -- ── runs: the ring of the last 50, and the acknowledgement ──────────────────────────────────────────────────
   do
     local c = me()
+    -- (the oldest run kept had an item whose price never loaded: the mark has to outlive the ring)
+    local markedBefore = num0(c.goldRuns[1].unpriced) + num0((c.goldRunsEvicted or {}).unpriced)
+    c.goldRuns[1].unpriced = num0(c.goldRuns[1].unpriced) + 2
     local had = #c.goldRuns
     local sumBefore = G.runs().total
     for i = 1, 53 do
@@ -302,6 +322,10 @@ return function(P)
     local want = sumBefore.looted
     for i = 1, 53 do want = want + 10 + i end
     check("run ring: the table still sums to every run through the evicted row", t.looted == want and t.n == had + 53 and t.quests == sumBefore.quests and t.items == sumBefore.items, t.looted .. " " .. want)
+    local keptUnpriced = 0
+    for _, r in ipairs(G.runs().rows) do keptUnpriced = keptUnpriced + r.unpriced end
+    check("run ring: the evicted sum keeps the items that never got a price", ev and ev.unpriced >= markedBefore + 2 and G.runs().evicted.unpriced == ev.unpriced and ev.unpriced + keptUnpriced == sumBefore.unpriced, ev and ev.unpriced)
+    check("run ring: so the total's loot value still reads \"so far\"", t.unpriced == sumBefore.unpriced and t.unpriced >= 2 and G.lootValueText(t):find("^so far about ") ~= nil, G.lootValueText(t))
     check("run ring: the view lists newest first with the evicted row named", G.runs().rows[1].looted == 63 and G.runs().evicted.inst == (had + 3) .. " earlier runs")
     -- the acknowledgement prunes sessions, loot rows and story events, never the runs
     local before, zonesBefore, bestBefore = deepcopy(c.goldRuns), deepcopy(c.goldZones), deepcopy(c.goldBest)
@@ -393,6 +417,7 @@ return function(P)
     -- Reset gold history takes the months too
     G.resetHistory(M.epoch)
     check("fold: Reset gold history removes the month rows with the day rows", c.goldMonths == nil and c.goldDays == nil)
+    check("reset: the records go with the day rows they were read from", c.goldBest == nil and G.bestText() == nil)
   end
 
   -- ── records ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -430,6 +455,22 @@ return function(P)
     me().goldDays["20200101"] = { g = 99999, s = 9, t = 0, n = 1 }
     money(10)
     check("records: the first note reads the day rows already kept", me().goldBest.day.key == "20200101" and me().goldBest.day.net == 99990)
+    -- Reset gold history, then a credit on the same day: the record begins again with the history, it is not a
+    -- stored record of a day whose row is gone that the fresh row then rewrites downwards
+    fresh()
+    M.epoch, M.money = T0, 0
+    login(); G.tick()
+    enter("Shadowfang Keep"); loot(700); leave()
+    local kR = G.dayKey(M.epoch, G.baseStored())
+    check("reset: before it the day holds the record", me().goldBest.day.key == kR and me().goldBest.day.net == 700 and G.bestText():find("+" .. fmt(700), 1, true) ~= nil, G.bestText())
+    local zonesB, runB = deepcopy(me().goldZones), deepcopy(me().goldRun)
+    G.resetHistory(M.epoch)
+    check("reset: no record is shown for a day whose row is gone", me().goldBest == nil and G.bestText() == nil and me().goldDays == nil, G.bestText())
+    check("reset: the places and the dungeon runs stay", same(me().goldZones, zonesB) and same(me().goldRun, runB) and runB ~= nil)
+    loot(10)
+    local bR = me().goldBest
+    check("reset: a credit the same day starts the record again from the new row", bR and bR.day.key == kR and bR.day.net == 10 and bR.day.was == nil and me().goldDays[kR].g == 10, bR and bR.day and bR.day.net)
+    check("reset: the history after it reconciles", G.audit("today").state == "ok", tostring(G.audit("today").text or G.audit("today").reason))
   end
 
   -- ── the balance line ────────────────────────────────────────────────────────────────────────────────────────
@@ -591,6 +632,58 @@ return function(P)
       check("audit: a change while away makes the history not checkable, not broken", u.state == "unknown" and u.text == nil and u.away == -300 and u.reason:find("changed while away", 1, true) ~= nil, tostring(u.text or u.reason))
       check("audit: yesterday, with no gap, reconciles", G.audit("yesterday").state == "ok", tostring(G.audit("yesterday").reason))
       check("audit: today, with the gap, does not", G.audit("today").state == "unknown")
+      -- a second gap that cancels the first: two gaps are in the history, it stays not checkable
+      M.fire("PLAYER_LOGOUT"); G._tickAt = nil; ns._test.newLoad()
+      M.epoch, M.now = M.epoch + DAY, M.now + DAY
+      M.money = M.money + 300                   -- 300 gained on another PC
+      login(); G.tick()
+      loot(20)
+      local u2 = G.audit()
+      check("audit: two away gaps that cancel are still not checkable", u2.state == "unknown" and u2.text == nil and u2.away == 0 and u2.reason:find("changed while away", 1, true) ~= nil, tostring(u2.text or u2.reason))
+      check("audit: the reply says not checkable", G.auditText(u2):find("^Not checkable: gold changed while away") ~= nil, G.auditText(u2))
+      check("audit: the day of the second gap alone is not checkable either", G.audit("today").state == "unknown" and G.audit("today").away == 300)
+      -- the login read sets the balance at once, the away row is booked one frame later: not judged in between
+      M.fire("PLAYER_LOGOUT"); G._tickAt = nil; ns._test.newLoad()
+      M.epoch, M.now = M.epoch + DAY, M.now + DAY
+      M.money = M.money + 75
+      M.timers = {}
+      M.fire("PLAYER_ENTERING_WORLD", true, false)
+      local mid, midToday = G.audit(), G.audit("today")
+      check("audit: between the login read and the deferred away row nothing is judged", E._awayWait == 1 and me().gold.balance == M.money and mid.state == "unknown" and mid.text == nil
+        and mid.reason == "a purse change is still being booked" and midToday.state == "unknown", tostring(mid.text or mid.reason))
+      M.runTimers()
+      check("audit: once the away row is booked the wait is over", E._awayWait == nil and G.audit().state == "unknown" and G.audit().reason:find("changed while away", 1, true) ~= nil, tostring(G.audit().text or G.audit().reason))
+    end
+    -- a merchant spend waiting for its repair cost (0.3 s): the day row has the spend, its source row not yet
+    do
+      fresh()
+      M.epoch, M.money = T0, 0
+      login(); G.tick()
+      loot(5000)
+      local seen = {}
+      local sub = function() seen[#seen + 1] = G.audit("today").state end
+      G.onChange(sub)
+      M.repairCost = 600; M.fire("MERCHANT_SHOW")
+      M.timers = {}
+      money(-600)
+      local w1, w2 = G.audit("today"), G.audit()
+      check("audit: a spend waiting for its repair cost is not judged, never a break", E._repair.wait ~= nil and w1.state == "unknown" and w1.text == nil and w2.state == "unknown" and w2.text == nil
+        and w1.reason == "a purse change is still being booked", tostring(w1.text or w1.reason))
+      check("audit: /eb gold audit says so in that window", G.auditText(w1) == "Not checkable: a purse change is still being booked")
+      M.repairCost = 0; M.fire("UPDATE_INVENTORY_DURABILITY")
+      check("audit: booked, it reconciles", E._repair.wait == nil and G.audit("today").state == "ok" and G.audit().state == "ok" and me().gold.repairs == 600, tostring(G.audit().text or G.audit().reason))
+      local broke = false
+      for _, st in ipairs(seen) do if st == "broken" then broke = true end end
+      check("audit: no listener of the pane saw a break in between", #seen > 0 and not broke, table.concat(seen, " "))
+      for i = #G._subs, 1, -1 do if G._subs[i] == sub then table.remove(G._subs, i) end end
+      -- the same wait ended by its timer, as a purchase
+      M.repairCost = 600; M.fire("UPDATE_INVENTORY_DURABILITY")
+      M.timers = {}
+      money(-600)
+      check("audit: the wait of a purchase is not judged either", E._repair.wait ~= nil and G.audit().state == "unknown")
+      M.runTimers()
+      check("audit: its timer books it as a purchase and the day reconciles", E._repair.wait == nil and G.audit().state == "ok" and me().gold.vendor == 600, tostring(G.audit().text or G.audit().reason))
+      M.fire("MERCHANT_CLOSED"); M.repairCost = 0
     end
     -- a character that had gold before the addon first saw it: noted, never judged
     do

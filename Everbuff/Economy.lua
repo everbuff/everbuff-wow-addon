@@ -1542,13 +1542,14 @@ function Gold.timerText(t)
   return s
 end
 
--- Reset gold history, for the logged-in character only (#43, rule 44): the day rows, the month rows, the rate window
--- and the farm timer go, and the history starts now. The lifetime ledger and the balance stay (the backend reads
--- them).
+-- Reset gold history, for the logged-in character only (#43, rule 44): the day rows, the month rows, the records
+-- (the best day and session are read from those rows and begin again with them), the rate window and the farm timer
+-- go, and the history starts now. The lifetime ledger and the balance stay (the backend reads them), and so do the
+-- places and the dungeon runs, which are counted on their own and are not part of the day history.
 function Gold.resetHistory(now)
   if not (ns.DB and ns.charGuid()) then return false end
   local c = ns.char()
-  c.goldDays, c.goldMonths, c.goldRate, c.goldTimer = nil, nil, nil, nil
+  c.goldDays, c.goldMonths, c.goldRate, c.goldTimer, c.goldBest = nil, nil, nil, nil, nil
   c.goldSince = now or nowT()
   Gold._held = nil
   Gold.fire()
@@ -2106,7 +2107,7 @@ end
 --                        still sums to what was counted.
 --   goldRun            the dungeon run that is open: { t, inst, secs, looted, quests, lootValue, items, wait, left }
 --   goldRuns[]         the last Gold.RUN_CAP closed runs { t, inst, secs, looted, quests, lootValue, items, unpriced },
---                        oldest first; an older one goes into goldRunsEvicted { n, looted, quests, secs, lootValue, items }.
+--                        oldest first; an older one goes into goldRunsEvicted { n, looted, quests, secs, lootValue, items, unpriced }.
 --                        A run begins and ends where the addon's own dungeon detection says so (Emitter.checkInstance,
 --                        names through Emitter.canonInstance), and going back in within 20 minutes continues it, as
 --                        on Combat > Dungeons. Vendor sales and repairs are never given to a run.
@@ -2167,7 +2168,8 @@ function Gold.zoneRow(c, at)
       z[oldK] = nil
     end
   end
-  if name then r.name = name end
+  -- (the places with no map id share row 0: it keeps no name, so it never reads as the last of them)
+  if id ~= 0 then if name then r.name = name end else r.name = nil end
   r.last = at
   return r
 end
@@ -2211,6 +2213,8 @@ function Gold.runClose(c, run)
     local ev = type(c.goldRunsEvicted) == "table" and c.goldRunsEvicted or { n = 0, looted = 0, quests = 0, secs = 0, lootValue = 0, items = 0 }
     ev.n = num(ev.n) + 1
     for _, k in ipairs({ "looted", "quests", "secs", "lootValue", "items" }) do ev[k] = num(ev[k]) + num(o[k]) end
+    -- (the items that never got a price stay marked, so the estimate of the earlier runs still reads "so far")
+    if num(o.unpriced) > 0 then ev.unpriced = num(ev.unpriced) + num(o.unpriced) end
     c.goldRunsEvicted = ev
   end
   return rec
@@ -2226,7 +2230,7 @@ function Gold.runSync(at)
   local inst = plainS(c.inInstance)
   if inst and ns.Emitter and ns.Emitter.canonInstance then inst = plainS(ns.Emitter.canonInstance(inst)) or inst end
   local run = type(c.goldRun) == "table" and c.goldRun or nil
-  if run and plainN(run.left) and (at - run.left > Gold.RUN_REENTER or (inst and inst ~= run.inst)) then Gold.runClose(c, run); run = nil end
+  if run and plainN(run.left) and at - run.left > Gold.RUN_REENTER then Gold.runClose(c, run); run = nil end
   if run and inst and inst ~= run.inst then Gold.runClose(c, run); run = nil end
   if not inst then
     if run and not run.left then run.left = at end
@@ -2332,7 +2336,7 @@ function Gold.runs()
   local ev = c.goldRunsEvicted
   if type(ev) == "table" and num(ev.n) > 0 then
     out.evicted = { evicted = true, n = num(ev.n), looted = num(ev.looted), quests = num(ev.quests), secs = num(ev.secs),
-      lootValue = num(ev.lootValue), items = num(ev.items), unpriced = 0 }
+      lootValue = num(ev.lootValue), items = num(ev.items), unpriced = num(ev.unpriced) }
     out.evicted.coin = out.evicted.looted + out.evicted.quests
     out.evicted.inst = ("%d earlier run%s"):format(out.evicted.n, out.evicted.n == 1 and "" or "s")
   end
@@ -2360,14 +2364,16 @@ function Gold.runLine(r)
   if r.perHour then parts[#parts + 1] = Gold.fmt(r.perHour, { rate = true }) .. "/h" end
   return table.concat(parts, SEP)
 end
--- the run record of a run of Combat > Dungeons (its name and the time it began and ended), or nil
+-- the run record that began with a run of Combat > Dungeons (its name and the time it began), or nil
 function Gold.runFor(name, startT, endT)
   if type(name) ~= "string" then return nil end
   if ns.Emitter and ns.Emitter.canonInstance then name = ns.Emitter.canonInstance(name) end
   startT = num(startT)
   local best, bd
   for _, r in ipairs(Gold.runs().rows) do
-    if r.inst == name and r.t >= startT - 90 and r.t <= (plainN(endT) or nowT()) + 90 then
+    -- (only a record that began with the run covers it: one opened later, by an update in the middle of a run,
+    -- counted a part of it, and the loot log's line is the fuller one)
+    if r.inst == name and math.abs(r.t - startT) <= 90 then
       local d = math.abs(r.t - startT)
       if not bd or d < bd then best, bd = r, d end
     end
@@ -2552,6 +2558,13 @@ function Gold.audit(key, now)
   local base = Gold.baseStored()
   local function broke(text) res.state, res.text = "broken", text; return res end
   local unk
+  -- A purse change that is not fully booked yet is not judged, like Gold._held: a merchant spend waiting for its
+  -- repair cost (Emitter.creditRepair, up to 0.3 s) is on the day row and the balance before its source row is
+  -- written, and a change while away read at login is on the balance one frame before its row (Emitter.goldAway).
+  if E and ((type(E._repair) == "table" and E._repair.wait) or num(E._awayWait) > 0) then
+    res.reason = "a purse change is still being booked"
+    return res
+  end
 
   -- the sessions and the rows of the scope
   local sessions, rows, period = {}, {}, nil
@@ -2662,9 +2675,11 @@ function Gold.audit(key, now)
 
   if data == 0 and not unk then res.reason = whole and "nothing is recorded yet" or "no gold moved in this period"; return res end
   if unk then res.reason = unk; return res end
-  if awaySum ~= 0 or (#rows == 0 and awaySeen > 0) then
+  -- (an away gap is a row with an away amount: two gaps that cancel are still two gaps, the sum is only for the text)
+  if awayAt or (#rows == 0 and awaySeen > 0) then
     res.away = awaySum
     res.reason = awaySum ~= 0 and ("%s changed while away (%s), not seen on this PC. Everything recorded here adds up"):format(signed(awaySum), awayAt)
+      or awayAt and ("gold changed while away (%s and later, the changes cancel), not seen on this PC. Everything recorded here adds up"):format(awayAt)
       or "gold changed while away in this session, not seen on this PC. Everything recorded here adds up"
     return res
   end
@@ -3461,7 +3476,7 @@ local function refresh(c)
     end)
     c.runData = rs
     caption = "Dungeon runs" .. SEP .. "this character"
-    notes = { "coin is looted coin and quest rewards; loot value is an estimate (vendor price), never added to coin" }
+    notes = { "loot value is a vendor estimate, never added to coin" }
   else
     -- Characters: the roster for the saved filter, the TOTAL row pinned first
     local filter = labelOf(FILTERS, cfg.filter) and cfg.filter or "all"
@@ -4118,7 +4133,7 @@ function ns.BuildGoldSettings(pane)
       refresh()
     end
   end)
-  pane.resetNote = label(more, "Reset gold history deletes this character's day rows, its per hour window and its farm timer. The balance and the lifetime totals stay, and no other character is touched.",
+  pane.resetNote = label(more, "Reset gold history deletes this character's day rows, its records, its per hour window and its farm timer. The balance, the lifetime totals, the places and the dungeon runs stay, and no other character is touched.",
     X2 + 4, -30 - 3 * (ROW_H + SP.S) - SP.XS)
   pane.resetNote:SetWidth(310)
   if pane.resetNote.SetWordWrap then pane.resetNote:SetWordWrap(true) end

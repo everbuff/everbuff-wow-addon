@@ -1242,7 +1242,11 @@ function Emitter.goldAway(d, bal, mailWaiting, undo, sync)
   local seen = ns.Gold and ns.Gold.seenBefore and ns.Gold.seenBefore() or nil
   local nowS = (GetServerTime and GetServerTime()) or time()
   local gap = (not undo and seen and nowS > seen) and math.floor(nowS - seen) or nil
+  local waits = not sync and C_Timer and C_Timer.After and true or nil
+  -- (the balance is already the new one: until the row is booked, one frame later, the audit does not judge)
+  if waits then Emitter._awayWait = (Emitter._awayWait or 0) + 1 end
   local function book()
+    if waits then Emitter._awayWait = (Emitter._awayWait or 1) > 1 and Emitter._awayWait - 1 or nil end
     if not ns.DB then return end
     local g, ses = goldDB(), sessionDB()
     -- (the row that takes a 0 read back carries the same tag as its booking, so the two cancel in every sum)
@@ -1257,7 +1261,7 @@ function Emitter.goldAway(d, bal, mailWaiting, undo, sync)
     Emitter.event("GOLDAWAY", { money = d }, true)
     if ns.Gold and ns.Gold.fire then ns.Gold.fire() end
   end
-  if not sync and C_Timer and C_Timer.After then C_Timer.After(0, book) else book() end
+  if waits then C_Timer.After(0, book) else book() end
 end
 
 -- Coin and items traded with another player (#31, #36). The window is open, or closed under 3 s ago (the purse can
@@ -3251,7 +3255,7 @@ ns._test.newLoad = function()
   lastMoney = nil
   Emitter._zero, Emitter._zeroSeed, Emitter._guidWait = nil, nil, nil
   Emitter._repair, Emitter._mailQ, Emitter._coin, Emitter._lastLoot, Emitter._respec = {}, {}, nil, nil, nil
-  Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading = nil, nil, nil, nil, nil
+  Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading, Emitter._awayWait = nil, nil, nil, nil, nil, nil
   Emitter._pend, Emitter._ah = { sell = {}, buy = {}, back = {} }, { claims = {} }
   if ns.Gold then ns.Gold._seenRead, ns.Gold._seenBefore = nil, nil end
 end

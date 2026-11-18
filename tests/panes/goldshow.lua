@@ -38,7 +38,7 @@ return function(P)
       { t = now - 3 * 86400, inst = "The Deadmines", secs = 3600, looted = 32000, quests = 12000, lootValue = 51000, items = 14 },
       { t = now - 2 * 86400, inst = "Sunken Temple", secs = 120, looted = 100, quests = 0, lootValue = 0, items = 1, unpriced = 1 },
     }
-    c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValue = 3000, items = 9 }
+c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValue = 3000, items = 9, unpriced = 2 }
     return c
   end
   local function open(w, h, view, scope)
@@ -46,6 +46,48 @@ return function(P)
     fill()
     Gold.open(scope or "today", view); M.settle()
     return c
+  end
+  -- A character played from zero through the real handlers, in a save file of its own put in the place of the data
+  -- in use (the played "gold" data holds changes while away in every period, so nothing in it can read
+  -- "Reconciled"). Returns the function that puts the client back; the next P.open brings the data back.
+  local function playFromZero()
+    local E = ns.Emitter
+    local keep = { money = M.money, now = M.now, timers = M.timers, repair = M.repairCost }
+    local db = ns.migrateDB({})
+    for k in pairs(ns.DB) do ns.DB[k] = nil end
+    for k, v in pairs(db) do ns.DB[k] = v end
+    Gold._held, Gold._baseWait, Gold._flushTimer, Gold._tickAt = nil, nil, nil, nil
+    ns._test.newLoad()
+    M.timers = {}
+    M.money = 0
+    local realPrint = print
+    print = function() end
+    M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
+    print = realPrint
+    Gold.tick()
+    local function money(d) M.money = M.money + d; M.fire("PLAYER_MONEY") end
+    M.units.target = { name = "Kobold Miner", hostile = true, dead = true, guid = "Creature-0-1-1-1-6-00AA" }
+    M.fire("LOOT_OPENED"); money(1500)
+    M.units.target = nil
+    M.now = M.now + 4
+    E.questMoney(800, 4242); money(800)
+    M.now = M.now + 4
+    money(40)                                   -- a gain nothing explains
+    money(-150)                                 -- a spend nothing explains
+    M.repairCost = 300; M.fire("MERCHANT_SHOW")
+    money(-300); M.repairCost = 0; M.fire("UPDATE_INVENTORY_DURABILITY")   -- a repair, booked after its wait
+    M.fire("MERCHANT_CLOSED")
+    M.runTimers()
+    return function()
+      M.money, M.now, M.repairCost = keep.money, keep.now, keep.repair
+      Gold._held, Gold._baseWait, Gold._flushTimer, Gold._tickAt = nil, nil, nil, nil
+      ns._test.newLoad()
+      M.timers = {}
+      P.open("loot", "gold", 900, 580, "gold")
+      -- the baseline of the purse is read again on the data's own balance
+      M.fire("PLAYER_MONEY"); M.runTimers()
+      M.timers = keep.timers
+    end
   end
   local function inside(c, tbl)
     -- every shown cell of the table lies inside the list and no text is cut that the column should hold
@@ -80,6 +122,7 @@ return function(P)
         and rows[4].c.zone.text == "Unknown place" and rows[4].c.played.text == "")
       check(tag .. ": the evicted places are one row at the end", last.item.evicted and last.c.zone.text == "2 earlier places" and last.c.looted.text == fmt(700) and last.c.last.text == "")
       check(tag .. ": the caption says whose and what is counted", c.caption.text:find("^Coin by place" .. SEP .. "this character") ~= nil and c.caption.text:find("looted coin and quest rewards", 1, true) ~= nil, c.caption.text)
+      check(tag .. ": the Zones caption is shown in full", not c.caption:IsTruncated(), c.caption.text)
       local ok, why = inside(c, c.tblZones)
       check(tag .. ": every Zones cell is inside the list, no header cut", ok, why)
       -- hover
@@ -122,6 +165,8 @@ return function(P)
       end
       check(tag .. ": the evicted runs are one row at the end", rows[5].item.evicted and rows[5].c.inst.text == "4 earlier runs" and rows[5].c.time.text == "")
       check(tag .. ": the caption says the loot value is an estimate and never added to coin", c.caption.text:find("^Dungeon runs" .. SEP .. "this character") ~= nil and c.caption.text:find("estimate", 1, true) ~= nil and c.caption.text:find("never added to coin", 1, true) ~= nil, c.caption.text)
+      check(tag .. ": the Runs caption is shown in full, to \"never added to coin\"", not c.caption:IsTruncated(), c.caption.text)
+      check(tag .. ": the evicted runs' unpriced items make the TOTAL's loot value read \"so far\"", rows[1].c.value.text == fmt(1234 + 51000 + 0 + 3000) .. " so far" and rows[5].c.value.text == fmt(3000) .. " so far", rows[1].c.value.text .. " / " .. rows[5].c.value.text)
       local ok, why = inside(c, tbl)
       check(tag .. ": every Runs cell is inside the list, no header cut", ok, why)
       tip:ClearLines(); dm.scripts.OnEnter(dm)
@@ -195,18 +240,37 @@ return function(P)
     end
     -- ── the status line: reconciled, broken, not checkable ───────────────────────────────────────────────────
     do
-      local c = open(size[1], size[2], "sources", "session")
-      local a = c.audit
-      check(tag .. ": the running session of the gold data is audited", a ~= nil and a.key == "session", a and a.state)
-      if a and a.state == "ok" then
-        check(tag .. ": a period that adds up ends its status line with a quiet check mark", c.status.text:sub(-#(Gold.AUDIT_MARK .. " Reconciled")) == Gold.AUDIT_MARK .. " Reconciled" and P.visible(c.statusRow), c.status.text)
+      -- reconciled: a character played from zero through the real handlers
+      local c = open(size[1], size[2], "sources", "today")
+      local back = playFromZero()
+      local MARK = Gold.AUDIT_MARK .. " Reconciled"
+      for _, scope in ipairs({ "today", "all" }) do
+        Gold.open(scope, "sources"); M.settle()
+        local a = c.audit
+        check(tag .. ": " .. scope .. ": a character played from zero reconciles", a ~= nil and a.state == "ok" and a.key == (scope == "all" and "history" or scope) and a.checks >= 1, a and tostring(a.text or a.reason))
+        check(tag .. ": " .. scope .. ": a period that adds up ends its status line with a quiet check mark", c.status.text:sub(-#MARK) == MARK and P.visible(c.statusRow) and P.visible(c.status), c.status.text)
+        check(tag .. ": " .. scope .. ": the status line is shown in full and says nothing in red", not c.status:IsTruncated() and c.status.text:find("do not add up", 1, true) == nil, c.status.text)
         tip:ClearLines(); c.statusRow.scripts.OnEnter(c.statusRow)
         local text = table.concat(tip.lines or {}, "\n")
-        check(tag .. ": its hover shows the identities", text:find("^Reconciled") ~= nil and text:find("closing minus opening balance = earned minus spent plus changed while away", 1, true) ~= nil, text)
+        check(tag .. ": " .. scope .. ": its hover shows the identities", text:find("^Reconciled") ~= nil and text:find("closing minus opening balance = earned minus spent plus changed while away", 1, true) ~= nil, text)
         c.statusRow.scripts.OnLeave(c.statusRow)
-      else
-        check(tag .. ": a period that cannot be checked says nothing more", a and a.state == "unknown" and c.status.text:find("Reconciled", 1, true) == nil and c.status.text:find("do not add up", 1, true) == nil, a and tostring(a.text))
       end
+      check(tag .. ": the reconciled character's cards read what was played", c.cIn.value.text == fmt(2340) and c.cOut.value.text == fmt(450), c.cIn.value.text .. " " .. c.cOut.value.text)
+      back()
+      -- the played data: changes while away in every period, so not checkable, and never a break
+      c = open(size[1], size[2], "sources", "session")
+      local a = c.audit
+      check(tag .. ": the running session of the gold data is audited", a ~= nil and a.key == "session", a and a.state)
+      check(tag .. ": a period that cannot be checked says nothing more", a and a.state == "unknown" and c.status.text:find("Reconciled", 1, true) == nil and c.status.text:find("do not add up", 1, true) == nil, a and tostring(a.text))
+      for _, scope in ipairs({ "all", "today", "yesterday", "week", "month", "last30" }) do
+        Gold.open(scope, "sources"); M.settle()
+        local b = c.audit
+        check(tag .. ": " .. scope .. " on the played data does not read broken", b ~= nil and b.state == "unknown" and c.status.text:find("do not add up", 1, true) == nil and c.status.text:find("Reconciled", 1, true) == nil
+          and not c.status:IsTruncated(), b and tostring(b.text or b.reason))
+      end
+      Gold.open("all", "sources"); M.settle()
+      check(tag .. ": All time on the played data says why it is not checkable", c.audit.reason:find("changed while away", 1, true) ~= nil, c.audit.reason)
+      Gold.open("session", "sources"); M.settle()
       -- a break: red, short, first of what the line says; the hover and the command say where
       local ses = ns.Recorder.current()
       ses.gold.other = (ses.gold.other or 0) + 1
@@ -248,6 +312,20 @@ return function(P)
         if fs.shown ~= false and fs.text == dv.lootLine then found = true; if fs.IsTruncated and fs:IsTruncated() then cut = true end end
       end
       check("Dungeons: the line is on the run's page in full at 900 px", found and not cut)
+      -- the list row of the run reads the same record as its page
+      local function listLoot()
+        local lv = ns._test.dungeonList(); M.settle()
+        for _, r in ipairs(lv and lv.tbl and lv.tbl.rows or {}) do
+          if r.shown ~= false and r.run and r.run.startT == run.startT and r.run.name == run.name then return r.c.loot.text end
+        end
+      end
+      eq("Dungeons: the list row of that run reads the record's items and coin", listLoot(), "12 · " .. fmt(32000))
+      -- a record that began after the run did (the addon was updated in the middle of the run) counted a part of it:
+      -- page and list keep the loot log's fuller line
+      ns.char().goldRuns[1].t = run.startT + 600
+      ns._test.renderRun(run); M.settle()
+      eq("Dungeons: a record that began later than the run does not replace the loot log's line", dv.lootLine, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmt(run.gold or 0)))
+      eq("Dungeons: nor the list row", listLoot(), ((run.items or 0) > 0 and (run.items .. " · ") or "") .. fmt(run.gold or 0))
     else
       check("Dungeons: the suite's data has a dungeon run", false)
     end
