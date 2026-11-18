@@ -35,11 +35,24 @@ local function nowEpoch() return (GetServerTime and GetServerTime()) or time() e
 
 local function buildRuns()
   local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's runs only (#23)
+  -- One run per visit to an instance: the two names a client gives one dungeon are one name, and going back in within
+  -- REENTER seconds (a wipe and the run back, a repair at the entrance) continues the run instead of starting a new one.
+  local canon = (ns.Emitter and ns.Emitter.canonInstance) or function(n) return n end
+  local REENTER = 20 * 60
   local runs, open = {}, nil
   for _, e in ipairs(log) do
     if e.kind == "DUNGEON" then
-      open = { name = e.text or "Dungeon", startT = e.t or 0 }
-      runs[#runs + 1] = open
+      local name, t = canon(e.text) or "Dungeon", e.t or 0
+      if open and open.name ~= name then open.endT = t; open = nil end   -- straight into another instance
+      if not open then
+        local last = runs[#runs]
+        if last and last.name == name and last.endT and t - last.endT <= REENTER then
+          open = last; open.endT = nil; open.reentries = (open.reentries or 0) + 1
+        else
+          open = { name = name, startT = t }
+          runs[#runs + 1] = open
+        end
+      end
     elseif e.kind == "DUNGEONLEAVE" and open then
       open.endT = e.t or open.startT; open = nil
     end
