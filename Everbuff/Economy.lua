@@ -49,6 +49,9 @@ Gold.LABEL = { looted = "Looted coin", quests = "Quest rewards", sold = "Sold to
 Gold.WORD = { looted = "Loot", quests = "Quest", sold = "Vendor sale", auctionSales = "Auction sale", mail = "Mail",
   trade = "Trade", unexplained = "Unexplained", repairs = "Repair", vendor = "Vendor buy", training = "Training",
   flights = "Flight", auctions = "Auction house", mailSpent = "Mail", tradeSpent = "Trade", other = "Unexplained", away = "Away" }
+-- what a journal row says for the refs of 0.9.46 (#43)
+Gold.AUCTION_KIND = { deposit = "Deposit", bid = "Bid", buyout = "Buyout", cancel = "Auction cancelled" }
+Gold.CRASH_LABEL = "Unattributed (game closed without saving)"
 local IS_IN, IS_OUT = {}, {}
 for _, k in ipairs(Gold.IN) do IS_IN[k] = true end
 for _, k in ipairs(Gold.OUT) do IS_OUT[k] = true end
@@ -141,23 +144,36 @@ local function describe(e)
     e.detail = e.quest or (r.quest and ("Quest " .. r.quest)) or "a quest"
     e.group = e.detail
   elseif src == "looted" then
-    e.detail = e.loot and e.loot.src or ""
+    -- (0.9.46: a share of coin a group member looted, said by the client's own coin line)
+    local from = e.loot and e.loot.src or ""
+    if r.share then from = (from ~= "" and from ~= "Group share") and ("Group share, " .. from) or "Group share" end
+    e.detail = from
     if r.x then e.detail = (e.detail ~= "" and (e.detail .. ", ") or "") .. r.x .. " pickups in one row" end
-    e.group = (e.loot and e.loot.src) or "source not recorded"
+    e.group = r.share and "Group share" or (e.loot and e.loot.src) or "source not recorded"
   elseif src == "sold" or src == "vendor" then
     local name = itemName(r.item)
     local what = name and (name .. " x" .. (r.n or 1)) or nil
     local word = src == "sold" and " to " or " from "
-    e.detail = (what or (src == "sold" and "items" or "an item")) .. (npc and (word .. npc) or "")
+    if r.kind == "buyback" then
+      -- a sale taken back (0.9.46): a sold row with a negative amount
+      e.detail = "Bought back: " .. (what or "an item") .. (npc and (" from " .. npc) or "")
+    else
+      e.detail = (what or (src == "sold" and "items" or "an item")) .. (npc and (word .. npc) or "")
+      if r.x == "unmatched" then e.detail = e.detail .. ", no item asked for has this amount"; e.flag = "amount not matched" end
+    end
     e.group = name or npc or "not recorded"
     local unit, n = tonumber(r.unit), tonumber(r.n)
     if src == "sold" and unit and n and unit * n > 0 then
       e.vendorPrice = unit * n
       if e.delta > unit * n then e.flag = "above vendor price" end
     end
-  elseif src == "repairs" or src == "training" or src == "flights" then
-    e.detail = npc or ""
+  elseif src == "repairs" then
+    e.detail = "Repair" .. (r.kind == "repairOne" and ", one item" or "") .. (npc and (" at " .. npc) or "")
     e.group = npc or "not recorded"
+  elseif src == "training" or src == "flights" then
+    e.detail = npc or ""
+    if r.kind == "respec" then e.detail = "Talent reset" .. (npc and (" at " .. npc) or "") end
+    e.group = r.kind == "respec" and "Talent reset" or npc or "not recorded"
   elseif src == "mail" or src == "auctionSales" then
     local m = e.loot and e.loot.mail
     if src == "auctionSales" and type(m) == "table" and m.item then
@@ -165,6 +181,7 @@ local function describe(e)
       e.group = m.item
     else
       e.detail = r.sender and ("from " .. person(r.sender, nil, r.rel)) or "mailbox"
+      if r.x == "unmatched" then e.detail = "mailbox, no mail taken has this amount" end
       e.group = r.sender or "not recorded"
     end
     if src == "mail" and r.rel == "stranger" then e.flag = "stranger" end
@@ -181,13 +198,15 @@ local function describe(e)
     local t = tonumber(r.trade)
     e.tradeRec = t and e.sess.trades and e.sess.trades[t] or nil
   elseif src == "auctions" then
-    e.detail = "bid, buyout or deposit"
+    e.detail = Gold.AUCTION_KIND[r.kind or ""] or "bid, buyout or deposit"
+    e.group = Gold.AUCTION_KIND[r.kind or ""]
   elseif src == "away" then
-    e.detail = "while the addon was not running" .. (r.mailWaiting and ", mail was waiting" or "")
+    -- (0.9.46: the session before never closed, so what the purse did after its last save was never seen)
+    e.detail = (r.crash and Gold.CRASH_LABEL or "while the addon was not running") .. (r.mailWaiting and ", mail was waiting" or "")
   elseif src == "unexplained" then
-    e.detail = "no source seen"; e.flag = "unexplained"
+    e.detail = r.drift and "the purse changed and the client sent no event" or "no source seen"; e.flag = "unexplained"
   elseif src == "other" then
-    e.detail = "no window was open"; e.flag = "unexplained"
+    e.detail = r.drift and "the purse changed and the client sent no event" or "no window was open"; e.flag = "unexplained"
   else e.detail = "" end
 end
 
@@ -377,7 +396,10 @@ local function contributors(rows)
     if k then
       local a = by[k]
       if not a then a = { name = k, amount = 0, n = 0 }; by[k] = a; order[#order + 1] = a end
-      a.amount = a.amount + math.abs(e.delta); a.n = a.n + 1
+      -- (a buyback, 0.9.46, is a sale taken back: it counts against what it was sold for)
+      local v = math.abs(e.delta)
+      if e.ref and e.ref.kind == "buyback" then v = -v end
+      a.amount = a.amount + v; a.n = a.n + 1
     end
   end
   table.sort(order, function(a, b) if a.amount ~= b.amount then return a.amount > b.amount end return a.name < b.name end)
@@ -2326,8 +2348,15 @@ local function refresh(c)
   end
   c.cIn.value:SetText(fmtMoney(g.gained))
   c.cOut.value:SetText(fmtMoney(g.spent))
-  c.cNet.value:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net)))
-  local nc = net < 0 and C.red or C.green
+  -- gold from a play stretch that never saved (away rows with crash=1, 0.9.46) is part of the period's net: the net
+  -- card then is the closing balance minus the opening one, less only what truly changed while away
+  local crash = 0
+  for _, e in ipairs(entries) do if e.src == "away" and e.ref and e.ref.crash then crash = crash + e.delta end end
+  c.crash = crash
+  local shown = net + crash
+  c.cNet.value:SetText((shown < 0 and "-" or "+") .. fmtMoney(math.abs(shown)))
+  if crash ~= 0 then status[#status + 1] = ("%s: %s, counted in net"):format(Gold.CRASH_LABEL, signed(crash)) end
+  local nc = shown < 0 and C.red or C.green
   c.cNet.value:SetTextColor(nc[1], nc[2], nc[3])
   c.cRate.value:SetTextColor(C.ink[1], C.ink[2], C.ink[3])
   c.rateLive, c.rateStatusText = false, nil
@@ -2366,7 +2395,7 @@ local function refresh(c)
   if not mine and sc.days and sc.period.gaps > 0 then
     warn[#warn + 1] = ("%d character%s with changes not seen on this PC in this period"):format(sc.period.gaps, sc.period.gaps == 1 and "" or "s")
   end
-  if not sc.lifetime and num(g.away) ~= 0 then warn[#warn + 1] = ("Not seen: %s changed while away"):format(signed(g.away)) end
+  if not sc.lifetime and num(g.away) - crash ~= 0 then warn[#warn + 1] = ("Not seen: %s changed while away"):format(signed(num(g.away) - crash)) end
   local base = Gold.baseStored()
   local since = ns.DB and ns.charGuid() and plainN(ns.char().goldSince) or nil
   local historyNote, historyShown

@@ -37,7 +37,7 @@ return function(M, ns)
   -- vendor and repairs, then the mailbox and the auction house
   M.epoch = M.epoch + 120; M.now = M.now + 120
   M.fire("MERCHANT_SHOW"); M.money = M.money + 4321; M.fire("PLAYER_MONEY")
-  M.repairCost = 2468; RepairAllItems(); M.money = M.money - 2468; M.fire("PLAYER_MONEY"); M.fire("MERCHANT_CLOSED")
+  M.repairCost = 2468; M.fire("UPDATE_INVENTORY_DURABILITY"); RepairAllItems(); M.money = M.money - 2468; M.fire("PLAYER_MONEY"); M.fire("MERCHANT_CLOSED")
   M.locations.r1 = { name = "Cruel Barb", id = 5191, icon = 135651, count = 1 }
   M.locations.r2 = { name = "Bolt of Silk Cloth", id = 4305, icon = 132891, count = 20 }
   M.fire("AUCTION_HOUSE_SHOW")

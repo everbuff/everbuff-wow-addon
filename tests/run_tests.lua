@@ -394,6 +394,7 @@ M.money = 5000; M.fire("PLAYER_MONEY")                          -- re-baseline
 local g0 = ns.char().gold; local other0 = g0.other or 0   -- earlier tests already spent into "other"
 M.fire("MERCHANT_SHOW"); M.money = 4850; M.fire("PLAYER_MONEY")   -- bought something
 check("vendor spend attributed", g0.vendor == 150, g0.vendor)
+M.bags[0][9] = { itemID = 2589, quality = 1, stackCount = 1 }; C_Container.UseContainerItem(0, 9); M.bags[0][9] = nil
 M.money = 4890; M.fire("PLAYER_MONEY")                           -- sold something
 check("vendor sale counted as income", g0.sold == 40, g0.sold)
 M.fire("MERCHANT_CLOSED"); M.fire("TRAINER_SHOW"); M.money = 4390; M.fire("PLAYER_MONEY")
@@ -821,8 +822,10 @@ do
   check("#46 a new session starts its gold ledger with every key at zero", type(sg) == "table" and sg.vendor == 0 and sg.repairs == 0 and sg.auctionSales == 0 and sg.balance == nil)
   check("#46 session ledger gained and spent", sg and sg.gained == 3000 and sg.spent == 1000 and sg.other == 1000, sg and (tostring(sg.gained) .. " " .. tostring(sg.spent) .. " " .. tostring(sg.other)))
   local life = ns.char().gold; local lv, lr = life.vendor or 0, life.repairs or 0
+  M.repairCost = 75
   M.fire("MERCHANT_SHOW"); M.money = M.money - 200; M.fire("PLAYER_MONEY")      -- bought at a vendor
   RepairAllItems(); M.money = M.money - 75; M.fire("PLAYER_MONEY")              -- repaired
+  M.bags[0][9] = { itemID = 2589, quality = 1, stackCount = 1 }; C_Container.UseContainerItem(0, 9); M.bags[0][9] = nil
   M.money = M.money + 40; M.fire("PLAYER_MONEY"); M.fire("MERCHANT_CLOSED")      -- sold
   check("#46 vendor spend in both ledgers", sg.vendor == 200 and life.vendor == lv + 200, sg.vendor)
   check("#46 repairs in both ledgers", sg.repairs == 75 and life.repairs == lr + 75, sg.repairs)
@@ -2312,9 +2315,27 @@ end
 
 -- #43 (0.9.44): the gold day rows, the roster and the glance (each on a save file of its own, the suite's put back)
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance" }) do
+-- #43 (0.9.46): honest sources, one case per accounting rule
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
+end
+-- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
+-- process each, because a profile has to be in place when the addon files load): the stub as it is, the WoW
+-- Forever profile (no legacy global that has a namespaced replacement), and a bare client with none of the events
+-- and functions 0.9.46 feature-tests, where registering an unknown event throws
+if not EVERBUFF_RENDER_SETUP then
+  local exe = (arg and arg[-1]) or "luajit"
+  if exe:find(" ", 1, true) then exe = '"' .. exe .. '"' end
+  for _, mode in ipairs({ "legacy", "forever", "bare" }) do
+    local ph = io.popen(("%s tests/gold_profile.lua %s"):format(exe, mode))
+    local out = ph and ph:read("*a") or ""
+    if ph then ph:close() end
+    for line in out:gmatch("[^\r\n]+") do if line:find("^FAIL") then print(line) end end
+    local p, f = out:match("(%d+) passed, (%d+) failed")
+    check(("#43 profile %s: every check of tests/gold_profile.lua passes"):format(mode), p ~= nil and tonumber(f) == 0 and tonumber(p) > 40, out:sub(-200))
+    if p then print(("gold profile %s: %s passed, %s failed"):format(mode, p, f)) end
+  end
 end
 
 -- copy lint: no em dash in anything the addon ships (every string the player can see is in these files)

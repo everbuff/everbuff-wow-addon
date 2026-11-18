@@ -18,7 +18,10 @@ frameMT.__index = function(t, k)
   if k == "SetScript" then return function(self, n, fn) self.scripts[n] = fn; if n == "OnSizeChanged" then M.watchSize(self) end; return self end end
   if k == "GetScript" then return function(self, n) return self.scripts[n] end end
   if k == "HookScript" then return function(self, n, fn) local p = self.scripts[n]; self.scripts[n] = function(...) if p then p(...) end fn(...) end; if n == "OnSizeChanged" then M.watchSize(self) end; return self end end
-  if k == "RegisterEvent" then return function(self, ev) self.events[ev] = true; return self end end
+  -- M.unknownEvents[ev]: an event this client does not have; registering it throws, as the real client does
+  if k == "RegisterEvent" then return function(self, ev)
+    if M.unknownEvents and M.unknownEvents[ev] then error(("Frame:RegisterEvent(): Attempt to register unknown event \"%s\""):format(tostring(ev)), 2) end
+    self.events[ev] = true; return self end end
   if k == "IsEventRegistered" then return function(self, ev) return self.events[ev] == true end end
   if k == "UnregisterEvent" then return function(self, ev) self.events[ev] = nil; return self end end
   if k == "Show" then return function(self) self.shown = true; local h = self.scripts.OnShow; if h then h(self) end; return self end end
@@ -341,7 +344,7 @@ _G.C_Item.GetItemNameByID = function(id) return M.itemNames and M.itemNames[id] 
 -- town services the visit hooks count (Visits.lua, everbuff-business #39)
 M.repairCost = 0
 _G.GetRepairAllCost = function() return M.repairCost, M.repairCost > 0 end
-_G.RepairAllItems = function() M.repairCost = 0 end
+_G.RepairAllItems = function() M.repairCost = 0 end   -- (true: paid by the guild bank; the cost clears either way)
 _G.BuyMerchantItem = function() end
 _G.UseContainerItem = function() end
 -- bags as WoW Forever answers them: M.bags[bag][slot] = { itemID, quality, hasNoValue? }; selling all junk empties
@@ -392,5 +395,37 @@ _G.C_FriendList = {
   GetFriendInfoByIndex = function(i) local n = M.friends[i]; return n and { name = n } or nil end,
 }
 _G.HasNewMail = function() return M.newMail end
+-- honest sources (everbuff-wow-addon #43, 0.9.46): the namespaced merchant and item reads, buyback, the interaction
+-- manager, the auction house's deposit and cancel cost, the client's coin lines
+_G.C_MerchantFrame.GetItemInfo = function(i) local it = M.merchant[i]; if it then return { name = it.name or "x", texture = 134400, price = it.price or 0, stackCount = it.qty or 1, numAvailable = -1, isPurchasable = true } end end
+_G.C_Item.GetItemInfo = function(id) return "Item " .. tostring(id), ("|cffffffff|Hitem:%d::::::::1:::::::|h[Item %d]|h|r"):format(id, id), 1, 10, 1, "Misc", "Junk", 20, "", 134400, M.sellPrice[id] end
+-- M.buyback[index] = { id, name, price, qty }
+M.buyback = {}
+_G.GetBuybackItemLink = function(i) local it = M.buyback[i]; if it then return ("|cffffffff|Hitem:%d::::::::1:::::::|h[%s]|h|r"):format(it.id, it.name or "x") end end
+_G.GetBuybackItemInfo = function(i) local it = M.buyback[i]; if it then return it.name or "x", 134400, it.price, it.qty or 1, 1, true end end
+_G.BuybackItem = function() end
+_G.CanMerchantRepair = function() return M.canRepair ~= false end
+-- M.interact[kind] = true while the client says the player is at that kind of NPC (M.interactOff: the API answers nothing)
+M.interact = {}
+_G.Enum = _G.Enum or {}
+_G.Enum.PlayerInteractionType = { Merchant = 5, Trainer = 7, MailInfo = 17, Auctioneer = 21 }
+_G.C_PlayerInteractionManager = { IsInteractingWithNpcOfType = function(t)
+  if M.interactOff then return nil end
+  for name, v in pairs(_G.Enum.PlayerInteractionType) do if v == t then return M.interact[name] == true end end
+  return false
+end }
+-- M.ahDeposit, M.ahCancelCost: what the auction house answers (nil: nothing)
+_G.C_AuctionHouse.CalculateItemDeposit = function() return M.ahDeposit end
+_G.C_AuctionHouse.CalculateCommodityDeposit = function() return M.ahDeposit end
+_G.C_AuctionHouse.GetCancelCost = function() return M.ahCancelCost end
+_G.LOOT_MONEY_SPLIT, _G.YOU_LOOT_MONEY, _G.YOU_LOOT_MONEY_GUILD = "Your share of the loot is %s.", "You loot %s", "You loot %s (%s deposited to guild bank)"
+_G.GetCoinTextureString = function(c) return tostring(c) end
+-- The WoW Forever profile (#43, 0.9.46): the globals the Midnight engine documents a namespaced replacement for are
+-- gone (C_MerchantFrame.GetItemInfo, C_Item.GetItemInfo, C_Container.GetContainerItemInfo, C_CurrencyInfo); the
+-- ones without a replacement stay. Applied before the addon loads (tests/gold_profile.lua).
+M.FOREVER_GONE = { "GetMerchantItemInfo", "GetItemInfo", "GetContainerItemInfo", "GetCoinTextureString" }
+function M.profile(name)
+  if name == "forever" then for _, g in ipairs(M.FOREVER_GONE) do _G[g] = nil end end
+end
 M.frames = frames
 return M

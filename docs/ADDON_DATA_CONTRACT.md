@@ -66,26 +66,29 @@ optional; nothing is drawn in game, nothing goes to chat, no new story kind.
 `training`, the flight master on `flights`, read from the `NPC` unit when the window opened), `sender`, `partner`,
 `guild` (the trade partner's guild, `GetGuildInfo("NPC")`), `rel`, `cod` (copper, 0 when none), `trade` (1-based
 index into this session's `trades[]`), `quest` (quest id), `mailWaiting` (1 when `HasNewMail()` was true at the first
-read of the load, on `away` rows), `x` (rows merged past the cap), `gap` (0.9.44, #43: on `away` rows, the seconds
-since the character was last seen, `characters[guid].seen` before this load; absent when that is not known).
+read of the load, on `away` rows), `x` (rows merged past the cap; from 0.9.46 the word `unmatched` on a `mail`, `sold`
+or `vendor` row whose amount matched nothing that was waiting), `gap` (0.9.44, #43: on `away` rows, the seconds
+since the character was last seen, `characters[guid].seen` before this load; absent when that is not known), and
+from 0.9.46 (#43, "Honest sources" below) `kind`, `share`, `bank`, `crash`, `to`, `drift`.
 
 Which source an income is, in this order (0.9.44, #43; the order matters because day rows are kept): a quest reward
 of exactly this amount (QUEST_TURNED_IN within 3 s), an open trade (or one closed under 3 s ago), a sale asked for at
 a merchant in the last 5 s, a mail taken in the last 3 s, the loot window (3 s from LOOT_OPENED), any gain while a
 merchant window is open, any gain while the mailbox is open, else `unexplained`. Before 0.9.44 the loot window came
 first, so a quest reward or a sale within 3 s of a corpse loot was booked as `looted`. Spending is unchanged.
+0.9.46 changes this order and the spending rules: see "Honest sources" below, which is the current rule.
 
 | Source | ref |
 | --- | --- |
-| `sold` | `item, n, unit, npc`; the item is the stack the player sold (a right click, or one of the junk stacks of "sell all junk") whose `unit * n` equals the delta, else the oldest sale of the last 5 s; a sale the addon did not see asked for carries `npc` only. A delta above `unit * n` is a sale above the vendor price |
+| `sold` | `item, n, unit, npc`; the item is the stack the player sold (a right click, or one of the junk stacks of "sell all junk") whose `unit * n` equals the delta, else the oldest sale of the last 5 s; a sale the addon did not see asked for carried `npc` only until 0.9.45 (from 0.9.46 such a gain is `unexplained`). A delta above `unit * n` is a sale above the vendor price |
 | `vendor` | `item, n, npc` (`BuyMerchantItem`, `BuybackItem`) |
-| `repairs`, `training`, `flights` | `npc` |
+| `repairs`, `training`, `flights` | `npc` (from 0.9.46 also `kind` on `repairs` and `training`) |
 | `quests` | `quest`. An income first seen with no source is written `unexplained` and rewritten in place to `quests` when QUEST_TURNED_IN names that amount within 3 s (one row per purse change either way) |
 | `mail`, `auctionSales` | `sender, rel, cod` of the mail the coin came from (absent when the mailbox was open but no take was seen) |
 | `mailSpent` | `sender, rel, cod` for a COD payment (the item taken in the 3 s before); empty for postage |
 | `trade`, `tradeSpent` | `partner, guild?, rel, trade` |
-| `away` | `mailWaiting` when true, `gap` when known. From 0.9.44 a 0 the client answered at login and then corrected is two `away` rows that cancel (the booking and its taking back), both kept |
-| `looted`, `auctions`, `other`, `unexplained` | empty |
+| `away` | `mailWaiting` when true, `gap` when known, `crash` (0.9.46) when the session before never closed. From 0.9.44 a 0 the client answered at login and then corrected is two `away` rows that cancel (the booking and its taking back), both kept |
+| `looted`, `auctions`, `other`, `unexplained` | empty (from 0.9.46: `share` on `looted`, `kind` on `auctions`, `drift` on `other` and `unexplained`) |
 
 `rel`, who the player is to this character: `alt` (a `characters[guid]` block of this save file with that `name` on the
 same realm; a `Name-Realm` name compares its own realm), `guild` (the guild roster, cached on GUILD_ROSTER_UPDATE),
@@ -108,6 +111,57 @@ A trade is written once it completed: a purse change while the window is open or
 client's `ERR_TRADE_COMPLETE` (UI_INFO_MESSAGE), so an items-only trade is written too. When gold moved but no
 snapshot was taken the money comes from the purse change. A cancelled trade (closed with nothing moved, or
 `ERR_TRADE_CANCELLED`) is not written. The `trade` ref of the gold row is the entry's index.
+
+### Honest sources (0.9.46, everbuff-wow-addon #43 milestone 3)
+
+No new ledger key and no new SavedVariables key. Amounts move between the existing sources, and `ref` gains keys.
+Day rows and journal rows written before 0.9.46 keep the attribution they were written with.
+
+New `ref` keys, written after the older ones in this order: `kind`, `share`, `bank`, `crash`, `to`, `drift`.
+
+| Key | On | Meaning |
+| --- | --- | --- |
+| `kind` | `auctions` | `deposit`, `bid`, `buyout` or `cancel`: the spend equals, to the copper, an amount the client's own auction call named in the 30 s before (`C_AuctionHouse.CalculateItemDeposit` / `CalculateCommodityDeposit` on the arguments of `PostItem` / `PostCommodity`, the amount of `PlaceBid`, the total of COMMODITY_PRICE_UPDATED at `ConfirmCommoditiesPurchase`, `GetCancelCost` at `CancelAuction`). A deposit the client does not answer leaves no claim; a spend that equals no claim has no `kind` |
+| `kind` | `repairs` | `repairOne`: the repair cost dropped by the spend and did not reach 0 (one item repaired) |
+| `kind` | `training` | `respec`: the spend equals the cost CONFIRM_TALENT_WIPE named in the 60 s before (with or without a trainer window; `npc` only when one is open) |
+| `kind` | `sold` | `buyback`: see the sign rule below |
+| `share` | `looted` | `1`: the client's coin line said this coin is the player's share of what a group member looted |
+| `crash` | `away` | `1`: the character's session before this one has no `endedBy` (the game closed without saving), so what the purse did after its last save was never seen. Not set on the row that takes back a 0 read |
+| `drift` | `unexplained`, `other` | `1`: the purse differed from the last read and the client sent no PLAYER_MONEY for it. Looked for on PLAYER_ENTERING_WORLD (booked at once) and one frame after MERCHANT_CLOSED, MAIL_CLOSED, AUCTION_HOUSE_CLOSED and TRAINER_CLOSED (a purse event of the same frame is read first and keeps its source). A quest never claims such a row |
+| `bank`, `to` | | reserved for 0.9.47 (the bank a transfer went through, the recipient of a mail); never written by 0.9.46 |
+
+**Sign rule for `sold` (a contract note).** A buyback whose price the client gives (`GetBuybackItemInfo`, at
+`BuybackItem`) and whose price the next spend at the merchant equals is the sale taken back: `gained` and `sold` are
+both credited the negative amount (lifetime, session and day row), `spent` is not touched, and the journal row is a
+`sold` row with a negative `delta` and `ref` `item, n, npc, kind=buyback`. So `sold`, `gained`, a session's `gained`
+and a day row's `g` can be lower than the sum of the sales, and a `sold` row can be negative. `balance = gained -
+spent + away` still holds, the income keys still sum to `gained` and the spend keys to `spent`, and sell, buy back,
+sell again counts one sale. A buyback with no price known is a `vendor` purchase as before.
+
+**More than one row for one purse change.** Until 0.9.45 a purse change was one row. From 0.9.46 a change the server
+sends for several things at once is one row per thing, each with the balance after it (the last one carries
+`GetMoney()`), so the balance chain still holds row by row: several mails taken (Open All), several sales or several
+purchases asked for at a merchant. `gained` or `spent` is credited once with the whole change.
+
+Which source an income is, in this order: a quest reward of exactly this amount (QUEST_TURNED_IN within 3 s); an
+open trade (or one closed under 3 s ago); a sale asked for at a merchant in the last 5 s; a mail's coin taken in
+the last 3 s; the client's coin line of the last 3 s whose digits are this amount; the loot window (3 s from
+LOOT_OPENED); any gain while the mailbox is open; else `unexplained`. A gain at a merchant with no sale asked for is
+no longer `sold`: it stays `unexplained`. An income found by the drift check is `unexplained` with `drift=1`.
+
+| Rule | What is written |
+| --- | --- |
+| Mail (`mail`, `auctionSales`) | Every `TakeInboxMoney` / `AutoLootMailItem` of a mail with money queues `{ sender, rel, cod, money }` for 3 s (each matched change restarts the wait of the rest). A gain takes the mail whose money it equals; else the oldest k mails whose money sums to it, one row each; else one `mail` row with `x=unmatched` (takes were waiting) or an empty ref (the mailbox is open, no take seen) |
+| Coin line (`looted`) | CHAT_MSG_MONEY, as a classifier only. The text before the first `%s` of `LOOT_MONEY_SPLIT` (share), `YOU_LOOT_MONEY` and `YOU_LOOT_MONEY_GUILD` says what the line is, in any locale; a format with no text before its `%s` is skipped, a share prefix equal to a loot prefix is skipped, the longest prefix that fits wins. The line's digit groups must be the gold, silver and copper of the purse change, in order (a 0 may be left out, a large gold figure may come in groups of three; the guild form counts the first amount only; texture and color escapes are stripped). The line may come before the change or up to 3 s after it: an `unexplained` row of those digits is then rewritten in place to `looted` (the day row moves it too), and a `looted` row learns `share=1`. Digits that do not fit change nothing; a text the client hides is skipped. Coin with no loot window of the player's own gets a loot log row with `src` `Group share` or `Coin` |
+| Repairs | `Emitter._repair.cost` is the last `GetRepairAllCost()` read while the purse was unchanged (MERCHANT_SHOW, UPDATE_INVENTORY_DURABILITY, after each purse change at the merchant). A spend at a merchant equal to the drop of the cost is `repairs` (a drop the client showed up to 2 s before the change counts). When the cost has not moved and the merchant can repair, the row waits for the next UPDATE_INVENTORY_DURABILITY, 0.3 s, the next purse change, MERCHANT_CLOSED or PLAYER_LOGOUT, then is a repair or a purchase; it keeps its own balance, so the chain holds. A purchase asked for whose price equals the spend wins over the repair rule. `RepairAllItems(true)` (guild bank) arms nothing and the cost it clears is forgotten. A client without `GetRepairAllCost` keeps the rule of before: a spend within 2 s of `RepairAllItems()` |
+| Flights | `TakeTaxiNode` arms the next spend for 15 s, however long the map was open; the 5 s window from TAXIMAP_OPENED stays. The fare is taken once |
+| Sales and purchases | A purchase's amount is `C_MerchantFrame.GetItemInfo(index).price` (legacy `GetMerchantItemInfo` as fallback) times the quantity over the stack count. A change takes the waiting entry whose amount it equals; else the entries (searched over the 8 oldest with a known amount) that sum to it, one row each; else the oldest entry is used up as before, and when several were waiting and every amount was known the row names no item and carries `x=unmatched` |
+| Context | Where the client has `C_PlayerInteractionManager.IsInteractingWithNpcOfType`, a merchant, trainer, mailbox or auctioneer it reports open counts as open even when the window event was not seen. It never closes a window the events say is open |
+
+Every function and event above is feature-tested (`type(x) == "function"`) or registered through pcall, and each
+rule keeps the behavior of 0.9.45 as its fallback on a client that lacks it. `tests/gold_sources.lua` holds these
+(with `tests/coin_locales.lua`, the coin lines of the 13 locales mined from the client), and `tests/gold_profile.lua`
+runs the journal and the sources suites on a WoW Forever stub profile and on a bare client.
 
 ## Gold history (`characters[guid].goldDays`, `goldSince`, `settings.gold`, 0.9.44, everbuff-wow-addon #43)
 
@@ -228,6 +282,7 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 | Home > Overview, GOLD card | the addon window is open | today's net and today's pace (the day's net over the time played that day, after 5 minutes), and on a second line the total of all characters when more than one is known |
 | Minimap button tooltip | while the mouse is over the button | the gold block (at most 18 lines) under the two help lines; it follows the purse while it is open. Off with `settings.gold.tips = false` |
 | Chat | only as the direct reply to a typed `/eb gold` (four lines, a fifth while a farm timer runs), `/eb gold chars` (the roster), `/eb gold stats` (0.9.45: today, week and month in, out and net for the character, its realm and the account, three lines) or `/eb gold timer` (0.9.45: starts the farm timer, "Farm timer started.") | never a login summary. These replies also answer in combat: they open, move and change nothing on screen |
+| Loot > Gold pane, NET card and status line | the addon window is open | 0.9.46: `away` rows with `crash=1` in the period are counted in the NET card, and the status line says "Unattributed (game closed without saving): <amount>, counted in net"; "Not seen: ... changed while away" then names only the rest. The journal's Detail column says "Group share", "Repair", "Repair, one item", "Deposit", "Bid", "Buyout", "Auction cancelled", "Bought back: ...", "Talent reset" and "Unattributed (game closed without saving)" for the rows that carry those refs |
 | Loot > Gold pane, PER HOUR card | the addon window is open | 0.9.45: for today and the running session of the character logged in, the rolling rate by the per hour setting ("FARMING PER HOUR"), dimmed while it warms up, its window in the status line. Every other period keeps its net over the time played |
 | Loot > Gold pane, first-run question | the addon window is open, until answered | 0.9.45 (decision 4): one row above the cards, "Show your gold on screen?" with Yes and No. Yes turns the pill on. Asked once per account (`settings.gold.pill.asked`) |
 | Gold pill | only when `settings.gold.pill.on` is true (default off; no frame exists while it is off) | 0.9.45: one line of text, one or two of Balance, Account total, Session net, Today net, Per hour, Farm timer. Its text follows the purse in the frame of the change, in combat too. It is kept inside the screen and at least 8 px clear of the flag and of its notification line at its widest (600 x 40 at the flag's scale, growing inward from the flag's corner; the 600 is the Emitter's own cap on the line, `Emitter.TOAST_MAX_W`), wherever the flag is, and it is placed again when the flag is dragged, snapped to a corner or resized. A new pill sits under the flag's row. Left-click opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. In combat nothing about it is moved, resized, scaled, shown or hidden; a text that gets longer than the pill during a fight is cut short inside it until the fight ends |

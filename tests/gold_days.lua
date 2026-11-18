@@ -284,7 +284,8 @@ return function(P)
       M.fire("MERCHANT_CLOSED"); M.units.NPC = nil
     elseif op == 6 then
       M.units.NPC = { name = "Merchant Bob" }; M.fire("MERCHANT_SHOW")
-      RepairAllItems(); money(-math.min(n, M.money))
+      M.repairCost = math.min(n, M.money); M.fire("UPDATE_INVENTORY_DURABILITY")
+      RepairAllItems(); money(-M.repairCost); M.repairCost = 0
       M.fire("MERCHANT_CLOSED"); M.units.NPC = nil
     elseif op == 7 then M.units.NPC = { name = "Trainer Tom" }; M.fire("TRAINER_SHOW"); money(-math.min(n, M.money)); M.fire("TRAINER_CLOSED"); M.units.NPC = nil
     elseif op == 8 then M.fire("MAIL_SHOW"); M.inbox = { { sender = "Rando", subject = "gold", money = n } }; TakeInboxMoney(1); money(n); M.fire("MAIL_CLOSED"); M.inbox = {}
