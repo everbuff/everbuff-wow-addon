@@ -112,7 +112,8 @@ UI.WIN_MIN_W, UI.WIN_MIN_H, UI.WIN_MAX_W, UI.WIN_MAX_H = 900, 580, 1600, 1000
 --   signed   the sign is always printed: "+" or "-" (a caller can no longer forget it)
 --   short    the glance form: under 1g silver and copper, under 100g gold and silver, from 100g gold only; the
 --            smaller part is zero-padded ("12g 04s") so the width stays steady while the amount moves
---   compact  from 100,000g "123.4k" and the gold icon, or "123.4k g" in letters (only with `short`)
+--   compact  from 100,000g "123.4k" and from 1,000,000g "1.2M", with the gold icon, or "123.4k g" in letters (only
+--            with `short`); the tenth is floored
 --   icons    the coin icons instead of the letters g, s and c: inline textures of height 0, which follow the size
 --            of the font they are drawn in
 --   rate     round half away from zero (a rate); without it the amount is floored (a balance)
@@ -143,7 +144,9 @@ function ns.fmtMoney(c, opts)
     -- the amount in the smallest unit its band shows (copper under 1g, silver under 100g, gold from there),
     -- rounded or floored in that unit; a value rounded up over its band is shown in the next one
     local gold, silver, copper = round(c / 10000), round(c / 100), round(c)
-    if opts.compact and gold >= 100000 then
+    if opts.compact and gold >= 1000000 then
+      text = grouped(math.floor(gold / 1000000)) .. "." .. (math.floor(gold / 100000) % 10) .. "M" .. (unit and unit.g or (NBSP .. "g"))
+    elseif opts.compact and gold >= 100000 then
       text = grouped(math.floor(gold / 1000)) .. "." .. (math.floor(gold / 100) % 10) .. "k" .. (unit and unit.g or (NBSP .. "g"))
     elseif c >= 1000000 or silver >= 10000 then
       text = grouped(c >= 1000000 and gold or math.floor(silver / 100)) .. u("g")

@@ -163,9 +163,9 @@ prune (`applyAck`) never touches `characters`, so the history outlives the sessi
 | `tips` | `false` turns the gold block of the tooltips off (default on) |
 | `rateMode` | 0.9.45: what "per hour" means on every surface: `farm` (default), `earned` or `net`, see "Gold rate and farm timer" |
 | `icons` | 0.9.45: `true` draws the coin icons instead of the letters g, s and c on the pill, the bar texts and the tooltips (default off) |
-| `compact` | 0.9.45: `true` writes amounts from 100,000g as `123.4k` on the pill and the bar texts (default off) |
+| `compact` | 0.9.45: `true` writes amounts from 100,000g as `123.4k` and from 1,000,000g as `1.2M` on the pill and the bar texts (the tenth is floored; default off) |
 | `pill` | 0.9.45: the gold pill, `{ on, metrics, label?, corner?, x?, y?, locked?, scale?, alpha?, asked? }`. `on` (default `false`): the pill is on screen. `metrics`: one or two of `balance`, `total`, `session`, `today`, `rate`, `timer`. `label`: each value names itself. `corner`, `x`, `y`: its place as offsets in screen units from the nearest screen corner (`TOPLEFT`, `TOPRIGHT`, `BOTTOMLEFT`, `BOTTOMRIGHT`), written the moment the pill is created and whenever it is moved or pushed back inside the screen or off the flag. `locked`: a drag does not move it. `scale` 0.5 to 2, `alpha` 0.2 to 1. `asked`: the first-run question "Show your gold on screen?" was answered. Created on the first write, never by a read |
-| `tip` | 0.9.45: the tooltip block, `{ limit, week, month, flag? }`. `limit` 5 to 30 characters listed (default 8), `week` and `month` add a line each (default off), `flag = true` adds the block to the flag's tooltip (default off, see "Gold display") |
+| `tip` | 0.9.45: the tooltip block, `{ limit, week, month }`. `limit` 5 to 30 characters listed (default 8), `week` and `month` add a line each (default off). No key turns on the gold block of the flag's tooltip (see "Gold display") |
 
 Never stored: week, month, last 7 and last 30 days, realm and account sums, the total of all characters, shares and
 rates. They are sums over the character blocks at read time (`Gold.period`, `Gold.roster`, `Gold.metric` in
@@ -182,7 +182,7 @@ day row with two sources is 178 bytes in the save file's layout and each further
 Milestone 2 of the plan approved in #43. Both keys are optional, created on first use, written only into the block
 of the character logged in, and ignored by the backend until its own gate. No `sessions.gold` key changes.
 
-`characters[guid].goldRate`: `{ m = { [epochMinute] = { e, s, f, a } }, last }`.
+`characters[guid].goldRate`: `{ m = { [epochMinute] = { e, s, f, a, x? } }, last }`.
 
 | Field | Meaning |
 | --- | --- |
@@ -190,11 +190,12 @@ of the character logged in, and ignored by the backend until its own gate. No `s
 | `e` | earned in that minute, copper: every gain of the purse except `mail` and `auctionSales` (they are added with `gained` and taken out again in the same purse change). A change while away is never in it |
 | `s` | spent in that minute, copper |
 | `f` | farmed in that minute, copper: `looted` + `sold` + `quests`. A quest that claims an unexplained income within 3 s is added to the minute the income was booked in |
+| `x` | optional, only in a minute that had one: the `mail` and `auctionSales` gains of that minute, copper, the amount left out of `e`. It is what makes Net the purse's own net (the NET card's figure) while Farming and Earned stay without mail and auction payouts |
 | `a` | active seconds of that minute, at most 60: the 10 s ticker of the day rows, so time away from the keyboard and time logged out are not in it. A credit is booked whether or not the character is away |
 | `last` | server epoch of the last write. A write more than 1800 s after it empties `m` first (the window starts over); a read past that gap sees an empty window and changes nothing |
 
 A rate is `sum * 3600 / active seconds` over the buckets of the last 90 minutes, rounded half away from zero:
-Farming sums `f`, Earned sums `e`, Net sums `e - s`. Under 300 active seconds it is shown dimmed with "warming up
+Farming sums `f`, Earned sums `e`, Net sums `e + x - s` (everything gained minus everything spent). Under 300 active seconds it is shown dimmed with "warming up
 m:ss". The label always names the definition and the window ("Farming 44g 20s/h · last 37 min"). The window is the
 character's own: a second character starts its own, a /reload and a relog inside 30 minutes continue it.
 `tests/gold_rate.lua` holds these.
@@ -202,8 +203,10 @@ character's own: a second character starts its own, a /reload and a relog inside
 `characters[guid].goldTimer`: `{ at, ledger }`. `at` is the server epoch the farm timer was started (`/eb gold
 timer`, or "Start farm timer" in the menu), `ledger` a copy of every key of `characters[guid].gold` except
 `balance` at that moment. The timer's figures are the lifetime ledger minus the snapshot over the wall time since
-`at`, by the per hour setting (Farming: `looted + sold + quests`). It survives a /reload and a relog, and it is not
-part of any session record.
+`at`, by the per hour setting (Farming: `looted + sold + quests`; Earned: `gained - mail - auctionSales`; Net:
+`gained - spent`). These are the figures the resolver gives for every period (`Gold.metric` ids `farmed`,
+`earnedOwn`, `net`, and `byMode` for the one the setting picks; `earned` is always everything gained). It survives
+a /reload and a relog, and it is not part of any session record.
 
 Reset gold history (Settings, Gold, More; two clicks) removes `goldDays`, `goldMonths`, `goldRate` and `goldTimer`
 of the character logged in and sets `goldSince` to now. `gold` (the lifetime ledger and the balance) is never
@@ -227,18 +230,17 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 | Chat | only as the direct reply to a typed `/eb gold` (four lines, a fifth while a farm timer runs), `/eb gold chars` (the roster), `/eb gold stats` (0.9.45: today, week and month in, out and net for the character, its realm and the account, three lines) or `/eb gold timer` (0.9.45: starts the farm timer, "Farm timer started.") | never a login summary. These replies also answer in combat: they open, move and change nothing on screen |
 | Loot > Gold pane, PER HOUR card | the addon window is open | 0.9.45: for today and the running session of the character logged in, the rolling rate by the per hour setting ("FARMING PER HOUR"), dimmed while it warms up, its window in the status line. Every other period keeps its net over the time played |
 | Loot > Gold pane, first-run question | the addon window is open, until answered | 0.9.45 (decision 4): one row above the cards, "Show your gold on screen?" with Yes and No. Yes turns the pill on. Asked once per account (`settings.gold.pill.asked`) |
-| Gold pill | only when `settings.gold.pill.on` is true (default off; no frame exists while it is off) | 0.9.45: one line of text, one or two of Balance, Account total, Session net, Today net, Per hour, Farm timer. Its text follows the purse in the frame of the change, in combat too. It is kept inside the screen and at least 8 px clear of the flag and its notification line (320 x 40 at the flag's scale), wherever the flag is. Left-click opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. In combat nothing about it is moved, resized, scaled, shown or hidden |
-| Pill and bar text menu | on a right-click, never in combat | 0.9.45: the client's `MenuUtil.CreateContextMenu` when it exists and works, else the addon's own list frame. Never UIDropDownMenu |
+| Gold pill | only when `settings.gold.pill.on` is true (default off; no frame exists while it is off) | 0.9.45: one line of text, one or two of Balance, Account total, Session net, Today net, Per hour, Farm timer. Its text follows the purse in the frame of the change, in combat too. It is kept inside the screen and at least 8 px clear of the flag and of its notification line at its widest (600 x 40 at the flag's scale, growing inward from the flag's corner; the 600 is the Emitter's own cap on the line, `Emitter.TOAST_MAX_W`), wherever the flag is, and it is placed again when the flag is dragged, snapped to a corner or resized. A new pill sits under the flag's row. Left-click opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. In combat nothing about it is moved, resized, scaled, shown or hidden; a text that gets longer than the pill during a fight is cut short inside it until the fight ends |
+| Pill and bar text menu | on a right-click, never in combat | 0.9.45: the client's `MenuUtil.CreateContextMenu` when it exists and works (its entries built during the call, or a menu handed back), else the addon's own list frame. The own list closes when what it hangs under is hidden (the window, a Settings page, the pill) and when a fight starts. Never UIDropDownMenu |
 | Bar text | only when another addon loaded LibDataBroker-1.1 (it is not embedded, decision 18) | 0.9.45: four data sources registered at PLAYER_LOGIN, "everbuff.gg Balance", "everbuff.gg Account total", "everbuff.gg Today", "everbuff.gg Per hour". Their tooltip is the gold block |
 | Pill tooltip | while the mouse is over the pill | 0.9.45: two help lines and the gold block |
-| Flag tooltip | while the mouse is over the flag, only when `settings.gold.tip.flag` is true (default off) | 0.9.45: the gold block under the flag's four help lines. Off by default: the flag is what the desktop app reads, and the taller tooltip waits for the desktop's replay of its fixtures (decision 3c) |
-| Settings > Gold | the addon window is open | 0.9.45: the controls of `settings.gold`, hidden characters with "Show again", and behind "More" the pill's lock, size and opacity, the tooltip's row count, week and month, the flag tooltip, and the resets |
+| Flag tooltip | never in 0.9.45 | the gold block under the flag's four help lines is built and switched off in code (`Gold.FLAG_TIP = false`); no setting and no control turns it on. The flag is what the desktop app reads, and the taller tooltip ships with the release that carries the desktop's replay of its fixtures (decision 3c) |
+| Settings > Gold | the addon window is open | 0.9.45: the controls of `settings.gold`, hidden characters with "Show again", and behind "More" the pill's lock, size and opacity, the tooltip's row count, week and month, and the resets |
 
 A rate on screen is drawn again every 10 s, by one ticker that exists only while the pill shows a rate or the farm
 timer, a bar text exists, one of the addon's tooltips is open or the Gold pane is showing.
 
-Nothing is drawn on or beside the flag for a machine to read, and with the default settings the flag's tooltip is
-unchanged.
+Nothing is drawn on or beside the flag for a machine to read, and the flag's tooltip is unchanged.
 
 ## Fight record (`schema = 1`)
 

@@ -34,8 +34,19 @@ return function(P)
     return { l = l, b = b, w = w, h = h }
   end
   local function inside(r) return r.l >= -0.01 and r.b >= -0.01 and r.l + r.w <= G.VIEW.w + 0.01 and r.b + r.h <= G.VIEW.h + 0.01 end
+  -- the flag and its notification line at its widest, from the Emitter's cap (not from Gold.flagRect): 600 x 40 at
+  -- the flag's size, inward from the flag's corner or from where it was dragged to
+  local function flagReach()
+    local st = ns.DB.settings
+    local fs = math.max(1, math.min(1.5, tonumber(st.flagScale) or 1))
+    local fw, fh = ns.Emitter.TOAST_MAX_W * fs, 40 * fs
+    local fc, fx, fy = st.emitCorner or "TOPLEFT", 0, 0
+    if st.flagPos then fc, fx, fy = st.flagPos.point, st.flagPos.x * fs, st.flagPos.y * fs end
+    local l, b = Gold.cornerRect(fc, fx, fy, fw, fh, G.VIEW.w, G.VIEW.h)
+    return { l = l, b = b, w = fw, h = fh }
+  end
   local function clearOfFlag(r)
-    local fr = Gold.flagRect(G.VIEW.w, G.VIEW.h)
+    local fr = flagReach()
     local m = Gold.FLAG_MARGIN - 0.01
     return r.l >= fr.l + fr.w + m or r.l + r.w <= fr.l - m or r.b >= fr.b + fr.h + m or r.b + r.h <= fr.b - m
   end
@@ -69,6 +80,7 @@ return function(P)
     local b = P.box(p)
     check("pill: as wide as its text plus S on each side, 22 high", b ~= nil and math.abs(b.w - (math.ceil(G.naturalWidth(p.text)) + 2 * UI.SP.S)) < 0.51 and b.h == Gold.PILL_H, b and b.w)
     check("pill: its text fits it", not p.text:IsTruncated() and G.naturalWidth(p.text) <= b.w - 2 * UI.SP.S + 0.5)
+    check("pill: a new pill sits under the flag's row, not beside it where the notification line runs", pc.corner == "TOPLEFT" and pc.x == Gold.FLAG_MARGIN and -pc.y >= 40 * 1.5 + Gold.FLAG_MARGIN, ("%s %s"):format(tostring(pc.x), tostring(pc.y)))
     check("pill: saved on creation, inside the screen, clear of the flag", pc.corner ~= nil and pc.x ~= nil and pc.y ~= nil and inside(pillBox()) and clearOfFlag(pillBox()), ("%s %s %s"):format(tostring(pc.corner), tostring(pc.x), tostring(pc.y)))
     check("pill: the box the layout resolves is the box the settings say", math.abs(b.l - pillBox().l) < 0.51 and math.abs((G.VIEW.h - b.t - b.h) - pillBox().b) < 0.51, ("%s vs %s"):format(b.l, pillBox().l))
     -- clear of the flag wherever the flag is, also when the pill was saved right on it
@@ -89,6 +101,38 @@ return function(P)
     if not (inside(pillBox()) and clearOfFlag(pillBox())) then bad[#bad + 1] = "dragged flag" end
     ns.DB.settings.flagPos, ns.DB.settings.emitCorner, ns.DB.settings.flagScale = nil, "TOPLEFT", 1
     check("pill: never over the flag or its notification line, for every flag corner and size and a dragged flag", #bad == 0, table.concat(bad, "; "))
+    -- the notification line itself: however long its text, it is drawn no wider than the cap the pill keeps clear of
+    do
+      local toast = _G.EverbuffToast
+      local q = ns._test.toastQueue()
+      for i = #q, 1, -1 do q[i] = nil end
+      M.now = M.now + 100
+      ns.Emitter.event("QUESTDONE", { name = ("A quest with a name far too long for one line "):rep(6) })
+      check("pill: the widest notification is drawn at exactly the cap it keeps clear of (600)", toast ~= nil and toast._w == ns.Emitter.TOAST_MAX_W and ns.Emitter.TOAST_MAX_W == 600, toast and toast._w)
+      M.now = M.now + 100
+    end
+    -- the flag moves after the pill was placed: the pill makes way in the same call
+    bad = {}
+    local E = ns.Emitter
+    pc.corner, pc.x, pc.y = "TOPRIGHT", -10, -10
+    Gold.pillPlace()
+    if not (pc.corner == "TOPRIGHT" and pc.y == -10) then bad[#bad + 1] = "start" end
+    E.setCorner("TR")
+    if not (inside(pillBox()) and clearOfFlag(pillBox())) then bad[#bad + 1] = "snapped onto it" end
+    E.setCorner("TL")
+    pc.corner, pc.x, pc.y = "BOTTOMLEFT", 300, 400
+    Gold.pillPlace()
+    E.setFlagPos("BOTTOMLEFT", 100, 390)
+    if not (ns.DB.settings.flagPos and inside(pillBox()) and clearOfFlag(pillBox())) then bad[#bad + 1] = "dragged onto it" end
+    E.setFlagPos(nil)
+    pc.corner, pc.x, pc.y = "TOPLEFT", 700, -20
+    Gold.pillPlace()
+    if not (pc.x == 700 and pc.y == -20) then bad[#bad + 1] = "beside the 100 percent flag" end
+    E.setFlagScale(1.5)
+    if not (inside(pillBox()) and clearOfFlag(pillBox())) or (pc.x == 700 and pc.y == -20) then bad[#bad + 1] = "made bigger over it" end
+    E.setFlagScale(1)
+    ns.DB.settings.flagPos, ns.DB.settings.emitCorner, ns.DB.settings.flagScale = nil, "TOPLEFT", 1
+    check("pill: it makes way when the flag is snapped onto it, dragged onto it or made bigger over it", #bad == 0, table.concat(bad, "; "))
     -- never off screen after a scale change, at the edge of every corner
     bad = {}
     for _, corner in ipairs({ "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }) do
@@ -127,6 +171,17 @@ return function(P)
     M.inCombat = false
     M.fire("PLAYER_REGEN_ENABLED")
     check("pill: after the fight it takes the width of its text", p:GetWidth() < wc and math.abs(p:GetWidth() - (math.ceil(G.naturalWidth(p.text)) + 2 * UI.SP.S)) < 0.51)
+    -- a text that gets longer in a fight stays inside the pill (cut short), and is shown in full after it
+    M.inCombat = true
+    local ws = p:GetWidth()
+    Gold.pillSet(2, "today"); M.settle()
+    local tb, pb = P.box(p.text), P.box(p)
+    check("pill: in combat a longer text does not resize it", p:GetWidth() == ws and G.naturalWidth(p.text) > ws - 2 * UI.SP.S)
+    check("pill: and is not drawn outside it: the text is held to the pill's inner width", tb ~= nil and tb.w <= ws - 2 * UI.SP.S + 0.5 and tb.l >= pb.l + UI.SP.S - 0.5 and tb.l + tb.w <= pb.l + pb.w - UI.SP.S + 0.5 and p.text:IsTruncated(), tb and (tb.l .. " " .. tb.w))
+    M.inCombat = false
+    M.fire("PLAYER_REGEN_ENABLED"); M.settle()
+    check("pill: after the fight it is in full again, the pill as wide as it", not p.text:IsTruncated() and p:GetWidth() > ws and math.abs(p:GetWidth() - (math.ceil(G.naturalWidth(p.text)) + 2 * UI.SP.S)) < 0.51 and inside(pillBox()), p:GetWidth())
+    Gold.pillSet(2, nil); M.settle()
     -- the own menu opens under the pill, as wide as its longest entry
     local keepMenu = rawget(_G, "MenuUtil")
     _G.MenuUtil = nil
@@ -271,6 +326,23 @@ return function(P)
     click(pane.pick1)
     local m = Gold._menu
     check("Settings Gold: Pill shows opens the six values", m.shown == true and m.count == 7 and m.btns[1].text.text == "Balance" and m.btns[1].ebSelected == true and m.btns[6].text.text == "Farm timer")
+    -- an open list does not outlive what it hangs under
+    pane:Hide()
+    check("Settings Gold: hiding the pane closes an open list", m.shown == false and m.owner == nil)
+    pane:Show(); M.settle()
+    click(pane.pick1)
+    click(pane.moreBtn)
+    check("Settings Gold: More closes an open list", m.shown == false)
+    click(pane.backBtn)
+    click(pane.pick2)
+    tick(pane.cbTips); tick(pane.cbTips)
+    check("Settings Gold: so does any other control of the page", m.shown == false)
+    click(pane.pick1)
+    M.inCombat = true; M.fire("PLAYER_REGEN_DISABLED")
+    check("Settings Gold: and the start of a fight", m.shown == false)
+    M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED"); M.settle()
+    click(pane.pick1)
+    check("Settings Gold: the list opens again", m.shown == true and m.count == 7)
     click(m.btns[4])
     check("Settings Gold: picking one sets the pill and the button", g().pill.metrics[1] == "today" and pane.pick1.text.text == "Today net" and m.shown == false and Gold.pill.text.text:find("^[%+%-]") ~= nil, pane.pick1.text.text)
     click(pane.pick2)
@@ -288,7 +360,7 @@ return function(P)
     check("Settings Gold: Show gold from", g().filter == "realm" and pane.pickFilter.text.text == "This realm")
     click(pane.pickFilter); click(m.btns[1])
     tick(pane.cbIcons); tick(pane.cbCompact)
-    check("Settings Gold: Coin icons and Compact numbers", g().icons == true and g().compact == true and Gold.fmt(12345670000) == "1,234.5k" .. UI.COIN_ICON.g)
+    check("Settings Gold: Coin icons and Compact numbers", g().icons == true and g().compact == true and Gold.fmt(12345670000) == "1.2M" .. UI.COIN_ICON.g and Gold.fmt(1234560000) == "123.4k" .. UI.COIN_ICON.g)
     tick(pane.cbIcons); tick(pane.cbCompact)
     check("Settings Gold: and off", g().icons == false and g().compact == false and Gold.fmt(12345670000) == "1,234,567g")
     -- hidden characters
@@ -309,10 +381,11 @@ return function(P)
     check("Settings Gold: Pill opacity", g().pill.alpha == 0.6 and pane.slAlpha.label.text == "Pill opacity: 60%")
     pane.slRows:SetValue(12)
     check("Settings Gold: Characters in tooltips", g().tip.limit == 12 and pane.slRows.label.text == "Characters in tooltips: 12")
-    tick(pane.cbWeek); tick(pane.cbMonth); tick(pane.cbFlag)
-    check("Settings Gold: week, month and the flag's tooltip", g().tip.week == true and g().tip.month == true and g().tip.flag == true)
-    tick(pane.cbWeek); tick(pane.cbMonth); tick(pane.cbFlag)
-    check("Settings Gold: the flag's tooltip is off again", g().tip.flag == false and g().tip.week == false)
+    tick(pane.cbWeek); tick(pane.cbMonth)
+    check("Settings Gold: week and month in tooltips", g().tip.week == true and g().tip.month == true)
+    tick(pane.cbWeek); tick(pane.cbMonth)
+    check("Settings Gold: and off again", g().tip.week == false and g().tip.month == false)
+    check("Settings Gold: no control for the flag's tooltip (it waits for the desktop's replay), no key written for it", pane.cbFlag == nil and g().tip.flag == nil and Gold.FLAG_TIP == false)
     M.inCombat = true
     pane.slScale:SetValue(0.5)
     check("Settings Gold: in combat the pill's size is not changed", g().pill.scale == 1.5)

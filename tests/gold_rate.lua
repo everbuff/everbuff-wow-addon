@@ -164,11 +164,18 @@ return function(P)
     local mail0 = me().gold.mail or 0
     M.fire("MAIL_SHOW"); money(70000); M.fire("MAIL_CLOSED")
     check("modes: the gain was booked as mail", (me().gold.mail or 0) == mail0 + 70000, me().gold.mail)
-    check("modes: a mail from an alt moves neither Farming nor Earned", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0)
+    check("modes: a mail from an alt moves neither Farming nor Earned; Net counts it, as the purse and the NET card do", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0 + 70000, G.rate("net").sum)
+    do
+      local x = 0
+      for _, b in pairs(me().goldRate.m) do x = x + (b.x or 0) end
+      check("modes: the mail is kept beside the earned figure of its minute (x), not in it", x == 70000, x)
+      check("modes: Net over the window is the purse's own net of the same credits", G.rate("net").sum == G.metric("net", "char", "today"), ("%s vs %s"):format(G.rate("net").sum, G.metric("net", "char", "today")))
+    end
     local tr0 = me().gold.training or 0
     M.fire("TRAINER_SHOW"); money(-20000); M.fire("TRAINER_CLOSED")
     check("modes: the spend was booked as training", (me().gold.training or 0) == tr0 + 20000, me().gold.training)
-    check("modes: a training spend does not move Farming or Earned, and Net falls by it", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0 - 20000, G.rate("net").sum)
+    check("modes: a training spend does not move Farming or Earned, and Net falls by it", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 and G.rate("net").sum == n0 + 70000 - 20000, G.rate("net").sum)
+    check("modes: the note of Net says what it is", G.RATE_NOTE.net == "Net: everything gained minus everything spent, per hour of active time", G.RATE_NOTE.net)
     money(3000)   -- income no source claims: earned, not farmed
     check("modes: unexplained income is earned, not farmed", G.rate("farm").sum == f0 and G.rate("earned").sum == e0 + 3000)
     -- a quest claims it within 3 s: it becomes farmed, in the minute it was booked in
@@ -275,7 +282,7 @@ return function(P)
   M.epoch, M.now = M.epoch + 18 * 60, M.now + 18 * 60
   do
     local t = G.timer()
-    check("timer: farmed, earned and net since the start", t.farmed == 120000 and t.earned == 120000 and t.net == 110000 and t.elapsed == 1080, ("%s %s %s"):format(t.farmed, t.earned, t.net))
+    check("timer: farmed, earned without the mail, and the purse's net since the start", t.farmed == 120000 and t.earnedOwn == 120000 and t.net == 150000 and t.elapsed == 1080 and t.earned == nil, ("%s %s %s"):format(t.farmed, tostring(t.earnedOwn), t.net))
     check("timer: the value follows the per hour setting, 12g in 18 minutes is 40g an hour", t.mode == "farm" and t.value == 120000 and t.perHour == 400000)
     local nb = ns.UI.NBSP
     check("timer: its line", G.timerText(t) == ("This farm: +12g%s00s in 18 min  ·  40g%s00s/h"):format(nb, nb), G.timerText(t))
@@ -284,7 +291,17 @@ return function(P)
     check("timer: the glance text", G.glance("timer") == ("Farm +12g%s00s in 18 min"):format(nb), G.glance("timer"))
     ns.DB.settings.gold = ns.DB.settings.gold or {}
     ns.DB.settings.gold.rateMode = "net"
-    check("timer: in Net mode it is earned minus spent", G.timer().value == 110000)
+    check("timer: in Net mode it is gained minus spent, the resolver's net", G.timer().value == 150000 and G.metric("byMode", "char", "timer") == 150000)
+    -- a mail credit inside the timer: one definition of every figure, whoever asks
+    ns.DB.settings.gold.rateMode = "earned"
+    local te = G.timer()
+    check("timer: in Earned mode the mail is left out, and the resolver gives the same figure under its own name", te.value == 120000 and te.earnedOwn == 120000
+      and G.metric("earnedOwn", "char", "timer") == 120000 and G.metric("byMode", "char", "timer") == 120000, te.value)
+    check("timer: the resolver's earned is everything gained, for the timer as for every period", G.metric("earned", "char", "timer") == 160000 and G.metric("mail", "char", "timer") == 40000
+      and G.metric("earned", "char", "today") - G.metric("earnedOwn", "char", "today") == G.metric("mail", "char", "today") + G.metric("auctionSales", "char", "today"))
+    check("timer: what the pill and /eb gold show in Earned mode is that figure", G.glance("timer") == ("Farm +12g%s00s in 18 min"):format(nb) and G.timerText(te):find(("^This farm: %%+12g%s00s in 18 min"):format(nb)) ~= nil, G.glance("timer"))
+    ns.DB.settings.gold.rateMode = "farm"
+    check("timer: farmed by the resolver too", G.metric("farmed", "char", "timer") == G.timer().farmed and G.metric("byMode", "char", "timer") == 120000 and G.metric("net", "char", "timer") == G.timer().net)
     ns.DB.settings.gold.rateMode = nil
   end
   do
