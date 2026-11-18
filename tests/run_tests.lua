@@ -195,6 +195,33 @@ do
   local rr = T.buildRuns(); local sfk
   for _, r in ipairs(rr) do if r.name == "Shadowfang Keep" then sfk = r end end
   check("Forever: Shadowfang Keep run listed and closed", sfk and sfk.inProgress == false, sfk and tostring(sfk.inProgress))
+  -- one dungeon, two names (Sunken Temple, 2026-11-17): a flip of the zone name inside is no new run
+  local dA = nk("DUNGEON")
+  M.zone = "Sunken Temple"; M.fire("PLAYER_ENTERING_WORLD")
+  M.zone = "The Temple of Atal'Hakkar"; M.fire("ZONE_CHANGED_NEW_AREA")
+  check("alias: the second name of the same dungeon raises nothing", nk("DUNGEON") == dA + 1, nk("DUNGEON") - dA)
+  M.zone = "Swamp of Sorrows"; M.fire("ZONE_CHANGED_NEW_AREA")
+  -- tonight's pattern in the log: enter, flip names, leave, come back within minutes, many times -> one run
+  do
+    local L, sid, t0 = ns.DB.story.events, ns.DB.active, 1794951106
+    local function ev(kind, t, text) L[#L + 1] = { s = sid, kind = kind, t = t, text = text } end
+    ev("DUNGEON", t0, "Sunken Temple")
+    ev("DUNGEONLEAVE", t0 + 5000, "Left  Sunken Temple"); ev("DUNGEON", t0 + 5001, "The Temple of Atal'Hakkar"); ev("DUNGEONLEAVE", t0 + 5002, "Left  The Temple of Atal'Hakkar")
+    ev("DUNGEON", t0 + 5096, "Sunken Temple")
+    ev("DUNGEONLEAVE", t0 + 7500, "Left  Sunken Temple")
+    ev("DUNGEON", t0 + 7600, "Sunken Temple")
+    ev("DUNGEONLEAVE", t0 + 8500, "Left  Sunken Temple")
+    -- an hour later, the same dungeon again: a second run
+    ev("DUNGEON", t0 + 12100, "Sunken Temple"); ev("DUNGEONLEAVE", t0 + 13000, "Left  Sunken Temple")
+    local st = {}
+    for _, r in ipairs(T.buildRuns()) do if r.name == "Sunken Temple" and r.startT >= t0 then st[#st + 1] = r end end
+    check("re-entries within 20 min and both names make one run", #st == 2, #st)
+    check("the merged run spans the whole visit", st[1] and st[1].startT == t0 and st[1].endT == t0 + 8500 and st[1].reentries == 3,
+      st[1] and (tostring(st[1].endT) .. "/" .. tostring(st[1].reentries)))
+    local noAlias = true
+    for _, r in ipairs(T.buildRuns()) do if r.name == "The Temple of Atal'Hakkar" then noAlias = false end end
+    check("no run carries the second name", noAlias)
+  end
   -- clean up so later run-count checks see only the original run
   for i = #ns.DB.story.events, n0 + 1, -1 do table.remove(ns.DB.story.events, i) end
 end
@@ -202,7 +229,7 @@ end
 -- ── Dungeons run grouping (pure) ──
 local runs = T.buildRuns()
 check("one run built", #runs == 1, #runs)
-check("run named", runs[1] and runs[1].name == "Deadmines", runs[1] and runs[1].name)
+check("run named (canonical)", runs[1] and runs[1].name == "The Deadmines", runs[1] and runs[1].name)
 check("run closed (not in progress)", runs[1] and runs[1].inProgress == false)
 
 -- ── Deaths matching (pure) ──

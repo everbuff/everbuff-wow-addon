@@ -449,6 +449,17 @@ Emitter.INSTANCES = {
   raid = { "Molten Core", "Onyxia's Lair", "Blackwing Lair", "Zul'Gurub", "Ruins of Ahn'Qiraj", "Ahn'Qiraj Temple",
     "Temple of Ahn'Qiraj", "Naxxramas" },
 }
+-- One instance, one name: the client calls Sunken Temple both "Sunken Temple" and "The Temple of Atal'Hakkar" (seen
+-- on WoW Forever, 2026-11-17: a run split in twelve on the flips), so names are compared and stored canonical.
+Emitter.INSTANCE_ALIAS = {
+  ["the temple of atal'hakkar"] = "Sunken Temple", ["temple of atal'hakkar"] = "Sunken Temple",
+  ["deadmines"] = "The Deadmines", ["stormwind stockade"] = "The Stockade", ["ahn'qiraj temple"] = "Temple of Ahn'Qiraj",
+  ["the temple of ahn'qiraj"] = "Temple of Ahn'Qiraj", ["ruins of ahn'qiraj"] = "Ruins of Ahn'Qiraj",
+}
+function Emitter.canonInstance(name)
+  if type(name) ~= "string" then return name end
+  return Emitter.INSTANCE_ALIAS[name:lower()] or name
+end
 function Emitter.instanceNow()
   -- (plainNum is declared further down; the same guard inline)
   local function plainNum(v) if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then return v end end
@@ -484,7 +495,8 @@ end
 -- Announce a dungeon entry or exit when the answer changed (deduped on the character across /reload).
 function Emitter.checkInstance()
   local iname, kind = Emitter.instanceNow()
-  local announced = ns.DB and ns.char().inInstance   -- per character (#23): another character is not in this dungeon
+  iname = Emitter.canonInstance(iname)
+  local announced = ns.DB and Emitter.canonInstance(ns.char().inInstance)   -- per character (#23): another character is not in this dungeon
   -- state FIRST, then the event/toast: if presentation ever throws, the dedupe state is still correct
   if kind and announced ~= iname then
     if announced then Emitter.event("DUNGEONLEAVE", { name = announced }) end
