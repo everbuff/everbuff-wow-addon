@@ -397,8 +397,8 @@ running back as a ghost) unless they are named wall offsets.
 | `open` | string | how it opened: `zone` (the dungeon check), `login` (found inside at a login or a /reload), `boss` (an ENCOUNTER_START where the dungeon check did not say inside), `split` (the run before it was ended by hand while the character stayed inside: it begins in the second the other ended) |
 | `why` | string | closed runs: `left` (20 minutes alive outside), `other` (another instance through a loading screen), `ghost` (a ghost outside for over 30 minutes), `manual` (`Runs.endNow`), `lost` (the game closed without saving) |
 | `partial?` | string | `state lost before this login` or `ended while a boss was in progress`: the record is incomplete and stays out of every later statistic |
-| `visits[]` | object | one row per stretch inside, at most 20, then the last row absorbs (`n` counts the stretches it took). `i`, `o`: wall offsets from `t` (`o` absent while inside). `how`: `zone`, `login`, `reload`, `ghost` (back in after a ghost run), `boss`, `split`. `out`: `alive`, `ghost`, `offline`, or `other` and `manual` when the run closed while inside. Sums of the visit: `secs` (inside), `active` (never more than `secs`), `xp`, `xpKill`, `xpQuest`, `kills`, `looted`, `quests`, `lootValue`, `items`, `unpriced`, `purse` (copper, the raw change of the purse inside). On a closed run a sum that is 0 is absent |
-| `secs` | object | `{ inside, ghost, outside, offline, active, combat, boss }`. `inside + ghost + outside + offline = endT - t`, the wall time, which is not stored. On a closed run a clock that is 0 is absent (`inside` is always there). `active` is inside time at the keyboard (10 second tick, same rule as the gold tick); every rate divides by it. `combat`: PLAYER_REGEN_DISABLED to ENABLED while inside. `boss`: the union of the windows of the encounters seen ending (two that overlap count once; one whose END was never seen counts nothing) |
+| `visits[]` | object | one row per stretch inside, at most 20, then the last row absorbs (`n` counts the stretches it took). `i`, `o`: wall offsets from `t` (`o` absent while inside). `gaps?`: on the row that absorbed, the time outside between its stretches as flat pairs of offsets from `t` (from, to, from, to, in order), at most 20 pairs; a later gap is not kept and reads as inside. A moment in a gap is not of the run. `how`: `zone`, `login`, `reload`, `ghost` (back in after a ghost run), `boss`, `split`. `out`: `alive`, `ghost`, `offline`, or `other` and `manual` when the run closed while inside. Sums of the visit: `secs` (inside), `active` (never more than `secs`), `xp`, `xpKill`, `xpQuest`, `kills`, `looted`, `quests`, `lootValue`, `items`, `unpriced`, `purse` (copper, the raw change of the purse inside). On a closed run a sum that is 0 is absent |
+| `secs` | object | `{ inside, ghost, outside, offline, active, combat, boss }`. `inside + ghost + outside + offline = endT - t`, the wall time, which is not stored. On a closed run a clock that is 0 is absent (`inside` is always there). `active` is inside time at the keyboard (10 second tick, same rule as the gold tick); every rate divides by it. `combat`: PLAYER_REGEN_DISABLED to ENABLED while inside. `boss`: the union of the windows of the encounters seen ending, in any order (two that overlap count once, also when one ends inside the other; one whose END was never seen counts nothing) |
 | `firstPull?` | number | offset of the first combat or encounter start |
 | `bosses[]` | object | one row per encounter id in pull order, at most 20, from ENCOUNTER_START and ENCOUNTER_END themselves (never from a fight record). `enc` (encounter id), `name?`, `pulls?` (on a closed run absent when 1: a row was pulled at least once), `wipes?` (non-success END with an own death in the pull), `resets?` (non-success END with none), `unknown?` (the END was not seen, or its success was hidden), `combat` (END minus START, summed), `ok?` and `dur?` (the raw success value and the length of the last END seen; on a closed run `ok` is absent beside `kill`, and `dur` when it equals `combat`), and once killed: `kill` (offset, stored once: a later kill of the same boss changes nothing) and `fight?` (uid of the fight running at the END, else of the last one that ended inside the pull). Not stored, because the kills give them: a boss's segment (its `kill` less the `kill` before it, or less `firstPull`) and the encounter killed before it (`Runs.splits`), and where its kill pull began (`kill` less `dur`, or less `combat`) |
 | `nDeaths?` | object | `{ me?, party? }`, never capped. `party` is not counted until party deaths are tracked. On a closed run a count that is 0 is absent, and the block with it when both are |
@@ -409,11 +409,13 @@ running back as a ghost) unless they are named wall offsets.
 | `keep?` | bool | protected from eviction (set from 0.9.51) |
 
 Only on the open run: `st` (`in`, `ghost`, `out`, `off`), `mark` and `beat` (epoch of the last clock reading),
-`left` (epoch alive outside began), `ghostAt`, `gap` (`{ ghost, outside, offline }`, the seconds since the last
+`left` (epoch alive outside began; a logout outside moves it on by the time offline), `ghostAt` (the same for
+the 30 minutes as a ghost), `gap` (`{ ghost, outside, offline }`, the seconds since the last
 visit, added to `secs` only when the character goes back in), `encs` (the open encounters, a map encounter id ->
 `{ t, o, d, r? }`; `r = 1` marks one carried across a /reload, whose END may have fired during the loading screen),
-`bossTo` (epoch up to which `secs.boss` is counted), `deadSince`, `m0` and `g0` (the purse and the gold counters at
-the last reading), `bossIn` (`{ zone, map }` after a boss pull put the character inside). The open run always has
+`bossWin` (the boss windows already in `secs.boss`, merged, as `{ from, to }` epoch pairs, at most 20; only those an
+encounter still open can meet are kept), `deadSince`, `m0` and `g0` (the purse and the gold counters at
+the last reading; `m0` is absent while the purse cannot be trusted: a 0 at a load while the saved balance is above 0), `bossIn` (`{ zone, map }` after a boss pull put the character inside), `prov` (`true` while only the zone name ever said dungeon: no instance type, no dungeon map). The open run always has
 every block and every clock (`nDeaths`, `deaths`, `hidden`, all of `secs`, `pulls`); a closed one is lean.
 
 Rules a reader can rely on:
@@ -423,7 +425,18 @@ Rules a reader can rely on:
   dungeon's name). A door visit is time outside and opens no run. A boss pull there, or on a map that is no
   continent where the check says outside, puts the character inside until the zone or the map changes.
 - Only time alive outside runs the 20 minutes. A ghost gap is on the run's clock; it ends at a resurrect outside,
-  or closes the run after 30 minutes. A /reload stays on the clock the run was on; only a login makes offline time.
+  or closes the run after 30 minutes. A /reload stays on the clock the run was on; only a login makes offline time,
+  and time offline runs neither the 20 minutes nor the 30, wherever the character logged out.
+- A run opened by the zone name alone (`prov`) is provisional until a fight, a boss pull, a death, XP, looted coin or
+  an item, or a stronger signal (the instance type, the dungeon map) confirms it. One never confirmed is not stored
+  when it closes, whatever its length (`settings.selftest.runs.provisional` counts them). A run ended by hand passes
+  its confirmation on to the next run in the same place.
+- A visit's `purse` never takes a 0 the client answers at a load for a purse that holds gold: the first trusted
+  reading after it is the baseline and adds nothing.
+- `combat` counts a combat that was already running when a visit began (walked in fighting, the next run of a split)
+  and one that goes on over a /reload, from the client's UnitAffectingCombat.
+- An encounter still open when a run is ended by hand while the character stays inside goes on in the next run
+  (`open = "split"`), its window there beginning at the cut: the old run does not see its end and says so.
 - Several encounters can be open at once. A second END of one encounter and an END without a START are ignored.
   A pull whose outcome was not seen is resolved by a later kill of the same encounter in the same run.
 - Nothing is put on a clock before a load is read (the login's or the /reload's world entry, once the client has
@@ -442,15 +455,15 @@ Rules a reader can rely on:
 `settings.instanceAlias` (map lowercase name -> canonical name, at most 40): a second name the client gave a dungeon
 while the character was inside it with GetInstanceInfo's map id unchanged. `Emitter.canonInstance` reads it after
 its built-in list. Diagnostics, nothing shown: `settings.selftest.runs` (whole-number counters: `door`,
-`discarded`, `outdoorBoss`, `endNoStart`, `restart`, `alias`, `lost`, `dropped`) and
+`discarded`, `provisional`, `gapCap`, `outdoorBoss`, `endNoStart`, `restart`, `alias`, `lost`, `dropped`) and
 `settings.selftest.aliasCandidates[]` (at most 20, `{ from, to, map0?, map1?, at, n }`: a name change inside with no
 loading screen that was not learned).
 
 Size, measured by `tests/runs.lua` as the client writes tables, at the depth a run sits at in the file: the real
 shape of the Maraudon run of 2026-11-18 (2 visits, 8 bosses, 1 death) is 2.8 KB (2903 bytes), and 100 such runs
 serialised together are 298 KB per character. The tests fail above 3 KB and 300 KB (plan 4.6). The worst case at
-the caps, every optional key present and not 0 on all 20 visits, 20 bosses and 40 death rows, is 20.0 KB (20515
-bytes; the test fails above 21 KB). The plan names 3 KB for the worst case too, as a target to be measured: with
+the caps, every optional key present and not 0 on all 20 visits, 20 bosses and 40 death rows, with 20 gaps on the
+last visit, is 21.0 KB (21456 bytes; the test fails above 22 KB). The plan names 3 KB for the worst case too, as a target to be measured: with
 its own caps (20 visits, 20 bosses, 40 deaths) that is not reachable, and the caps or the target are the founder's
 to change.
 

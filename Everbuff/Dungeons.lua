@@ -387,10 +387,66 @@ local function openRun(run)
 end
 
 -- ══ LIST VIEW ═══════════════════════════════════════════════════════════════════
+-- the value a column sorts by (the Per hour column: runs with an XP rate before those with a coin rate)
+local SORT_VAL = {
+  time = function(r) return n0(r.startT) end,
+  name = function(r) return (r.name or ""):lower() end,
+  dur = function(r) return n0(r.duration) end,
+  boss = function(r) return n0(r.bossesDown) end,
+  death = function(r) return n0(r.deaths) end,
+  rate = function(r) return r.xpPerHour and (1e12 + r.xpPerHour) or n0(r.coinPerHour) end,
+  loot = function(r) return n0(r.coin) end,
+}
+-- the rows of the list: the runs the filter keeps, sorted by `key`; ties and the default newest first
+local function listRows(runs, kind, inst, key, asc)
+  local rows = {}
+  for _, r in ipairs(runs) do
+    local k = r.kind == "raid" and "raid" or "party"
+    if (kind == "all" or kind == k) and (not inst or r.name == inst) then rows[#rows + 1] = r end
+  end
+  local val = SORT_VAL[key] or SORT_VAL.time
+  table.sort(rows, function(a, b)
+    local x, y = val(a), val(b)
+    if x ~= y then if asc then return x < y end return x > y end
+    if n0(a.startT) ~= n0(b.startT) then return n0(a.startT) > n0(b.startT) end
+    return tostring(a.id) > tostring(b.id)
+  end)
+  return rows
+end
+
 local function buildList(content)
   local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
+  -- the filter: All, Dungeons, Raids on the tab strip, and one dungeon from the list at its right (the pane's own
+  -- list frame). The sort: a click on a column's header.
+  local st = { kind = "all", inst = nil, sortKey = "time", sortAsc = false }
+  v.st = st
+  local tabs = UI.Tabs(v, { { key = "all", label = "All" }, { key = "party", label = "Dungeons" }, { key = "raid", label = "Raids" } }, -30, 2,
+    { shared = true, onSelect = function(key) st.kind = key; if listRebuild then listRebuild() end end })
+  v.tabs = tabs
+  local pane = tabs.content
+  local menu = UI.Menu(v)
+  v.menu = menu
+  local pick
+  pick = UI.Button(v, "All dungeons", 120, UI.ROW_H, function(b)
+    local names, seen = {}, {}
+    for _, r in ipairs(Runs.views()) do
+      if r.name and not seen[r.name] then seen[r.name] = true; names[#names + 1] = r.name end
+    end
+    table.sort(names)
+    local items = { { "", "All dungeons", st.inst == nil } }
+    for _, n in ipairs(names) do items[#items + 1] = { n, n, st.inst == n } end
+    menu.open(b, items, function(key) v.pickInst(key ~= "" and key or nil) end, true)
+  end)
+  pick:SetPoint("BOTTOMRIGHT", tabs.host, "TOPRIGHT", -UI.SP.S, 2)
+  v.pick = pick
+  v.pickInst = function(name)
+    st.inst = name
+    pick.text:SetText(name or "All dungeons"); UI.FitButton(pick, 120); UI.SetButtonSelected(pick, name ~= nil)
+    if listRebuild then listRebuild() end
+  end
+  UI.FitButton(pick, 120)
   -- lockouts: which instances this character is saved to, and when they reset (wraps; the list moves down with it)
-  local lock = UI.SummaryLine(v, C.gold, nil, true)
+  local lock = UI.SummaryLine(pane, C.gold, nil, true)
   v.lockFS = lock
   local function lockText()
     local L = (ns.DB and ns.char().lockouts) or {}
@@ -408,16 +464,19 @@ local function buildList(content)
   v.lockText = lockText
   v.emptyText = "No dungeon runs yet. Enter a dungeon and it shows up here.\n" .. Runs.SINCE
   -- Time · Dungeon · (in progress) · Length · Bosses · Deaths · Per hour · Loot
-  local tbl = UI.Table(UI.Below(v, lock), {
-    { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
-    { key = "name", label = "Dungeon", flex = 1, min = 120 },
+  local tbl = UI.Table(UI.Below(pane, lock), {
+    { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "12/31 23:59" }, sort = true },
+    { key = "name", label = "Dungeon", flex = 1, min = 120, sort = true },
     { key = "live", label = "", kind = "tag", color = "green", measure = { "•" } },
-    { key = "dur", label = "Length", kind = "num", color = "dim", measure = { "23h 59m" } },
-    { key = "boss", label = "Bosses", kind = "num", measure = { "99" } },
-    { key = "death", label = "Deaths", kind = "num", color = "dim", measure = { "99" } },
-    { key = "rate", label = "Per hour", kind = "num", color = "dim", measure = { "999,999 XP/h" } },
-    { key = "loot", label = "Loot", kind = "money", color = "gold", measure = { "999 · " .. fmtMoney(9999999) } },
-  }, { top = 0, emptyText = v.emptyText,
+    { key = "dur", label = "Length", kind = "num", color = "dim", measure = { "23h 59m" }, sort = true },
+    { key = "boss", label = "Bosses", kind = "num", measure = { "99" }, sort = true },
+    { key = "death", label = "Deaths", kind = "num", color = "dim", measure = { "99" }, sort = true },
+    { key = "rate", label = "Per hour", kind = "num", color = "dim", measure = { "999,999 XP/h" }, sort = true },
+    { key = "loot", label = "Loot", kind = "money", color = "gold", measure = { "999 · " .. fmtMoney(9999999) }, sort = true },
+  -- (the columns 8 px apart, not 12: with the filter strip's inset and the sort arrows' room, the name of a run in
+  -- progress, "Maraudon  ·  in progress", is cut at 900x580 otherwise)
+  }, { top = 0, gap = UI.SP.S, emptyText = v.emptyText, sortKey = st.sortKey, sortAsc = st.sortAsc,
+    onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; if listRebuild then listRebuild() end end,
     onClick = function(row) if row.run then openRun(row.run) end end,
     -- the clocks of the run, why it ended, and what is missing from it
     tooltip = function(row, _, tip)
@@ -442,8 +501,9 @@ local function buildList(content)
 
   listRebuild = function()
     lock:SetText(lockText())
-    local runs, rows = Runs.views(), {}
-    for i = #runs, 1, -1 do rows[#rows + 1] = runs[i] end
+    local runs = Runs.views()
+    local rows = listRows(runs, st.kind, st.inst, st.sortKey, st.sortAsc)
+    v.shown = rows
     tbl.setRows(rows, function(row, run)
       row.run = run
       row.c.time:SetText(date("%m/%d %H:%M", run.startT or 0))
@@ -458,9 +518,11 @@ local function buildList(content)
       local items, coin = run.items or 0, run.coin or 0
       row.c.loot:SetText((items > 0 and (items .. " · ") or "") .. fmtMoney(coin))
     end)
+    -- runs there are, none the filter keeps: say so, not that there are no runs
+    if #rows == 0 and #runs > 0 then tbl.setEmpty("No run matches this filter.") end
   end
 
-  listRebuild()
+  tabs.select("all")
   return v
 end
 local ticker

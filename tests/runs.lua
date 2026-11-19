@@ -149,9 +149,9 @@ return function(P)
   local RUN = { id = "string", v = "number", inst = "string", kind = "string", map = "number", diff = "number", uiMap = "number", t = "number", endT = "number",
     open = "string", why = "string", partial = "string", visits = "table", secs = "table", firstPull = "number", bosses = "table", nDeaths = "table", deaths = "table", xp = "table",
     gold = "table", hidden = "table", keep = "boolean",
-    st = "string", mark = "number", beat = "number", left = "number", ghostAt = "number", gap = "table", encs = "table", deadSince = "number", m0 = "number", g0 = "table", bossIn = "table", bossTo = "number" }
+    st = "string", mark = "number", beat = "number", left = "number", ghostAt = "number", gap = "table", encs = "table", deadSince = "number", m0 = "number", g0 = "table", bossIn = "table", bossWin = "table", prov = "boolean" }
   local VISIT = { i = "number", o = "number", how = "string", out = "string", n = "number", secs = "number", active = "number", xp = "number", xpKill = "number", xpQuest = "number", kills = "number",
-    looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number" }
+    looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number", gaps = "table" }
   local BOSS = { enc = "number", name = "string", pulls = "number", wipes = "number", resets = "number", unknown = "number", combat = "number", kill = "number",
     fight = "string", ok = "number", dur = "number" }
   local SECS = { inside = "number", ghost = "number", outside = "number", offline = "number", active = "number", combat = "number", boss = "number" }
@@ -161,7 +161,13 @@ return function(P)
       or (run.nDeaths and typed(run.nDeaths, { me = "number", party = "number" }, "nDeaths")) or (run.hidden and typed(run.hidden, { xp = "number", rep = "number", loot = "number" }, "hidden"))
       or (run.xp and typed(run.xp, { gain = "number", kill = "number", quest = "number", n = "number", l0 = "number", l1 = "number", p0 = "number", p1 = "number", need = "number" }, "xp"))
       or (run.gold and typed(run.gold, GOLD, "gold"))
-    for _, x in ipairs(run.visits) do why = why or typed(x, VISIT, "visit") end
+    for _, x in ipairs(run.visits) do
+      why = why or typed(x, VISIT, "visit")
+      if type(x.gaps) == "table" then
+        if #x.gaps % 2 ~= 0 or #x.gaps > 2 * R.GAP_CAP then why = why or "visit.gaps is no list of pairs under the cap" end
+        for k, g in ipairs(x.gaps) do if type(g) ~= "number" or (k > 1 and g < x.gaps[k - 1]) then why = why or "visit.gaps is not in order" end end
+      end
+    end
     for _, x in ipairs(run.bosses) do why = why or typed(x, BOSS, "boss") end
     for _, x in ipairs(run.deaths or {}) do why = why or typed(x, { o = "number", enc = "number", foe = "string", back = "number" }, "death") end
     if not isOpen then
@@ -343,8 +349,14 @@ return function(P)
     die(); play(10); leave()
     local endT = open().endT
     relog(8 * 3600)
+    -- (the night offline runs no clock: the 30 minutes go on from the login, where the logout left them)
+    check("4: logged out as a ghost overnight: at the login still running back, the night on no ghost clock", open() and open().st == "ghost" and #closed() == 0
+      and open().ghostAt == M.epoch and open().gap.offline == 8 * 3600 and open().gap.ghost == 0, open() and (open().ghostAt - M.epoch .. " " .. open().gap.offline .. " " .. open().gap.ghost))
+    play(R.GHOST_CAP)
+    check("4: 30 minutes as a ghost after the login to the second are not over", open() ~= nil)
+    play(10)
     local r = last()
-    check("4: logged out as a ghost overnight: closed at the cap, why ghost", open() == nil and r and r.why == "ghost", r and r.why)
+    check("4: then closed at the cap, why ghost", open() == nil and r and r.why == "ghost", r and r.why)
     check("4: and not hours long: it ends where the character was last inside", r.endT == endT and r.secs.wall == 120 + 1500 + 70 and r.secs.offline == 0, r.secs.wall)
     invariants("4")
     -- past the cap without a logout
@@ -486,9 +498,10 @@ return function(P)
     -- or none readable, the character is inside.
     fresh()
     enter("Shadowfang Keep", { type = "none", map = 33 })
-    check("7: a dungeon whose strong signal never fires still opens (the zone name, a dungeon's map id)", open() and open().inst == "Shadowfang Keep" and open().st == "in" and E._det.sig == "name")
-    play(120); leave(); expire()
-    check("7: and its time counts as inside", #closed() == 1 and last().secs.inside == 120)
+    check("7: a dungeon whose strong signal never fires still opens (the zone name, a dungeon's map id), provisional", open() and open().inst == "Shadowfang Keep" and open().st == "in"
+      and E._det.sig == "name" and open().prov == true)
+    play(60); combat(true); play(10); combat(false); play(50); leave(); expire()
+    check("7: once a fight confirms it, its time counts as inside", #closed() == 1 and last().secs.inside == 120)
     fresh()
     M.secrets[987654] = true
     enter("Shadowfang Keep", { type = "none", map = 987654 })
@@ -571,7 +584,18 @@ return function(P)
     local s = boss(open(), 493)
     check("9: a non-success END with the character dead in the pull is a wipe", s and s.kill == nil and s.wipes == 1 and s.resets == 0 and R.bossResult(s) == "Wiped", s and s.wipes)
     rise()
+    -- a boss reset twice and never killed: its last pull is shorter than its time in combat
+    play(30); START(494, "Morphaz"); play(2); END(494, "Morphaz", 0); play(5); START(494, "Morphaz"); play(1); END(494, "Morphaz", 0)
     invariants("9")
+    -- the raw answer of an END that was no kill is what the wipe probe reads (plan section 10): it stays on the
+    -- stored record, beside `dur`, and only a kill drops it
+    leave(); expire()
+    local rr = raw()
+    local k, w, z = boss(rr, 492), boss(rr, 493), boss(rr, 494)
+    check("9: closed: the killed row keeps no ok, the wipe and the reset rows keep ok 0", k and k.kill and k.ok == nil and w and w.ok == 0 and z and z.ok == 0, tostring(w and w.ok) .. " " .. tostring(z and z.ok))
+    check("9: closed: dur stays where it is not the time in combat, and reads as it where it is", z.dur == 1 and z.combat == 3 and z.resets == 2 and w.dur == nil and w.combat == 25
+      and (w.dur or w.combat) == 25, tostring(z.dur) .. " " .. tostring(w.dur))
+    invariants("9 closed")
 
     -- 10. a boss pulled out of trash combat (real: fight 216 opens 20:37:46, the START is 20:38:19; 85 s of fight,
     -- 52 s of encounter)
@@ -589,6 +613,25 @@ return function(P)
     check("10: the first pull of the run is the first combat", open().firstPull == 288 and seg(open(), 422) == 85 and open().secs.combat == 85 and open().secs.boss == 52, open().firstPull)
     check("10: the boss links the fight that was running at its END", uid ~= nil and b.fight == uid, tostring(b.fight))
     invariants("10")
+    -- the link refuses a fight that ended before the pull (a trash fight, then a boss with no fight of its own:
+    -- the client opened none, or it was not kept), and takes one that ended inside it
+    do
+      local F = ns.Fights
+      local realCur, realList = F.currentUid, F.list
+      local trash = { uid = "trash-1", startEpoch = 1000, duration = 40 }
+      local stub = { trash }
+      F.currentUid, F.list = function() return nil end, function() return stub end
+      local realMine = ns.isMine
+      ns.isMine = function() return true end
+      local refuse = R.fightUid(1041)
+      local touch = R.fightUid(1040)
+      local inside = R.fightUid(1020)
+      stub[2] = { uid = "pull-1", startEpoch = 1050, duration = 30 }
+      local later = R.fightUid(1060)
+      F.currentUid, F.list, ns.isMine = realCur, realList, realMine
+      check("10: a fight that ended before the pull is no link of the kill", refuse == nil, tostring(refuse))
+      check("10: one that ended inside the pull, or at its first second, is", touch == "trash-1" and inside == "trash-1" and later == "pull-1", tostring(touch) .. " " .. tostring(later))
+    end
 
     -- 11. END twice, END without START, and two encounters open at once (Zul'Farrak: Sezz'ziz and Nekrum start 17 ms
     -- apart and end 5 s apart)
@@ -885,16 +928,22 @@ return function(P)
         fight = "Hart-Realm-1795033978-216-a1b2" }
     end
     for i = 1, R.DEATH_CAP do worst.deaths[i] = { o = 40000 + i, enc = 12345, foe = "High Interrogator Gerstahn", back = 1234 } end
+    worst.visits[R.VISIT_CAP].gaps = {}
+    for k = 1, R.GAP_CAP do local g = worst.visits[R.VISIT_CAP].gaps; g[#g + 1] = 81000 + 20 * k; g[#g + 1] = 81010 + 20 * k end
     R.lean(worst)
     local missing = {}
     for _, k in ipairs(R.LEAN_VISIT) do if worst.visits[R.VISIT_CAP][k] == nil then missing[#missing + 1] = k end end
+    if #(worst.visits[R.VISIT_CAP].gaps or {}) ~= 2 * R.GAP_CAP then missing[#missing + 1] = "gaps" end
     for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "name" }) do if worst.bosses[R.BOSS_CAP][k] == nil then missing[#missing + 1] = k end end
     check("15: the worst case carries every optional key on every row, and is a record of the contract", #missing == 0 and contract(worst, false) == nil and R.valid(worst)
       and worst.deaths[R.DEATH_FULL].foe ~= nil and worst.deaths[R.DEATH_FULL + 1].foe == nil and worst.deaths[R.DEATH_CAP].back == nil and worst.deaths[R.DEATH_CAP].enc == 12345,
       table.concat(missing, ",") .. " " .. tostring(contract(worst, false)))
+    -- a boss row never killed keeps the raw answer of its END on the stored record (what the wipe probe reads)
+    local unk = T.runRecord("The Deadmines", 1000, 100, { bosses = { { enc = 1, name = "Rhahk'Zor", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 50, ok = 0, dur = 20 } } }).bosses[1]
+    check("15: lean keeps ok and dur on a boss row with no kill", unk.ok == 0 and unk.dur == 20 and unk.wipes == 1 and unk.resets == nil, tostring(unk.ok))
     local wsize = svSize(worst)
-    check("15: the worst case at the caps is under 21 KB (measured 20.0 KB; plan 4.6 names 3 KB as a target to be measured)", wsize < 21 * 1024, wsize)
-    realPrint(("dungeon run size: worst case at the caps (20 visits, 20 bosses, 40 deaths, every key) is %d bytes"):format(wsize))
+    check("15: the worst case at the caps is under 22 KB (measured 21.0 KB with 20 gaps; plan 4.6 names 3 KB as a target to be measured)", wsize < 22 * 1024, wsize)
+    realPrint(("dungeon run size: worst case at the caps (20 visits, 20 gaps, 20 bosses, 40 deaths, every key) is %d bytes"):format(wsize))
     -- the caps themselves
     fresh()
     enter("Maraudon")
@@ -1037,9 +1086,17 @@ return function(P)
     leave()
     _G.UnitIsDeadOrGhost = realDead
     check("18: a dead-or-ghost answer the addon may not test counts as alive", open().st == "out")
+    -- hidden lines outside, in the 20 minutes the run waits: none is the run's
+    local h0 = deepcopy(open().hidden)
+    M.fire("CHAT_MSG_LOOT", "Hidden line"); M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "Hidden line"); M.fire("CHAT_MSG_COMBAT_XP_GAIN", "Hidden line")
+    check("18: chat lines hidden outside are not counted on the run", same(open().hidden, h0), open().hidden.loot)
+    enter("Maraudon")
+    M.fire("CHAT_MSG_LOOT", "Hidden line")
+    check("18: back inside, the next one is", open().hidden.loot == h0.loot + 1 and open().hidden.rep == h0.rep and open().hidden.xp == h0.xp, open().hidden.loot)
+    leave()
     expire()
     check("18: no handler threw on any of it", errs() == e0 and R._err == nil, M.errors[#M.errors] or R._err)
-    check("18: the hidden lines end up on the record and in the page's wording", last().hidden.xp == 1 and last().hidden.loot == 1 and last().hidden.rep == 1)
+    check("18: the hidden lines end up on the record and in the page's wording", last().hidden.xp == 1 and last().hidden.loot == 2 and last().hidden.rep == 1)
     S[777001], S[424242], S["Hidden Boss"], S["Hidden line"], S[31337] = nil, nil, nil, nil, nil
     invariants("18")
   end
@@ -1113,9 +1170,15 @@ return function(P)
     -- two encounters that overlap in part: the union of their windows, counted once
     START(601, "Shadowpriest Sezz'ziz"); play(10); START(602, "Nekrum Gutchewer"); END(601, "Shadowpriest Sezz'ziz", 1); play(5); END(602, "Nekrum Gutchewer", 1)
     check("boss clock: two staggered encounters count the union of their windows", open().secs.boss == 70 + 15 and boss(open(), 601).combat == 10 and boss(open(), 602).combat == 5, open().secs.boss)
+    -- one encounter inside another, the inner one ending first: still the union (50 + 30 + 20, not 50)
+    START(603, "Hydromancer Velratha"); play(50); START(604, "Gahz'rilla"); play(30); END(604, "Gahz'rilla", 1); play(20); END(603, "Hydromancer Velratha", 1)
+    check("boss clock: an encounter that ends inside another counts the union of their windows", open().secs.boss == 85 + 100 and boss(open(), 603).combat == 100 and boss(open(), 604).combat == 30, open().secs.boss)
+    START(605, "Witch Doctor Zum'rah"); play(10); END(605, "Witch Doctor Zum'rah", 1)
+    check("boss clock: a later pull counts its own window, nothing of the earlier ones", open().secs.boss == 85 + 110, open().secs.boss)
+    check("boss clock: the windows kept are only those an open encounter can still meet", open().bossWin ~= nil and #open().bossWin >= 1 and open().encs[428] ~= nil, open().bossWin and #open().bossWin)
     R.endNow()
     local r = last()
-    check("boss clock: a run ended from inside with only a carried encounter open did not end mid-boss", r.why == "manual" and r.partial == nil and boss(r, 428).unknown == 1 and r.secs.boss == 85, tostring(r.partial))
+    check("boss clock: a run ended from inside with only a carried encounter open did not end mid-boss", r.why == "manual" and r.partial == nil and boss(r, 428).unknown == 1 and r.secs.boss == 195, tostring(r.partial))
     invariants("boss clock")
 
     -- a kill is stored once
@@ -1389,6 +1452,273 @@ return function(P)
     _G.SendChatMessage = real.send
     M.xpmax = 1000
     invariants("20")
+  end
+
+  -- ── offline runs no clock outside; combat and a boss go on over a /reload and a split ──────────────────────────
+  do
+    -- left alive, 60 s outside, logged out 25 minutes, back outside: only the 90 s alive outside run the 20 minutes
+    fresh()
+    enter("Maraudon"); play(300)
+    local id = open().id
+    leave(); play(60)
+    relog(25 * 60)
+    check("offline: logged out outside, the run waits at the login with its 20 minutes where the logout left them", open() and open().id == id and open().st == "out"
+      and open().left == M.epoch - 60 and #closed() == 0, open() and open().left)
+    play(30); enter("Maraudon")
+    local run = open()
+    check("offline: back in: one run, two visits, the night offline and only the time alive outside outside", run and run.id == id and #closed() == 0 and #run.visits == 2
+      and run.secs.offline == 1500 and run.secs.outside == 90 and run.secs.inside == 300, run and (run.secs.offline .. " " .. run.secs.outside))
+    invariants("offline outside")
+    -- the reviewer's shape: 2 minutes alive outside, 30 minutes offline, straight back in
+    fresh()
+    enter("Maraudon"); play(300); leave(); play(120)
+    relog(30 * 60); enter("Maraudon")
+    check("offline: 2 minutes outside and 30 offline is one run", #closed() == 0 and open() and #open().visits == 2 and open().secs.outside == 120 and open().secs.offline == 1800,
+      open() and #open().visits)
+    -- and the 20 minutes still end it, counted alive outside only
+    leave(); play(R.REENTER - 120)
+    relog(3600)
+    check("offline: the 20 minutes alive outside are not over with an hour offline in them", open() ~= nil and #closed() == 0)
+    play(130)
+    check("offline: they end once 20 minutes alive outside are spent", open() == nil and last().why == "left" and last().secs.offline == 1800, open() and open().st)
+    invariants("offline 20 minutes")
+    -- logged out outside 10 minutes, back in, out, over: the closed run sums to its wall time
+    fresh()
+    enter("Maraudon"); play(100); leave(); play(30)
+    relog(600); enter("Maraudon"); play(50); leave(); expire()
+    check("offline: a closed run with an offline gap outside sums to its wall time", last().secs.wall == last().endT - last().t and last().secs.offline == 600 and last().secs.outside == 30
+      and last().secs.inside == 150, last().secs.wall)
+    invariants("offline wall")
+    -- a ghost: 20 minutes running back, 15 offline, then in: one run, the ghost clock without the night
+    fresh()
+    enter("Maraudon"); play(100); die(); leave(); play(20 * 60)
+    relog(15 * 60)
+    check("offline: a ghost logged out 15 minutes after 20 running back is still running back", open() and open().st == "ghost" and #closed() == 0)
+    enter("Maraudon"); rise()
+    check("offline: back in: one run, 20 minutes running back, 15 offline", open() and #open().visits == 2 and open().secs.ghost == 1200 and open().secs.offline == 900 and #closed() == 0,
+      open() and open().secs.ghost)
+    invariants("offline ghost")
+    -- the 30 minutes as a ghost are counted without the time offline
+    fresh()
+    enter("Maraudon"); play(100); die(); leave(); play(20 * 60)
+    relog(15 * 60)
+    play(10 * 60)
+    check("offline: 20 + 10 minutes as a ghost around 15 offline: not over yet", open() ~= nil)
+    play(20)
+    check("offline: past 30 minutes as a ghost: over", open() == nil and last().why == "ghost" and last().secs.wall == 100)
+    M.dead = false
+    invariants("offline ghost cap")
+
+    -- combat across a /reload: the logout books it to there, the load counts the rest, the reload's seconds included
+    fresh()
+    enter("Maraudon"); play(60)
+    combat(true); play(30)
+    reload(9)
+    play(30); combat(false)
+    check("combat: a combat over a /reload counts whole, as inside does", open().secs.combat == 69 and open().secs.inside == 129, open().secs.combat)
+    invariants("combat reload")
+    -- combat over a split: each run takes its own part
+    fresh()
+    enter("Maraudon"); play(60)
+    combat(true); play(30)
+    local rec = R.endNow()
+    play(30); combat(false)
+    check("combat: a combat over a split: 30 s on the old run, 30 s on the next", rec and rec.secs.combat == 30 and open() and open().secs.combat == 30 and open().firstPull == 0,
+      open() and open().secs.combat)
+    invariants("combat split")
+    -- a boss over a split: the old run did not see it end, the kill lands on the next
+    fresh()
+    enter("Maraudon"); play(60)
+    combat(true); START(422, "Noxxion"); play(20)
+    rec = R.endNow()
+    play(10); END(422, "Noxxion", 1); combat(false)
+    local b = boss(open(), 422)
+    check("boss: a run ended mid-boss says so and does not see the end", rec and rec.partial == "ended while a boss was in progress" and boss(rec, 422).unknown == 1 and boss(rec, 422).kill == nil)
+    check("boss: the kill right after the split counts on the next run, its window from the cut", b and b.kill == 10 and (b.pulls or 1) == 1 and b.combat == 10 and open().secs.boss == 10
+      and open().encs == nil and (notes().endNoStart or 0) == 0, b and b.kill)
+    -- a death in the pull before the cut still makes a non-success END a wipe on the next run
+    START(423, "Razorlash"); play(10); die(); play(2)
+    R.endNow()
+    rise(); play(5); END(423, "Razorlash", 0)
+    check("boss: a death in the pull before the cut is carried with it", boss(open(), 423) and boss(open(), 423).wipes == 1, boss(open(), 423) and boss(open(), 423).wipes)
+    invariants("boss split")
+  end
+
+  -- ── the list: All, Dungeons, Raids, one dungeon, and a sort on every column (plan 5.A) ────────────────────────
+  do
+    fresh()
+    local lv = T.dungeonList and T.dungeonList()
+    if lv then
+      enter("Deadmines", { map = 36 }); play(300); kill(644, "Rhahk'Zor", 30); leave(); expire()
+      enter("Molten Core", { type = "raid", map = 409 }); play(900); die(); rise(); leave(); expire()
+      enter("Maraudon"); play(120); kill(422, "Noxxion", 20); kill(423, "Razorlash", 20); leave(); expire()
+      enter("Deadmines", { map = 36 }); play(600); leave(); expire()
+      local function names() local o = {}; T.dungeonList(); for _, r in ipairs(lv.shown) do o[#o + 1] = r.name .. ":" .. r.duration end; return table.concat(o, " ") end
+      check("list: newest first by default", names() == "The Deadmines:600 Maraudon:160 Molten Core:900 The Deadmines:330", names())
+      lv.tabs.select("raid")
+      check("list: Raids keeps the raids only", names() == "Molten Core:900", names())
+      lv.tabs.select("party")
+      check("list: Dungeons leaves the raids out", names() == "The Deadmines:600 Maraudon:160 The Deadmines:330", names())
+      lv.tabs.select("all")
+      lv.pick:GetScript("OnClick")(lv.pick)
+      local items = lv.menu.items or {}
+      check("list: the dungeon list names every dungeon once, after All dungeons", #items == 4 and items[1][2] == "All dungeons" and items[1][3] == true and items[2][1] == "Maraudon"
+        and items[3][1] == "Molten Core" and items[4][1] == "The Deadmines", #items)
+      lv.menu.btns[4]:GetScript("OnClick")(lv.menu.btns[4])
+      check("list: a dungeon picked keeps its runs only, and the button says which", names() == "The Deadmines:600 The Deadmines:330" and lv.pick.text:GetText() == "The Deadmines", names())
+      lv.tabs.select("raid")
+      check("list: a filter that keeps nothing says so, not that there are no runs", #lv.shown == 0 and lv.tbl.empty and lv.tbl.empty:GetText() == "No run matches this filter.",
+        lv.tbl.empty and lv.tbl.empty:GetText())
+      lv.tabs.select("all"); lv.pickInst(nil)
+      local head = lv.tbl.head
+      head.dur:GetScript("OnClick")(head.dur)
+      check("list: Length sorts longest first, then shortest first on a second click", names() == "Molten Core:900 The Deadmines:600 The Deadmines:330 Maraudon:160", names())
+      head.dur:GetScript("OnClick")(head.dur)
+      check("list: (shortest first)", names() == "Maraudon:160 The Deadmines:330 The Deadmines:600 Molten Core:900", names())
+      head.name:GetScript("OnClick")(head.name)
+      check("list: Dungeon sorts A to Z, ties newest first", names() == "Maraudon:160 Molten Core:900 The Deadmines:600 The Deadmines:330", names())
+      head.boss:GetScript("OnClick")(head.boss)
+      check("list: Bosses sorts most first, ties newest first", names() == "Maraudon:160 The Deadmines:330 The Deadmines:600 Molten Core:900", names())
+      head.death:GetScript("OnClick")(head.death)
+      check("list: Deaths sorts most first", lv.shown[1].name == "Molten Core", names())
+      for _, k in ipairs({ "time", "rate", "loot" }) do check("list: " .. k .. " is a sortable column", head[k] and head[k]:GetScript("OnClick") ~= nil) end
+      head.time:GetScript("OnClick")(head.time)
+      check("list: back on Time: newest first", names() == "The Deadmines:600 Maraudon:160 Molten Core:900 The Deadmines:330", names())
+      invariants("list")
+    end
+  end
+
+  -- ── review round 3: a run the zone name alone opened, the visit cap's gaps, a purse at load, another dungeon ────
+  do
+    -- the zone name alone (type "none", a map that is no continent): provisional, and 5 minutes with nothing in it
+    -- are not kept, whatever their length (plan section 6)
+    fresh()
+    enter("Shadowfang Keep", { type = "none", map = 33 })
+    check("prov: a run the zone name alone opened is provisional", open() and open().prov == true and E._det.sig == "name")
+    play(300); leave(); expire()
+    check("prov: 5 minutes with nothing in it are not kept, and noted", open() == nil and #closed() == 0 and (notes().provisional or 0) == 1, notes().provisional)
+    -- a fight confirms it
+    fresh()
+    enter("Shadowfang Keep", { type = "none", map = 33 })
+    play(60); combat(true); play(20); combat(false)
+    check("prov: a fight confirms it", open() and open().prov == nil)
+    play(220); leave(); expire()
+    check("prov: and the run is kept", #closed() == 1 and last().secs.inside == 300 and last().secs.combat == 20 and raw().prov == nil, #closed())
+    invariants("prov fight")
+    -- so do a boss, XP, a death, looted coin and a stronger signal
+    for _, how in ipairs({ "boss", "xp", "death", "loot", "signal" }) do
+      fresh()
+      enter("Shadowfang Keep", { type = "none", map = 33 }); play(30)
+      if how == "boss" then kill(1069, "Rethilgore", 20)
+      elseif how == "xp" then M.xp = M.xp + 50; M.fire("PLAYER_XP_UPDATE")
+      elseif how == "death" then die(); play(5); rise()
+      elseif how == "loot" then loot(250)
+      else enter("Shadowfang Keep", { map = 33 }) end                -- the client names it an instance now
+      play(30)
+      check("prov: " .. how .. " confirms it", open() and open().prov == nil, open() and tostring(open().prov))
+      leave(); expire()
+      check("prov: " .. how .. ": the run is kept", #closed() == 1, #closed())
+      invariants("prov " .. how)
+    end
+    -- a run opened by a strong signal is never provisional
+    fresh()
+    enter("Maraudon")
+    check("prov: a run the client names an instance is not provisional", open() and open().prov == nil)
+    -- ended by hand: unconfirmed, not kept and the next run is provisional too; confirmed, the next one is as well
+    fresh()
+    enter("Shadowfang Keep", { type = "none", map = 33 }); play(100)
+    local rec = R.endNow()
+    check("prov: ended by hand unconfirmed: not kept, the next run is provisional", rec == nil and #closed() == 0 and open() and open().prov == true and open().open == "split")
+    combat(true); play(10); combat(false); play(60)
+    rec = R.endNow()
+    check("prov: ended by hand once confirmed: kept, and the next run in the same place is confirmed", rec ~= nil and #closed() == 1 and open() and open().prov == nil)
+    invariants("prov split")
+
+    -- the visit cap: 22 visits, the last row absorbs 21 and 22, the time between them stays outside
+    fresh()
+    enter("Maraudon")
+    for _ = 1, 20 do play(10); leave(true); play(100); enter("Maraudon", { noLoad = true }) end
+    local tIn21 = M.epoch + 5
+    play(10); leave(true); play(30)
+    local tOut = M.epoch
+    combat(true); play(10); combat(false)                          -- a fight outside, between visits 21 and 22
+    play(60); enter("Maraudon", { noLoad = true })
+    local run = open()
+    local last20 = run.visits[R.VISIT_CAP]
+    check("caps: 22 visits keep 20 rows, the last one with its two gaps", #run.visits == R.VISIT_CAP and last20.n == 2 and last20.gaps and #last20.gaps == 4
+      and last20.gaps[3] == tOut - 30 - run.t and last20.gaps[4] == M.epoch - run.t, last20.gaps and table.concat(last20.gaps, ","))
+    check("caps: a moment outside between visits 21 and 22 is not of the run", R.inRun(run, tOut) == false and R.runAt(tOut) == nil and R.inRun(run, tOut + 20) == false)
+    check("caps: moments inside visits 20, 21 and 22 are", R.inRun(run, run.t + last20.i + 5) and R.inRun(run, tIn21) and R.inRun(run, M.epoch) and R.runAt(tIn21) == run)
+    local realMine = ns.isMine
+    ns.isMine = function() return true end
+    local rows = R.rowsOf(run, { { startEpoch = tIn21, uid = "f-in" }, { startEpoch = tOut, uid = "f-out" } }, "startEpoch")
+    ns.isMine = realMine
+    check("caps: the fight outside is not in the run's rows", #rows == 1 and rows[1].uid == "f-in", #rows)
+    play(10); leave(); expire()
+    local r = raw()
+    check("caps: the closed run keeps the gaps, and still sums to its wall time", r and r.visits[R.VISIT_CAP].gaps and #r.visits[R.VISIT_CAP].gaps == 4 and R.inRun(r, tOut) == false
+      and R.inRun(r, tIn21) == true and last().secs.wall == last().endT - last().t, r and #r.visits)
+    invariants("caps gaps")
+    -- past R.GAP_CAP gaps a later one is not kept: the row reads it as inside, and says so in the notes
+    fresh()
+    enter("Maraudon")
+    for _ = 1, R.VISIT_CAP - 1 + R.GAP_CAP + 2 do play(10); leave(true); play(20); enter("Maraudon", { noLoad = true }) end
+    check("caps: at most R.GAP_CAP gaps on the row", #open().visits[R.VISIT_CAP].gaps == 2 * R.GAP_CAP and (notes().gapCap or 0) == 2, notes().gapCap)
+    invariants("caps gap cap")
+
+    -- a login inside with the client's 0 for the purse at the world entry, the real balance right after: nothing of
+    -- the balance is the visit's
+    fresh()
+    enter("Maraudon"); play(300)
+    M.fire("PLAYER_LOGOUT"); G._tickAt = nil; T.newLoad(); adv(3600)
+    local bal = M.money
+    M.money = 0
+    pew(true); R.tick(); G.tick()
+    check("purse: logged in inside on a 0 that cannot be trusted: a visit with no purse baseline yet", open() and #open().visits == 2 and open().visits[2].how == "login"
+      and open().m0 == nil and open().visits[2].purse == 0, open() and tostring(open().m0))
+    M.money = bal; M.fire("PLAYER_MONEY")
+    play(60); leave(); expire()
+    r = raw()
+    check("purse: the login's 0 put nothing on the visit and nothing on the run", r and r.visits[2].how == "login" and r.visits[2].purse == nil and (r.gold == nil or r.gold.purse == nil)
+      and R.purseLine(R.view(r, false)) == nil, r and tostring(r.visits[2].purse))
+    invariants("purse login")
+    -- the same on a /reload: the reading before it stays the baseline
+    fresh()
+    enter("Maraudon"); play(300)
+    bal = M.money
+    M.fire("PLAYER_LOGOUT"); G._tickAt = nil; T.newLoad(); adv(9)
+    M.money = 0
+    pew(false, true); R.tick(); G.tick(); R.tick()
+    check("purse: a /reload on a 0 that cannot be trusted keeps the baseline from before", open() and open().m0 == bal and open().visits[1].purse == 0, open() and tostring(open().m0))
+    M.money = bal; M.fire("PLAYER_MONEY"); play(20)
+    leave()
+    check("purse: and the visit's purse is 0", open().visits[1].purse == 0, open().visits[1].purse)
+    invariants("purse reload")
+    -- a purse that really is 0 is read once the money code took it (the saved balance is 0)
+    fresh()
+    M.money = 0; me().gold.balance = 0
+    enter("Maraudon"); play(20)
+    check("purse: a real 0 is a baseline", open().m0 == 0, tostring(open().m0))
+    M.money = 500000
+
+    -- left alive (or as a ghost), 5 minutes outside, then another dungeon: the first run closes as "other", the
+    -- second opens with one visit
+    for _, ghost in ipairs({ false, true }) do
+      local tag = ghost and "as a ghost" or "alive"
+      fresh()
+      enter("Deadmines", { map = 36 }); play(60); kill(644, "Rhahk'Zor", 30)
+      if ghost then die() end
+      leave(); play(300)
+      enter("Wailing Caverns", { map = 43 })
+      local lr = last()
+      check("other " .. tag .. ": the run left closes as entered another instance", #closed() == 1 and lr.why == "other" and lr.inst == "The Deadmines"
+        and lr.visits[1].out == (ghost and "ghost" or "alive") and lr.secs.inside == 90, lr and lr.why)
+      check("other " .. tag .. ": and the other dungeon is a run of its own with one visit", open() and open().inst == "Wailing Caverns" and #open().visits == 1 and open().st == "in",
+        open() and open().inst)
+      if ghost then rise() end
+      play(30); leave(); expire()
+      invariants("other " .. tag)
+    end
   end
 
   -- ── 21. what the pane says; the contract of every key ────────────────────────────────────────────────────────

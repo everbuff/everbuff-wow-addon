@@ -322,6 +322,57 @@ function UI.SetButtonSelected(b, on)
   if b.ebRest then b.ebRest(b) end
   if b.text then b.text:SetTextColor(unpackc(on and C.ink or C.dim)) end
 end
+-- A short list of choices under a button, the pane's own frame (never UIDropDownMenu: it spreads taint). One per
+-- pane: menu.open(anchor, items, onPick, right) with items { { key, label, selected } }; a click picks and closes, a
+-- second click on the same button closes. (The Gold pane keeps its own copy, Economy.lua buildMenu.)
+UI.MENU_ROWS, UI.MENU_MIN_ROWS = 15, 5
+function UI.Menu(parent)
+  local SP, ROW_H = UI.SP, UI.ROW_H
+  local m = UI.Panel(parent)
+  if m.SetFrameStrata then m:SetFrameStrata("DIALOG") end
+  m.btns = {}
+  m:Hide()
+  function m.open(anchor, items, onPick, right)
+    if m:IsShown() and m.anchor == anchor then m:Hide(); m.anchor = nil; return end
+    m.anchor, m.items = anchor, items
+    local wmax = 0
+    for i, it in ipairs(items) do
+      local b = m.btns[i]
+      if not b then
+        b = UI.Button(m, "", 44, ROW_H, function(bb) m:Hide(); m.anchor = nil; if m.onPick then m.onPick(bb.key) end end)
+        m.btns[i] = b
+      end
+      b.key = it[1]
+      b.text:SetText(it[2]); UI.FitButton(b, 44); UI.SetButtonSelected(b, it[3] and true or false)
+      -- (the width FitButton gave it, worked out again: an unplaced frame need not answer GetWidth yet)
+      local ok, tw = pcall(b.text.GetStringWidth, b.text)
+      wmax = math.max(wmax, 44, math.ceil(ok and tonumber(tw) or 0) + 2 * SP.M)
+      b:Show()
+    end
+    for i = #items + 1, #m.btns do m.btns[i]:Hide() end
+    -- A long list goes on in columns, never past the bottom of the screen: as many rows as fit below the anchor (the
+    -- client's GetBottom, UIParent units from the bottom), at most UI.MENU_ROWS, at least UI.MENU_MIN_ROWS.
+    local rows = UI.MENU_ROWS
+    local ok, bottom = pcall(anchor.GetBottom, anchor)
+    bottom = ok and tonumber(bottom) or nil
+    if bottom and bottom > 0 then rows = math.max(UI.MENU_MIN_ROWS, math.min(UI.MENU_ROWS, math.floor((bottom - 2 - 2 * SP.XS - SP.S) / (ROW_H + 2)))) end
+    local cols = math.max(1, math.ceil(#items / rows))
+    rows = math.max(1, math.min(rows, #items))
+    for i = 1, #items do
+      local b = m.btns[i]
+      local col, row = math.floor((i - 1) / rows), (i - 1) % rows
+      b:ClearAllPoints(); b:SetPoint("TOPLEFT", m, "TOPLEFT", SP.XS + col * (wmax + SP.XS), -SP.XS - row * (ROW_H + 2)); b:SetWidth(wmax)
+    end
+    m.rows, m.cols = rows, cols
+    m.onPick = onPick
+    m:SetSize(cols * wmax + (cols + 1) * SP.XS, rows * (ROW_H + 2) - 2 + 2 * SP.XS)
+    if m.SetClampedToScreen then pcall(m.SetClampedToScreen, m, true) end
+    m:ClearAllPoints()
+    if right then m:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -2) else m:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2) end
+    m:Show()
+  end
+  return m
+end
 
 -- An edit box with an optional placeholder drawn inside it (a region of the box, so it sits on the box's fill and
 -- moves with it). The box keeps the placeholder in step on OnTextChanged; callers add their own handling with

@@ -807,6 +807,39 @@ return function(P)
     end
   end
 
+  -- ── Combat / Dungeons (0.9.50, review round 3): the dungeon list of a levelling character (40 names) lies inside
+  -- the window at 900x580, in columns, every name a button that can be clicked
+  do
+    P.open("combat", "dungeons", 900, 580, "normal")
+    local me = ns.char()
+    local keep, keepOpen = me.dungeonRuns, me.dungeonRun
+    local list, t0 = {}, GetServerTime() - 40 * 3600
+    for i = 1, 40 do list[i] = T.runRecord(("Dungeon Number %02d of the Long List"):format(i), t0 + i * 3600, 600) end
+    me.dungeonRuns, me.dungeonRun = list, nil
+    T.dungeonDetail():Hide()
+    local lv = T.dungeonList(); lv:Show(); M.settle()
+    lv.pick:GetScript("OnClick")(lv.pick); M.settle()
+    local menu = lv.menu
+    local wb = P.box(_G.EverbuffFrame)
+    local out, n = {}, 0
+    for i = 1, #menu.items do
+      local b = menu.btns[i]
+      local bb = b and b.shown ~= false and P.box(b)
+      if not bb then out[#out + 1] = "no box " .. i
+      else
+        n = n + 1
+        if bb.l < wb.l - 0.5 or bb.t < wb.t - 0.5 or bb.l + bb.w > wb.l + wb.w + 0.5 or bb.t + bb.h > wb.t + wb.h + 0.5 then out[#out + 1] = ("%d at %d,%d"):format(i, bb.l, bb.t) end
+      end
+    end
+    check("Dungeons menu: 40 dungeons and All dungeons are 41 buttons, in columns of at most UI.MENU_ROWS", #menu.items == 41 and n == 41 and menu.rows <= UI.MENU_ROWS and menu.cols == 3,
+      ("%d %d %s %s"):format(#menu.items, n, tostring(menu.rows), tostring(menu.cols)))
+    check("Dungeons menu: every entry lies inside the 900x580 window", #out == 0, table.concat(out, " | "))
+    menu.btns[41]:GetScript("OnClick")(menu.btns[41]); M.settle()
+    check("Dungeons menu: the last entry can be picked", lv.st.inst == "Dungeon Number 40 of the Long List" and #lv.shown == 1 and menu.shown == false, lv.st.inst)
+    lv.pickInst(nil)
+    me.dungeonRuns, me.dungeonRun = keep, keepOpen
+  end
+
   -- ── the framework pieces this step added
   do
     local hostF = CreateFrame("Frame", nil, _G.EverbuffFrame)
