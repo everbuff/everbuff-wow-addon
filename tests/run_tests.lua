@@ -1866,7 +1866,7 @@ do
       end
     end
   end
-  local build = "1.60.1.70170"
+  local build = "1.60.1.70959"
   setG("GetBuildInfo", function() local v, b = build:match("^(.*)%.(%d+)$"); return v, b, "Oct 1 2026", 120105 end)
   local said = {}
   local oldMsg = ns.msg
@@ -1876,7 +1876,7 @@ do
   local r, ran = ST.run()
   check("selftest: runs at the first login on a build", ran == true)
   check("selftest: a client with everything passes", r.ok == true and #r.missing == 0 and #r.forbidden == 0, table.concat(r.missing, ",") .. " / " .. table.concat(r.forbidden, ",") .. " / " .. tostring(r.error))
-  check("selftest: record carries build, interface, addon, at", r.build == "1.60.1.70170" and r.interface == 120105 and r.addon == ns.VERSION and r.at == M.epoch, tostring(r.build))
+  check("selftest: record carries build, interface, addon, at", r.build == "1.60.1.70959" and r.interface == 120105 and r.addon == ns.VERSION and r.at == M.epoch, tostring(r.build))
   check("selftest: events are checked when the client can say", r.events == "checked" and r.secrets == true)
   check("selftest: silent when everything passes", ST.line(r) == nil)
   local _, again = ST.run()
@@ -2320,6 +2320,12 @@ end
 for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
+end
+-- 0.9.49 (#42, plan in #51): the chat guards, the group member not named yet, the friendly target that is no foe,
+-- the sticky dungeon check records and the client's restricted events (on a save file of its own)
+do
+  local ok, err = pcall(dofile("tests/guards.lua"), { check = check, M = M, ns = ns })
+  check("0.9.49 tests/guards.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
 -- process each, because a profile has to be in place when the addon files load): the stub as it is, the WoW

@@ -18,7 +18,8 @@ end
 _G.print = function() end   -- the addon's chat lines are not part of the result
 
 local NEW_EVENTS = { "CHAT_MSG_MONEY", "CONFIRM_TALENT_WIPE", "COMMODITY_PRICE_UPDATED", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_PURCHASE_COMPLETED",
-  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR" }
+  "COMMODITY_PURCHASE_SUCCEEDED", "COMMODITY_PURCHASE_FAILED", "AUCTION_CANCELED", "AUCTION_HOUSE_SHOW_ERROR",
+  "UNIT_NAME_UPDATE" }   -- (0.9.49, #42: registered through pcall by Emitter and Fights)
 if mode == "forever" or mode == "bare" then M.profile("forever") end
 if mode == "bare" then
   M.unknownEvents = {}

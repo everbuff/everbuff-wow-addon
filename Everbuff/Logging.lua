@@ -55,6 +55,41 @@ do
     ns.noteBlocked(event == "ADDON_ACTION_FORBIDDEN" and "forbidden" or "blocked", addon, func)
   end)
 end
+-- The shared readers (0.9.49, #42 and the chat guards). Emitter keeps `safeStr` and `plainNum` as file locals,
+-- Fights `plain` and Visits `plainNum`; a module that needs the same guard without a local of its own asks here
+-- (Emitter.lua is at Lua's limit of 60 upvalues, so nothing new can be a file-level local there).
+--   ns.safeStr(v)    v when it is an ordinary string the addon may compare, match and store, else nil
+--   ns.plainNum(v)   the same for a number
+--   ns.unitName(u)   a unit's name as a plain string. Returns nil, true while the client has not resolved the name
+--                    (it answers its placeholder, UNKNOWNOBJECT, "Unknown" in English) or hides it (a secret
+--                    value): the unit is there, its name is not readable yet. The caller records nothing under the
+--                    placeholder and reads again on UNIT_NAME_UPDATE.
+do
+  local function cat0(v) return v == "" or (v .. "") end
+  local function add0(v) return v + 0 end
+  function ns.safeStr(v)
+    if type(v) ~= "string" then return nil end
+    if issecretvalue and issecretvalue(v) then return nil end
+    local ok = pcall(cat0, v)
+    return ok and v or nil
+  end
+  function ns.plainNum(v)
+    if type(v) ~= "number" then return nil end
+    if issecretvalue and issecretvalue(v) then return nil end
+    local ok = pcall(add0, v)
+    return ok and v or nil
+  end
+  function ns.unitName(unit)
+    if type(UnitName) ~= "function" then return nil, false end
+    local ok, raw = pcall(UnitName, unit)
+    if not ok or type(raw) == "nil" then return nil, false end   -- (type, not ==: a secret value throws on a compare)
+    local name = ns.safeStr(raw)
+    if not name then return nil, true end                       -- hidden by the client: there, not readable
+    if name == "" or name == (UNKNOWNOBJECT or "Unknown") then return nil, true end
+    return name, false
+  end
+end
+
 local L = {}
 ns.Logging = L
 

@@ -426,7 +426,7 @@ Nothing is drawn on or beside the flag for a machine to read, and the flag's too
 | `foes` | array of string | mobs faced (names may be missing on the Secret-Values client) |
 | `outcome` | `kill` / `wipe` / `death` / `fled` or nil | `fled` = left combat with no foe; nil on an `interrupted` fight whose result was not known yet |
 | `interrupted` | string or nil | `"logout"` (0.9.23, #18): the fight was still running at a /reload or a logout (PLAYER_LOGOUT fires on both) and is stored as far as it got; the end of that combat after a reload is not recorded |
-| `group` | array or nil | `{ name, class, race, level, unit, me, deadT?, deaths? }` at pull (nil when solo); `deadT` = seconds into the fight that member first died; `deaths[]` (0.9.3) = every death in seconds, so a member resurrected and killed again dies twice |
+| `group` | array or nil | `{ name?, class, race, level, unit, me, deadT?, deaths? }` at pull (nil when solo); `name` is absent (0.9.49, #42) for a member the client had not named yet or whose name it hides: never the client's placeholder "Unknown", and filled in when the name arrives during the fight or at its close; `deadT` = seconds into the fight that member first died; `deaths[]` (0.9.3) = every death in seconds, so a member resurrected and killed again dies twice |
 | `talents` | string or nil | Classic: talent points per tree at the pull, e.g. `"31/20/0"` (order = talent tabs). Retail / Midnight: the game's talent import string (loadout code) |
 | `uses` | array or nil | items used during the fight: `{ t (s into fight), name, sid (spell id), icon }`; a cast that is not a known spell |
 | `memberDeaths` | int or nil | how many groupmate deaths happened in this fight, a second death after a resurrection included (your own death is `outcome = "death"`) |
@@ -450,6 +450,7 @@ carried across those windows rather than recorded as lost. `t` is seconds since 
 (`duration`, 0.9.27: on FLIGHTTRIP, the seconds on the taxi to a tenth, the per-trip value behind the catalog's T-2 and T-5; the text keeps the rounded "(2m 38s)". `characters[guid].flightTime` is the character's lifetime sum.)
 (One row per fact, 0.9.27, #11: a recipe learned is one RECIPE row although WoW Forever both prints the system line and fires `NEW_RECIPE_LEARNED` for it, and a quest reward choice is one REWARD row per reward panel although the client can call `GetQuestReward` twice for one turn-in. Both were seen twice in the save file of 2026-10-02.)
 (`shown`, 0.9.5: the client's `GetTime()` in seconds with milliseconds when the notification for this row reached the screen; absent when it was quiet, muted, hidden or dropped from the queue. With the session's `startedMono` it is the addon side of an alignment anchor, matched to the desktop's OCR of the same notification, everbuff-desktop #72. `downtime` is stamped on a DEATH row once you are back on your feet: seconds from death to revive, the corpse run; `durLoss` is the gear durability percentage lost across that death.)
+(0.9.49, #42: ROSTERJOIN and ROSTERLEAVE are written only under a real name. A member the client has not named yet, whose name reads as its placeholder "Unknown", is waited for up to 30 s and joins under its name; no leave is written while a name is waited for. A KILL row takes its name from the target only when the target is an enemy; with the enemy's name hidden and a party member selected the row reads "an enemy down!", where it named the party member before.)
 (`x`,`y` are 0..1 map fractions.) Kinds: `LEVELUP ZONE FIRSTZONE DUNGEON DUNGEONLEAVE QUESTACCEPT QUESTDONE
 REWARD BOSS KILL WIPE DEATH ALIVE SKILLUP DISCOVERY FLIGHT FLIGHTTRIP LOOT ACHIEV SPELL REP ROSTERJOIN
 ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE GOLDAWAY TRADE`. (`money`, 0.9.37, #31: signed copper on GOLDAWAY, gold changed outside the addon's view, and TRADE, coin received or given in one purse change of a trade, whose text names the partner ("Gold elsewhere +5g 65s 70c", "Trade +25s with Kristijan"); both are quiet, never shown in game.) Only rare+ LOOT lands here (all loot is in `loot.log`).
@@ -480,11 +481,12 @@ At the first world entry on a client build or addon version it has not recorded,
 takes from the client: the functions, values and events in `Everbuff/Deps.lua` (generated from the source by
 `tools/deps.lua`; `luajit tools/deps.lua --json` prints the same list for the L1 API diff), that `issecretvalue` exists
 and answers false for plain values, and that none of its event frames holds an event the client forbids
-(`COMBAT_LOG_EVENT_UNFILTERED` on WoW Forever). One record, replaced on the next new build:
+(`COMBAT_LOG_EVENT_UNFILTERED` on WoW Forever). One record, replaced on the next new build; the three diagnostics the
+addon collects between two checks (`instance`, `instances`, `chatSecret`) are carried over into the new record:
 
 | field | type | notes |
 | --- | --- | --- |
-| `build` | string | `GetBuildInfo` version and build, `"1.60.1.70170"` |
+| `build` | string | `GetBuildInfo` version and build, `"1.60.1.70959"` |
 | `interface` | int | the interface number `GetBuildInfo` reports |
 | `addon` | string | the addon version that ran the check |
 | `at` | epoch | server time of the check |
@@ -496,7 +498,9 @@ and answers false for plain values, and that none of its event frames holds an e
 | `events` | string | `checked` (`C_EventUtils.IsEventValid`), or `unchecked` when the client cannot say |
 | `skipped?` | string | `classic`: a Classic client is not checked (WoW Forever only) |
 | `error?` | string | the check itself failed; `ok` is false and nothing is said in chat |
-| `instance?` | object | 0.9.41: the client's raw answers at the last dungeon check (world entry and zone change): `zone`, `name`, `type`, `diff`, `map` (GetInstanceInfo), `inInstance`, `ptype` (IsInInstance), `uiMap`, `mapType` (C_Map), `verdict` (`party`, `raid` or `none`). Diagnostics only; WoW Forever answers instance type `none` inside Shadowfang Keep, so the addon also reads the dungeon map type and a list of instance names |
+| `instance?` | object | 0.9.41: the client's raw answers at the last dungeon check (world entry and zone change): `zone`, `name`, `type`, `diff`, `map` (GetInstanceInfo), `inInstance`, `ptype` (IsInInstance), `uiMap`, `mapType` (C_Map), `verdict` (`party`, `raid` or `none`), and from 0.9.49 `sig`, the signal that gave the verdict (`type`, `ptype`, `mapType` or `name`; absent when the verdict is `none`). Diagnostics only; WoW Forever answers instance type `none` inside Shadowfang Keep, so the addon also reads the dungeon map type and a list of instance names |
+| `instances?` | map name -> object | 0.9.49 (#51): one sticky record per dungeon or raid, keyed by its canonical name (`Sunken Temple` for both of its names), written at every dungeon check whose verdict is not `none` and never by a check that says `none`. `{ at, strong, weak? }`: `at` is the server time the dungeon was last seen; `strong` is the newest record of the strongest signal seen under that name and `weak` the newest record of the weakest one (absent while only one signal was seen). Each record: `zone` (GetRealZoneText), `name` (GetInstanceInfo's name), `type`, `diff`, `map` (GetInstanceInfo; `map` 0 with `sig` `name` is the open world in front of the portal), `inInstance`, `ptype` (IsInInstance), `uiMap`, `mapType` (C_Map), `sig` (`type`, `ptype`, `mapType` or `name`, strongest first) and `at`. At most 40 names; the one not seen for longest goes first. Diagnostics only, nothing is shown and ingest ignores it |
+| `chatSecret?` | map kind -> object | 0.9.49 (#51): chat lines counted while the character is inside a dungeon or raid, by kind (`xp` CHAT_MSG_COMBAT_XP_GAIN, `rep` CHAT_MSG_COMBAT_FACTION_CHANGE, `loot` CHAT_MSG_LOOT, `system` CHAT_MSG_SYSTEM): `{ plain, secret }`, how many lines arrived as text the addon may read and how many as a Secret Value. A secret line is dropped unread (before 0.9.49 the handler matched it and threw). Counters only grow. Diagnostics only, nothing is shown and ingest ignores it |
 
 Silent when `ok`. When it fails the player sees exactly one chat line (founder decision 3, option B):
 `everbuff.gg: this WoW build changed <first item> (and N more); recording continues.` The backend's live canary

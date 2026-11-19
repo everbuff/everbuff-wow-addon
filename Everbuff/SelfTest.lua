@@ -16,16 +16,26 @@
 -- record ever, or on the first record of a new addon version (whose list may hold items the previous record never
 -- checked), is listed in `absent` only: it is how this client is, not a change. Classic clients are not checked
 -- (WoW Forever only): their record says skipped = "classic".
+--
+-- The record also carries what Emitter.lua notes about the client between two checks (0.9.41 `instance`, 0.9.49
+-- `instances` and `chatSecret`: the answers of the dungeon check and the chat lines the client hid inside). A new
+-- check replaces the record and keeps those (ST.KEEP): they are collected over many sessions, not by the check.
 
 local ADDON, ns = ...
 
 local ST = {}
 ns.SelfTest = ST
 
+ST.KEEP = { "instance", "instances", "chatSecret" }
+local function keep(res, prev)
+  if type(prev) ~= "table" then return end
+  for _, k in ipairs(ST.KEEP) do if type(prev[k]) == "table" and res[k] == nil then res[k] = prev[k] end end
+end
+
 local CLASSIC_PROJECTS = { "WOW_PROJECT_CLASSIC", "WOW_PROJECT_BURNING_CRUSADE_CLASSIC", "WOW_PROJECT_WRATH_CLASSIC",
   "WOW_PROJECT_CATACLYSM_CLASSIC", "WOW_PROJECT_MISTS_CLASSIC" }
 
--- "1.60.1.70170" and the interface number, or nil when the client does not say
+-- "1.60.1.70959" and the interface number, or nil when the client does not say
 function ST.buildId()
   if type(GetBuildInfo) ~= "function" then return nil end
   local ok, version, build, _, iface = pcall(GetBuildInfo)
@@ -71,6 +81,7 @@ function ST.run()
   if type(prev) == "table" and prev.build == build and prev.addon == ns.VERSION then return prev, false end
   local now = (GetServerTime and GetServerTime()) or time()
   local res = { build = build, interface = iface, addon = ns.VERSION, at = now, ok = true, missing = {}, forbidden = {}, absent = {} }
+  keep(res, prev)
   if isClassic() then
     res.skipped = "classic"
     db.settings.selftest = res
