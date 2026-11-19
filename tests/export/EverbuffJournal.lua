@@ -4,6 +4,14 @@ EverbuffDB = {
 	["characters"] = {
 		["Player-1-000001"] = {
 			["class"] = "WARRIOR",
+			["dungeonCopies"] = {
+				{
+					["key"] = "The Deadmines",
+					["run"] = "1-000001-1793000231-9df3",
+					["t"] = 1793000231,
+					["why"] = "first",
+				}, -- [1]
+			},
 			["dungeonRuns"] = {
 				{
 					["bosses"] = {
@@ -35,11 +43,14 @@ EverbuffDB = {
 						["combat"] = 30,
 						["inside"] = 100,
 					},
+					["size"] = 1,
 					["t"] = 1793000231,
 					["uiMap"] = 37,
-					["v"] = 1,
+					["v"] = 2,
 					["visits"] = {
 						{
+							["boss"] = 25,
+							["combat"] = 30,
 							["how"] = "zone",
 							["i"] = 0,
 							["looted"] = 240,
@@ -51,6 +62,51 @@ EverbuffDB = {
 					},
 					["why"] = "left",
 				}, -- [1]
+			},
+			["dungeonStats"] = {
+				["the deadmines"] = {
+					["active"] = 0,
+					["bosses"] = {
+						[1144] = {
+							["kills"] = 1,
+							["name"] = "Rhahk'Zor",
+							["seenIn"] = 1,
+							["wipes"] = 0,
+						},
+					},
+					["deaths"] = 0,
+					["full"] = 0,
+					["inst"] = "The Deadmines",
+					["kind"] = "party",
+					["last"] = 1793000231,
+					["lootValue"] = 0,
+					["looted"] = 240,
+					["n"] = 1,
+					["quests"] = 0,
+					["routes"] = {
+						["1144/d1/solo"] = {
+							["best"] = 30,
+							["bestAt"] = 1793000231,
+							["bestId"] = "1-000001-1793000231-9df3",
+							["k"] = 1,
+							["last"] = 1793000231,
+							["n"] = 1,
+							["seg"] = {
+								["start>1144"] = {
+									["id"] = "1-000001-1793000231-9df3",
+									["s"] = 30,
+								},
+							},
+							["splits"] = {
+								[1144] = 30,
+							},
+							["tot"] = 30,
+						},
+					},
+					["secs"] = 100,
+					["wipes"] = 0,
+					["xp"] = 0,
+				},
 			},
 			["durability"] = {
 				["at"] = 1793000331,
@@ -611,7 +667,7 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.50",
+			["addonVersion"] = "0.9.51",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
@@ -787,7 +843,7 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [84]
 				"UIErrorsFrame", -- [85]
 			},
-			["addon"] = "0.9.50",
+			["addon"] = "0.9.51",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["chatSecret"] = {

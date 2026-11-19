@@ -2261,7 +2261,7 @@ do
   -- 0.9.50: the visit is a stored dungeon run, closed by the 20 minutes outside
   local ch = db.characters["Player-1-000001"] or {}
   local dr = type(ch.dungeonRuns) == "table" and ch.dungeonRuns[1] or nil
-  check("export: one closed dungeon run on the character, none open", ch.dungeonRun == nil and type(ch.dungeonRuns) == "table" and #ch.dungeonRuns == 1 and dr.v == 1
+  check("export: one closed dungeon run on the character, none open", ch.dungeonRun == nil and type(ch.dungeonRuns) == "table" and #ch.dungeonRuns == 1 and dr.v == ns.Runs.V
     and dr.inst == "The Deadmines" and dr.key == nil and dr.kind == "party" and dr.map == 36 and dr.open == "zone" and dr.why == "left", dr and dr.why)
   check("export: its clocks sum to the wall time (a clock that is 0 is not stored) and it ends where the character was last inside", dr and dr.secs.inside == 100 and dr.endT - dr.t == 100
     and dr.secs.wall == nil and dr.secs.ghost == nil and dr.secs.outside == nil and dr.secs.offline == nil and dr.secs.combat == 30 and dr.secs.boss == 25 and #dr.visits == 1
@@ -2365,6 +2365,12 @@ end
 do
   local ok, err = pcall(dofile("tests/runs.lua"), { check = check, M = M, ns = ns })
   check("0.9.50 tests/runs.lua runs to its end", ok, err)
+end
+-- 0.9.51 (#51, the plan's milestone 0.9.50): bests per route and the segments, the dungeon statistics, Delete,
+-- Split, Join and Keep, the glance and the instances of the hour (on a save file of its own)
+do
+  local ok, err = pcall(dofile("tests/runs_bests.lua"), { check = check, M = M, ns = ns })
+  check("0.9.51 tests/runs_bests.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
 -- process each, because a profile has to be in place when the addon files load): the stub as it is, the WoW

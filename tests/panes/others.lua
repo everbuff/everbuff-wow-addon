@@ -840,6 +840,107 @@ return function(P)
     me.dungeonRuns, me.dungeonRun = keep, keepOpen
   end
 
+  -- ── Combat / Dungeons (0.9.51): bests, VS BEST, Pace, Visits and the buttons, BY DUNGEON, the hour line; a run
+  -- with 12 bosses and one with none, at both sizes: nothing cut, every button inside the window
+  for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+    local R = ns.Runs
+    local tag = ("Dungeons 0.9.51 %dx%d"):format(size[1], size[2])
+    P.open("combat", "dungeons", size[1], size[2], "normal")
+    local me = ns.char()
+    local keep, keepOpen, keepStats = me.dungeonRuns, me.dungeonRun, me.dungeonStats
+    local t = GetServerTime() - 90000
+    -- three runs of a dungeon with 12 bosses (the last one 3 bosses short), two visits each, the real names
+    local BRD = { "High Interrogator Gerstahn", "Lord Roccor", "Houndmaster Grebmar", "Ring of Law", "Pyromancer Loregrain", "Lord Incendius", "Warder Stilgiss",
+      "Fineous Darkvire", "Bael'Gar", "General Angerforge", "Golem Lord Argelmach", "Emperor Dagran Thaurissan" }
+    local function twelve(at, step, n, over)
+      local b = {}
+      for i = 1, n do b[i] = { enc = 3000 + i, name = BRD[i], pulls = 1, combat = 30, kill = 100 + i * step } end
+      local inside = 200 + 12 * step
+      local o = { firstPull = 70, bosses = b, size = 5, diff = 1,
+        visits = { { i = 0, o = 300, how = "zone", out = "ghost", secs = 300, active = 300 }, { i = 400, o = inside + 100, how = "ghost", secs = inside - 300, active = inside - 300, gg = 100 } },
+        secs = { inside = inside, ghost = 100, active = inside, combat = 0, boss = 0 } }
+      for k, v in pairs(over or {}) do o[k] = v end
+      local r = T.runRecord("Blackrock Depths", at, inside, o)
+      r.endT = at + inside + 100
+      return r
+    end
+    local runs = { twelve(t, 200, 12), twelve(t + 10000, 190, 12), twelve(t + 20000, 210, 9, { keep = true }), T.runRecord("Ragefire Chasm", t + 30000, 400, { size = 1 }),
+      T.runRecord("The Temple of Atal'Hakkar", t + 40000, 500, { keep = true }) }
+    me.dungeonRuns, me.dungeonRun, me.dungeonStats = runs, nil, nil
+    R.statsRebuild(me)
+    local dv = T.dungeonDetail()
+    local function cut()
+      local out = {}
+      for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and fs.text and fs.text ~= "" and fs:IsTruncated() then out[#out + 1] = tostring(fs.text):sub(1, 40) end end
+      return out
+    end
+    local wb = P.box(_G.EverbuffFrame)
+    local function inside(b)
+      local bb = P.box(b)
+      return bb and bb.l >= wb.l - 0.5 and bb.l + bb.w <= wb.l + wb.w + 0.5
+    end
+    for _, which in ipairs({ { 1, "12 bosses" }, { 3, "9 of 12 bosses" }, { 4, "no boss" } }) do
+      local v = R.view(runs[which[1]], false, true)
+      dv.pending, dv.refused = nil, nil
+      T.openRun(v); M.settle()
+      local c = cut()
+      check(tag .. ", " .. which[2] .. ": nothing on the run page is cut", #c == 0, table.concat(c, " | "))
+      local outB = {}
+      for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and not inside(b) then outB[#outB + 1] = tostring(b.label) end end
+      check(tag .. ", " .. which[2] .. ": every button lies inside the window", #outB == 0 and #dv.actBtns() >= 3, table.concat(outB, " | "))
+      if which[1] == 1 then
+        local vs, splits = 0, 0
+        for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and tostring(fs.text):find(R.UP, 1, true) then vs = vs + 1 end end
+        for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and b.visit then splits = splits + 1 end end
+        check(tag .. ": the slower run reads its 12 bosses against the best, each with its sign and arrow", vs >= 12 and dv.paceLine ~= nil, vs)
+        check(tag .. ": Split here on the second visit", splits == 1, splits .. " " .. tostring(R.visitClocks(runs[1]) ~= nil))
+      elseif which[1] == 3 then
+        local nk = 0
+        for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and fs.text == "Not killed" then nk = nk + 1 end end
+        check(tag .. ": the short run lists the 3 bosses it did not kill", nk == 3 and R.view(runs[3], false).total == 12, nk)
+      else
+        check(tag .. ": a run with no boss has no Pace and no VS BEST", dv.paceLine == nil)
+      end
+    end
+    dv:Hide()
+    local lv = T.dungeonList(); lv:Show(); M.settle()
+    check(tag .. ": the hour line and the lock line are not cut", not lv.hourFS:IsTruncated() and lv.hourFS.text:find("^Instances this hour: ") ~= nil, lv.hourFS.text)
+    -- (the longest real name may be cut in its cell: the hover says it in full, checked below)
+    local cutL = {}
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run then for k, fs in pairs(r.c) do if fs.IsTruncated and fs:IsTruncated() and not (k == "name" and r.run.name == "The Temple of Atal'Hakkar") then cutL[#cutL + 1] = k .. "=" .. tostring(fs.text) end end end end
+    local wd = {}
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and not wd[1] then for k, fs in pairs(r.c) do local bx = P.box(fs); wd[#wd + 1] = k .. "=" .. (bx and math.floor(bx.w) or -1) end end end
+    check(tag .. ": RUNS: LENGTH with its delta and BOSSES 9/12 are not cut", #cutL == 0, table.concat(cutL, " | ") .. " || " .. table.concat(wd, " "))
+    check(tag .. ": the view buttons lie inside the window", inside(lv.viewBtn.runs) and inside(lv.viewBtn.dungeons))
+    -- the view switch and the dungeon pick, with the longest real name picked, lie over no tab
+    lv.pickInst("The Temple of Atal'Hakkar"); M.settle()
+    local over = {}
+    local function meets(a, b) return a and b and a.l < b.l + b.w and b.l < a.l + a.w and a.t < b.t + b.h and b.t < a.t + a.h end
+    for nm, f in pairs({ runs = lv.viewBtn.runs, dungeons = lv.viewBtn.dungeons, pick = lv.pick }) do
+      for _, tb in ipairs(lv.tabs.tabs) do if meets(P.box(f), P.box(tb)) then over[#over + 1] = nm .. " over " .. tostring(tb.key) end end
+      if not inside(f) then over[#over + 1] = nm .. " outside the window" end
+    end
+    check(tag .. ": no view button and no dungeon pick lies over a tab, with a long dungeon picked", #over == 0 and #lv.shown == 1, table.concat(over, " | "))
+    lv.pickInst(nil); M.settle()
+    -- a long name: the hover says it in full, with what the cell leaves out
+    local longRow
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and r.run.name == "The Temple of Atal'Hakkar" then longRow = r end end
+    if longRow then longRow:GetScript("OnEnter")(longRow) end
+    check(tag .. ": the hover of a run names it in full, kept included", longRow and _G.GameTooltip.lines[1] == "The Temple of Atal'Hakkar  ·  kept"
+      and longRow.c.name.text == "The Temple of Atal'Hakkar", longRow and _G.GameTooltip.lines[1])
+    if longRow then longRow:GetScript("OnLeave")(longRow) end
+    lv.setView("dungeons"); M.settle()
+    local cutD = {}
+    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow then for k, fs in pairs(r.c) do if fs.IsTruncated and fs:IsTruncated() then cutD[#cutD + 1] = k .. "=" .. tostring(fs.text) end end end end
+    check(tag .. ": BY DUNGEON lists the three dungeons, nothing cut", #lv.dshown == 3 and lv.dungHost:IsShown() and not lv.runsHost:IsShown() and #cutD == 0, table.concat(cutD, " | "))
+    local first
+    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow and r.drow.name == "Blackrock Depths" then first = r end end
+    if first then first:GetScript("OnClick")(first, "LeftButton"); M.settle() end
+    check(tag .. ": a click on a dungeon filters RUNS to it", lv.st.view == "runs" and lv.st.inst == "Blackrock Depths" and #lv.shown == 3, lv.st.inst)
+    lv.pickInst(nil)
+    me.dungeonRuns, me.dungeonRun, me.dungeonStats = keep, keepOpen, keepStats
+  end
+
   -- ── the framework pieces this step added
   do
     local hostF = CreateFrame("Frame", nil, _G.EverbuffFrame)
