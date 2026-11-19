@@ -38,7 +38,6 @@ EverbuffDB = {
 					["kind"] = "party",
 					["map"] = 36,
 					["open"] = "zone",
-					["pb"] = true,
 					["secs"] = {
 						["boss"] = 25,
 						["combat"] = 30,
@@ -89,6 +88,7 @@ EverbuffDB = {
 							["best"] = 30,
 							["bestAt"] = 1793000231,
 							["bestId"] = "1-000001-1793000231-9df3",
+							["k"] = 1,
 							["last"] = 1793000231,
 							["n"] = 1,
 							["seg"] = {
@@ -100,6 +100,7 @@ EverbuffDB = {
 							["splits"] = {
 								[1144] = 30,
 							},
+							["tot"] = 30,
 						},
 					},
 					["secs"] = 100,

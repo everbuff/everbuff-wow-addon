@@ -516,7 +516,8 @@ return function(P)
     check("/eb gold stats and timer answer in combat: they open, move and change nothing on screen", #run("Gold STATS") == 3 and #run("gold timer") == 1)
     M.inCombat = false
     out = run("help")
-    check("/eb: the command list names them", out[1]:find("/eb gold stats", 1, true) ~= nil and out[1]:find("/eb gold timer", 1, true) ~= nil)
+    check("/eb: the command list names them", out[1]:find("/eb gold stats", 1, true) ~= nil and out[1]:find("/eb gold timer", 1, true) ~= nil
+      and out[1]:find("/eb instances", 1, true) ~= nil and out[1]:find("/eb instances limit 5, 10 or off", 1, true) ~= nil)
     local dash = false
     for _, a in ipairs({ "gold", "gold stats", "gold timer", "gold chars" }) do for _, s in ipairs(run(a)) do if s:find("\226\128\148", 1, true) then dash = true end end end
     for _, it in ipairs(G.menuItems()) do if it.text:find("\226\128\148", 1, true) then dash = true end end

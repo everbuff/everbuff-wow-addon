@@ -157,18 +157,18 @@ return function(P)
     local sig = "644.645.646/d1/solo"
     local s = stats(DM)
     check("1: a closed run is counted in its dungeon's statistics", s and s.n == 1 and s.inst == DM and s.routes[sig] and s.routes[sig].best == 600 and s.routes[sig].bestId == r1.id
-      and r1.pb == true, s and s.n)
+      and R.isPb(r1), s and s.n)
     check("1: its route is the sorted ids it killed, with the difficulty and solo", R.routeOf(r1) == "644.645.646" and R.sigOf(r1) == sig and r1.size == 1 and r1.route == nil)
     -- the entrance does not count: 100 s stood there, and the best is first pull to last kill
     check("1: standing at the entrance before the first pull is not in the best", R.measure(r1) == 600 and r1.firstPull == 100 and r1.secs.inside > 700)
     -- run 2: first pull at 50, kills at 150, 300, 550: 500 s, a new best
     local r2 = clear("Deadmines", DMAP, 50, K3(150, 300, 550))
     s = stats(DM)
-    check("2: a faster run sets the best and says so", s.routes[sig].best == 500 and s.routes[sig].bestId == r2.id and r2.pb == true and s.n == 2, s.routes[sig].best)
+    check("2: a faster run sets the best and says so", s.routes[sig].best == 500 and s.routes[sig].bestId == r2.id and R.isPb(r2) and s.n == 2, s.routes[sig].best)
     -- run 3: first pull at 80, kills at 230, 420, then 5 minutes outside alive, and 646 at 720 on the run's clock
     local r3 = clear("Deadmines", DMAP, 80, K3(230, 420, 720, { leaveC = 300 }))
     s = stats(DM)
-    check("3: a slower run sets no best", s.routes[sig].best == 500 and s.routes[sig].bestId == r2.id and r3.pb == nil and s.n == 3 and s.routes[sig].n == 3)
+    check("3: a slower run sets no best", s.routes[sig].best == 500 and s.routes[sig].bestId == r2.id and not R.isPb(r3) and s.n == 3 and s.routes[sig].n == 3)
     check("3: the 5 minutes outside are in no split: 640 s on the run's clock, not 940", R.measure(r3) == 640 and r3.secs.outside == 300 and #r3.visits == 2
       and R.splits(r3)[646].at == 640, R.measure(r3))
     -- the best run's splits, for VS BEST: 100, 250, 500 from its first pull
@@ -209,7 +209,7 @@ return function(P)
     check("3: BOSSES reads 3/3 once the dungeon has a learned list", rows[r3.id].c.boss.text == "3/3" and v3.total == 3, rows[r3.id].c.boss.text)
     check("3: the first run of a dungeon reads 'first run here' while it is the only one", (function()
       fresh(); local r = clear("Deadmines", DMAP, 10, K3(100, 200, 300)); local v = R.views()[1]
-      T.renderRun(v); return v.cmp.isBest and T.dungeonDetail().deltaText == "first run here" and r.pb == true and r.done == nil
+      T.renderRun(v); return v.cmp.isBest and T.dungeonDetail().deltaText == "first run here" and R.isPb(r) and r.done == nil
         and T.dungeonDetail().paceLine == nil end)())                -- (and no Pace before the dungeon's first full clear)
     invariants("three runs")
   end
@@ -224,11 +224,12 @@ return function(P)
     local full = "1.2.3.4.5/d1/solo"
     local s = stats(SFK)
     check("4of5: the learned list exists from the second run: every boss killed in at least half", R.learned(s) and #R.learned(s) == 5 and s.n == 2)
-    check("4of5: the first run of a dungeon is no full clear (no list yet), the second is", a.done == nil and b.done == true and s.full == 1, tostring(a.done) .. " " .. tostring(b.done))
+    -- (the first run closes with no list; the second gives the list and judges the first again: both are full clears)
+    check("4of5: two identical clears are two full clears, the first judged once the list exists", a.done == true and b.done == true and s.full == 2, tostring(a.done) .. " " .. tostring(b.done) .. " " .. tostring(s.full))
     local c4 = clear(SFK, 33, 10, { { id = 1, at = 60 }, { id = 2, at = 110 }, { id = 3, at = 160 }, { id = 4, at = 210 } })   -- 200 s, boss 5 never pulled
     s = stats(SFK)
     check("4of5: a 4-of-5 run sets no best on the full route", s.routes[full].best == 490 and s.routes[full].bestId == b.id and s.routes["1.2.3.4/d1/solo"].best == 200
-      and c4.pb == true and c4.done == nil and s.full == 1)
+      and R.isPb(c4) and c4.done == nil and s.full == 2)
     local v = R.views()[3]
     check("4of5: it reads 4/5 and lists the boss it never pulled", v.total == 5 and v.bossesDown == 4 and #v.missing == 1 and v.missing[1].enc == 5, v.total)
     T.renderRun(v)
@@ -240,8 +241,9 @@ return function(P)
       return cmp and cmp.mode == "prefix" and cmp.at == 4 end)())
     -- BY DUNGEON
     local rows = R.dungeonRows()
-    check("4of5: BY DUNGEON: runs, full clears, average, the full route's best", #rows == 1 and rows[1].n == 3 and rows[1].full == 1 and rows[1].best == 490
-      and math.abs(rows[1].avg - s.secs / 3) < 0.01 and rows[1].deathsPerRun == 0, rows[1] and rows[1].best)
+    -- (Average is the Best's own measure over the full route's runs: 500 and 490, not the time inside of all three)
+    check("4of5: BY DUNGEON: runs, full clears, average, the full route's best", #rows == 1 and rows[1].n == 3 and rows[1].full == 2 and rows[1].best == 490
+      and rows[1].avg == 495 and rows[1].deathsPerRun == 0, rows[1] and rows[1].avg)
     invariants("4of5")
   end
 
@@ -255,7 +257,7 @@ return function(P)
     kill(644, "Rhahk'Zor", 10); START(645, "Sneed"); play(5); combat(false); leave(); play(30)
     enter("Deadmines", { map = DMAP }); combat(true); kill(646, "Gilnid", 10); combat(false); play(10); leave(); expire()
     local unk = raw()
-    check("never: a run with an outcome not seen sets no best and is no full clear", unk.pb == nil and unk.done == nil and R.unknownBoss(unk) and stats(DM).routes[sig].best == 500
+    check("never: a run with an outcome not seen sets no best and is no full clear", not R.isPb(unk) and unk.done == nil and R.unknownBoss(unk) and stats(DM).routes[sig].best == 500
       and stats(DM).n == 2)
     -- resolved: the unseen pull is followed by a kill of the same boss in the same run
     enter("Deadmines", { map = DMAP }); play(10); combat(true)
@@ -271,8 +273,8 @@ return function(P)
     ns.Recorder.discard(); ns.DB = ns.migrateDB(file)
     G._tickAt = nil; T.newLoad(); adv(3600); M.inCombat = false
     outside(); pew(true)
-    check("never: a partial run is counted nowhere", raw() and raw().partial ~= nil and me().dungeonStats == nil and raw().pb == nil, raw() and raw().partial)
-    check("never: and writes no copy row", #(me().dungeonCopies or {}) == 1, #(me().dungeonCopies or {}))
+    check("never: a partial run is counted nowhere", raw() and raw().partial ~= nil and me().dungeonStats == nil and not R.isPb(raw()), raw() and raw().partial)
+    check("never: the close of a partial run writes no second row (the row its entry wrote stays)", #(me().dungeonCopies or {}) == 1, #(me().dungeonCopies or {}))
     -- edited: split by hand
     fresh()
     clear("Deadmines", DMAP, 50, K3(150, 300, 550))
@@ -280,7 +282,7 @@ return function(P)
     local id = raw().id
     local ok = R.split(id, 2)
     local A, B = closed()[2], closed()[3]
-    check("never: an edited run sets no best", ok and A.edited and B.edited and A.pb == nil and B.pb == nil and stats(DM).routes[sig].best == 500
+    check("never: an edited run sets no best", ok and A.edited and B.edited and not R.isPb(A) and not R.isPb(B) and stats(DM).routes[sig].best == 500
       and stats(DM).n == 3, tostring(ok))
     invariants("never")
   end
@@ -452,7 +454,7 @@ return function(P)
     mara(M8); local two = mara(M8)
     local seven = mara({ 422, 423, 424, 425, 426, 427, 428 })     -- Tinkerer Gizlock skipped
     local s = stats("Maraudon")
-    check("full: 8 bosses learned from two clears, Gizlock after Princess Theradras among them", #R.learned(s) == 8 and two.done == true and seven.done == nil and s.full == 1)
+    check("full: 8 bosses learned from two clears, Gizlock after Princess Theradras among them", #R.learned(s) == 8 and two.done == true and seven.done == nil and s.full == 2)
     check("full: a run without Gizlock reads 7/8", R.views()[3].total == 8 and R.views()[3].bossesDown == 7)
   end
 
@@ -464,8 +466,8 @@ return function(P)
     local grp = clear("Deadmines", DMAP, 10, K3(150, 300, 450))
     M.groupN = 1
     local s = stats(DM)
-    check("size: the largest group is stored, and solo and group runs are two routes", solo.size == 1 and grp.size == 5 and s.routes["644.645.646/d1/solo"].best == 290
-      and s.routes["644.645.646/d1"].best == 440 and grp.pb == true, grp.size)
+    check("size: a solo run is marked solo (a group run keeps no size), and solo and group runs are two routes", solo.size == 1 and grp.size == nil and s.routes["644.645.646/d1/solo"].best == 290
+      and s.routes["644.645.646/d1"].best == 440 and R.isPb(grp), grp.size)
     -- a group that grows inside the run counts at its largest
     M.groupN = 1
     enter("Deadmines", { map = DMAP }); play(20); M.groupN = 3; M.fire("GROUP_ROSTER_UPDATE"); play(20); M.groupN = 2; M.fire("GROUP_ROSTER_UPDATE")
@@ -518,7 +520,7 @@ return function(P)
     enter("Deadmines", { map = DMAP }); play(30); leave(); play(60); enter("Deadmines", { map = DMAP }); play(30); leave(); expire()
     check("hour: a re-entry adds no copy", #(me().dungeonCopies or {}) == 1 and #closed()[1].visits == 2)
     enter("Molten Core", { type = "raid", map = 409 }); play(200); combat(true); kill(663, "Lucifron", 30); combat(false); leave(); expire()
-    check("hour: a raid adds none, and sets no best and no full clear", #(me().dungeonCopies or {}) == 1 and raw().kind == "raid" and raw().pb == nil and raw().done == nil
+    check("hour: a raid adds none, and sets no best and no full clear", #(me().dungeonCopies or {}) == 1 and raw().kind == "raid" and not R.isPb(raw()) and raw().done == nil
       and stats("Molten Core").n == 1 and next(stats("Molten Core").routes) == nil and R.compare(raw(), false) == nil)
     fresh()
     walk("The Temple of Atal'Hakkar"); play(60); walk("Swamp of Sorrows"); play(60); walk("The Temple of Atal'Hakkar"); play(60)
@@ -623,8 +625,8 @@ return function(P)
     clear("Deadmines", DMAP, 10, K3(100, 200, 300))
     check("glance: no run open reads so", G.glance("dungeon"):find("No dungeon run", 1, true) ~= nil)
     enter("Deadmines", { map = DMAP }); play(10); combat(true); play(90); START(644, "Rhahk'Zor"); play(10); END(644, "Rhahk'Zor", 1); play(41)
-    -- 151 s on the clock, one of the 3 learned bosses, killed 100 s from the first pull where the best took 90
-    check("glance: name, the run's clock, bosses of the learned list, the delta at the last kill", R.glance() == "The Deadmines 2:31 · 1/3 · +0:10" and G.glance("dungeon") == R.glance(), R.glance())
+    -- 151 s on the clock (2m: the glance reads whole minutes), one of the 3 learned bosses, killed 100 s from the first pull where the best took 90
+    check("glance: name, the run's clock, bosses of the learned list, the delta at the last kill", R.glance() == "The Deadmines 2m · 1/3 · +0:10" and G.glance("dungeon") == R.glance(), R.glance())
     -- on the pill, the metric holds the pill's size in combat (turned on out of combat, as a player can only do)
     combat(false)
     G.pillOn(true); G.pillSet(1, "dungeon")
@@ -635,10 +637,10 @@ return function(P)
     local w0, sz0 = p and p._wSet, p and p._w
     check("glance: the pill shows the run", p and p._text and p._text:find(R.glance(), 1, true) ~= nil and (w0 or 0) > 0, p and p._text)
     combat(true)
-    play(600)                                                    -- 12:31 on the clock: the text changes in combat
+    play(600)                                                    -- 12m on the clock: the text changes in combat
     START(645, "Sneed"); play(10); END(645, "Sneed", 1)          -- and a second kill, so 2/3 and a new delta
     G.pillUpdate()
-    check("glance: the pill text changes in combat and the pill keeps its size", p._wSet == w0 and p._w == sz0 and p._text:find("12:", 1, true) ~= nil
+    check("glance: the pill text changes in combat and the pill keeps its size", p._wSet == w0 and p._w == sz0 and p._text:find("12m", 1, true) ~= nil
       and p._text:find("2/3", 1, true) ~= nil, p._text)
     combat(false); G.pillUpdate()
     check("glance: after the fight the pill fits its text again", p._wSet == #p._text * 6 + 2 * ns.UI.SP.S, p._wSet)
@@ -657,13 +659,13 @@ return function(P)
     check("/eb run: bosses read against the learned list", said[1] and said[1]:find(", bosses 3/3, ", 1, true) ~= nil, said[1])
     local c = me()
     local runs = deepcopy(c.dungeonRuns)
-    for _, r in ipairs(runs) do r.v, r.pb, r.done, r.size = 1, nil, nil, nil end
+    for _, r in ipairs(runs) do r.v, r.done, r.size = 1, nil, nil end
     local file = deepcopy(ns.DB)
     file.characters[ME].dungeonRuns, file.characters[ME].dungeonStats = runs, nil
     ns.Recorder.discard(); ns.DB = ns.migrateDB(file)
     T.newLoad(); adv(60); pew(true)
     local s = stats(DM)
-    check("load: the statistics are built once from the runs stored since 0.9.50", s and s.n == 2 and s.full == 1 and s.routes["644.645.646/d1"] and s.routes["644.645.646/d1"].n == 2,
+    check("load: the statistics are built once from the runs stored since 0.9.50", s and s.n == 2 and s.full == 2 and s.routes["644.645.646/d1"] and s.routes["644.645.646/d1"].n == 2,
       s and s.n)
   end
 
@@ -678,6 +680,314 @@ return function(P)
     check("lockouts: the hover lists the other characters' lockouts that have not reset, not this one's", #lines == 1 and lines[1] == "Alt: Scholomance 4/10, resets in 1d 1h", lines[1])
     ns.DB.characters["Player-1-000002"] = nil
     check("lockouts: none says so", lv.lockTipLines()[1] == "No other character of this account is saved to an instance.")
+  end
+
+  -- ── review round 1 of 0.9.51 ─────────────────────────────────────────────────────────────────────────────────
+  -- wings under one name: each wing's clear is a full clear of its wing, and a visit with no kill moves no list
+  do
+    fresh()
+    local SM, SMAP = "Scarlet Monastery", 189
+    local LIB = function() return { { id = 6001, at = 100 }, { id = 6002, at = 200 } } end
+    local CAT = function() return { { id = 6003, at = 100 }, { id = 6004, at = 200 }, { id = 6005, at = 300 } } end
+    local l1 = clear(SM, SMAP, 20, LIB())
+    local c1 = clear(SM, SMAP, 20, CAT())
+    local l2 = clear(SM, SMAP, 20, LIB())
+    local c2 = clear(SM, SMAP, 20, CAT())
+    local s = stats(SM)
+    check("wings: two Library and two Cathedral clears are four full clears", l1.done and c1.done and l2.done and c2.done and s.full == 4 and s.n == 4, s.full)
+    check("wings: each wing has its own learned list", #R.learned(s, l2) == 2 and #R.learned(s, c2) == 3 and #R.clusters(s) == 2)
+    local vs = R.views()
+    check("wings: BOSSES reads 2/2 on a Library clear and 3/3 on a Cathedral clear", vs[3].total == 2 and vs[3].bossesDown == 2 and vs[4].total == 3, tostring(vs[3].total))
+    -- two quest visits with no kill (each with an item, so they are kept) leave the lists where they were
+    for _ = 1, 2 do enter(SM, { map = SMAP }); play(70); loot(10); leave(); expire() end
+    s = stats(SM)
+    check("wings: visits with no kill leave the lists and the full clears as they were", s.n == 6 and #R.learned(s, l2) == 2 and #R.learned(s, c2) == 3 and s.full == 4)
+    check("wings: Pace shows once a wing was cleared", R.views()[4].cleared == true)
+    invariants("wings")
+  end
+
+  -- the "at least half" boundary of the learned list
+  do
+    fresh()
+    clear("Razorfen Kraul", 47, 10, { { id = 1, at = 50 }, { id = 2, at = 100 }, { id = 3, at = 150 } })
+    clear("Razorfen Kraul", 47, 10, { { id = 1, at = 50 }, { id = 2, at = 100 } })
+    local s = stats("Razorfen Kraul")
+    local L = R.learned(s)
+    check("half: a boss killed in exactly half of two runs is on the list", L and #L == 3 and L[3] == 3, L and #L)
+    clear("Razorfen Kraul", 47, 10, { { id = 1, at = 50 }, { id = 2, at = 100 } })
+    clear("Razorfen Kraul", 47, 10, { { id = 1, at = 50 }, { id = 2, at = 100 } })
+    L = R.learned(stats("Razorfen Kraul"))
+    check("half: a boss killed in one run of four is not", L and #L == 2, L and #L)
+  end
+
+  -- a full clear needs every outcome seen
+  do
+    fresh()
+    clear("Deadmines", DMAP, 10, K3(100, 200, 300)); clear("Deadmines", DMAP, 10, K3(100, 200, 300))
+    local before = stats(DM).full
+    enter("Deadmines", { map = DMAP }); play(10); combat(true)
+    kill(644, "Rhahk'Zor", 10); kill(645, "Sneed", 10); kill(646, "Gilnid", 10)
+    START(700, "Mr. Smite"); play(5); combat(false); leave(); expire()   -- (left alive while Mr. Smite was up: not seen)
+    local r = raw()
+    check("full: every learned boss killed and one outcome not seen is no full clear", r.done == nil and R.unknownBoss(r) and stats(DM).full == before and before == 2)
+  end
+
+  -- the kill pull's length stays when the boss is pulled again later in the run
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(20); combat(true)
+    kill(644, "Rhahk'Zor", 10); play(20); kill(645, "Sneed", 60); combat(false)
+    local keys = {}
+    for _, sp in pairs(R.splits(open())) do keys[#keys + 1] = sp.prevKey .. ">" .. sp.key end
+    table.sort(keys)
+    leave(); play(300); enter("Deadmines", { map = DMAP }); play(20); combat(true)
+    START(645, "Sneed"); play(90); END(645, "Sneed", 1); combat(false)
+    local after = {}
+    for _, sp in pairs(R.splits(open())) do after[#after + 1] = sp.prevKey .. ">" .. sp.key end
+    table.sort(after)
+    check("dur: a long repull of a killed boss changes neither its pull nor the segment keys", table.concat(keys, " ") == "644>645 start>644" and table.concat(after, " ") == table.concat(keys, " ")
+      and boss(open(), 645).dur == 60 and boss(open(), 645).combat == 150, table.concat(after, " "))
+    leave(); expire()
+    check("dur: the stored record keeps the kill pull's length", boss(raw(), 645).dur == 60 and R.pullOf(boss(raw(), 645)) == boss(raw(), 645).kill - 60)
+  end
+
+  -- "Possibly two runs" stays on the closed run, and moves with its visit
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); kill(644, "Rhahk'Zor", 20); combat(false); play(10); leave(); play(60)
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); play(10); combat(false); leave(); play(60)
+    enter("Deadmines", { map = DMAP }); play(30); START(644, "Rhahk'Zor"); play(20); END(644, "Rhahk'Zor", 1); play(10); leave(); expire()
+    local r = raw()
+    check("repull: the closed run still says which visit to split at", r.repull == 3 and #r.visits == 3)
+    T.renderRun(R.view(r, false, true))
+    local said
+    for _, fs in ipairs(T.dungeonDetail().child.fs) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said = fs.text end end
+    check("repull: the page of the closed run says possibly two runs", said ~= nil and said:find("visit 3", 1, true) ~= nil, said)
+    R.split(r.id, 2)
+    check("repull: a split before that visit moves the mark to its new place", closed()[1].repull == nil and closed()[2].repull == 2)
+    R.join(closed()[2].id)
+    check("repull: and the join puts it back", closed()[1].repull == 3 and #closed() == 1)
+    R.split(closed()[1].id, 3)
+    check("repull: a split at that visit clears it", closed()[1].repull == nil and closed()[2].repull == nil)
+  end
+
+  -- Split and Join correct the instances counted; split and join back is the original count
+  do
+    fresh()
+    clear("Deadmines", DMAP, 20, K3(100, 200, 900, { leaveC = 60 }))
+    local d0 = select(2, R.copies())
+    R.split(raw().id, 2)
+    local d1 = select(2, R.copies())
+    local rows = me().dungeonCopies
+    check("copies: Split here counts the second part as a new copy", d1 == d0 + 1 and rows[#rows].run == closed()[2].id and rows[#rows].why == "split"
+      and R.hourTip()[1]:find("new copy (split by hand)", 1, true) ~= nil, d1)
+    R.join(closed()[2].id)
+    check("copies: Join with previous run takes it out again: the original count", select(2, R.copies()) == d0 and d0 == 1)
+    clear("Deadmines", DMAP, 20, K3(100, 200, 300))
+    check("copies: two runs, two copies", select(2, R.copies()) == 2)
+    R.join(raw().id)
+    check("copies: joining two runs says they were one copy", select(2, R.copies()) == 1 and #closed() == 1)
+    check("copies: the reason of a later copy reads as words", R.COPY_WHY.estimate == "new copy by the 20 minute rule")
+    -- `first` and `estimate`: a row of this dungeon on this character in the last 24 hours makes the next one an estimate
+    fresh()
+    local function entry() enter("Deadmines", { map = DMAP }); play(20); combat(true); play(10); combat(false); leave(); expire() end
+    entry(); play(23 * 3600 - R.REENTER); entry()
+    local L = me().dungeonCopies
+    check("copies: a second entry 23 hours later is an estimate", #L == 2 and L[1].why == "first" and L[2].why == "estimate", L[2] and L[2].why)
+    play(25 * 3600); entry()
+    L = me().dungeonCopies
+    check("copies: one more than 24 hours after the last is a first entry again", L[#L].why == "first" and #L == 1, #L)
+  end
+
+  -- the newest run deleted: `last` comes back from the runs left
+  do
+    fresh()
+    clear("Deadmines", DMAP, 50, K3(150, 300, 550))
+    local mid = clear("Deadmines", DMAP, 50, K3(160, 320, 600))
+    local newest = clear("Deadmines", DMAP, 50, K3(170, 340, 650))
+    R.delete(newest.id)
+    local s = stats(DM)
+    check("last: deleting the newest run puts Last run back on the run before", s.last == mid.t and s.routes["644.645.646/d1/solo"].last == mid.t and R.dungeonRows()[1].last == mid.t, s.last)
+    local after = deepcopy(me().dungeonStats)
+    R.statsRebuild(me(), true)
+    check("last: and equals a recompute from the runs left", (same(after, me().dungeonStats)), select(2, same(after, me().dungeonStats)))
+  end
+
+  -- delete equals a recompute: a run that held a best segment but not the best; an edited run never takes the best
+  do
+    fresh()
+    local slow = clear("Deadmines", DMAP, 50, K3(70, 400, 800))   -- start>644 in 20 s, 750 s in all
+    local best = clear("Deadmines", DMAP, 50, K3(150, 300, 550))  -- 500 s, start>644 in 100
+    local sig = "644.645.646/d1/solo"
+    check("seg: the slow run holds the fastest first segment", stats(DM).routes[sig].seg["start>644"].id == slow.id and stats(DM).routes[sig].bestId == best.id)
+    R.delete(slow.id)
+    local held = false
+    for _, x in pairs(stats(DM).routes[sig].seg) do if x.id == slow.id then held = true end end
+    check("seg: deleting it leaves no segment that names it, the next one takes its place", not held and stats(DM).routes[sig].seg["start>644"].s == 100)
+    local after = deepcopy(me().dungeonStats)
+    R.statsRebuild(me(), true)
+    check("seg: and equals a recompute from the runs left", (same(after, me().dungeonStats)), select(2, same(after, me().dungeonStats)))
+    -- an edited run of the same route, much faster: the best of the deleted run must not go to it
+    clear("Deadmines", DMAP, 10, { { id = 644, at = 40 } })
+    clear("Deadmines", DMAP, 10, { { id = 645, at = 40 }, { id = 646, at = 60 } })
+    local ok = R.join(raw().id)
+    local J = raw()
+    check("seg: the joined run is edited, on the same route and faster", ok and J.edited and R.sigOf(J) == sig and R.measure(J) < 500, R.measure(J))
+    R.delete(best.id)
+    local r = stats(DM).routes[sig]
+    check("seg: the deleted best is not taken from an edited run", r and r.best == nil and r.bestId == nil and r.n == 1, r and r.bestId)
+  end
+
+  -- `exact`: only a close through a loading screen into another map
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); play(20); combat(false)
+    enter("Shadowfang Keep", { map = 33 })
+    check("exact: another instance with another map id is an exact end", closed()[1].exact == true and closed()[1].why == "other")
+    play(30); combat(true); play(20); combat(false); leave(); expire()
+    check("exact: the 20 minutes are an estimate", closed()[2].exact == nil and closed()[2].why == "left")
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); play(20); combat(false)
+    enter("Wailing Caverns", { map = false })
+    check("exact: another name with no map id to compare is not exact", closed()[3].exact == nil and closed()[3].why == "other")
+    leave(); expire()
+  end
+
+  -- a difficulty of 0 (the client outside an instance) is no difficulty: such a run meets the /d1 runs of its route
+  do
+    fresh()
+    local SFK = "Shadowfang Keep"
+    local two = function() return { { id = 1, at = 100 }, { id = 2, at = 200 } } end
+    clear(SFK, 33, 50, two())
+    M.zone, M.mapType = SFK, 3
+    M.inst = { name = SFK, type = "none", diff = 0, mapID = 33 }
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    check("diff: a run opened by the name alone has difficulty 0", open() and open().diff == 0 and open().prov == true)
+    play(30); combat(true)
+    M.inst = { name = SFK, type = "party", diff = 1, mapID = 33 }; M.fire("ZONE_CHANGED_NEW_AREA")
+    check("diff: once the client says instance the run takes its difficulty", open().diff == 1)
+    play(40); START(1, "Rethilgore"); play(10); END(1, "Rethilgore", 1); play(90); START(2, "Razorclaw"); play(10); END(2, "Razorclaw", 1)
+    combat(false); play(30); leave(); expire()
+    check("diff: and shares the /d1 best", R.sigOf(raw()) == "1.2/d1/solo" and stats(SFK).routes["1.2/d1/solo"].n == 2, R.sigOf(raw()))
+    check("diff: a difficulty of 0 adds nothing to the key", R.sigOf({ bosses = { { enc = 5, kill = 10 } }, diff = 0, size = 1 }) == "5/solo")
+  end
+
+  -- a run split off by hand begins at its first combat, trash included, like every run
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); kill(644, "Rhahk'Zor", 20); combat(false); play(10); leave(); play(60)
+    enter("Deadmines", { map = DMAP }); play(20); combat(true); play(30); combat(false); play(40)   -- trash, then the boss
+    combat(true); kill(645, "Sneed", 20); combat(false); play(10); leave(); expire()
+    local orig = deepcopy(raw())
+    check("fc: each visit after the first keeps its first combat", orig.visits[2].fc ~= nil and orig.visits[1].fc == nil)
+    R.split(orig.id, 2)
+    local B = closed()[2]
+    -- (B's first visit: 20 s in, the trash; Sneed pulled 90 s in and down at 110)
+    check("fc: the second part's measure starts at its trash, not at its boss", B.firstPull == 20 and R.measure(B) == 90, B.firstPull)
+    R.join(B.id)
+    local J = deepcopy(closed()[1])
+    for _, x in ipairs({ J, orig }) do x.edited, x.pb, x.done = nil, nil, nil end
+    check("fc: split then join gives the first combat of each visit back", (same(J, orig)), select(2, same(J, orig)))
+  end
+
+  -- "first run" only on the only run of a dungeon
+  do
+    fresh()
+    for _ = 1, 3 do enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire() end
+    local n = 0
+    for _, v in ipairs(R.views()) do T.renderRun(v); if T.dungeonDetail().deltaText ~= "" then n = n + 1 end end
+    check("first: runs that cannot set a best do not read first run", n == 0, n)
+    fresh()
+    enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire()
+    T.renderRun(R.views()[1])
+    check("first: the only run of a dungeon does", T.dungeonDetail().deltaText == "first run here")
+    clear("Uldaman", 70, 10, { { id = 9, at = 50 } })
+    T.renderRun(R.views()[2])
+    check("first: the first run of a new route in a dungeon run before reads best", T.dungeonDetail().deltaText == "best", T.dungeonDetail().deltaText)
+  end
+
+  -- the two-click question ends with its 8 seconds, on the page too
+  do
+    fresh()
+    clear("Deadmines", DMAP, 10, K3(100, 200, 300))
+    T.openRun(R.views()[1])
+    local dv = T.dungeonDetail()
+    local function btn(key) for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and b.key == key then return b end end end
+    M.timers = {}
+    btn("delete").scripts.OnClick(btn("delete"))
+    check("ask: the question shows", dv.questionLine ~= nil and btn("delete").label == "Yes, delete")
+    adv(9); M.runTimers()
+    check("ask: after 8 seconds the button and the question are back to rest", dv.questionLine == nil and btn("delete").label == "Delete run" and #closed() == 1)
+    dv:Hide()
+  end
+
+  -- BY DUNGEON follows the tabs; a click on a row shows that dungeon's runs
+  do
+    fresh()
+    clear("Deadmines", DMAP, 10, K3(100, 200, 300))
+    enter("Molten Core", { type = "raid", map = 409 }); play(200); combat(true); kill(663, "Lucifron", 30); combat(false); leave(); expire()
+    local lv = T.dungeonList()
+    lv.setView("dungeons")
+    lv.tabs.select("raid")
+    check("filter: the Raids tab lists the raids only", #lv.dshown == 1 and lv.dshown[1].name == "Molten Core")
+    lv.tabs.select("party")
+    check("filter: the Dungeons tab lists the dungeons only", #lv.dshown == 1 and lv.dshown[1].name == DM)
+    lv.tabs.select("all")
+    local mc
+    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow and r.drow.name == "Molten Core" then mc = r end end
+    lv.st.kind = "party"                                          -- (a tab that does not hold the clicked row)
+    mc:GetScript("OnClick")(mc, "LeftButton")
+    check("filter: a click on a raid shows its runs, on the Raids tab", lv.st.view == "runs" and lv.st.kind == "raid" and #lv.shown == 1, #lv.shown)
+    lv.pickInst(nil); lv.tabs.select("all"); lv.setView("runs")
+  end
+
+  -- an evicted best stays across a /reload, and the statistics are never built again once they exist
+  do
+    fresh()
+    local best = clear("Deadmines", DMAP, 50, K3(150, 300, 550))
+    local sig = "644.645.646/d1/solo"
+    local c = me()
+    for i = 1, R.CAP - 1 do c.dungeonRuns[#c.dungeonRuns + 1] = T.runRecord("Uldaman", M.epoch + i, 90) end
+    clear("Deadmines", DMAP, 50, K3(160, 320, 600))
+    check("reload: the best run left the list", c.dungeonRuns[1].id ~= best.id and stats(DM).routes[sig].bestId == best.id)
+    local held = false
+    for _, x in pairs(stats(DM).routes[sig].seg) do if x.id == best.id then held = true end end
+    check("reload: its best segments keep their seconds, not its id", not held and stats(DM).routes[sig].seg["start>644"].s == 100)
+    stats(DM).probe = 7
+    E.reloadAsked(); M.fire("PLAYER_LOGOUT")
+    local file = deepcopy(ns.DB)
+    ns.Recorder.discard(); ns.DB = ns.migrateDB(file)
+    G._tickAt = nil; T.newLoad(); adv(60); pew(true)
+    check("reload: the evicted best is still the best after a reload", stats(DM).routes[sig].best == 500 and stats(DM).routes[sig].bestId == best.id)
+    check("reload: the statistics were not built again", stats(DM).probe == 7)
+    stats(DM).probe = nil
+  end
+
+  -- the statistics have caps of their own: bosses per dungeon, segments per route
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    for i = 1, R.STATS_BOSS_CAP + 6 do
+      local r = T.runRecord("Blackrock Depths", M.epoch - 100000 + i * 100, 100, { firstPull = 10, size = 1, diff = 1, bosses = { { enc = 3000 + i, name = "B", combat = 5, kill = 50 } } })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+    end
+    local nb = 0
+    for _ in pairs(stats("Blackrock Depths").bosses) do nb = nb + 1 end
+    check("caps: at most Runs.STATS_BOSS_CAP bosses per dungeon", nb == R.STATS_BOSS_CAP, nb)
+    -- six orders of the same three kills on one route: at most its 3 bosses plus Runs.SEG_EXTRA segments
+    fresh()
+    c = me()
+    c.dungeonRuns = {}
+    local orders = { { 1, 2, 3 }, { 1, 3, 2 }, { 2, 1, 3 }, { 2, 3, 1 }, { 3, 1, 2 }, { 3, 2, 1 } }
+    for i, o in ipairs(orders) do
+      local b = {}
+      for j, e in ipairs(o) do b[j] = { enc = e, combat = 5, kill = 50 * j } end
+      local r = T.runRecord("Uldaman", M.epoch - 10000 + i * 100, 200, { firstPull = 10, size = 1, diff = 1, bosses = b })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+    end
+    local ns0 = 0
+    for _ in pairs(stats("Uldaman").routes["1.2.3/d1/solo"].seg) do ns0 = ns0 + 1 end
+    check("caps: a route keeps at most its bosses plus 2 best segments", ns0 == 3 + R.SEG_EXTRA, ns0)
   end
 
   -- ── the contract of the new keys ─────────────────────────────────────────────────────────────────────────────
@@ -699,7 +1009,7 @@ return function(P)
       why = why or (type(key) ~= "string" and "stats key") or typed(s, STAT, "stats")
       for enc, b in pairs(s.bosses or {}) do why = why or (type(enc) ~= "number" and "boss key") or typed(b, { name = "string", kills = "number", wipes = "number", seenIn = "number" }, "stats.bosses") end
       for sig, r in pairs(s.routes or {}) do
-        why = why or (type(sig) ~= "string" and "route key") or typed(r, { n = "number", last = "number", best = "number", bestId = "string", bestAt = "number", splits = "table", seg = "table" }, "route")
+        why = why or (type(sig) ~= "string" and "route key") or typed(r, { n = "number", last = "number", best = "number", bestId = "string", bestAt = "number", splits = "table", seg = "table", tot = "number", k = "number" }, "route")
         for enc, x in pairs(r.splits or {}) do if type(enc) ~= "number" or type(x) ~= "number" then why = why or "splits" end end
         for k, x in pairs(r.seg or {}) do why = why or (type(k) ~= "string" and "seg key") or typed(x, { s = "number", id = "string" }, "seg") end
       end

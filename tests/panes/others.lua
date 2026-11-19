@@ -864,7 +864,8 @@ return function(P)
       r.endT = at + inside + 100
       return r
     end
-    local runs = { twelve(t, 200, 12), twelve(t + 10000, 190, 12), twelve(t + 20000, 210, 9, { keep = true }), T.runRecord("Ragefire Chasm", t + 30000, 400, { size = 1 }) }
+    local runs = { twelve(t, 200, 12), twelve(t + 10000, 190, 12), twelve(t + 20000, 210, 9, { keep = true }), T.runRecord("Ragefire Chasm", t + 30000, 400, { size = 1 }),
+      T.runRecord("The Temple of Atal'Hakkar", t + 40000, 500, { keep = true }) }
     me.dungeonRuns, me.dungeonRun, me.dungeonStats = runs, nil, nil
     R.statsRebuild(me)
     local dv = T.dungeonDetail()
@@ -892,7 +893,7 @@ return function(P)
         for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and tostring(fs.text):find(R.UP, 1, true) then vs = vs + 1 end end
         for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and b.visit then splits = splits + 1 end end
         check(tag .. ": the slower run reads its 12 bosses against the best, each with its sign and arrow", vs >= 12 and dv.paceLine ~= nil, vs)
-        check(tag .. ": Split here on the second visit", splits == 1)
+        check(tag .. ": Split here on the second visit", splits == 1, splits .. " " .. tostring(R.visitClocks(runs[1]) ~= nil))
       elseif which[1] == 3 then
         local nk = 0
         for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and fs.text == "Not killed" then nk = nk + 1 end end
@@ -904,16 +905,34 @@ return function(P)
     dv:Hide()
     local lv = T.dungeonList(); lv:Show(); M.settle()
     check(tag .. ": the hour line and the lock line are not cut", not lv.hourFS:IsTruncated() and lv.hourFS.text:find("^Instances this hour: ") ~= nil, lv.hourFS.text)
+    -- (the longest real name may be cut in its cell: the hover says it in full, checked below)
     local cutL = {}
-    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run then for k, fs in pairs(r.c) do if fs.IsTruncated and fs:IsTruncated() then cutL[#cutL + 1] = k .. "=" .. tostring(fs.text) end end end end
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run then for k, fs in pairs(r.c) do if fs.IsTruncated and fs:IsTruncated() and not (k == "name" and r.run.name == "The Temple of Atal'Hakkar") then cutL[#cutL + 1] = k .. "=" .. tostring(fs.text) end end end end
     local wd = {}
     for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and not wd[1] then for k, fs in pairs(r.c) do local bx = P.box(fs); wd[#wd + 1] = k .. "=" .. (bx and math.floor(bx.w) or -1) end end end
     check(tag .. ": RUNS: LENGTH with its delta and BOSSES 9/12 are not cut", #cutL == 0, table.concat(cutL, " | ") .. " || " .. table.concat(wd, " "))
     check(tag .. ": the view buttons lie inside the window", inside(lv.viewBtn.runs) and inside(lv.viewBtn.dungeons))
+    -- the view switch and the dungeon pick, with the longest real name picked, lie over no tab
+    lv.pickInst("The Temple of Atal'Hakkar"); M.settle()
+    local over = {}
+    local function meets(a, b) return a and b and a.l < b.l + b.w and b.l < a.l + a.w and a.t < b.t + b.h and b.t < a.t + a.h end
+    for nm, f in pairs({ runs = lv.viewBtn.runs, dungeons = lv.viewBtn.dungeons, pick = lv.pick }) do
+      for _, tb in ipairs(lv.tabs.tabs) do if meets(P.box(f), P.box(tb)) then over[#over + 1] = nm .. " over " .. tostring(tb.key) end end
+      if not inside(f) then over[#over + 1] = nm .. " outside the window" end
+    end
+    check(tag .. ": no view button and no dungeon pick lies over a tab, with a long dungeon picked", #over == 0 and #lv.shown == 1, table.concat(over, " | "))
+    lv.pickInst(nil); M.settle()
+    -- a long name: the hover says it in full, with what the cell leaves out
+    local longRow
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and r.run.name == "The Temple of Atal'Hakkar" then longRow = r end end
+    if longRow then longRow:GetScript("OnEnter")(longRow) end
+    check(tag .. ": the hover of a run names it in full, kept included", longRow and _G.GameTooltip.lines[1] == "The Temple of Atal'Hakkar  ·  kept"
+      and longRow.c.name.text == "The Temple of Atal'Hakkar", longRow and _G.GameTooltip.lines[1])
+    if longRow then longRow:GetScript("OnLeave")(longRow) end
     lv.setView("dungeons"); M.settle()
     local cutD = {}
     for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow then for k, fs in pairs(r.c) do if fs.IsTruncated and fs:IsTruncated() then cutD[#cutD + 1] = k .. "=" .. tostring(fs.text) end end end end
-    check(tag .. ": BY DUNGEON lists the two dungeons, nothing cut", #lv.dshown == 2 and lv.dungHost:IsShown() and not lv.runsHost:IsShown() and #cutD == 0, table.concat(cutD, " | "))
+    check(tag .. ": BY DUNGEON lists the three dungeons, nothing cut", #lv.dshown == 3 and lv.dungHost:IsShown() and not lv.runsHost:IsShown() and #cutD == 0, table.concat(cutD, " | "))
     local first
     for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow and r.drow.name == "Blackrock Depths" then first = r end end
     if first then first:GetScript("OnClick")(first, "LeftButton"); M.settle() end

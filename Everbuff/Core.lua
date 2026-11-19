@@ -354,7 +354,7 @@ SlashCmdList.EVERBUFF = function(arg)
     local on = not arg:match("off")
     if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb gold stats · /eb gold timer · /eb gold audit · /eb run · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb gold stats · /eb gold timer · /eb gold audit · /eb run · /eb instances · /eb instances limit 5, 10 or off · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
   end
 end
 

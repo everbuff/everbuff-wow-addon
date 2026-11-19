@@ -310,6 +310,14 @@ function Runs.fightUid(from)
 end
 
 -- ── visits ──────────────────────────────────────────────────────────────────────────────────────────────────────
+-- The first combat or encounter start of the run (`firstPull`) and of the visit (`fc`, from 0.9.51), both on the
+-- run's clock: a run split at a visit begins its measure at that visit's first combat, trash included.
+local function pulled(run, o)
+  if not run.firstPull then run.firstPull = o end
+  local v = visit(run)
+  if v and not plainNum(v.fc) then v.fc = o end
+end
+Runs.pulled = pulled
 local xpMark
 local function beginVisit(c, run, at, how)
   local g = run.gap
@@ -345,7 +353,7 @@ local function beginVisit(c, run, at, how)
   Runs._combatAt = nil
   if fighting() then
     Runs._combatAt = GetTime()
-    if not run.firstPull then run.firstPull = Runs.clock(run, at) end
+    pulled(run, Runs.clock(run, at))
     run.prov = nil
   end
 end
@@ -427,6 +435,12 @@ function Runs.evict(list, c)
     for i = 1, #list do if not list[i].keep then drop = i; break end end
     local gone = table.remove(list, drop)
     if c and type(gone) == "table" and plainNum(gone.endT) then c.dungeonEvictedTo = max(num(c.dungeonEvictedTo), gone.endT) end
+    -- (a best segment it held keeps its seconds and drops the id: no Delete can reach the run any more, and the id is
+    -- most of the entry's size in the save file)
+    local st = c and type(gone) == "table" and type(c.dungeonStats) == "table" and c.dungeonStats[Runs.keyOf(gone)]
+    for _, r in pairs(type(st) == "table" and type(st.routes) == "table" and st.routes or {}) do
+      for _, x in pairs(type(r.seg) == "table" and r.seg or {}) do if type(x) == "table" and x.id == gone.id then x.id = nil end end
+    end
   end
 end
 -- A closed record is lean: a visit or a boss row keeps a counter only when it is not 0 (the whole save file is
@@ -458,6 +472,11 @@ function Runs.lean(run)
     if b.kill then b.ok = nil end
     if b.dur == b.combat then b.dur = nil end
   end
+  -- (the first visit's first combat is the run's own `firstPull`; XP counts of 0 a reader takes as 0)
+  local v1 = run.visits[1]
+  if v1 and v1.fc ~= nil and v1.fc == run.firstPull then v1.fc = nil end
+  if run.size ~= 1 then run.size = nil end                      -- (the one value a reader asks: solo or not, Runs.sigOf)
+  if type(run.xp) == "table" then for _, k in ipairs({ "kill", "quest", "n" }) do if run.xp[k] == 0 then run.xp[k] = nil end end end
   leanBlock(run, "hidden"); leanBlock(run, "nDeaths"); leanBlock(run, "gold")
   for i = Runs.DEATH_FULL + 1, #run.deaths do run.deaths[i].foe, run.deaths[i].back = nil, nil end
   if #run.deaths == 0 then run.deaths = nil end
@@ -479,7 +498,6 @@ function Runs.close(c, run, why, at, drop, exact)
   if not (type(run.xp) == "table" and num(run.xp.gain) > 0) then run.xp = nil end
   local prov = run.prov == true
   for _, k in ipairs(Runs.OPEN_KEYS) do run[k] = nil end
-  run.repull = nil
   c.dungeonRun = nil
   if drop then Runs.note("deleted"); return nil end
   if prov then Runs.note("provisional"); return nil end         -- only the zone name ever said dungeon
@@ -533,7 +551,7 @@ function Runs.endNow(drop)
         nxt.encs[x.id] = { t = at, o = o, d = x.d, r = x.r }
         if num(b.pulls) == 0 then b.p = o end
         b.pulls = num(b.pulls) + 1
-        if not nxt.firstPull then nxt.firstPull = o end
+        pulled(nxt, o)
       end
     end
   end
@@ -606,6 +624,8 @@ function Runs.sync(at)
     end
     if not run then run = openRun(c, at, name, kind or "party", det, loadHow or "zone") end
     if det.kind and det.sig ~= "name" then run.prov = nil end     -- a stronger signal than the zone name
+    -- the difficulty, once the client names one inside (a run opened before it said instance has 0 or none)
+    if (det.sig == "type" or det.sig == "ptype") and plainNum(det.diff) and det.diff > 0 and not (plainNum(run.diff) and run.diff > 0) then run.diff = det.diff end
   elseif run then
     if run.st == "in" then
       local ghost = isDead()
@@ -705,7 +725,8 @@ function Runs.validate(c)
   local list = c.dungeonRuns
   if not list then return end
   for i = #list, 1, -1 do
-    if not Runs.valid(list[i]) then table.remove(list, i); Runs.note("dropped") end
+    if not Runs.valid(list[i]) then table.remove(list, i); Runs.note("dropped")
+    else list[i].pb = nil end                                    -- (a mark the first builds of 0.9.51 stored: worked out now)
   end
   -- the statistics begin with the runs stored since 0.9.50 (stored records, not rebuilt from story events)
   if c.dungeonStats == nil and #list > 0 then Runs.statsRebuild(c) end
@@ -752,7 +773,7 @@ function Runs.encStart(id, name)
   run.encs[id] = { t = at, o = o, d = 0 }
   if num(b.pulls) == 0 then b.p = o end
   b.pulls = num(b.pulls) + 1
-  if not run.firstPull then run.firstPull = o end
+  pulled(run, o)
 end
 -- Seconds with a boss up are the union of the windows of the encounters seen ending, in any order (one can end
 -- inside another). run.bossWin holds the windows counted so far, merged and in order, as { from, to } epochs; this one
@@ -804,7 +825,9 @@ function Runs.encEnd(id, name, success)
   b.combat = num(b.combat) + dur
   -- the raw answer and the length of this pull, kept for the next look (what does the client send on a wipe?)
   local ok = plainNum(success)
-  b.ok, b.dur = ok, dur
+  -- (once killed, `dur` stays the kill pull's length: a later pull of the same boss, a farm reset in the same run,
+  -- must not move where the kill pull began, Runs.pullOf and Runs.groups)
+  if not b.kill then b.ok, b.dur = ok, dur end
   if ok == 1 then
     if not b.kill then                                           -- (stored once: a later kill of the same boss changes nothing)
       b.kill = Runs.clock(run, at)
@@ -914,7 +937,7 @@ function Runs.onCombat(on)
   if on then
     run.prov = nil
     if not Runs._combatAt then Runs._combatAt = GetTime() end
-    if not run.firstPull then run.firstPull = Runs.clock(run) end
+    pulled(run, Runs.clock(run))
   else combatEnd(run) end
 end
 -- the 10 second tick: clocks, active seconds, the 20 and 30 minute rules, the coin of the visit so far
@@ -1010,6 +1033,8 @@ Runs.STATS_CAP = 80        -- dungeons with statistics of their own; the least r
 Runs.ROUTE_CAP = 8         -- routes per dungeon; the least run goes first
 Runs.KEEP_CAP = 20         -- runs protected from eviction
 Runs.COPY_CAP = 40
+Runs.SEG_EXTRA = 2         -- best segments per route: its boss count plus this many
+Runs.STATS_BOSS_CAP = 20   -- bosses with counts per dungeon (the boss rows of one run: Runs.BOSS_CAP)
 Runs.COPY_WINDOW = 86400   -- copy rows older than this are dropped
 Runs.HOUR = 3600
 Runs.OTHER = "other"
@@ -1045,7 +1070,9 @@ function Runs.sigOf(rec)
   local route = Runs.routeOf(rec)
   if not route then return nil end
   local s = route
-  if plainNum(rec.diff) then s = s .. "/d" .. rec.diff end
+  -- (a difficulty of 0 is the client's answer outside an instance: a run opened by the zone name, the map type or a
+  -- boss pull before the client said instance; it is no difficulty and never splits a best off its route)
+  if plainNum(rec.diff) and rec.diff > 0 then s = s .. "/d" .. rec.diff end
   if rec.size == 1 then s = s .. "/solo" end
   return s
 end
@@ -1116,12 +1143,34 @@ local function offer(route, rec)
   end
   local seg = type(route.seg) == "table" and route.seg or {}
   route.seg = seg
+  local fresh = {}
   for _, x in pairs(sp) do
     local k = x.prevKey .. ">" .. x.key
     local cur0 = seg[k]
-    if type(cur0) ~= "table" or x.seg < num(cur0.s) then seg[k] = { s = x.seg, id = rec.id } end
+    if type(cur0) ~= "table" or x.seg < num(cur0.s) then seg[k] = { s = x.seg, id = rec.id }; fresh[k] = true end
+  end
+  -- at most the route's boss count plus Runs.SEG_EXTRA segments (every new order of kills adds some): the entry of
+  -- the oldest run goes first, one whose run left the list (no id) before any
+  local cap = select(2, Runs.routeOf(rec)) + Runs.SEG_EXTRA
+  local n = 0
+  for _ in pairs(seg) do n = n + 1 end
+  while n > cap do
+    local dropK, dropT
+    for k, x in pairs(seg) do
+      if not fresh[k] then
+        local t = Runs.idTime(type(x) == "table" and x.id)
+        if not dropT or t < dropT or (t == dropT and k < dropK) then dropK, dropT = k, t end
+      end
+    end
+    if not dropK then break end
+    seg[dropK] = nil; n = n - 1
+    Runs.note("segCap")
   end
   return pb
+end
+-- the start of the run an id names (`<guid>-<t>-<hex>`), 0 for none
+function Runs.idTime(id)
+  return (type(id) == "string" and tonumber(id:match("%-(%d+)%-%x+$"))) or 0
 end
 local function routeFor(s, sig, create)
   local R = s.routes
@@ -1174,12 +1223,17 @@ function Runs.statsApply(c, rec, sign)
     deaths = num(type(rec.nDeaths) == "table" and rec.nDeaths.me), wipes = wipes, xp = num(type(rec.xp) == "table" and rec.xp.gain),
     looted = num(g.looted), quests = num(g.quests), lootValue = num(g.lootValue) }
   for _, k in ipairs(Runs.ADD) do s[k] = max(0, num(s[k]) + sign * add[k]) end
-  if sign > 0 then s.last = max(num(s.last), num(rec.t)) end
+  if sign > 0 then s.last = max(num(s.last), num(rec.t))
+  elseif S[key] == s and num(rec.t) >= num(s.last) then s.last = Runs.lastOf(c, key, nil, rec.id) or s.last end
   if type(s.bosses) == "table" then
     for _, b in ipairs(rec.bosses or {}) do
       if plainNum(b.enc) then
         local x = s.bosses[b.enc]
-        if not x and sign > 0 then x = { kills = 0, wipes = 0, seenIn = 0 }; s.bosses[b.enc] = x end
+        if not x and sign > 0 then
+          local nb = 0
+          for _ in pairs(s.bosses) do nb = nb + 1 end
+          if nb < Runs.STATS_BOSS_CAP then x = { kills = 0, wipes = 0, seenIn = 0 }; s.bosses[b.enc] = x else Runs.note("statsBossCap") end
+        end
         if x then
           if b.name then x.name = b.name end
           x.kills = max(0, num(x.kills) + sign * (b.kill and 1 or 0))
@@ -1193,46 +1247,137 @@ function Runs.statsApply(c, rec, sign)
     local r = sig and routeFor(s, sig, sign > 0) or nil
     if r then
       r.n = max(0, num(r.n) + sign)
+      -- the measure of every run that could set a best, summed: the Average of BY DUNGEON is the Best's measure
+      local m = Runs.bestable(rec) and Runs.measure(rec) or nil
+      if m then
+        r.tot, r.k = max(0, num(r.tot) + sign * m), max(0, num(r.k) + sign)
+        if r.k == 0 then r.tot, r.k = nil, nil end
+      end
       if sign > 0 then
         r.last = max(num(r.last), num(rec.t))
-        if Runs.bestable(rec) and offer(r, rec) then rec.pb = true end
+        if m then offer(r, rec) end
       elseif r.n == 0 then s.routes[sig] = nil
-      elseif Runs.refers(r, rec.id) then Runs.routeRecompute(c, key, sig, r, rec.id) end
+      else
+        if num(rec.t) >= num(r.last) then r.last = Runs.lastOf(c, key, sig, rec.id) or r.last end
+        if Runs.refers(r, rec.id) then Runs.routeRecompute(c, key, sig, r, rec.id) end
+      end
     end
   end
   if s.n == 0 and S[key] == s then S[key] = nil end
   return s
 end
--- The learned boss list of a dungeon: the bosses killed in at least half of its counted runs, once it has two. The
--- route's last boss is not needed for it (Maraudon's last kill comes after its "last boss"). nil before; raids none.
-function Runs.learned(s)
-  if type(s) ~= "table" or type(s.bosses) ~= "table" or s.kind == "raid" or num(s.n) < 2 then return nil end
+-- The newest start among the stored runs of a dungeon (and of one route, with `sig`) that count, leaving out `skip`:
+-- what `last` falls back to when the newest run is taken out. nil when none is stored.
+function Runs.lastOf(c, key, sig, skip)
+  local t
+  for _, rec in ipairs(type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do
+    if Runs.valid(rec) and rec.id ~= skip and not rec.partial and Runs.keyOf(rec) == key
+      and (not sig or (rec.kind ~= "raid" and Runs.sigOf(rec) == sig)) and (not t or rec.t > t) then t = rec.t end
+  end
+  return t
+end
+-- The boss sets of a dungeon, from its routes: routes that share a boss are one set (one wing, or the whole dungeon),
+-- routes that share none are sets of their own (the wings of Scarlet Monastery, Dire Maul, Stratholme or Maraudon
+-- under one name). Each: `n` the runs with a kill in it, `kills[enc]` those that killed that boss. Most runs first.
+local function sigIds(sig)
+  local ids = {}
+  for x in ((type(sig) == "string" and sig:match("^([^/]*)")) or ""):gmatch("[^%.]+") do local e = tonumber(x); if e then ids[#ids + 1] = e end end
+  return ids
+end
+function Runs.clusters(s)
+  local parent = {}
+  local function find(x) while parent[x] ~= x do x = parent[x] end return x end
+  local entries = {}
+  for sig, r in pairs(type(s) == "table" and type(s.routes) == "table" and s.routes or {}) do
+    local ids = sigIds(sig)
+    if #ids > 0 and num(r.n) > 0 then
+      entries[#entries + 1] = { ids = ids, n = num(r.n) }
+      for _, e in ipairs(ids) do if parent[e] == nil then parent[e] = e end end
+      for i = 2, #ids do local a, b = find(ids[1]), find(ids[i]); if a ~= b then parent[max(a, b)] = min(a, b) end end
+    end
+  end
+  local byRoot, out = {}, {}
+  for _, en in ipairs(entries) do
+    local root = find(en.ids[1])
+    local cl = byRoot[root]
+    if not cl then cl = { n = 0, kills = {}, root = root }; byRoot[root] = cl; out[#out + 1] = cl end
+    cl.n = cl.n + en.n
+    for _, e in ipairs(en.ids) do cl.kills[e] = num(cl.kills[e]) + en.n end
+  end
+  table.sort(out, function(a, b) if a.n ~= b.n then return a.n > b.n end return a.root < b.root end)
+  return out
+end
+-- The boss set a run belongs to: the one it shares most kills with, else most bosses pulled, else the only one; with
+-- no run, the set run most often. Sets are compared by their root (the lowest encounter id), so two reads agree.
+function Runs.clusterOf(s, rec)
+  local CL = Runs.clusters(s)
+  if #CL == 0 then return nil end
+  if not rec then return CL[1] end
+  local function most(killsOnly)
+    local bo, bc = 0, nil
+    for _, cl in ipairs(CL) do
+      local o = 0
+      for _, b in ipairs(rec.bosses or {}) do if plainNum(b.enc) and (b.kill or not killsOnly) and cl.kills[b.enc] then o = o + 1 end end
+      if o > bo then bo, bc = o, cl end
+    end
+    return bc
+  end
+  return most(true) or most(false) or (#CL == 1 and CL[1]) or nil
+end
+-- The learned boss list of a run's dungeon: the bosses killed in at least half of the runs of its boss set (above),
+-- once that set has two. Counted from the runs with a kill (a quest visit or a trash run moves nothing), per set, so
+-- a wing clear is a full clear of its wing. The route's last boss is not needed for it (Maraudon's last kill comes
+-- after its "last boss"). nil before; raids none. Without `rec`: the set run most often.
+function Runs.learned(s, rec)
+  if type(s) ~= "table" or s.kind == "raid" or type(s.routes) ~= "table" then return nil end
+  local cl = Runs.clusterOf(s, rec)
+  if not cl or cl.n < 2 then return nil end
   local out = {}
-  for enc, x in pairs(s.bosses) do if num(x.kills) * 2 >= num(s.n) then out[#out + 1] = enc end end
+  for enc, k in pairs(cl.kills) do if k * 2 >= cl.n then out[#out + 1] = enc end end
   table.sort(out)
   return #out > 0 and out or nil
 end
 function Runs.isFull(s, rec)
   if rec.kind == "raid" or unknownBoss(rec) then return false end
-  local L = Runs.learned(s)
+  local L = Runs.learned(s, rec)
   if not L then return false end
   local killed = {}
   for _, b in ipairs(rec.bosses or {}) do if b.kill then killed[b.enc] = true end end
   for _, enc in ipairs(L) do if not killed[enc] then return false end end
   return true
 end
--- a closed run joins the statistics: its numbers, whether it set a best (`pb`) and whether it was a full clear
--- (`done`: every boss of the learned list killed), counted too
+-- Whether a run holds the best of its route now (worked out from `bestId`, never stored: 0.9.51's review)
+function Runs.isPb(rec)
+  local S = statsOf(me())
+  local s = S and S[Runs.keyOf(rec)]
+  local sig = rec.kind ~= "raid" and Runs.sigOf(rec) or nil
+  local r = sig and type(s) == "table" and type(s.routes) == "table" and s.routes[sig] or nil
+  return (r and r.bestId ~= nil and r.bestId == rec.id) and true or false
+end
+-- a closed run joins the statistics: its numbers, its route's best when it sets one, and whether it was a full
+-- clear (`done`: every boss of the learned list killed), counted too
 -- With `keep` the run's own marks stay as they were set at its close (a full clear is a fact of the run, fixed
--- when it ended against the list known then), and only the sums are counted again.
+-- when it ended against the list known then), and only the sums are counted again. The one exception: the run that
+-- gives a boss set its learned list (its second run) judges the runs counted before it too, which closed with none.
 function Runs.statsAdd(c, rec, keep)
-  local pb, done = rec.pb, rec.done
-  rec.pb, rec.done = nil, nil
+  local done = rec.done
+  rec.done = nil
   local s = Runs.statsApply(c, rec, 1)
   if keep then
-    rec.pb, rec.done = pb, done
+    rec.done = done
     if s and done then s.full = num(s.full) + 1 end
-  elseif s and type(s.bosses) == "table" and Runs.isFull(s, rec) then rec.done = true; s.full = num(s.full) + 1 end
+  elseif s and type(s.bosses) == "table" then
+    if Runs.isFull(s, rec) then rec.done = true; s.full = num(s.full) + 1 end
+    local cl = rec.kind ~= "raid" and Runs.clusterOf(s, rec) or nil
+    if cl and cl.n == 2 then
+      local key = Runs.keyOf(rec)
+      for _, o in ipairs(type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do
+        if o == rec or o.id == rec.id then break end                -- (only runs counted before this one)
+        local oc = Runs.valid(o) and not o.partial and not o.done and Runs.keyOf(o) == key and Runs.clusterOf(s, o) or nil
+        if oc and oc.root == cl.root and Runs.isFull(s, o) then o.done = true; s.full = num(s.full) + 1 end
+      end
+    end
+  end
   return s
 end
 -- the statistics again from the runs stored, oldest first: at the first load of 0.9.51 (a save without them, the
@@ -1245,7 +1390,10 @@ end
 -- ── instances this hour ────────────────────────────────────────────────────────────────────────────────────────
 -- A copy row is written for the first entry of a run: not for a re-entry (a visit), a run the zone name alone
 -- opened until something confirms it (the door of Sunken Temple never writes one), a run opened by End run now
--- (the same copy), a partial run or a raid. A run too short to be kept keeps its row: the entry made a copy.
+-- (the same copy), a run partial from its start (opened at a login after the game closed without saving) or a raid.
+-- A run that becomes partial later keeps the row its entry wrote, and a run too short to be kept keeps its row: the
+-- entry made a copy either way. `why`: `first` when this character has no row of the dungeon in the last 24 hours,
+-- else `estimate` (a new copy by the 20 minute rule); `split` for the second part of Split here (Runs.copyAdd).
 function Runs.copiesOf(c, at)
   local L = type(c.dungeonCopies) == "table" and c.dungeonCopies or {}
   for i = #L, 1, -1 do
@@ -1293,7 +1441,24 @@ function Runs.hourLine(at)
   local first = lim and ("Instances this hour: %d of %d (estimate)"):format(h, lim) or ("Instances this hour: %d (estimate)"):format(h)
   return first .. "  ·  last 24 hours: " .. d
 end
-Runs.COPY_WHY = { first = "first entry", estimate = "new copy by the 20 minutes" }
+Runs.COPY_WHY = { first = "first entry", estimate = "new copy by the 20 minute rule", split = "new copy (split by hand)" }
+-- Split here says the second part was a new copy: a row at its start (not for a raid or a partial run). Join with
+-- previous run says the two were one copy: the joined-away run's row goes.
+function Runs.copyAdd(c, rec, why)
+  if rec.partial or rec.kind == "raid" or not plainNum(rec.t) then return end
+  local L = Runs.copiesOf(c, nowT())
+  if rec.t < nowT() - Runs.COPY_WINDOW then return end
+  local at = #L + 1
+  for i = #L, 1, -1 do if num(L[i].t) > rec.t then at = i end end
+  table.insert(L, at, { t = rec.t, key = rec.inst, run = rec.id, why = why })
+  while #L > Runs.COPY_CAP do table.remove(L, 1) end
+  c.dungeonCopies = L
+end
+function Runs.copyDrop(c, id)
+  local L = type(c.dungeonCopies) == "table" and c.dungeonCopies or nil
+  if not L then return end
+  for i = #L, 1, -1 do if type(L[i]) == "table" and L[i].run == id then table.remove(L, i) end end
+end
 -- the hover of the hour line: one row per copy (dungeon, character, time, reason)
 function Runs.hourTip(at)
   local _, _, rows = Runs.copies(at)
@@ -1337,7 +1502,17 @@ end
 --   mode "prefix"  otherwise (and always for the run in progress): against the best of the route that shares the
 --                  longest start with this run (the same bosses in the first `at` kills, in any order inside a group):
 --                  `delta` and `best` at boss `at`, `vs[enc]` for the shared bosses
--- `first` is true when no run of this dungeon has a best yet.
+-- `first` is true when the run is the character's only run of this dungeon (Runs.onlyRun).
+-- Whether a run is the only one of its dungeon: no other stored run of it, and no counted run beyond itself in the
+-- statistics (which also hold the runs evicted from the list). "first run" says exactly that.
+function Runs.onlyRun(c, rec, isOpen, s)
+  local key = Runs.keyOf(rec)
+  if type(s) == "table" and num(s.n) > ((isOpen or rec.partial) and 0 or 1) then return false end
+  for _, o in ipairs(c and type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do
+    if type(o) == "table" and o.id ~= rec.id and Runs.keyOf(o) == key then return false end
+  end
+  return true
+end
 function Runs.compare(rec, isOpen)
   if rec.kind == "raid" then return nil end
   local c = me()
@@ -1346,9 +1521,7 @@ function Runs.compare(rec, isOpen)
   local routes = type(s) == "table" and type(s.routes) == "table" and s.routes or {}
   local sp, groups = Runs.splits(rec), Runs.groups(rec)
   local sig = Runs.sigOf(rec)
-  local any = false
-  for _, r in pairs(routes) do if plainNum(r.best) then any = true end end
-  local out = { vs = {}, first = not any }
+  local out = { vs = {}, first = Runs.onlyRun(c, rec, isOpen, s) }
   local r = sig and routes[sig]
   local m = Runs.measure(rec)
   if not isOpen and r and plainNum(r.best) and m then
@@ -1410,7 +1583,7 @@ end
 function Runs.bossTotal(rec)
   if rec.kind == "raid" then return nil end
   local S = statsOf(me())
-  local L = Runs.learned(S and S[Runs.keyOf(rec)])
+  local L = Runs.learned(S and S[Runs.keyOf(rec)], rec)
   if not L then return nil end
   local set, n, missing = {}, 0, {}
   for _, enc in ipairs(L) do set[enc] = true; n = n + 1 end
@@ -1426,22 +1599,23 @@ function Runs.bossTotal(rec)
   return n, missing
 end
 -- The best of a dungeon for its row in BY DUNGEON: the full route's when one has a best (its bosses are the learned
--- list), else the best of the route with the most bosses.
+-- list of the boss set run most often), else the best of the route with the most bosses. Returns the seconds and
+-- the route.
 function Runs.dungeonBest(s)
   local L = Runs.learned(s)
   local full = L and table.concat(L, ".") or nil
-  local best, bestN, isFull
+  local best, bestN, isFull, bestR
   for sig, r in pairs(type(s.routes) == "table" and s.routes or {}) do
     if plainNum(r.best) then
       local route = sig:match("^([^/]*)") or sig
       local n = select(2, route:gsub("%.", "")) + 1
       local f = route == full
       if (f and not isFull) or (f == (isFull or false) and (not bestN or n > bestN or (n == bestN and r.best < best))) then
-        best, bestN, isFull = r.best, n, f
+        best, bestN, isFull, bestR = r.best, n, f, r
       end
     end
   end
-  return best
+  return best, bestR
 end
 -- the rows of BY DUNGEON: one per dungeon with statistics, the most recently run first, `other` last
 function Runs.dungeonRows()
@@ -1451,8 +1625,13 @@ function Runs.dungeonRows()
   for key, s in pairs(S) do
     if type(s) == "table" and num(s.n) > 0 then
       local row = { key = key, name = s.inst or key, kind = s.kind, n = s.n, full = num(s.full), last = num(s.last), other = key == Runs.OTHER }
-      row.avg = num(s.secs) / s.n
-      row.best = (not row.other) and Runs.dungeonBest(s) or nil
+      -- Average is the Best's own measure (first pull to last kill) over the runs of the Best's route that could set
+      -- one, so the two columns compare; nil while there is no best
+      if not row.other then
+        local best, r = Runs.dungeonBest(s)
+        row.best = best
+        if r and num(r.k) > 0 then row.avg = num(r.tot) / r.k end
+      end
       local warm = num(s.active) >= Runs.RATE_WARM
       row.coinPerHour = warm and (num(s.looted) + num(s.quests)) * 3600 / s.active or nil
       row.xpPerHour = (warm and num(s.xp) > 0) and s.xp * 3600 / s.active or nil
@@ -1588,6 +1767,7 @@ function Runs.splitRec(rec, k, isOpen)
       x.i = num(x.i) - wB
       if plainNum(x.o) then x.o = x.o - wB end
       if type(x.gaps) == "table" then for q = 1, #x.gaps do x.gaps[q] = x.gaps[q] - wB end end
+      if plainNum(x.fc) then x.fc = x.fc - cB end
       B.visits[#B.visits + 1] = x
     end
   end
@@ -1628,8 +1808,16 @@ function Runs.splitRec(rec, k, isOpen)
   if fp and fp < cB then A.firstPull = fp end
   if fp and fp >= cB then B.firstPull = fp - cB
   else
-    for _, b in ipairs(B.bosses) do local p0 = Runs.pullOf(b); if not B.firstPull or p0 < B.firstPull then B.firstPull = max(0, p0) end end
+    -- B's measure begins at the first combat of its first visit that had one (trash included), as every run's does;
+    -- a record without the visits' first combat (0.9.50, or a row written before 0.9.51's review) at its first boss pull
+    for _, x in ipairs(B.visits) do if plainNum(x.fc) then B.firstPull = max(0, x.fc); break end end
+    if not B.firstPull then
+      for _, b in ipairs(B.bosses) do local p0 = Runs.pullOf(b); if not B.firstPull or p0 < B.firstPull then B.firstPull = max(0, p0) end end
+    end
   end
+  -- "Possibly two runs" goes with its visit: gone when the cut is at it, on the side that holds it otherwise
+  local rp = plainNum(rec.repull)
+  if rp and rp < k then A.repull = rp elseif rp and rp > k then B.repull = rp - k + 1 end
   if type(rec.xp) == "table" then
     local function xpOf(H)
       return { gain = sumV(H.visits, "xp"), kill = sumV(H.visits, "xpKill"), quest = sumV(H.visits, "xpQuest"), n = sumV(H.visits, "kills") }
@@ -1651,7 +1839,6 @@ function Runs.splitRec(rec, k, isOpen)
   if isOpen then
     for _, key in ipairs(Runs.OPEN_KEYS) do B[key] = copyT(rec[key]) end
     for _, e in pairs(type(B.encs) == "table" and B.encs or {}) do if type(e) == "table" then e.o = num(e.o) - cB end end
-    B.repull = nil
     openBlocks(B)
   end
   return Runs.closeRec(A), isOpen and B or Runs.closeRec(B)
@@ -1681,7 +1868,10 @@ function Runs.joinRec(A, B, isOpen)
   local cJ = num(A.secs.inside) + num(A.secs.ghost) + tri[1]
   local J = { id = A.id, v = Runs.V, inst = A.inst, kind = A.kind, map = A.map or B.map, diff = A.diff or B.diff, uiMap = A.uiMap or B.uiMap,
     t = A.t, endT = B.endT, open = A.open, why = B.why, partial = A.partial or B.partial, keep = (A.keep or B.keep) or nil, edited = true, exact = B.exact }
-  if A.size or B.size then J.size = max(num(A.size), num(B.size)) end
+  -- (a closed record keeps `size` only for a run played alone: no size is a group; the joined run is alone only
+  -- when both were)
+  if A.size or B.size then J.size = max(plainNum(A.size) or 2, plainNum(B.size) or 2) end
+  J.repull = plainNum(A.repull) or (plainNum(B.repull) and B.repull + #A.visits) or nil
   J.visits = {}
   for j, x in ipairs(A.visits) do local y = copyT(x); if j >= 2 then setGap(y, gA[j]) end; J.visits[#J.visits + 1] = y end
   for j, x in ipairs(B.visits) do
@@ -1689,6 +1879,7 @@ function Runs.joinRec(A, B, isOpen)
     y.i = num(y.i) + wJ
     if plainNum(y.o) then y.o = y.o + wJ end
     if type(y.gaps) == "table" then for q = 1, #y.gaps do y.gaps[q] = y.gaps[q] + wJ end end
+    if plainNum(y.fc) then y.fc = y.fc + cJ end
     setGap(y, j == 1 and tri or gB[j])
     J.visits[#J.visits + 1] = y
   end
@@ -1696,6 +1887,13 @@ function Runs.joinRec(A, B, isOpen)
   for _, k in ipairs(Runs.SECS) do J.secs[k] = num(A.secs[k]) + num(B.secs[k]) end
   for q = 1, 3 do J.secs[SECS_GAP[q]] = J.secs[SECS_GAP[q]] + tri[q] end
   if plainNum(A.firstPull) then J.firstPull = A.firstPull elseif plainNum(B.firstPull) then J.firstPull = B.firstPull + cJ end
+  -- B's first visit gave its first combat to B's `firstPull` (Runs.lean): it is that visit's again
+  local bf = J.visits[#A.visits + 1]
+  if bf and not plainNum(bf.fc) and plainNum(B.firstPull) then
+    local other = false
+    for j = 2, #B.visits do if B.visits[j].fc == B.firstPull then other = true end end
+    if not other then bf.fc = B.firstPull + cJ end
+  end
   local rows, byEnc = {}, {}
   for i, b in ipairs(A.bosses) do local x = copyT(b); rows[#rows + 1] = { b = x, i = i }; byEnc[x.enc] = x end
   for i, b in ipairs(B.bosses) do
@@ -1705,10 +1903,14 @@ function Runs.joinRec(A, B, isOpen)
     local e = byEnc[x.enc]
     if e then
       e.p = Runs.pullOf(e)
+      local killed, eDur = e.kill ~= nil, e.dur or e.combat
       e.pulls = (e.pulls or 1) + (x.pulls or 1)
       for _, k in ipairs({ "wipes", "resets", "unknown", "combat" }) do e[k] = num(e[k]) + num(x[k]) end
-      if not e.kill and x.kill then e.kill, e.fight = x.kill, x.fight end
-      e.ok, e.dur = x.ok, x.dur or x.combat
+      if killed then e.dur = eDur                                -- (the kill pull's length stays, as in Runs.encEnd)
+      else
+        if x.kill then e.kill, e.fight = x.kill, x.fight end
+        e.ok, e.dur = x.ok, x.dur or x.combat
+      end
       if not e.name then e.name = x.name end
     else rows[#rows + 1] = { b = x, i = 1000 + i }; byEnc[x.enc] = x end
   end
@@ -1737,7 +1939,6 @@ function Runs.joinRec(A, B, isOpen)
   if isOpen then
     for _, key in ipairs(Runs.OPEN_KEYS) do J[key] = copyT(B[key]) end
     for _, e in pairs(type(J.encs) == "table" and J.encs or {}) do if type(e) == "table" then e.o = num(e.o) + cJ end end
-    J.repull = nil
     openBlocks(J)
     return J
   end
@@ -1764,6 +1965,7 @@ function Runs.split(id, k)
     Runs.statsApply(c, rec, -1)
     Runs.statsAdd(c, A); Runs.statsAdd(c, B)
   end
+  Runs.copyAdd(c, B, "split")
   Runs.evict(list, c)
   Runs.note("split")
   return true
@@ -1784,6 +1986,7 @@ function Runs.join(id)
   if isOpen then Runs.flush(rec); if rec.st == "in" then Runs.goldTake(c, rec) end end
   local J, why = Runs.joinRec(A, rec, isOpen)
   if not J then return false, why end
+  Runs.copyDrop(c, rec.id)
   table.remove(list, ai)
   if isOpen then
     c.dungeonRun = J
@@ -1796,14 +1999,31 @@ function Runs.join(id)
   Runs.note("join")
   return true, J.id                                              -- (the joined run keeps the id of the first)
 end
--- the run in the pill and the bar text: "Deadmines 18:22 · 3/7 · +0:41" (nil when no run is open)
+-- the run in the pill and the bar text: "Deadmines 18m · 3/7 · +0:41" (nil when no run is open)
+-- It is drawn again every 10 s (Gold.rateWatch), so the clock reads whole minutes, never a second that is already
+-- stale; it reads the record without changing it, and the list and the best are worked out once per kill.
+function Runs.glanceClock(sec)
+  sec = floor(max(0, num(sec)))
+  if sec >= 3600 then return ("%dh %02dm"):format(floor(sec / 3600), floor((sec % 3600) / 60)) end
+  return floor(sec / 60) .. "m"
+end
 function Runs.glance()
   local c = me()
   local run = cur(c)
   if not (run and Runs.valid(run)) then return nil end
-  local v = Runs.view(run, true)
-  local parts = { v.name .. " " .. clockText(v.duration), v.total and (v.bossesDown .. "/" .. v.total) or tostring(v.bossesDown) }
-  if v.cmp and v.cmp.delta then parts[#parts + 1] = Runs.signed(v.cmp.delta) end
+  local down = 0
+  for _, b in ipairs(run.bosses) do if b.kill then down = down + 1 end end
+  local S = statsOf(c)
+  local s = S and S[Runs.keyOf(run)]
+  local key = ("%s:%d:%d:%d"):format(run.id, down, num(type(s) == "table" and s.n), num(run.firstPull))
+  local g = Runs._glance
+  if not (g and g.key == key) then
+    local cmp = Runs.compare(run, true)
+    g = { key = key, total = (Runs.bossTotal(run)), delta = cmp and cmp.delta }
+    Runs._glance = g
+  end
+  local parts = { run.inst .. " " .. Runs.glanceClock(Runs.clock(run)), g.total and (down .. "/" .. g.total) or tostring(down) }
+  if g.delta then parts[#parts + 1] = Runs.signed(g.delta) end
   return table.concat(parts, " · ")
 end
 
@@ -1869,7 +2089,7 @@ function Runs.view(rec, isOpen, full)
   local S = statsOf(me())
   local st = S and S[Runs.keyOf(rec)]
   v.cleared = type(st) == "table" and num(st.full) > 0 or nil
-  v.done, v.pb, v.edited, v.repull, v.exact, v.keep, v.size = rec.done, rec.pb, rec.edited, rec.repull, rec.exact, rec.keep, rec.size
+  v.done, v.pb, v.edited, v.repull, v.exact, v.keep, v.size = rec.done, Runs.isPb(rec), rec.edited, rec.repull, rec.exact, rec.keep, rec.size
   local warm = v.active >= Runs.RATE_WARM
   v.xpGain = type(rec.xp) == "table" and num(rec.xp.gain) or 0
   v.xpPerHour = (warm and v.xpGain > 0) and v.xpGain * 3600 / v.active or nil

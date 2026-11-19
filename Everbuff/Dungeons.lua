@@ -65,7 +65,7 @@ local function deltaWord(run, short)
   local FIRST = short and "first run" or "first run here"
   if not cmp then return "", C.dim end
   if cmp.mode == "same" then
-    if cmp.isBest then return (n0(cmp.runs) <= 1) and FIRST or "best", C.gold end
+    if cmp.isBest then return cmp.first and FIRST or "best", C.gold end
     return Runs.deltaText(cmp.delta), cmp.delta > 0 and C.red or C.green
   end
   if cmp.mode == "prefix" and run.inProgress then return Runs.deltaText(cmp.delta), cmp.delta > 0 and C.red or C.green end
@@ -226,7 +226,7 @@ local function buildDetail(content)
     end
     b.text:SetText(label); UI.FitButton(b, w or 60)
     b:ClearAllPoints(); b:SetPoint("TOPLEFT", child, "TOPLEFT", x, -y)
-    b.ebAct, b.label = onClick, label
+    b.ebAct, b.label, b.key, b.visit = onClick, label, nil, nil   -- (a pooled button forgets what it was before)
     b:Show()
     return b
   end
@@ -266,8 +266,19 @@ local function buildDetail(content)
   local function ask(key, fn)
     local p = v.pending
     if p and p.key == key and p.id == (v.run and v.run.id) and GetTime() < p.untilT then fn(); return end
-    v.pending = { key = key, id = v.run and v.run.id, untilT = GetTime() + 8 }
+    local q = { key = key, id = v.run and v.run.id, untilT = GetTime() + 8 }
+    v.pending = q
     v.render(v.run)
+    -- when the 8 seconds are over the button reads its own label again and the question goes: a "Yes, ..." that
+    -- would only ask again is never left on the page
+    if C_Timer and C_Timer.After then
+      C_Timer.After(8.1, function()
+        if v.pending == q and GetTime() >= q.untilT then
+          v.pending = nil
+          if v.run and v:IsShown() then pcall(v.render, v.run) end
+        end
+      end)
+    end
   end
   v.ask = ask
   v.QUESTION = {
@@ -620,6 +631,11 @@ local function listRows(runs, kind, inst, key, asc)
   return rows
 end
 
+-- "The Temple of Atal'Hakkar  ·  RAID  ·  in progress": the list's DUNGEON cell; `kept` adds "kept" (the hover,
+-- where a long name is never cut)
+local function nameLabel(run, kept)
+  return (run.name or "?") .. (run.kind == "raid" and "  ·  RAID" or "") .. (run.inProgress and "  ·  in progress" or "") .. ((kept and run.keep) and "  ·  kept" or "")
+end
 local function buildList(content)
   local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
   -- the filter: All, Dungeons, Raids on the tab strip, and one dungeon from the list at its right (the pane's own
@@ -633,7 +649,7 @@ local function buildList(content)
   local menu = UI.Menu(v)
   v.menu = menu
   local pick
-  pick = UI.Button(v, "All dungeons", 120, UI.ROW_H, function(b)
+  pick = UI.Button(pane, "All dungeons", 120, UI.ROW_H, function(b)
     local names, seen = {}, {}
     for _, r in ipairs(Runs.views()) do
       if r.name and not seen[r.name] then seen[r.name] = true; names[#names + 1] = r.name end
@@ -643,10 +659,12 @@ local function buildList(content)
     for _, n in ipairs(names) do items[#items + 1] = { n, n, st.inst == n } end
     menu.open(b, items, function(key) v.pickInst(key ~= "" and key or nil) end, true)
   end)
-  pick:SetPoint("BOTTOMRIGHT", tabs.host, "TOPRIGHT", -UI.SP.S, 2)
+  -- (a row of its own under the tab strip, with the view switch at its left: on the tab strip's row a long dungeon
+  -- name and the two view buttons lay over the Raids tab at 900x580)
+  pick:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -(UI.SCROLLBAR + UI.SP.S), -UI.SP.XS)
   v.pick = pick
   -- the view: RUNS (one row per run) or BY DUNGEON (one row per dungeon, from its statistics; a click there filters
-  -- RUNS to that dungeon)
+  -- RUNS to that dungeon). Both views follow the tabs and the pick.
   st.view = "runs"
   local viewBtn = {}
   v.viewBtn = viewBtn
@@ -655,10 +673,10 @@ local function buildList(content)
     for k, b in pairs(viewBtn) do UI.SetButtonSelected(b, k == key) end
     if listRebuild then listRebuild() end
   end
-  viewBtn.dungeons = UI.Button(v, "By dungeon", 90, UI.ROW_H, function() v.setView("dungeons") end)
-  viewBtn.dungeons:SetPoint("RIGHT", pick, "LEFT", -UI.SP.S, 0)
-  viewBtn.runs = UI.Button(v, "Runs", 60, UI.ROW_H, function() v.setView("runs") end)
-  viewBtn.runs:SetPoint("RIGHT", viewBtn.dungeons, "LEFT", -UI.SP.XS, 0)
+  viewBtn.runs = UI.Button(pane, "Runs", 60, UI.ROW_H, function() v.setView("runs") end)
+  viewBtn.runs:SetPoint("TOPLEFT", pane, "TOPLEFT", UI.SP.S, -UI.SP.XS)
+  viewBtn.dungeons = UI.Button(pane, "By dungeon", 90, UI.ROW_H, function() v.setView("dungeons") end)
+  viewBtn.dungeons:SetPoint("LEFT", viewBtn.runs, "RIGHT", UI.SP.XS, 0)
   UI.FitButton(viewBtn.dungeons, 60); UI.FitButton(viewBtn.runs, 44)
   UI.SetButtonSelected(viewBtn.runs, true); UI.SetButtonSelected(viewBtn.dungeons, false)
   v.pickInst = function(name)
@@ -668,7 +686,7 @@ local function buildList(content)
   end
   UI.FitButton(pick, 120)
   -- lockouts: which instances this character is saved to, and when they reset (wraps; the list moves down with it)
-  local lock = UI.SummaryLine(pane, C.gold, nil, true)
+  local lock = UI.SummaryLine(pane, C.gold, -(UI.SP.XS + UI.ROW_H + UI.SP.S), true)
   v.lockFS = lock
   local function lockText()
     local L = (ns.DB and ns.char().lockouts) or {}
@@ -745,10 +763,11 @@ local function buildList(content)
     tooltip = function(row, _, tip)
       local run = row.run
       if not run then return end
-      tip:AddLine(run.name or "Dungeon")
+      tip:AddLine(nameLabel(run, true))                         -- (the whole name: the cell can cut a long one)
       for _, l in ipairs(v.tipLines(run)) do tip:AddLine(l) end
     end })
   v.tbl = tbl
+  v.nameLabel = nameLabel
   v.tipLines = function(run)
     local out = { "Inside " .. fmtDur(run.inside) }
     if n0(run.ghost) > 0 then out[#out + 1] = "Run back " .. fmtDur(run.ghost) end
@@ -777,7 +796,13 @@ local function buildList(content)
     { key = "dpr", label = "Deaths/run", kind = "num", color = "dim", measure = { "9.9" } },
     { key = "last", label = "Last run", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
   }, { top = 0, gap = UI.SP.S, emptyText = "No dungeon statistics yet. A run is counted here once it ends.",
-    onClick = function(row) if row.drow and not row.drow.other then v.pickInst(row.drow.name); v.setView("runs") end end,
+    onClick = function(row)
+      local d = row.drow
+      if not d or d.other then return end
+      local k = d.kind == "raid" and "raid" or "party"
+      if st.kind ~= "all" and st.kind ~= k then tabs.select(k) end      -- (RUNS then lists the clicked dungeon's runs)
+      v.pickInst(d.name); v.setView("runs")
+    end,
     tooltip = function(row, _, tip)
       local d = row.drow
       if not d then return end
@@ -787,20 +812,25 @@ local function buildList(content)
     end })
   v.dtbl = dtbl
   local function dungeonRebuild()
-    local rows = Runs.dungeonRows()
+    local all, rows = Runs.dungeonRows(), {}
+    for _, d in ipairs(all) do
+      local k = d.kind == "raid" and "raid" or "party"
+      if (st.kind == "all" or st.kind == k) and (not st.inst or d.name == st.inst) then rows[#rows + 1] = d end
+    end
     v.dshown = rows
     dtbl.setRows(rows, function(row, d)
       row.drow = d
       row.c.name:SetText(d.name .. (d.kind == "raid" and "  ·  RAID" or ""))
       row.c.n:SetText(tostring(d.n))
       row.c.full:SetText(d.kind == "raid" and "-" or tostring(d.full))
-      row.c.avg:SetText(fmtDur(d.avg))
+      row.c.avg:SetText(d.avg and fmtDur(d.avg) or "-")
       row.c.best:SetText(d.best and fmtDur(d.best) or "-")
       row.c.coin:SetText(d.coinPerHour and ((ns.Gold and ns.Gold.fmt) and ns.Gold.fmt(d.coinPerHour, { rate = true }) or fmtMoney(math.floor(d.coinPerHour))) or "-")
       row.c.xp:SetText(d.xpPerHour and Runs.commas(d.xpPerHour) or "-")
       row.c.dpr:SetText(("%.1f"):format(d.deathsPerRun))
       row.c.last:SetText(d.last > 0 and date("%m/%d %H:%M", d.last) or "")
     end)
+    if #rows == 0 and #all > 0 then dtbl.setEmpty("No dungeon matches this filter.") end
   end
   v.dungeonRebuild = dungeonRebuild
 
@@ -815,7 +845,7 @@ local function buildList(content)
     tbl.setRows(rows, function(row, run)
       row.run = run
       row.c.time:SetText(date("%m/%d %H:%M", run.startT or 0))
-      row.c.name:SetText((run.name or "?") .. (run.kind == "raid" and "  ·  RAID" or "") .. (run.inProgress and "  ·  in progress" or "") .. (run.keep and "  ·  kept" or ""))
+      row.c.name:SetText(nameLabel(run, false))
       row.c.live:SetText(run.inProgress and "•" or "")
       local dw, dc = deltaWord(run, true)
       row.c.dur:SetText(fmtDur(run.duration) .. (dw ~= "" and (" · " .. dw) or ""))

@@ -1557,7 +1557,7 @@ function Gold.resetHistory(now)
 end
 
 -- ── glance texts: the seven values a pill or a bar can show ────────────────────────────────────────────────────
--- (the dungeon run from 0.9.51, everbuff-wow-addon #51 decision 8: "Deadmines 18:22 · 3/7 · +0:41", Runs.glance)
+-- (the dungeon run from 0.9.51, everbuff-wow-addon #51 decision 8: "Deadmines 18m · 3/7 · +0:41", Runs.glance)
 Gold.GLANCE = { { "balance", "Balance" }, { "total", "Account total" }, { "session", "Session net" }, { "today", "Today net" },
   { "rate", "Per hour" }, { "timer", "Farm timer" }, { "dungeon", "Dungeon run" } }
 Gold.GLANCE_LABEL = {}

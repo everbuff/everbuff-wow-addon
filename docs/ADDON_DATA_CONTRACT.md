@@ -397,22 +397,21 @@ running back as a ghost) unless they are named wall offsets.
 | `open` | string | how it opened: `zone` (the dungeon check), `login` (found inside at a login or a /reload), `boss` (an ENCOUNTER_START where the dungeon check did not say inside), `split` (the run before it was ended by hand while the character stayed inside: it begins in the second the other ended) |
 | `why` | string | closed runs: `left` (20 minutes alive outside), `other` (another instance through a loading screen), `ghost` (a ghost outside for over 30 minutes), `manual` (`Runs.endNow`), `lost` (the game closed without saving) |
 | `partial?` | string | `state lost before this login` or `ended while a boss was in progress`: the record is incomplete and stays out of every later statistic |
-| `visits[]` | object | one row per stretch inside, at most 20, then the last row absorbs (`n` counts the stretches it took). `i`, `o`: wall offsets from `t` (`o` absent while inside). `gaps?`: on the row that absorbed, the time outside between its stretches as flat pairs of offsets from `t` (from, to, from, to, in order), at most 20 pairs; a later gap is not kept and reads as inside. A moment in a gap is not of the run. `how`: `zone`, `login`, `reload`, `ghost` (back in after a ghost run), `boss`, `split`. `out`: `alive`, `ghost`, `offline`, or `other` and `manual` when the run closed while inside. Sums of the visit: `secs` (inside), `active` (never more than `secs`), `combat` and `boss` (v2: the visit's share of `secs.combat` and `secs.boss`), `xp`, `xpKill`, `xpQuest`, `kills`, `looted`, `quests`, `lootValue`, `items`, `unpriced`, `purse` (copper, the raw change of the purse inside). `gg?`, `go?`, `gf?` (v2): the gap before this visit, as a ghost, alive outside and offline, in seconds; on the first visit only after a split (the gap before the run, no one's time, kept so a join puts it back). On a closed run a sum that is 0 is absent |
+| `visits[]` | object | one row per stretch inside, at most 20, then the last row absorbs (`n` counts the stretches it took). `i`, `o`: wall offsets from `t` (`o` absent while inside). `gaps?`: on the row that absorbed, the time outside between its stretches as flat pairs of offsets from `t` (from, to, from, to, in order), at most 20 pairs; a later gap is not kept and reads as inside. A moment in a gap is not of the run. `how`: `zone`, `login`, `reload`, `ghost` (back in after a ghost run), `boss`, `split`. `out`: `alive`, `ghost`, `offline`, or `other` and `manual` when the run closed while inside. Sums of the visit: `secs` (inside), `active` (never more than `secs`), `combat` and `boss` (v2: the visit's share of `secs.combat` and `secs.boss`), `xp`, `xpKill`, `xpQuest`, `kills`, `looted`, `quests`, `lootValue`, `items`, `unpriced`, `purse` (copper, the raw change of the purse inside). `gg?`, `go?`, `gf?` (v2): the gap before this visit, as a ghost, alive outside and offline, in seconds; on the first visit only after a split (the gap before the run, no one's time, kept so a join puts it back). `fc?` (v2, 0.9.51 review): offset of the visit's first combat or encounter start on the run's clock; absent on the first visit of a closed run when it equals `firstPull`, and on a visit with no combat. Split here starts the second part's `firstPull` there, trash included. On a closed run a sum that is 0 is absent |
 | `secs` | object | `{ inside, ghost, outside, offline, active, combat, boss }`. `inside + ghost + outside + offline = endT - t`, the wall time, which is not stored. On a closed run a clock that is 0 is absent (`inside` is always there). `active` is inside time at the keyboard (10 second tick, same rule as the gold tick); every rate divides by it. `combat`: PLAYER_REGEN_DISABLED to ENABLED while inside. `boss`: the union of the windows of the encounters seen ending, in any order (two that overlap count once, also when one ends inside the other; one whose END was never seen counts nothing) |
 | `firstPull?` | number | offset of the first combat or encounter start |
-| `bosses[]` | object | one row per encounter id in pull order, at most 20, from ENCOUNTER_START and ENCOUNTER_END themselves (never from a fight record). `enc` (encounter id), `name?`, `pulls?` (on a closed run absent when 1: a row was pulled at least once), `wipes?` (non-success END with an own death in the pull), `resets?` (non-success END with none), `unknown?` (the END was not seen, or its success was hidden), `combat` (END minus START, summed), `ok?` and `dur?` (the raw success value and the length of the last END seen; on a closed run `ok` is absent beside `kill`, and `dur` when it equals `combat`), `p?` (v2: offset of the first pull; absent on a closed run when it equals `kill` less `dur`, or less `combat`), and once killed: `kill` (offset, stored once: a later kill of the same boss changes nothing) and `fight?` (uid of the fight running at the END, else of the last one that ended inside the pull). Not stored, because the kills give them: a boss's segment (its `kill` less the `kill` before it, or less `firstPull`) and the encounter killed before it (`Runs.splits`), and where its kill pull began (`kill` less `dur`, or less `combat`) |
+| `bosses[]` | object | one row per encounter id in pull order, at most 20, from ENCOUNTER_START and ENCOUNTER_END themselves (never from a fight record). `enc` (encounter id), `name?`, `pulls?` (on a closed run absent when 1: a row was pulled at least once), `wipes?` (non-success END with an own death in the pull), `resets?` (non-success END with none), `unknown?` (the END was not seen, or its success was hidden), `combat` (END minus START, summed), `ok?` and `dur?` (the raw success value and the length of the pull: the kill pull once killed, a later pull of the same boss in the run changes neither; else the last END seen. On a closed run `ok` is absent beside `kill`, and `dur` when it equals `combat`), `p?` (v2: offset of the first pull; absent on a closed run when it equals `kill` less `dur`, or less `combat`), and once killed: `kill` (offset, stored once: a later kill of the same boss changes nothing) and `fight?` (uid of the fight running at the END, else of the last one that ended inside the pull). Not stored, because the kills give them: a boss's segment (its `kill` less the `kill` before it, or less `firstPull`) and the encounter killed before it (`Runs.splits`), and where its kill pull began (`kill` less `dur`, or less `combat`) |
 | `nDeaths?` | object | `{ me?, party? }`, never capped. `party` is not counted until party deaths are tracked. On a closed run a count that is 0 is absent, and the block with it when both are |
 | `deaths[]?` | object | the character's own deaths inside, at most 40 rows (a row without `who` is the character's own; the party's rows of a later version carry `who`): `o`, `enc?` (the encounter open at the death), `foe?`, `back?` (seconds until alive again). On a closed run only the first 10 rows keep `foe` and `back`, and the list is absent when empty |
-| `xp?` | object | `{ gain, kill, quest, n, l0?, p0, l1?, p1, need }`: XP gained inside (PLAYER_XP_UPDATE differences, a level-up carries the old maximum), XP and count of named kill lines, quest XP turned in inside, level and bar fraction at both ends and the bar's size at the end. The end is the last reading while the character was inside (taken at every XP gain inside and when a visit ends), never one taken when the run closes 20 minutes later. A level the client hid is absent. Absent as a whole when UnitXPMax is not a plain positive number or nothing was gained |
+| `xp?` | object | `{ gain, kill?, quest?, n?, l0?, p0, l1?, p1, need }` (on a closed run `kill`, `quest` and `n` are absent when 0): XP gained inside (PLAYER_XP_UPDATE differences, a level-up carries the old maximum), XP and count of named kill lines, quest XP turned in inside, level and bar fraction at both ends and the bar's size at the end. The end is the last reading while the character was inside (taken at every XP gain inside and when a visit ends), never one taken when the run closes 20 minutes later. A level the client hid is absent. Absent as a whole when UnitXPMax is not a plain positive number or nothing was gained |
 | `gold?` | object | closed runs: `{ looted?, quests?, lootValue?, items?, unpriced?, purse? }`, the sum of the visits; a 0 is absent, and the block with it when all are. A visit takes the difference of the character's gold run counters (`goldRun`, `goldRuns`, `goldRunsEvicted` together) between its two ends, so it holds whatever lifetime the gold run has. `purse` is the change of GetMoney inside less `quests`; the page shows it beside `looted` when the two differ ("Coin X of Y gained inside" when the purse gained more, "Looted X, purse up Y inside" when it gained less, nothing when it did not grow) |
 | `hidden?` | object | `{ xp?, rep?, loot? }`: chat lines of that kind that arrived as secret values while inside. On a closed run a 0 is absent, and the block with it when all are |
 | `keep?` | bool | protected from eviction, at most 20 runs (`Runs.KEEP_CAP`, the Keep button) |
-| `size` | int | v2: the largest group seen inside (GetNumGroupMembers, 1 when solo). Part of the route key, so a solo run and a group run never share a best |
-| `done?` | bool | v2: a full clear, set when the run closes: every boss of the dungeon's learned list killed (below), no outcome not seen. Never on a raid, a partial run or the first run of a dungeon |
-| `pb?` | bool | v2: the run set the best of its route when it closed |
+| `size?` | int | v2: the largest group seen inside (GetNumGroupMembers). A closed run keeps it only when it is 1 (solo), the one value a reader asks; absent is a group, or a run of 0.9.50. Part of the route key, so a solo run and a group run never share a best |
+| `done?` | bool | v2: a full clear: every boss of the learned list of the run's boss set killed (below), no outcome not seen. Set when the run closes; the first run of a boss set closes with no list and is judged when the second run gives the set its list. Never on a raid or a partial run |
 | `exact?` | bool | v2: closed as `other` through a loading screen with the instance map changed: the end is exact, not the 20 minutes |
 | `edited?` | bool | v2: made by Split here or Join with previous run. Never sets a best |
-| `repull?` | int | v2, open run only: the visit in which a boss killed in an earlier visit was pulled again ("Possibly two runs"); splits nothing, cleared at the close |
+| `repull?` | int | v2: the visit in which a boss killed in an earlier visit was pulled again ("Possibly two runs"); splits nothing and stays on the closed run, so the page still says where to split. Split here at that visit clears it; a split before it or a join moves it to the visit's new number |
 
 Only on the open run: `st` (`in`, `ghost`, `out`, `off`), `mark` and `beat` (epoch of the last clock reading),
 `left` (epoch alive outside began; a logout outside moves it on by the time offline), `ghostAt` (the same for
@@ -466,11 +465,11 @@ its built-in list. Diagnostics, nothing shown: `settings.selftest.runs` (whole-n
 loading screen that was not learned).
 
 Size, measured by `tests/runs.lua` as the client writes tables, at the depth a run sits at in the file: the real
-shape of the Maraudon run of 2026-11-18 (2 visits, 8 bosses, 1 death) is 3.0 KB (3025 bytes with the keys of
-0.9.51; 2903 bytes in 0.9.50), and 100 such runs serialised together are 310 KB per character. The tests fail
-above 3 KB and 320 KB (300 KB in 0.9.50). The worst case at the caps, every optional key present and not 0 on all
-20 visits, 20 bosses and 40 death rows, with 20 gaps on the last visit, is 23.8 KB (24345 bytes; the test fails
-above 25 KB, 22 KB in 0.9.50). The plan names 3 KB for the worst case too, as a target to be measured: with
+shape of the Maraudon run of 2026-11-18 (2 visits, 8 bosses, 1 death) is 3.0 KB (3014 bytes with the keys of
+0.9.51: no stored `pb`, `size` only when solo, no 0 in `xp`, `fc` on the second visit; 2903 bytes in 0.9.50), and
+100 such runs serialised together are 309 KB per character. The tests fail above 3 KB and 320 KB (300 KB in
+0.9.50). The worst case at the caps, every optional key present and not 0 on all 20 visits, 20 bosses and 40 death
+rows, with 20 gaps on the last visit, is 24.2 KB (24806 bytes; the test fails above 25 KB, 22 KB in 0.9.50). The plan names 3 KB for the worst case too, as a target to be measured: with
 its own caps (20 visits, 20 bosses, 40 deaths) that is not reachable, and the caps or the target are the founder's
 to change.
 
@@ -480,13 +479,18 @@ Additive, schema 2, no schema bump. The acknowledgement never touches these keys
 not read by ingest until a backend gate of its own.
 
 A run's route is the sorted encounter ids it killed (`Runs.routeOf`), worked out, not stored. Its key adds the
-difficulty and `/solo` for a group of one: `644.645.646/d1/solo` (`Runs.sigOf`). A best is the seconds from
+difficulty and `/solo` for a group of one: `644.645.646/d1/solo` (`Runs.sigOf`). A difficulty of 0 (the client's
+answer outside an instance, for a run the zone name, the map type or a boss pull opened) is no difficulty and adds
+nothing; the open run takes the difficulty the client names once it says instance. A best is the seconds from
 `firstPull` to the last kill on the run's own clock (inside plus running back; standing at the entrance and time
 outside count nothing). Kills whose pulls overlap (the next pull began before the last kill of the group: the
 Zul'Farrak pair) are one split, keyed by their ids sorted and joined with `+`, so the order they died in never
 changes a segment. Only a run that is not partial, not edited, not a raid and has no outcome not seen sets a best.
-A dungeon's learned list is the bosses killed in at least half of its counted runs, once it has two; the route's
-last boss is not needed for it. A raid is counted in the statistics with no route, no best, no full clear and no
+A dungeon's routes that share a boss form one boss set; routes that share none are sets of their own (the wings
+of Scarlet Monastery, Dire Maul, Stratholme or Maraudon under one name). A set's learned list is the bosses killed in
+at least half of the runs with a kill in that set (exactly half counts), once it has two; a run without a kill moves
+no list. A run is judged against the set it shares most kills with, so a wing clear is a full clear of its wing. The
+route's last boss is not needed for the list. A raid is counted in the statistics with no route, no best, no full clear and no
 copy. A run is never merged back into the run before it: a visit after the 20 minutes is a run of its own.
 Joining a group late gives another route (fewer kills), its own best and no full clear; that is accepted.
 
@@ -499,23 +503,32 @@ folded into the key `other`, which keeps only the sums and `folded`, the count o
 | `n`, `full` | int | runs counted and full clears among them |
 | `secs`, `active` | int | inside plus running back, and active seconds, summed |
 | `deaths`, `wipes`, `xp`, `looted`, `quests`, `lootValue` | int | sums (own deaths, wipes of every boss, XP gained, copper) |
-| `last` | epoch | start of the newest run counted |
-| `bosses` | map | encounter id -> `{ name?, kills, wipes, seenIn }` (`seenIn`: runs with a row of that boss) |
-| `routes` | map | route key -> `{ n, last, best?, bestId?, bestAt?, splits?, seg? }`, at most 8 per dungeon, the least recently run goes first. `best` seconds, `bestId` and `bestAt` the run and its start; `splits` encounter id -> seconds from the first pull of the best run; `seg` `"<group before>><group>"` (the first is `start`) -> `{ s, id }`, the best of each segment and its run |
+| `last` | epoch | start of the newest run counted; when that run is taken out, the newest start of the runs still stored (the same for a route's `last`) |
+| `bosses` | map | encounter id -> `{ name?, kills, wipes, seenIn }` (`seenIn`: runs with a row of that boss), at most 20 per dungeon (`Runs.STATS_BOSS_CAP`); a boss past it is not counted |
+| `routes` | map | route key -> `{ n, last, best?, bestId?, bestAt?, splits?, seg?, tot?, k? }`, at most 8 per dungeon, the least run goes first. `best` seconds, `bestId` and `bestAt` the run and its start (a run holds the best when `bestId` is its id: nothing is stored on the run); `splits` encounter id -> seconds from the first pull of the best run; `seg` `"<group before>><group>"` (the first is `start`) -> `{ s, id? }`, the best of each segment and its run, at most the route's boss count plus 2 (the entry of the oldest run goes first); `id` is dropped when its run is evicted from the list. `tot` and `k`: the measure (first pull to last kill) summed over the runs of the route that could set a best, and their count; BY DUNGEON's Average is `tot / k` of the route its Best comes from |
 | `folded?` | int | on `other` only |
 
 A run counts once, when it closes (`Runs.statsAdd`), and is taken out by Delete, Split and Join (`Runs.statsApply`
 with -1). The best of a route, or of a segment, that named a removed run is taken again from the runs still
 stored; an evicted run is never taken out, so its best stays. At the first load of 0.9.51 the statistics are built
 once from the runs stored since 0.9.50 (`Runs.statsRebuild`); nothing older exists. Delete leaves the statistics
-equal to a rebuild from the runs left with their own marks (`done` and `pb` are facts of a run, fixed when it
-closed).
+equal to a rebuild from the runs left with their own marks (`done` is a fact of a run, fixed when it closed).
+The statistics are built once: a load with `dungeonStats` present never builds them again, so a best whose run was
+evicted stays across every /reload and login.
+
+Size, measured by `tests/runs.lua` at the block's depth in the file: a levelling character (30 dungeons, two routes
+of 8 bosses each, 10 bosses seen, every segment with its run) is 147 KB (the test fails above 160 KB); at the caps
+(80 dungeons, 8 routes of 12 bosses, every segment, 20 bosses, ids on the segments of 100 routes) 1236 KB (fails
+above 1300 KB). The caps (`Runs.STATS_CAP`, `Runs.ROUTE_CAP`, `Runs.SEG_EXTRA`) are the levers.
 
 `characters[guid].dungeonCopies[]` (at most 40, rows older than 24 hours dropped): `{ t, key, run, why }`, one row
-per instance entered: `t` the run's start, `key` its `inst`, `run` its id, `why` `first` (no stored run of the
-dungeon within 20 minutes before it) or `estimate` (a new copy by the 20 minutes). A re-entry (a visit), End run
-now (the same copy), a raid, the door and a provisional run until something confirms it write none; a run too
-short to be kept keeps its row. The hour line sums the rows of every character of the account: "Instances this
+per instance entered: `t` the run's start, `key` its `inst`, `run` its id, `why` `first` (this character has no
+row of the dungeon in the last 24 hours), `estimate` (a later copy, by the 20 minute rule) or `split` (the second
+part of Split here: the player said it was a new copy). Join with previous run removes the row of the run joined
+away (the player said it was one copy). A re-entry (a visit), End run now (the same copy), a raid, the door, a
+provisional run until something confirms it and a run partial from its start (opened at a login after the game
+closed without saving) write none; a run that becomes partial later, and a run too short to be kept, keep the row
+their entry wrote. The hour line sums the rows of every character of the account: "Instances this
 hour: N (estimate)" and the last 24 hours, against `settings.instanceLimit` (int 1 to 99, absent by default, set
 with `/eb instances limit 5|10|off`) when the player set one.
 
@@ -529,8 +542,8 @@ equal. A record of version 1 with more than one kind of gap over three or more v
 were and is refused (`old`). Both work on the open run too: the run goes on, open, from the cut or the join.
 Delete run on the open run ends it unstored and, inside, opens the next run at once (the same copy).
 
-Diagnostics, nothing shown: `settings.selftest.runs` gains `deleted`, `split`, `join`, `repull`, `folded` and
-`routeCap`.
+Diagnostics, nothing shown: `settings.selftest.runs` gains `deleted`, `split`, `join`, `repull`, `folded`,
+`routeCap`, `segCap` and `statsBossCap`.
 
 ## Gold display (0.9.44 and 0.9.45, everbuff-wow-addon #43, decision 5)
 
@@ -546,7 +559,7 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 | Loot > Gold pane, NET card and status line | the addon window is open | 0.9.46: `away` rows with `crash=1` in the period are counted in the NET card of this pane (`Gold.netCard`), and the status line says "Unattributed (game closed without saving): <amount>, counted in the net of this pane"; "Not seen: ... changed while away" then names only the rest. Only here: the glance figures (the pill, the bar text, the tooltip, `/eb gold`, the Days view) stay gained minus spent, because a day row carries no crash amount, and a realm or account period has no journal rows, so there the amount stays in "changed while away". The journal's Detail column says "Group share", "Repair", "Repair, one item", "Deposit", "Bid or buyout", "Buyout", "Auction cancelled", "Bought back: ...", "Talent reset" and "Unattributed (game closed without saving)" for the rows that carry those refs |
 | Loot > Gold pane, PER HOUR card | the addon window is open | 0.9.45: for today and the running session of the character logged in, the rolling rate by the per hour setting ("FARMING PER HOUR"), dimmed while it warms up, its window in the status line. Every other period keeps its net over the time played |
 | Loot > Gold pane, first-run question | the addon window is open, until answered | 0.9.45 (decision 4): one row above the cards, "Show your gold on screen?" with Yes and No. Yes turns the pill on. Asked once per account (`settings.gold.pill.asked`) |
-| Gold pill | only when `settings.gold.pill.on` is true (default off; no frame exists while it is off) | 0.9.45: one line of text, one or two of Balance, Account total, Session net, Today net, Per hour, Farm timer, and from 0.9.51 Dungeon run (the open run: "Deadmines 18:22 · 3/7 · +0:41", its name, its clock, the bosses of the learned list and the delta at the last kill; "No dungeon run" when none is open). Its text follows the purse in the frame of the change, in combat too. It is kept inside the screen and at least 8 px clear of the flag and of its notification line at its widest (600 x 40 at the flag's scale, growing inward from the flag's corner; the 600 is the Emitter's own cap on the line, `Emitter.TOAST_MAX_W`), wherever the flag is, and it is placed again when the flag is dragged, snapped to a corner or resized. A new pill sits under the flag's row. Left-click opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. In combat nothing about it is moved, resized, scaled, shown or hidden; a text that gets longer than the pill during a fight is cut short inside it until the fight ends |
+| Gold pill | only when `settings.gold.pill.on` is true (default off; no frame exists while it is off) | 0.9.45: one line of text, one or two of Balance, Account total, Session net, Today net, Per hour, Farm timer, and from 0.9.51 Dungeon run (the open run: "Deadmines 18m · 3/7 · +0:41", its name, its clock in whole minutes, the bosses of the learned list and the delta at the last kill; "No dungeon run" when none is open). Its text follows the purse in the frame of the change, in combat too. It is kept inside the screen and at least 8 px clear of the flag and of its notification line at its widest (600 x 40 at the flag's scale, growing inward from the flag's corner; the 600 is the Emitter's own cap on the line, `Emitter.TOAST_MAX_W`), wherever the flag is, and it is placed again when the flag is dragged, snapped to a corner or resized. A new pill sits under the flag's row. Left-click opens Loot > Gold (after the fight when in combat), right-click opens the menu, a drag moves it. In combat nothing about it is moved, resized, scaled, shown or hidden; a text that gets longer than the pill during a fight is cut short inside it until the fight ends |
 | Pill and bar text menu | on a right-click, never in combat | 0.9.45: the client's `MenuUtil.CreateContextMenu` when it exists and works (its entries built during the call, or a menu handed back), else the addon's own list frame. The own list closes when what it hangs under is hidden (the window, a Settings page, the pill) and when a fight starts. Never UIDropDownMenu |
 | Bar text | only when another addon loaded LibDataBroker-1.1 (it is not embedded, decision 18) | 0.9.45: four data sources registered at PLAYER_LOGIN, "everbuff.gg Balance", "everbuff.gg Account total", "everbuff.gg Today", "everbuff.gg Per hour", and from 0.9.51 a fifth, "everbuff.gg Dungeon" (the Dungeon run text). Their tooltip is the gold block |
 | Pill tooltip | while the mouse is over the pill | 0.9.45: two help lines and the gold block |
