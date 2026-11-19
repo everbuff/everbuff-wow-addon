@@ -117,8 +117,8 @@ return function(P)
     local t0 = (f1.startEpoch or 0) - 60
     local inside = (f2.startEpoch or 0) + 120 - t0
     ns.char().dungeonRuns = { T.runRecord("Wailing Caverns", t0, inside, {
-      bosses = { { enc = 481, name = "Mutanus the Devourer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 40, kill = inside - 100, seg = inside - 160, at = f2.startEpoch } },
-      nDeaths = { me = 1, party = 0 }, deaths = { { o = 65, me = true, enc = 481, foe = "Mutanus the Devourer", back = 95 } },
+      bosses = { { enc = 481, name = "Mutanus the Devourer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 40, kill = inside - 100 } },
+      nDeaths = { me = 1, party = 0 }, deaths = { { o = 65, enc = 481, foe = "Mutanus the Devourer", back = 95 } },
       xp = { gain = 4200, kill = 3000, quest = 0, n = 14, l0 = 12, p0 = 0.2, l1 = 12, p1 = 0.6, need = 10000 },
       gold = { looted = 4321, quests = 0, lootValue = 12000, items = 9, purse = 6000 }, firstPull = 60 }) }
     L[#L + 1] = { kind = "LEVELUP", t = (f2.startEpoch or 0) + 130, text = "Level 13!", s = ns.DB.active }
@@ -485,6 +485,18 @@ return function(P)
     dv:Hide()
   end
 
+  -- a stored (lean) record made the open run it was while the character was inside: every block and clock back
+  local function asOpen(rec, t)
+    rec.why, rec.gold, rec.visits[1].o, rec.visits[1].out = nil, nil, nil, nil
+    rec.st, rec.mark, rec.beat = "in", t, t
+    ns.Runs._read = true                                         -- (the pane suite plays no world entry: the load counts as read)
+    rec.nDeaths, rec.deaths, rec.hidden = rec.nDeaths or {}, rec.deaths or {}, rec.hidden or {}
+    rec.nDeaths.me, rec.nDeaths.party = rec.nDeaths.me or 0, rec.nDeaths.party or 0
+    for _, k in ipairs({ "xp", "rep", "loot" }) do rec.hidden[k] = rec.hidden[k] or 0 end
+    for _, k in ipairs(ns.Runs.SECS) do rec.secs[k] = rec.secs[k] or 0 end
+    for _, b in ipairs(rec.bosses) do b.pulls = b.pulls or 1 end
+    return rec
+  end
   -- ── Combat / Dungeons (0.9.50): the empty state, and the row and the page of the run in progress, at both sizes
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     local tag = ("Dungeons %dx%d"):format(size[1], size[2])
@@ -501,11 +513,9 @@ return function(P)
     check(tag .. ": the empty text sits inside the pane", eb.l >= pb.l - 0.5 and eb.l + eb.w <= pb.l + pb.w + 0.5, eb.w)
     -- a run in progress: 15 minutes inside so far, one boss down, one still up
     local t = GetServerTime()
-    local rec = T.runRecord("Maraudon", t - 900, 900, { firstPull = 100,
-      bosses = { { enc = 422, name = "Noxxion", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 52, kill = 373, seg = 273, at = t - 579 },
-        { enc = 423, name = "Razorlash", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 0 } } })
-    rec.why, rec.gold, rec.visits[1].o, rec.visits[1].out = nil, nil, nil, nil
-    rec.st, rec.mark, rec.beat, rec.encs, rec.bossFrom = "in", t, t, { [423] = { t = t - 20, o = 880, d = 0 } }, t - 20
+    local rec = asOpen(T.runRecord("Maraudon", t - 900, 900, { firstPull = 100,
+      bosses = { { enc = 422, name = "Noxxion", pulls = 1, combat = 52, kill = 373 }, { enc = 423, name = "Razorlash", pulls = 1, combat = 0 } } }), t)
+    rec.encs = { [423] = { t = t - 20, o = 880, d = 0 } }
     me.dungeonRun = rec
     lv = T.dungeonList(); M.settle()
     local row
@@ -537,6 +547,216 @@ return function(P)
     end
     dv:Hide(); lv:Show()
     me.dungeonRuns, me.dungeonRun = keep, keepOpen
+  end
+
+  -- ── Combat / Dungeons (0.9.50, review round 1): nothing on the run page is cut at 900x580, the page of a run in
+  -- progress follows it through the pane's own ticker and only while it is on screen, and one fight reads one way
+  do
+    local R = ns.Runs
+    local tag = "Run page 900x580"
+    P.open("combat", "dungeons", 900, 580, "normal")
+    local me = ns.char()
+    local keep, keepOpen = me.dungeonRuns, me.dungeonRun
+    local fights = ns.DB.combat.fights
+    local nFights = #fights
+    local t = GetServerTime()
+    local dv = T.dungeonDetail()
+    local lv
+    local function rowOf(id)
+      lv = T.dungeonList(); lv:Show(); M.settle()
+      for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and r.run.id == id then return r end end
+    end
+    local function cutTexts()
+      local cut = {}
+      for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and fs.text and fs.text ~= "" and fs:IsTruncated() then cut[#cut + 1] = tostring(fs.text):sub(1, 30) end end
+      for _, b in ipairs(dv.child.btn) do
+        if b.shown ~= false then for _, fs in ipairs({ b.tm, b.nm, b.re }) do if fs:IsTruncated() then cut[#cut + 1] = tostring(fs.text):sub(1, 30) end end end
+      end
+      return cut
+    end
+    local function has(text) for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and fs.text == text then return fs end end end
+    local function hasPrefix(text) for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and tostring(fs.text):find(text, 1, true) == 1 then return fs end end end
+
+    -- a closed run with every clock above zero, hours long and then minutes long, XP with every part, a purse line,
+    -- a death with a long killer's name and the time back, and two fights still stored (the boss and a trash pull)
+    local CLOCKS = {
+      { secs = { inside = 14000, ghost = 3960, outside = 4980, offline = 6960, active = 12480, combat = 9000, boss = 7200 },
+        l1 = "Inside 3h 53m  ·  running back 1h 6m  ·  outside 1h 23m  ·  offline 1h 56m", l2 = "Active 3h 28m  ·  in combat 2h 30m (bosses 2h 0m)" },
+      { secs = { inside = 1870, ghost = 754, outside = 870, offline = 3540, active = 1720, combat = 842, boss = 190 },
+        l1 = "Inside 31m 10s  ·  running back 12m 34s  ·  outside 14m 30s  ·  offline 59m 0s", l2 = "Active 28m 40s  ·  in combat 14m 2s (bosses 3m 10s)" },
+    }
+    for ci, cl in ipairs(CLOCKS) do
+      local s = cl.secs
+      local rec = T.runRecord("Blackrock Depths", t - 40000, s.inside, {
+        secs = { inside = s.inside, ghost = s.ghost, outside = s.outside, offline = s.offline, active = s.active, combat = s.combat, boss = s.boss }, firstPull = 100,
+        bosses = { { enc = 228, name = "High Interrogator Gerstahn", pulls = 2, wipes = 1, combat = 300, kill = 900, fight = "uid-brd-boss" },
+          { enc = 229, name = "Lord Roccor", pulls = 1, combat = 60, kill = 1500, fight = "uid-brd-gone" } },
+        nDeaths = { me = 2 }, deaths = { { o = 700, enc = 228, foe = "High Interrogator Gerstahn", back = 754 }, { o = 1200 } },
+        xp = { gain = 123456, kill = 98765, quest = 23456, n = 1450, l0 = 52, p0 = 0.41, l1 = 53, p1 = 0.12, need = 150000 }, hidden = { xp = 12 },
+        gold = { looted = 123456, quests = 5000, lootValue = 234567, items = 45, purse = 345678 } })
+      me.dungeonRuns, me.dungeonRun = { rec }, nil
+      while #fights > nFights do table.remove(fights) end
+      fights[#fights + 1] = { uid = "uid-brd-trash", session = ns.DB.active, startEpoch = rec.t + 300, duration = 20, outcome = "fled", foes = {}, zone = "Blackrock Depths" }
+      fights[#fights + 1] = { uid = "uid-brd-boss", session = ns.DB.active, startEpoch = rec.t + 600, duration = 300, outcome = "kill", bossName = "High Interrogator Gerstahn",
+        foes = { "High Interrogator Gerstahn" }, zone = "Blackrock Depths" }
+      local row = rowOf(rec.id)
+      check(tag .. ": (the run is a row of the list)", row ~= nil)
+      if row then
+        T.openRun(row.run); M.settle()
+        check(tag .. ": the clocks are two lines, where the time went and what was done inside (" .. ci .. ")", dv.timeLine == cl.l1 and dv.timeLine2 == cl.l2 and #dv.timeFS == 2
+          and dv.timeFS[1].text == cl.l1 and dv.timeFS[2].text == cl.l2, tostring(dv.timeLine) .. " | " .. tostring(dv.timeLine2))
+        check(tag .. ": neither Time line is cut (" .. ci .. ")", not dv.timeFS[1]:IsTruncated() and not dv.timeFS[2]:IsTruncated())
+        check(tag .. ": the loot line, the purse line and the three XP lines are there and not cut (" .. ci .. ")", dv.lootFS and not dv.lootFS:IsTruncated() and dv.purseFS and not dv.purseFS:IsTruncated()
+          and #dv.xpFS == 3 and not dv.xpFS[1]:IsTruncated() and not dv.xpFS[2]:IsTruncated() and not dv.xpFS[3]:IsTruncated(), #dv.xpFS)
+        local cut = cutTexts()
+        check(tag .. ": no text of the page is cut, the deaths table included (" .. ci .. ")", #cut == 0, table.concat(cut, " | "))
+      end
+    end
+    -- the page of that run, part by part
+    check(tag .. ": the XP line ends on the runs the next level takes; quest XP and kills are the next line", dv.xpLine:find("about 2 more runs to level 54", 1, true) ~= nil
+      and dv.xpMore == "23,456 XP from quests  ·  at least 1,450 kills" and dv.xpHidden == "12 XP lines were hidden by the client.", dv.xpLine .. " | " .. tostring(dv.xpMore))
+    check(tag .. ": slain by and back after are columns of their own", has("SLAIN BY") ~= nil and has("BACK AFTER") ~= nil and has("12m 34s") ~= nil and has("12m 34s")._justify == "RIGHT"
+      and hasPrefix("slain by") == nil and hasPrefix("back after") == nil)
+    -- the TIME tile lists the clocks on hover
+    local tipB = dv.timeTip
+    tipB:GetScript("OnEnter")(tipB)
+    local tip = table.concat(GameTooltip.lines, " | ")
+    check(tag .. ": hovering the TIME tile lists the clocks", GameTooltip:GetOwner() == tipB and tip:find("Time | Inside 31m 10s | Run back 12m 34s | Outside 14m 30s | Offline 59m 0s | Active 28m 40s", 1, true) == 1, tip)
+    tipB:GetScript("OnLeave")(tipB)
+    local tb, tileB = P.box(tipB), P.box(has("TIME"))
+    check(tag .. ": the hover area sits on the TIME tile", near(tb.l, tileB.l) and tb.w > 20 and tb.t <= tileB.t and tb.t + tb.h >= tileB.t + tileB.h, tb.l - tileB.l)
+    -- the boss whose fight is still stored opens it; the one whose fight is gone is plain text
+    local bossBtns = {}
+    for _, b in ipairs(dv.child.bbtn) do if b.shown ~= false then bossBtns[#bossBtns + 1] = b end end
+    check(tag .. ": a boss row opens its fight while the fight is stored, and only then", #bossBtns == 1 and bossBtns[1].fight and bossBtns[1].fight.uid == "uid-brd-boss"
+      and near(P.box(bossBtns[1]).t, P.box(has("High Interrogator Gerstahn")).t, 2), #bossBtns)
+    -- one fight, one reading: the trash pull is Trash on the run page, in the Fights list, its tooltip and its page
+    local trashRow
+    for _, b in ipairs(dv.child.btn) do if b.shown ~= false and b.fight and b.fight.uid == "uid-brd-trash" then trashRow = b end end
+    check(tag .. ": Encounters lists the stored fights, the foe-less one as Trash", dv.encounters == 2 and has("Encounters  (2)") ~= nil and trashRow ~= nil and trashRow.re.text == "Trash", trashRow and trashRow.re.text)
+    local label, _, key = ns.FightResult(fights[#fights - 1])
+    check(tag .. ": the shared reading says trash for it, and fled for the same fight outside every run", key == "trash" and label[1] == "Trash"
+      and select(3, ns.FightResult({ outcome = "fled", foes = {}, startEpoch = t - 90000 })) == "fled")
+    local fl = T.fightsList()
+    T.fightDetail():Hide(); fl:Show()                           -- (an earlier test left a replay open; the list rebuilds only while it shows)
+    reopen("Combat", "fights")
+    local listRow
+    for _, r in ipairs(shownRows(fl.tbl)) do if r.fight and r.fight.uid == "uid-brd-trash" then listRow = r end end
+    check("Fights: the same fight reads Trash in the list", listRow ~= nil and tostring(listRow.c.res.text):find("Trash", 1, true) ~= nil and tostring(listRow.c.res.text):find("Fled", 1, true) == nil,
+      listRow and listRow.c.res.text)
+    ns.OpenFightDetail(fights[#fights - 1]); M.settle()
+    local fdv = T.fightDetail()
+    check("Fights: and on its own page", tostring(fdv.metaFS.text):find("Trash", 1, true) ~= nil and tostring(fdv.metaFS.text):find("Fled", 1, true) == nil, fdv.metaFS.text)
+    fdv:Hide(); fl:Show()
+    -- a boss row's click lands on that fight
+    reopen("Combat", "dungeons")
+    local row = rowOf(me.dungeonRuns[1].id)
+    T.openRun(row.run); M.settle()
+    for _, b in ipairs(dv.child.bbtn) do if b.shown ~= false then b:GetScript("OnClick")(b, "LeftButton") end end
+    check(tag .. ": clicking the boss row opens its fight", host("Combat").ctl.active == "fights" and T.fightDetail().fight and T.fightDetail().fight.uid == "uid-brd-boss")
+    T.fightDetail():Hide(); fl:Show()
+    -- a run none of whose fights is stored has no Encounters section
+    while #fights > nFights do table.remove(fights) end
+    reopen("Combat", "dungeons")
+    row = rowOf(me.dungeonRuns[1].id)
+    T.openRun(row.run); M.settle()
+    check(tag .. ": with no fight of the run stored there is no Encounters section", dv.encounters == 0 and hasPrefix("Encounters") == nil and has("No fights of this run are stored.") == nil
+      and #bossBtns >= 0 and (function() for _, b in ipairs(dv.child.bbtn) do if b.shown ~= false then return false end end return true end)())
+
+    -- ── the run in progress: the page follows it through the pane's 1 s ticker ──
+    tag = "Run in progress"
+    local function openOne()
+      local rec = asOpen(T.runRecord("Maraudon", t - 900, 900, { firstPull = 100, bosses = { { enc = 422, name = "Noxxion", pulls = 1, combat = 52, kill = 373 } } }), GetServerTime())
+      me.dungeonRuns, me.dungeonRun = {}, rec
+      return rec
+    end
+    local rec = openOne()
+    row = rowOf(rec.id)
+    T.openRun(row.run); M.settle()
+    M.tick()                                                    -- (the run's own 10 s tick settles first)
+    local renders, refreshes = dv.renders, 0
+    local realRefresh = dv.refresh
+    dv.refresh = function() refreshes = refreshes + 1; return realRefresh() end
+    M.epoch = M.epoch + 5
+    M.tick()
+    check(tag .. ": the ticker moves the clocks of the page: five seconds later it reads five seconds more", refreshes == 1 and dv.timeLine == "Inside 15m 5s" and dv.timeFS[1].text == "Inside 15m 5s"
+      and dv.run.inProgress == true, tostring(dv.timeLine))
+    check(tag .. ": a second in which only the clocks moved lays nothing out again and reads no fight", dv.renders == renders and has("15m 5s") ~= nil, dv.renders - renders)
+    -- a fight is stored: the next tick reads the lists again
+    fights[#fights + 1] = { uid = "uid-mara-1", session = ns.DB.active, startEpoch = GetServerTime() - 3, duration = 2, outcome = "kill", foes = { "Noxious Slime" }, zone = "Maraudon" }
+    M.tick()
+    check(tag .. ": a fight stored since is on the page at the next tick", dv.renders == renders + 1 and dv.encounters == 1 and has("Encounters  (1)") ~= nil, dv.encounters)
+    -- a number changed, no row was stored: laid out again, the lists as they were
+    local listsBefore = dv.run.fights
+    rec.nDeaths.me = 1; rec.deaths[1] = { o = 903 }
+    M.tick()
+    check(tag .. ": a death since is on the page at the next tick, the fights are not read again", dv.renders == renders + 2 and has("Deaths  (1)") ~= nil and dv.run.fights == listsBefore)
+    -- the window is closed, or another pane shows: the frame's own flag stays set, the ticker does nothing
+    renders, refreshes = dv.renders, 0
+    _G.EverbuffFrame:Hide()
+    M.epoch = M.epoch + 5
+    M.tick()
+    check(tag .. ": with the window closed the ticker reads nothing and lays nothing out", refreshes == 0 and dv.renders == renders and dv.shown ~= false and dv:IsVisible() == false, refreshes)
+    _G.EverbuffFrame:Show()
+    ns.UI.Open("Combat", "fights"); M.settle()
+    M.tick()
+    check(tag .. ": the same while another pane shows", refreshes == 0 and dv.renders == renders and dv.shown ~= false, refreshes)
+    reopen("Combat", "dungeons")
+    lv:Hide(); dv:Show(); M.settle()
+    M.tick()
+    check(tag .. ": back on screen it follows again", refreshes == 1 and dv.timeLine == "Inside 15m 10s", tostring(dv.timeLine))
+    -- the run closes while its page is open: the page becomes the closed run's
+    R.close(me, rec, "left", GetServerTime())
+    M.tick()
+    check(tag .. ": a run that closed while its page was open reads as ended", dv.shown ~= false and dv.run.inProgress == false and dv.run.id == rec.id
+      and tostring(dv.metaFS.text):find("Ended: left the dungeon", 1, true) ~= nil, tostring(dv.metaFS.text))
+    refreshes = 0
+    M.tick()
+    check(tag .. ": and is followed no further", dv.refresh() == false and dv.shown ~= false)
+    -- the run is discarded (too short and empty to be kept): the page lets go and the list shows
+    while #fights > nFights do table.remove(fights) end
+    rec = openOne()
+    row = rowOf(rec.id)
+    T.openRun(row.run); M.settle()
+    me.dungeonRun = nil
+    local views, realViews = 0, R.views
+    M.tick()
+    R.views = function(...) views = views + 1; return realViews(...) end
+    local again = dv.refresh()
+    R.views = realViews
+    check(tag .. ": a run that was not kept sends the page back to the list", dv.shown == false and lv.shown ~= false and dv.run.inProgress == false)
+    check(tag .. ": and nothing asks for it again", again == false and views == 0, views)
+    -- a row a few seconds old: the run closed between the list's rebuild and the click
+    rec = openOne()
+    row = rowOf(rec.id)
+    check(tag .. ": (the row says in progress)", row and row.run.inProgress == true)
+    R.close(me, rec, "left", GetServerTime())
+    T.openRun(row.run); M.settle()
+    check(tag .. ": a stale row opens the closed run as closed and writes nothing onto its record", dv.run.inProgress == false and rec.mark == nil and rec.beat == nil and rec.st == nil
+      and tostring(dv.metaFS.text):find("Ended: left the dungeon", 1, true) ~= nil, tostring(dv.metaFS.text))
+    dv.refresh = realRefresh
+    dv:Hide(); lv:Show()
+
+    -- ── the Fights list: a run header only over the fights of the run's visits ──
+    rec = openOne()
+    rec.visits[1].o, rec.visits[1].out = 900, "alive"                   -- left alive a minute ago: the run stays open
+    rec.st, rec.left, rec.endT, rec.gap = "out", rec.t + 900, rec.t + 900, { ghost = 0, outside = 0, offline = 0 }
+    fights[#fights + 1] = { uid = "uid-mara-in", session = ns.DB.active, startEpoch = rec.t + 100, duration = 20, outcome = "kill", foes = { "Noxious Slime" }, zone = "Maraudon" }
+    fights[#fights + 1] = { uid = "uid-after-leave", session = ns.DB.active, startEpoch = rec.t + 950, duration = 20, outcome = "kill", foes = { "Desolace Kodo" }, zone = "Desolace" }
+    T.fightDetail():Hide(); fl:Show()
+    reopen("Combat", "fights")
+    local order = {}
+    for i, r in ipairs(shownRows(fl.tbl)) do
+      if r.item and r.item.ebSection and tostring(r.item.ebSection):find("Maraudon", 1, true) then order.head = order.head or i end
+      if r.fight and r.fight.uid == "uid-mara-in" then order.inside = i end
+      if r.fight and r.fight.uid == "uid-after-leave" then order.after = i end
+    end
+    check("Fights: a fight after the character left a run that is still open gets no run header", order.head and order.inside and order.after and order.after < order.head and order.head < order.inside,
+      ("%s %s %s"):format(tostring(order.after), tostring(order.head), tostring(order.inside)))
+    while #fights > nFights do table.remove(fights) end
+    me.dungeonRuns, me.dungeonRun = keep, keepOpen
+    reopen("Combat", "dungeons")
+    T.dungeonDetail():Hide(); T.dungeonList():Show()
   end
 
   -- ── Combat / Deaths: the summary wraps and the table moves below it; the gear loss is its own cell

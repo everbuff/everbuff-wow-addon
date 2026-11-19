@@ -8,11 +8,13 @@
 -- What a run is made of:
 --   visits    one row per stretch inside. Every sum (seconds, XP, coin, items) is kept per visit, so the run's sums
 --             are always the sum of its visits.
---   clocks    secs = { wall, inside, ghost, outside, offline, active, combat, boss }; inside + ghost + outside +
---             offline = wall = endT - t. A run ends at the moment the character was last inside: the time outside
+--   clocks    secs = { inside, ghost, outside, offline, active, combat, boss }; inside + ghost + outside + offline
+--             = endT - t, the wall time. A run ends at the moment the character was last inside: the time outside
 --             after it is not part of the run.
 --   bosses    counted from ENCOUNTER_START and ENCOUNTER_END themselves, never from a fight record. Several
 --             encounters can be open at once (run.encs, keyed by encounter id).
+-- An open run has every block and every clock. A closed one is lean (Runs.lean): no 0, no empty block, nothing a
+-- reader can work out. Nothing is put on a clock before a load is read (Runs._read, set in Runs.loaded).
 --
 -- Where the character is, for a run ("in", "door" or "out", Runs.where):
 --   in        the client says instance (GetInstanceInfo's or IsInInstance's type), or the map is a dungeon map, or
@@ -49,7 +51,7 @@ Runs.CAP = 100             -- closed runs kept per character
 Runs.VISIT_CAP = 20        -- then the last visit row absorbs
 Runs.BOSS_CAP = 20
 Runs.DEATH_CAP = 40        -- rows; the counters are never capped
-Runs.KEEP_MAX = 20         -- runs protected from eviction (`keep`, set from 0.9.51)
+Runs.DEATH_FULL = 10       -- a closed run keeps `foe` and `back` on this many death rows
 Runs.REENTER = 20 * 60     -- alive outside this long: the run is over (the value of Gold.RUN_REENTER)
 Runs.GHOST_CAP = 30 * 60   -- a ghost outside this long is not running back
 Runs.MIN_SECS = 60         -- a shorter run with nothing in it is not kept
@@ -65,12 +67,13 @@ Runs.WHY = { left = "left the dungeon", other = "entered another instance", ghos
   manual = "ended by hand", lost = "the game closed without saving" }
 Runs.GOLD_KEYS = { "looted", "quests", "lootValue", "items" }
 -- the keys only an open run has
-Runs.OPEN_KEYS = { "st", "mark", "beat", "left", "ghostAt", "gap", "encs", "deadSince", "m0", "g0", "bossIn", "bossFrom" }
+Runs.OPEN_KEYS = { "st", "mark", "beat", "left", "ghostAt", "gap", "encs", "deadSince", "m0", "g0", "bossIn", "bossTo" }
 
 local floor, max, min = math.floor, math.max, math.min
 local function plainNum(v) return ns.plainNum(v) end
 local function safeStr(v) return ns.safeStr(v) end
 local function num(v) return type(v) == "number" and v or 0 end
+Runs.SECS = { "inside", "ghost", "outside", "offline", "active", "combat", "boss" }
 local function nowT() return (GetServerTime and GetServerTime()) or time() end
 local function canon(name)
   local E = ns.Emitter
@@ -104,6 +107,11 @@ local function isDead()
   return v
 end
 local function purse() return plainNum(rd(GetMoney)) end
+local function xpRead()
+  local xp, mx = plainNum(rd(UnitXP, "player")), plainNum(rd(UnitXPMax, "player"))
+  if xp and mx and mx > 0 then return xp, mx end
+  return nil
+end
 
 -- ── where the character is ──────────────────────────────────────────────────────────────────────────────────────
 -- the detector's last answer (Emitter.instanceNow leaves it in Emitter._det); `fresh` asks again
@@ -207,15 +215,28 @@ local function bossRow(run, id, name, make)
 end
 -- every encounter still open ends unseen
 function Runs.closeEncs(run)
-  if type(run.encs) ~= "table" then run.encs = nil; run.bossFrom = nil; return 0 end
+  if type(run.encs) ~= "table" then run.encs = nil; return 0 end
   local n = 0
   for id in pairs(run.encs) do
     local b = bossRow(run, id)
     if b then b.unknown = num(b.unknown) + 1 end
     n = n + 1
   end
-  run.encs, run.bossFrom = nil, nil
+  run.encs = nil
   return n
+end
+-- A boss's segment: the seconds on the run's clock from the kill before it (or from the first pull) to its own kill,
+-- and the encounter killed before it. Worked out from the kills, never stored: { [enc] = { seg, prev } }.
+function Runs.splits(rec)
+  local killed = {}
+  for i, b in ipairs(rec.bosses) do if plainNum(b.kill) then killed[#killed + 1] = { b = b, i = i } end end
+  table.sort(killed, function(x, y) if x.b.kill ~= y.b.kill then return x.b.kill < y.b.kill end return x.i < y.i end)
+  local out, prevO, prevEnc = {}, num(rec.firstPull), nil
+  for _, k in ipairs(killed) do
+    out[k.b.enc] = { seg = max(0, k.b.kill - prevO), prev = prevEnc }
+    prevO, prevEnc = k.b.kill, k.b.enc
+  end
+  return out
 end
 -- the uid of the fight that overlaps an encounter's window: the one running, else the last stored one that ended
 -- inside it
@@ -233,6 +254,7 @@ function Runs.fightUid(from)
 end
 
 -- ── visits ──────────────────────────────────────────────────────────────────────────────────────────────────────
+local xpMark
 local function beginVisit(c, run, at, how)
   local g = run.gap
   if type(g) == "table" then
@@ -261,6 +283,7 @@ local function endVisit(c, run, at, out)
   Runs.flush(run, at)
   Runs.goldTake(c, run, out == "offline")
   combatEnd(run)
+  if out ~= "offline" then xpMark(run) end                       -- (a visit found ended at a login was marked while inside)
   local v = visit(run)
   v.o, v.out = at - run.t, out
   run.endT = at
@@ -276,20 +299,26 @@ local function newId(at)
   local guid = tostring(ns.charGuid() or "")
   return ("%s-%d-%04x"):format(guid:sub(-8), at, math.random(0, 0xFFFF))
 end
-local function xpRead()
-  local xp, mx = plainNum(rd(UnitXP, "player")), plainNum(rd(UnitXPMax, "player"))
-  if xp and mx and mx > 0 then return xp, mx end
-  return nil
-end
 local function frac(xp, mx) return floor(xp / mx * 1000 + 0.5) / 1000 end
+-- where the level stands now, kept on the run while the character is inside: the end of the run's XP block is the
+-- last reading inside, never one taken after the character left
+function xpMark(run)
+  local x = run.xp
+  if type(x) ~= "table" then return end
+  local xp, mx = xpRead()
+  local lvl = plainNum(rd(UnitLevel, "player"))
+  if lvl then x.l1 = lvl end
+  if xp then x.p1, x.need = frac(xp, mx), mx end
+end
 local function openRun(c, at, name, kind, det, how)
-  local run = { id = newId(at), v = Runs.V, inst = name, key = name:lower(), kind = kind, map = det.map, diff = det.diff, uiMap = det.uiMap,
+  local run = { id = newId(at), v = Runs.V, inst = name, kind = kind, map = det.map, diff = det.diff, uiMap = det.uiMap,
     t = at, endT = at, open = (how == "reload" and "login") or how, visits = {},
-    secs = { wall = 0, inside = 0, ghost = 0, outside = 0, offline = 0, active = 0, combat = 0, boss = 0 },
+    secs = { inside = 0, ghost = 0, outside = 0, offline = 0, active = 0, combat = 0, boss = 0 },
     bosses = {}, nDeaths = { me = 0, party = 0 }, deaths = {}, hidden = { xp = 0, rep = 0, loot = 0 } }
   local xp, mx = xpRead()
   if xp then
     run.xp = { gain = 0, kill = 0, quest = 0, n = 0, l0 = plainNum(rd(UnitLevel, "player")), p0 = frac(xp, mx) }
+    run.xp.l1, run.xp.p1, run.xp.need = run.xp.l0, run.xp.p0, mx
     Runs._xp = { xp = xp, mx = mx }
   end
   if how == "login" and Runs._lost then run.partial = "state lost before this login" end
@@ -317,33 +346,46 @@ end
 -- uploaded at every /reload and logout, and a run is kept for a long time). Readers take a missing counter as 0.
 Runs.LEAN_VISIT = { "active", "xp", "xpKill", "xpQuest", "kills", "looted", "quests", "lootValue", "items", "purse" }
 Runs.LEAN_BOSS = { "wipes", "resets", "unknown" }
+-- Also gone from a closed record, because a reader can work it out: a clock that is 0 (`secs.inside` always stays;
+-- the wall time is endT - t), a 0 in `hidden`, `nDeaths` and `gold` (and the block with nothing left in it), an empty
+-- `deaths`, a boss row's `pulls` when it is 1 (the one count a reader takes as 1 when missing), its `ok` beside its
+-- `kill` and its `dur` when the last pull was the only one. Past Runs.DEATH_FULL death rows a row keeps when and
+-- where, not `foe` and `back`.
+local function leanBlock(run, key)
+  local t = run[key]
+  if type(t) ~= "table" then return end
+  for k, x in pairs(t) do if x == 0 then t[k] = nil end end
+  if next(t) == nil then run[key] = nil end
+end
 function Runs.lean(run)
+  local s = run.secs
+  for _, k in ipairs(Runs.SECS) do if k ~= "inside" and s[k] == 0 then s[k] = nil end end
   for _, v in ipairs(run.visits) do
     for _, k in ipairs(Runs.LEAN_VISIT) do if v[k] == 0 then v[k] = nil end end
   end
   for _, b in ipairs(run.bosses) do
     for _, k in ipairs(Runs.LEAN_BOSS) do if b[k] == 0 then b[k] = nil end end
+    if b.pulls == 1 then b.pulls = nil end
+    if b.kill then b.ok = nil end
+    if b.dur == b.combat then b.dur = nil end
   end
+  leanBlock(run, "hidden"); leanBlock(run, "nDeaths"); leanBlock(run, "gold")
+  for i = Runs.DEATH_FULL + 1, #run.deaths do run.deaths[i].foe, run.deaths[i].back = nil, nil end
+  if #run.deaths == 0 then run.deaths = nil end
 end
 -- Close the open run. Returns the stored record, or nil when the run was not kept.
 function Runs.close(c, run, why, at)
   at = at or nowT()
-  local bossOpen = type(run.encs) == "table" and next(run.encs) ~= nil
+  local bossOpen = false                                         -- an encounter that began in this load and has not ended
+  for _, e in pairs(type(run.encs) == "table" and run.encs or {}) do if type(e) == "table" and not e.r then bossOpen = true end end
   if run.st == "in" then
     if bossOpen and not run.partial then run.partial = "ended while a boss was in progress" end
     endVisit(c, run, at, (why == "left" or why == "ghost") and "alive" or (why == "lost" and "offline") or why)
   end
   Runs.closeEncs(run)
   run.why = why
-  local s = run.secs
-  s.wall = s.inside + s.ghost + s.outside + s.offline          -- the gap after the last visit is not the run's
-  run.gold = Runs.goldOf(run)
-  local x = run.xp
-  if type(x) == "table" and num(x.gain) > 0 then
-    local xp, mx = xpRead()
-    x.l1 = plainNum(rd(UnitLevel, "player")) or x.l0
-    if xp then x.p1, x.need = frac(xp, mx), mx end
-  else run.xp = nil end
+  run.gold = Runs.goldOf(run)                                    -- (the gap after the last visit is not the run's)
+  if not (type(run.xp) == "table" and num(run.xp.gain) > 0) then run.xp = nil end
   for _, k in ipairs(Runs.OPEN_KEYS) do run[k] = nil end
   c.dungeonRun = nil
   if empty(run) then Runs.note("discarded"); return nil end
@@ -360,11 +402,22 @@ function Runs.expire(c, run, at)
   if run.st == "ghost" and plainNum(run.ghostAt) and at - run.ghostAt > Runs.GHOST_CAP then Runs.close(c, run, "ghost", at); return true end
   return false
 end
--- End the open run now (the button comes with 0.9.51). Returns the record, or nil.
+-- End the open run now (the button comes with 0.9.51). Returns the record, or nil. While the character is still
+-- inside, what comes next is the next run and opens in the same second (`open = "split"`), so no second, XP, death or
+-- coin inside belongs to no run.
 function Runs.endNow()
   local c = me(); local run = cur(c)
-  if not run then return nil end
-  return Runs.close(c, run, "manual", nowT())
+  if not (run and Runs._read) then return nil end
+  local at = nowT()
+  local det = Runs.detect(true)
+  local w, name, kind = Runs.where(det, run)
+  local bossIn = run.bossIn
+  local rec = Runs.close(c, run, "manual", at)
+  if w == "in" then
+    local nxt = openRun(c, at, safeStr(name) or "Dungeon", kind or "party", det, "split")
+    if type(bossIn) == "table" then nxt.bossIn = bossIn end
+  end
+  return rec
 end
 
 -- ── two names, one dungeon ──────────────────────────────────────────────────────────────────────────────────────
@@ -374,7 +427,7 @@ end
 -- before it compares names, so the flip raises nothing.
 function Runs.alias()
   local c = me(); local run = cur(c)
-  if not run or run.st ~= "in" then return false end
+  if not run or run.st ~= "in" or not Runs._read then return false end
   local det = Runs.detect()
   local name = safeStr(det.name)
   if not (det.kind and name and name ~= "" and plainNum(det.map) and det.map == run.map and not Runs.CONTINENT[det.map]) then return false end
@@ -407,6 +460,7 @@ function Runs.sync(at)
   local c = me()
   if not c then return nil end
   if Runs._pendLoad then local p = Runs._pendLoad; Runs._pendLoad = nil; Runs.loaded(p[1], p[2]) end
+  if not Runs._read then return nil end                          -- (nothing is put on a clock before the load is read)
   at = plainNum(at) or nowT()
   local det = Runs.detect()
   local viaLoad, loadHow = Runs._viaLoad, Runs._loadHow
@@ -457,10 +511,20 @@ function Runs.loaded(isLogin, isReload)
   -- it has, by the next dungeon check or the next tick, before any second is put on a clock
   if not c then Runs._pendLoad = { isLogin, isReload }; return end
   if not Runs._checked then Runs._checked = true; Runs.validate(c) end
+  -- From here on this load may put time on a clock. Until here nothing does: the stored run still carries the mark of
+  -- the last load, and a tick, a zone event or a look at the pane before this point would book the whole time since
+  -- (a night offline) as seconds inside.
+  Runs._read = true
   local xp, mx = xpRead()
   Runs._xp = xp and { xp = xp, mx = mx } or nil
   local run = cur(c)
-  if isLogin ~= true then return end
+  if isLogin ~= true then
+    -- an encounter open across a /reload may have ended during the loading screen: it is carried, not in progress
+    if isReload == true and run and type(run.encs) == "table" then
+      for _, e in pairs(run.encs) do if type(e) == "table" then e.r = 1 end end
+    end
+    return
+  end
   -- the game closed without saving since the file was written (Emitter.loadKind, 0.9.46): what the file holds of
   -- the run is all there is. It ends where the file last saw it and says so.
   local crashed = (ns.Emitter and ns.Emitter._crashed == true) or c.goldOpen ~= nil
@@ -486,13 +550,21 @@ function Runs.loaded(isLogin, isReload)
   Runs.closeEncs(run)
 end
 -- drop what this version cannot read: a record of a later version or of another shape
+local function tableOrNone(v) return v == nil or type(v) == "table" end
 function Runs.valid(r)
   return type(r) == "table" and plainNum(r.v) ~= nil and r.v <= Runs.V and type(r.id) == "string" and type(r.inst) == "string"
     and plainNum(r.t) ~= nil and plainNum(r.endT) ~= nil and type(r.secs) == "table" and type(r.visits) == "table" and #r.visits > 0
-    and type(r.bosses) == "table" and type(r.nDeaths) == "table" and type(r.deaths) == "table" and plainNum(r.secs.inside) ~= nil
+    and type(r.bosses) == "table" and tableOrNone(r.nDeaths) and tableOrNone(r.deaths) and tableOrNone(r.hidden) and tableOrNone(r.gold)
+    and plainNum(r.secs.inside) ~= nil
+end
+-- an open run is written to all the time: it has every block and every clock
+function Runs.validOpen(r)
+  if not (Runs.valid(r) and type(r.st) == "string" and type(r.nDeaths) == "table" and type(r.deaths) == "table" and type(r.hidden) == "table") then return false end
+  for _, k in ipairs(Runs.SECS) do if plainNum(r.secs[k]) == nil then return false end end
+  return true
 end
 function Runs.validate(c)
-  if c.dungeonRun ~= nil and not (Runs.valid(c.dungeonRun) and type(c.dungeonRun.st) == "string") then c.dungeonRun = nil; Runs.note("dropped") end
+  if c.dungeonRun ~= nil and not Runs.validOpen(c.dungeonRun) then c.dungeonRun = nil; Runs.note("dropped") end
   if c.dungeonRuns ~= nil and type(c.dungeonRuns) ~= "table" then c.dungeonRuns = nil end
   local list = c.dungeonRuns
   if not list then return end
@@ -531,7 +603,6 @@ function Runs.encStart(id, name)
   if not b then return end
   if type(run.encs) ~= "table" then run.encs = {} end
   if run.encs[id] then b.unknown = num(b.unknown) + 1; Runs.note("restart") end   -- its END was never seen
-  if next(run.encs) == nil then run.bossFrom = at end
   local o = Runs.clock(run, at)
   run.encs[id] = { t = at, o = o, d = 0 }
   b.pulls = num(b.pulls) + 1
@@ -545,10 +616,13 @@ function Runs.encEnd(id, name, success)
   if type(e) ~= "table" then Runs.note("endNoStart"); return end   -- an END with no START, or a second END
   local at = nowT()
   run.encs[id] = nil
-  if next(run.encs) == nil then
-    run.encs = nil
-    run.secs.boss = run.secs.boss + max(0, at - num(run.bossFrom)); run.bossFrom = nil
-  end
+  if next(run.encs) == nil then run.encs = nil end
+  -- Seconds with a boss up are the union of the windows of the encounters seen ending: this one adds the part of
+  -- its window that none before it counted (run.bossTo: counted up to here). An encounter whose END is never seen
+  -- adds nothing and holds nothing up.
+  local from = max(num(e.t), num(run.bossTo))
+  if at > from then run.secs.boss = run.secs.boss + (at - from) end
+  run.bossTo = max(num(run.bossTo), at)
   local b = bossRow(run, id, safeStr(name))
   if not b then return end
   local dur = max(0, at - num(e.t))
@@ -557,14 +631,8 @@ function Runs.encEnd(id, name, success)
   local ok = plainNum(success)
   b.ok, b.dur = ok, dur
   if ok == 1 then
-    if not b.kill then
-      local o = Runs.clock(run, at)
-      local prevO, prevEnc
-      for _, x in ipairs(run.bosses) do
-        if x ~= b and x.kill and (not prevO or x.kill > prevO) then prevO, prevEnc = x.kill, x.enc end
-      end
-      b.kill, b.at = o, num(e.t)
-      b.seg, b.prev = max(0, o - (prevO or num(run.firstPull))), prevEnc
+    if not b.kill then                                           -- (stored once: a later kill of the same boss changes nothing)
+      b.kill = Runs.clock(run, at)
       b.fight = Runs.fightUid(num(e.t))
     end
   elseif ok == nil then b.unknown = num(b.unknown) + 1
@@ -584,7 +652,8 @@ function Runs.died()
     e.d = num(e.d) + 1
     if not encT or num(e.t) > encT then enc, encT = id, num(e.t) end
   end
-  if #run.deaths < Runs.DEATH_CAP then run.deaths[#run.deaths + 1] = { o = Runs.clock(run, at), me = true, enc = enc } end
+  -- (a row is the character's own death: the party's rows, from a later version, carry `who`)
+  if #run.deaths < Runs.DEATH_CAP then run.deaths[#run.deaths + 1] = { o = Runs.clock(run, at), enc = enc } end
 end
 -- who killed the character, when the client says (Emitter's PLAYER_DEAD knows; plain or nil)
 function Runs.deathFoe(foe)
@@ -592,7 +661,7 @@ function Runs.deathFoe(foe)
   foe = safeStr(foe)
   if not (run and foe and run.deadSince) then return end
   local d = run.deaths[#run.deaths]
-  if d and d.me and not d.foe then d.foe = foe end
+  if d and not d.who and not d.foe then d.foe = foe end
 end
 function Runs.alive()
   local c = me(); local run = cur(c)
@@ -600,11 +669,15 @@ function Runs.alive()
   local at = nowT()
   if plainNum(run.deadSince) then
     local d = run.deaths[#run.deaths]
-    if d and d.me and not d.back then d.back = max(0, at - run.deadSince) end
+    if d and not d.who and not d.back then d.back = max(0, at - run.deadSince) end
     run.deadSince = nil
   end
-  -- resurrected outside (a spirit healer): the running back is over, the 20 minutes begin
   if run.st == "ghost" then
+    -- Walking into the instance as a ghost resurrects the character too, and this event can come before the dungeon
+    -- check of that loading screen: where the character is gets asked first. Inside, the visit begins here and the
+    -- encounters the party is still fighting stay open.
+    if Runs.where(Runs.detect(true), run) == "in" then Runs.sync(at); return end
+    -- resurrected outside (a spirit healer): the running back is over, the 20 minutes begin
     Runs.flush(run, at)
     run.st, run.left, run.ghostAt = "out", at, nil
     Runs.closeEncs(run)
@@ -621,6 +694,7 @@ function Runs.onXP()
   if d <= 0 or d > L.mx + mx then return end
   local v = visit(run)
   v.xp, run.xp.gain = num(v.xp) + d, num(run.xp.gain) + d
+  xpMark(run)
 end
 -- a kill XP line: the named form counts one kill ("<mob> dies, you gain 85 experience.")
 function Runs.onXPLine(msg)
@@ -671,18 +745,24 @@ function Runs.tick()
   Runs._tickAt = now
   local c = me()
   if c and Runs._pendLoad then Runs.detect(true); Runs.sync(); return end   -- (the load is read first; this tick counts nothing)
+  if not Runs._read then return end
   local run = cur(c)
   if not run then return end
   local at = nowT()
-  if run.st == "ghost" and not isDead() then Runs.alive() end
+  if run.st == "ghost" and not isDead() then
+    Runs.alive()
+    run = cur(c)                                                 -- (alive back inside is a dungeon check: the run may be another now)
+    if not run then return end
+  end
   if Runs.expire(c, run, at) then return end
   Runs.flush(run, at)
   if run.st ~= "in" then return end
   Runs.goldTake(c, run)
   if not last or (ns.Gold and ns.Gold._afk) then return end
-  local add = floor(min(Runs.TICK, now - last) + 0.5)
-  if add <= 0 then return end
   local v = visit(run)
+  -- never more than the visit has been open: a visit that began inside this interval takes only its own seconds
+  local add = min(floor(min(Runs.TICK, now - last) + 0.5), num(v.secs) - num(v.active))
+  if add <= 0 then return end
   v.active, run.secs.active = num(v.active) + add, run.secs.active + add
 end
 function Runs.logout()
@@ -695,7 +775,7 @@ end
 -- what a fresh load starts with (the tests' /reload)
 function Runs.newLoad()
   Runs._tickAt, Runs._xp, Runs._combatAt, Runs._viaLoad, Runs._loadHow, Runs._lost, Runs._checked, Runs._where = nil, nil, nil, nil, nil, nil, nil, nil
-  Runs._pendLoad = nil
+  Runs._pendLoad, Runs._read = nil, nil
 end
 
 local ef = CreateFrame("Frame")
@@ -722,6 +802,8 @@ Runs.HANDLERS = {
 ef:SetScript("OnEvent", function(_, event, ...)
   local h = Runs.HANDLERS[event]
   if not h then return end
+  if Runs._pendLoad and me() then Runs.detect(true); Runs.sync() end   -- the client named the character: the load is read first
+  if not Runs._read then return end                              -- no event of a load is taken before the load is read
   local ok, err = pcall(h, ...)
   if not ok then Runs._err = err end
 end)
@@ -761,26 +843,29 @@ end
 function Runs.view(rec, isOpen, full)
   local c = me()
   local at = nowT()
-  if isOpen and c then
+  if isOpen and c and Runs._read then
     Runs.flush(rec, at)
     if rec.st == "in" then Runs.goldTake(c, rec) end
   end
   local s = rec.secs
   local gap = isOpen and type(rec.gap) == "table" and rec.gap or nil
+  local nD = type(rec.nDeaths) == "table" and rec.nDeaths or {}
+  -- (a closed record leaves out what is 0 or empty, Runs.lean)
   local v = { rec = rec, id = rec.id, name = rec.inst, kind = rec.kind, startT = rec.t, endT = (not isOpen) and rec.endT or nil,
     inProgress = isOpen and true or false, why = rec.why, partial = rec.partial, opened = rec.open,
-    inside = s.inside, ghost = s.ghost + num(gap and gap.ghost), outside = s.outside + num(gap and gap.outside),
-    offline = s.offline + num(gap and gap.offline), active = s.active, combat = s.combat, boss = s.boss,
-    visits = rec.visits, bosses = rec.bosses, deathRows = rec.deaths, deaths = num(rec.nDeaths.me), partyDeaths = num(rec.nDeaths.party),
+    inside = num(s.inside), ghost = num(s.ghost) + num(gap and gap.ghost), outside = num(s.outside) + num(gap and gap.outside),
+    offline = num(s.offline) + num(gap and gap.offline), active = num(s.active), combat = num(s.combat), boss = num(s.boss),
+    visits = rec.visits, bosses = rec.bosses, deathRows = type(rec.deaths) == "table" and rec.deaths or {}, deaths = num(nD.me), partyDeaths = num(nD.party),
     hidden = rec.hidden, xp = rec.xp, state = isOpen and rec.st or nil }
   v.duration = v.inside + v.ghost                                -- the run's clock: inside and running back
+  v.splits = Runs.splits(rec)
   v.reentries = max(0, #rec.visits - 1)
   for _, x in ipairs(rec.visits) do v.reentries = v.reentries + num(x.n) end
   v.gold = isOpen and Runs.goldOf(rec) or (type(rec.gold) == "table" and rec.gold) or Runs.goldOf(rec)
   v.items, v.coin = num(v.gold.items), num(v.gold.looted) + num(v.gold.quests)
   local down, pulls, wipes, unseen = 0, 0, 0, 0
   for _, b in ipairs(rec.bosses) do
-    pulls, wipes = pulls + num(b.pulls), wipes + num(b.wipes)
+    pulls, wipes = pulls + (b.pulls or 1), wipes + num(b.wipes)
     if b.kill then down = down + 1 elseif num(b.unknown) > 0 then unseen = unseen + 1 end
   end
   v.bossesDown, v.pulls, v.wipes, v.unseen = down, pulls, wipes, unseen
@@ -789,25 +874,65 @@ function Runs.view(rec, isOpen, full)
   v.xpPerHour = (warm and v.xpGain > 0) and v.xpGain * 3600 / v.active or nil
   v.coinPerHour = warm and v.coin * 3600 / v.active or nil
   if full then
-    local function inRun(t)
-      t = num(t) - rec.t
-      for _, x in ipairs(rec.visits) do if t >= num(x.i) and t <= (x.o or math.huge) then return true end end
-      return false
-    end
-    v.fights, v.notable = {}, {}
+    v.fights = Runs.rowsOf(rec, ns.Fights and ns.Fights.list and ns.Fights.list(), "startEpoch")
     local grp
-    for _, f in ipairs(ns.mine(ns.Fights and ns.Fights.list and ns.Fights.list()) or {}) do
-      if inRun(f.startEpoch) then
-        v.fights[#v.fights + 1] = f
-        if type(f.group) == "table" and (not grp or #f.group > #grp) then grp = f.group end
-      end
+    for _, f in ipairs(v.fights) do
+      if type(f.group) == "table" and (not grp or #f.group > #grp) then grp = f.group end
     end
     v.group = grp
-    for _, l in ipairs(ns.mine(ns.DB and ns.DB.loot and ns.DB.loot.log) or {}) do
-      if not l.money and Runs.qRank(l.q) >= 3 and inRun(l.t) then v.notable[#v.notable + 1] = l end
-    end
+    v.notable = Runs.rowsOf(rec, ns.DB and ns.DB.loot and ns.DB.loot.log, "t", function(l) return not l.money and Runs.qRank(l.q) >= 3 end)
   end
   return v
+end
+-- whether a moment lies in one of the run's visits (a visit with no end is the one the character is in now). The
+-- one test for "of this run", for the run page and for the run headers of the Fights list alike.
+function Runs.inRun(rec, t)
+  t = plainNum(t)
+  if not t then return false end
+  t = t - rec.t
+  for _, x in ipairs(rec.visits) do if t >= num(x.i) and t <= (x.o or math.huge) then return true end end
+  return false
+end
+-- the stored run of the logged-in character a moment belongs to (newest first, the open one before the closed), or nil
+function Runs.runAt(t)
+  local c = me()
+  if not (c and plainNum(t)) then return nil end
+  local run = cur(c)
+  if run and Runs.valid(run) and Runs.inRun(run, t) then return run end
+  local list = type(c.dungeonRuns) == "table" and c.dungeonRuns or {}
+  for i = #list, 1, -1 do
+    local r = list[i]
+    if Runs.valid(r) then
+      if Runs.inRun(r, t) then return r end
+      if r.endT < t - 86400 then return nil end                  -- (the list is oldest first: nothing older can hold it)
+    end
+  end
+  return nil
+end
+-- The logged-in character's rows of a stored list (fights, loot rows) that lie in the run's visits, oldest first.
+-- Both lists are written in time order, so they are read from their end and the reading stops once it is past the
+-- run's start (Runs.TAIL_SLACK rows in a row from before it: a row can sit a little out of order), never the whole
+-- list of up to 5000 fights or 2000 loot rows.
+Runs.TAIL_SLACK = 20
+function Runs.rowsOf(rec, list, tkey, want)
+  local rev, older = {}, 0
+  if type(list) ~= "table" then return rev end
+  for i = #list, 1, -1 do
+    local r = list[i]
+    local t = type(r) == "table" and plainNum(r[tkey]) or nil
+    if t then
+      if t < rec.t then
+        older = older + 1
+        if older >= Runs.TAIL_SLACK then break end
+      else
+        older = 0
+        if Runs.inRun(rec, t) and (not want or want(r)) and ns.isMine(r) then rev[#rev + 1] = r end
+      end
+    end
+  end
+  local out = {}
+  for i = #rev, 1, -1 do out[#out + 1] = rev[i] end
+  return out
 end
 Runs.Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 }
 function Runs.qRank(q) return Runs.Q_RANK[type(q) == "string" and q:lower() or ""] or 1 end
@@ -823,24 +948,32 @@ function Runs.views(full)
   if run and Runs.valid(run) then out[#out + 1] = Runs.view(run, true, full) end
   return out
 end
-function Runs.openView(full)
-  local run = cur(me())
-  return run and Runs.view(run, true, full) or nil
-end
--- "Inside 31m 10s · running back 2m 05s · outside 4m 30s · in combat 14m 2s (bosses 3m 10s)"
+-- Two lines, so that no clock is cut at the narrowest window:
+--   "Inside 31m 10s · running back 2m 05s · outside 4m 30s · offline 1h 56m"   where the wall time went
+--   "Active 28m 40s · in combat 14m 2s (bosses 3m 10s)"                        what was done inside
 function Runs.timeLine(v)
   local SEP = "  ·  "
-  local parts = { "Inside " .. fmtDur(v.inside) }
-  if v.ghost > 0 then parts[#parts + 1] = "running back " .. fmtDur(v.ghost) end
-  if v.outside > 0 then parts[#parts + 1] = "outside " .. fmtDur(v.outside) end
-  if v.offline > 0 then parts[#parts + 1] = "offline " .. fmtDur(v.offline) end
-  parts[#parts + 1] = "active " .. fmtDur(v.active)
+  local a = { "Inside " .. fmtDur(v.inside) }
+  if v.ghost > 0 then a[#a + 1] = "running back " .. fmtDur(v.ghost) end
+  if v.outside > 0 then a[#a + 1] = "outside " .. fmtDur(v.outside) end
+  if v.offline > 0 then a[#a + 1] = "offline " .. fmtDur(v.offline) end
+  local b = { "Active " .. fmtDur(v.active) }
   if v.combat > 0 or v.boss > 0 then
-    parts[#parts + 1] = "in combat " .. fmtDur(v.combat) .. (v.boss > 0 and (" (bosses " .. fmtDur(v.boss) .. ")") or "")
+    b[#b + 1] = "in combat " .. fmtDur(v.combat) .. (v.boss > 0 and (" (bosses " .. fmtDur(v.boss) .. ")") or "")
   end
-  return table.concat(parts, SEP)
+  return table.concat(a, SEP), table.concat(b, SEP)
 end
--- "12,300 XP · 23,000 per hour · level 23.4 to 24.1", then the kills the client let the addon read
+-- How many more runs like this one reach the next level, from the XP of its kills alone (a quest is handed in
+-- once). Only for a run that is over, and only when the bar it ended on is known.
+function Runs.runsToLevel(v)
+  local x = v.xp
+  if v.inProgress or type(x) ~= "table" or num(x.kill) <= 0 or not (plainNum(x.need) and plainNum(x.p1) and plainNum(x.l1)) then return nil end
+  local n = math.ceil(x.need * (1 - x.p1) / x.kill)
+  if n < 1 or n > 999 then return nil end
+  return n, x.l1 + 1
+end
+-- "12,300 XP · 23,000 per hour · level 23.4 to 24.1 · about 6 more runs to level 25", then on a line of their own
+-- the quest XP and the kills the client let the addon read, then what it hid. Returns the three (the last two or nil).
 function Runs.xpLine(v)
   local x = v.xp
   if type(x) ~= "table" or v.xpGain <= 0 then return nil end
@@ -848,19 +981,28 @@ function Runs.xpLine(v)
   local parts = { Runs.commas(v.xpGain) .. " XP" }
   if v.xpPerHour then parts[#parts + 1] = Runs.commas(v.xpPerHour) .. " per hour" end
   if x.l0 and x.p0 and x.l1 and x.p1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + floor(x.p0 * 10) / 10, x.l1 + floor(x.p1 * 10) / 10) end
-  if num(x.quest) > 0 then parts[#parts + 1] = Runs.commas(x.quest) .. " XP from quests" end
-  local line = table.concat(parts, SEP)
+  local more, lvl = Runs.runsToLevel(v)
+  if more then parts[#parts + 1] = ("about %d more run%s to level %d"):format(more, more == 1 and "" or "s", lvl) end
+  local second = {}
+  if num(x.quest) > 0 then second[#second + 1] = Runs.commas(x.quest) .. " XP from quests" end
   local hid = num(v.hidden and v.hidden.xp)
   if num(x.n) > 0 then
-    line = line .. SEP .. (hid > 0 and ("at least %d kills"):format(x.n) or ("%d kill%s"):format(x.n, x.n == 1 and "" or "s"))
+    second[#second + 1] = hid > 0 and ("at least %s kills"):format(Runs.commas(x.n)) or ("%s kill%s"):format(Runs.commas(x.n), x.n == 1 and "" or "s")
   end
-  return line, hid > 0 and ("%d kill line%s hidden by the client."):format(hid, hid == 1 and " was" or "s were") or nil
+  -- (the addon cannot read a hidden line, so it does not say what kind of XP line it was)
+  return table.concat(parts, SEP), #second > 0 and table.concat(second, SEP) or nil,
+    hid > 0 and ("%d XP line%s hidden by the client."):format(hid, hid == 1 and " was" or "s were") or nil
 end
--- "Coin 3s 65c of 1g 12s gained inside": the looted coin beside what the purse itself gained, when they differ
+-- The looted coin beside what the purse itself gained inside (less quest coin), when the two differ:
+--   "Coin 3s 65c of 1g 12s gained inside"   the purse gained more: group shares, a trade, coin booked elsewhere
+--   "Looted 50s, purse up 30s inside"       the purse gained less: coin was spent inside (a repair, a vendor)
+-- Nothing when the purse did not grow.
 function Runs.purseLine(v)
   local g = v.gold
-  if not g or num(g.purse) == num(g.looted) or num(g.purse) <= 0 then return nil end
-  return ("Coin %s of %s gained inside"):format(ns.fmtMoney(num(g.looted)), ns.fmtMoney(num(g.purse)))
+  local looted, purse = num(g and g.looted), num(g and g.purse)
+  if not g or purse == looted or purse <= 0 then return nil end
+  if purse > looted then return ("Coin %s of %s gained inside"):format(ns.fmtMoney(looted), ns.fmtMoney(purse)) end
+  return ("Looted %s, purse up %s inside"):format(ns.fmtMoney(looted), ns.fmtMoney(purse))
 end
 function Runs.endedLine(v)
   if v.inProgress then return nil end
@@ -893,15 +1035,17 @@ end
 
 ns._test = ns._test or {}
 ns._test.Runs = Runs
--- a closed record of the smallest valid shape: `inside` seconds in one visit, `over` laid on top (tests, fixtures)
+-- a closed record of the smallest valid shape, lean as a stored one is: `inside` seconds in one visit, `over` laid
+-- on top (tests, fixtures)
 ns._test.runRecord = function(inst, t, inside, over)
-  local r = { id = ("test-%d-%04x"):format(t, math.random(0, 0xFFFF)), v = Runs.V, inst = inst, key = inst:lower(), kind = "party", t = t, endT = t + inside,
+  local r = { id = ("test-%d-%04x"):format(t, math.random(0, 0xFFFF)), v = Runs.V, inst = inst, kind = "party", t = t, endT = t + inside,
     open = "zone", why = "left",
     visits = { { i = 0, o = inside, how = "zone", out = "alive", secs = inside, active = inside, xp = 0, xpKill = 0, xpQuest = 0, kills = 0,
       looted = 0, quests = 0, lootValue = 0, items = 0, purse = 0 } },
-    secs = { wall = inside, inside = inside, ghost = 0, outside = 0, offline = 0, active = inside, combat = 0, boss = 0 },
+    secs = { inside = inside, ghost = 0, outside = 0, offline = 0, active = inside, combat = 0, boss = 0 },
     bosses = {}, nDeaths = { me = 0, party = 0 }, deaths = {}, hidden = { xp = 0, rep = 0, loot = 0 },
     gold = { looted = 0, quests = 0, lootValue = 0, items = 0, purse = 0 } }
   for k, v in pairs(over or {}) do r[k] = v end
+  Runs.lean(r)
   return r
 end

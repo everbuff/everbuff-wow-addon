@@ -39,7 +39,17 @@ local RESULT = {
   wipe  = { "Wipe",  C.red },
   death = { "Death", C.red },
   fled  = { "Fled",  C.dim },
+  trash = { "Trash", C.dim },
 }
+GLYPH.trash = GLYPH.fled
+-- One reading of a fight's result for every surface (the Fights list, its tooltip, the fight's page, the run page's
+-- Encounters). A fight inside a stored dungeon run with no foe and no death is a trash pull: the enemy's name was
+-- hidden, nobody fled. Returns the label and colour, the glyph and the key.
+ns.FightResult = function(f)
+  local key = RESULT[f.outcome] and f.outcome or "fled"
+  if key == "fled" and not f.bossName and not (type(f.foes) == "table" and f.foes[1]) and ns.Runs and ns.Runs.runAt and ns.Runs.runAt(f.startEpoch) then key = "trash" end
+  return RESULT[key], GLYPH[key], key
+end
 local function foesText(f)
   if f.bossName then return f.bossName end
   local n = #f.foes
@@ -615,7 +625,7 @@ local function buildDetail(content)
   v.render = function(f)
     v.fight = f
     v.titleFS:SetText(foesText(f))
-    local rc = RESULT[f.outcome] or RESULT.fled
+    local rc = ns.FightResult(f)
     local groupN = (f.group and #f.group) or 0
     local groupTxt = (groupN > 1 and (groupN .. "-player group") or "solo") .. (f.spec and ("   ·   " .. f.spec) or "") .. (f.talents and ("  " .. f.talents) or "")
     local coords = UI.fmtCoords(f.x, f.y)
@@ -777,7 +787,7 @@ local function buildList(content)
     onClick = function(row) if row.fight then openDetail(row.fight) end end,
     tooltip = function(row, f, tip)
       tip:AddLine(foesText(f), 1, 1, 1)
-      tip:AddLine(("%s  ·  %s  ·  %s"):format(date("%b %d %H:%M:%S", f.startEpoch or 0), fmtDur(f.duration), (RESULT[f.outcome] or RESULT.fled)[1]), 0.8, 0.8, 0.8)
+      tip:AddLine(("%s  ·  %s  ·  %s"):format(date("%b %d %H:%M:%S", f.startEpoch or 0), fmtDur(f.duration), ns.FightResult(f)[1]), 0.8, 0.8, 0.8)
       if f.zone then tip:AddLine(f.zone .. (UI.fmtCoords(f.x, f.y) ~= "" and ("  " .. UI.fmtCoords(f.x, f.y)) or ""), 0.6, 0.7, 0.75) end
       if f.group and #f.group > 0 then
         local names = {}
@@ -801,9 +811,9 @@ local function buildList(content)
     c.loc:SetText(f.zone or "")
     c.coords:SetText(UI.fmtCoords(f.x, f.y))
     c.dur:SetText(fmtDur(f.duration))
-    local rc = RESULT[f.outcome] or RESULT.fled
+    local rc, glyph = ns.FightResult(f)
     local md = tonumber(f.memberDeaths) or 0
-    c.res:SetText((GLYPH[f.outcome] or GLYPH.fled) .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); c.res:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
+    c.res:SetText(glyph .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); c.res:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
   end
 
   listRebuild = function()
@@ -816,11 +826,12 @@ local function buildList(content)
       secs = secs + (f.duration or 0)
     end
     summary:SetText(("%d fights  ·  %d kills  ·  %d wipes  ·  %d deaths  ·  %s in combat"):format(#fights, kills, wipes, deaths, fmtDur(secs)))
-    -- dungeon runs (from the Combat / Dungeons pane) so fights inside one get a run header
+    -- dungeon runs (from the Combat / Dungeons pane) so fights inside one get a run header. A fight is of a run when
+    -- it began in one of the run's visits, the test the run's own page uses (Runs.inRun): a fight in the open world
+    -- between two visits, or after the character left a run that is still open, gets no header.
     local runs = (sortKey == "time" and ns.DungeonRuns) and ns.DungeonRuns() or {}
     local function runOf(f)
-      local t = f.startEpoch or 0
-      for _, r in ipairs(runs) do if t >= r.startT and t <= (r.endT or math.huge) then return r end end
+      for _, r in ipairs(runs) do if ns.Runs.inRun(r.rec, f.startEpoch) then return r end end
     end
     local items, lastDay, lastRun = {}, nil, nil
     for _, f in ipairs(sortFights(fights, sortKey, sortAsc)) do

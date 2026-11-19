@@ -872,9 +872,9 @@ do
   ns.char().dungeonRuns = ns.char().dungeonRuns or {}
   local list = ns.char().dungeonRuns
   list[#list + 1] = T.runRecord("Ragefire Chasm", t0, 600, {
-    bosses = { { enc = 1443, name = "Taragaman the Hungerer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 95, kill = 350, seg = 230, at = t0 + 300 },
-      { enc = 1444, name = "Jergosh the Invoker", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 30, kill = 450, seg = 100, prev = 1443, at = t0 + 420 } },
-    nDeaths = { me = 1, party = 0 }, deaths = { { o = 165, me = true, enc = 1443, foe = "Taragaman the Hungerer", back = 80 } },
+    bosses = { { enc = 1443, name = "Taragaman the Hungerer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 95, kill = 350 },
+      { enc = 1444, name = "Jergosh the Invoker", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 30, kill = 450 } },
+    nDeaths = { me = 1, party = 0 }, deaths = { { o = 165, enc = 1443, foe = "Taragaman the Hungerer", back = 80 } },
     gold = { looted = 1500, quests = 0, lootValue = 900, items = 2, purse = 1500 }, firstPull = 120 })
   local runs = T.runViews(true); local run = runs[#runs]
   check("run has two bosses in pull order", run and #run.bosses == 2 and run.bosses[1].name == "Taragaman the Hungerer", run and #run.bosses)
@@ -2262,13 +2262,15 @@ do
   local ch = db.characters["Player-1-000001"] or {}
   local dr = type(ch.dungeonRuns) == "table" and ch.dungeonRuns[1] or nil
   check("export: one closed dungeon run on the character, none open", ch.dungeonRun == nil and type(ch.dungeonRuns) == "table" and #ch.dungeonRuns == 1 and dr.v == 1
-    and dr.inst == "The Deadmines" and dr.key == "the deadmines" and dr.kind == "party" and dr.map == 36 and dr.open == "zone" and dr.why == "left", dr and dr.why)
-  check("export: its clocks sum to the wall time and it ends where the character was last inside", dr and dr.secs.inside == 100 and dr.secs.wall == 100 and dr.endT - dr.t == 100
-    and dr.secs.ghost + dr.secs.outside + dr.secs.offline == 0 and dr.secs.combat == 30 and dr.secs.boss == 25 and #dr.visits == 1 and dr.visits[1].out == "alive", dr and dr.secs.wall)
-  check("export: its boss is the encounter, killed once, linked to the fight", dr and #dr.bosses == 1 and dr.bosses[1].enc == 1144 and dr.bosses[1].name == "Rhahk'Zor" and dr.bosses[1].pulls == 1
-    and dr.bosses[1].kill == 70 and dr.bosses[1].combat == 25 and dr.bosses[1].ok == 1 and dr.bosses[1].fight == fights[4].uid and dr.bosses[1].at == fights[4].startEpoch + 5, dr and dr.bosses[1] and dr.bosses[1].kill)
-  check("export: its gold is the coin looted inside, the purse agrees, the hidden XP line is counted", dr and dr.gold.looted == 240 and dr.gold.purse == 240 and dr.gold.items == 0
-    and dr.hidden.xp == 1 and dr.xp == nil and dr.nDeaths.me == 0 and #dr.deaths == 0, dr and dr.gold.looted)
+    and dr.inst == "The Deadmines" and dr.key == nil and dr.kind == "party" and dr.map == 36 and dr.open == "zone" and dr.why == "left", dr and dr.why)
+  check("export: its clocks sum to the wall time (a clock that is 0 is not stored) and it ends where the character was last inside", dr and dr.secs.inside == 100 and dr.endT - dr.t == 100
+    and dr.secs.wall == nil and dr.secs.ghost == nil and dr.secs.outside == nil and dr.secs.offline == nil and dr.secs.combat == 30 and dr.secs.boss == 25 and #dr.visits == 1
+    and dr.visits[1].out == "alive", dr and dr.secs.inside)
+  check("export: its boss is the encounter, killed once, linked to the fight", dr and #dr.bosses == 1 and dr.bosses[1].enc == 1144 and dr.bosses[1].name == "Rhahk'Zor" and dr.bosses[1].pulls == nil
+    and dr.bosses[1].kill == 70 and dr.bosses[1].combat == 25 and dr.bosses[1].ok == nil and dr.bosses[1].dur == nil and dr.bosses[1].fight == fights[4].uid
+    and dr.t + dr.bosses[1].kill - dr.bosses[1].combat == fights[4].startEpoch + 5, dr and dr.bosses[1] and dr.bosses[1].kill)
+  check("export: its gold is the coin looted inside, the purse agrees, the hidden XP line is counted", dr and dr.gold.looted == 240 and dr.gold.purse == 240 and dr.gold.items == nil
+    and dr.hidden.xp == 1 and dr.hidden.loot == nil and dr.xp == nil and dr.nDeaths == nil and dr.deaths == nil, dr and dr.gold.looted)
   check("export: the session counts that one run", sess and sess.dungeons == 1, sess and sess.dungeons)
   check("export: the character block sits under the player GUID", db.characters["Player-1-000001"] and db.characters["Player-1-000001"].xp.fromQuests == 600)
   -- 0.9.44 (#43): the scripted session is one server day; its row sums to the ledger, the reorder moved nothing

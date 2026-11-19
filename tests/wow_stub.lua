@@ -27,6 +27,8 @@ frameMT.__index = function(t, k)
   if k == "Show" then return function(self) self.shown = true; local h = self.scripts.OnShow; if h then h(self) end; return self end end
   if k == "Hide" then return function(self) self.shown = false; local h = self.scripts.OnHide; if h then h(self) end; return self end end
   if k == "IsShown" then return function(self) return self.shown end end
+  -- on screen: the frame's own flag and every parent's (IsShown is the frame's own flag alone)
+  if k == "IsVisible" then return function(self) local f = self; while f do if f.shown == false then return false end; f = rawget(f, "parentFrame") end; return true end end
   if k == "GetWidth" or k == "GetHeight" then return function() return 560 end end
   if k:match("^Get") and (k:match("Width$") or k:match("Height$") or k:match("Scale$") or k:match("Alpha$")) then return function() return 100 end end
   if k == "GetCenter" or k == "GetPoint" then return function() return 0, 0 end end

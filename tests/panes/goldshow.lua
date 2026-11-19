@@ -312,7 +312,7 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     end
     check("Dungeons: the line is on the run's page in full at 900 px", onPage(dv.lootLine))
     check("Dungeons: no purse line while the looted coin is what the purse gained", dv.purseLine == nil)
-    check("Dungeons: the clocks of the run are one line, in full", dv.timeLine == ("Inside 30m 0s%sactive 30m 0s"):format(SEP) and onPage(dv.timeLine), dv.timeLine)
+    check("Dungeons: the clocks of the run are two lines, in full", dv.timeLine == "Inside 30m 0s" and dv.timeLine2 == "Active 30m 0s" and onPage(dv.timeLine) and onPage(dv.timeLine2), dv.timeLine)
     -- the list row of the run reads the same block as its page
     local function listRow()
       local lv = ns._test.dungeonList(); M.settle()
@@ -326,13 +326,14 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     -- the purse gained more inside than was booked as looted (group shares booked as mail, seen 2026-11-18)
     rec.gold.looted, rec.gold.purse = 365, 11253
     rec.xp = { gain = 12300, kill = 9000, quest = 0, n = 45, l0 = 23, p0 = 0.4, l1 = 24, p1 = 0.1, need = 30000 }
-    rec.hidden.xp = 12
+    rec.hidden = { xp = 12 }
     ns._test.renderRun(view()); M.settle()
     eq("Dungeons: the page says when the looted coin is not what the purse gained", dv.purseLine, ("Coin %s of %s gained inside"):format(fmt(365), fmt(11253)))
     check("Dungeons: that line is on the page in full", onPage(dv.purseLine))
-    eq("Dungeons: the XP line reads XP, XP per hour, the levels and the kills as a lower bound", dv.xpLine,
-      ("12,300 XP%s24,600 per hour%slevel 23.4 to 24.1%sat least 45 kills"):format(SEP, SEP, SEP))
-    check("Dungeons: the XP line and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage("12 kill lines were hidden by the client."))
+    eq("Dungeons: the XP line reads XP, XP per hour, the levels and the runs the next level takes", dv.xpLine,
+      ("12,300 XP%s24,600 per hour%slevel 23.4 to 24.1%sabout 3 more runs to level 25"):format(SEP, SEP, SEP))
+    eq("Dungeons: the kills the client let the addon read are a lower bound, on a line of their own", dv.xpMore, "at least 45 kills")
+    check("Dungeons: the XP lines and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage(dv.xpMore) and onPage("12 XP lines were hidden by the client."))
     row = listRow()
     eq("Dungeons: the list row reads XP per hour while the run has XP", row and row.c.rate.text, "24,600 XP/h")
     table.remove(list)
