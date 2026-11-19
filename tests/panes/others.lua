@@ -112,9 +112,15 @@ return function(P)
     f1.bossName, f1.outcome = "Mutanus the Devourer", "death"   -- the attempt you died in
     f2.group = { { name = "Hart", class = "WARRIOR", me = true }, { name = "Undertaker", class = "PRIEST" } }
     f2.memberAuras = { Undertaker = { { t = 1.2, gain = true, name = "Power Word: Fortitude" } } }
-    L[#L + 1] = { kind = "DUNGEON", t = (f1.startEpoch or 0) - 60, text = "Wailing Caverns", s = ns.DB.active }
     L[#L + 1] = { kind = "DEATH", t = (f1.startEpoch or 0) + 5, foe = "Mutanus the Devourer", zone = "Wailing Caverns", x = 0.5, y = 0.5, downtime = 95, durLoss = 10, s = ns.DB.active, text = "You died" }
-    L[#L + 1] = { kind = "DUNGEONLEAVE", t = (f2.startEpoch or 0) + 120, text = "Wailing Caverns", s = ns.DB.active }
+    -- the stored run around the two fights (0.9.50): one boss, wiped once and killed, the death in the first pull
+    local t0 = (f1.startEpoch or 0) - 60
+    local inside = (f2.startEpoch or 0) + 120 - t0
+    ns.char().dungeonRuns = { T.runRecord("Wailing Caverns", t0, inside, {
+      bosses = { { enc = 481, name = "Mutanus the Devourer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 40, kill = inside - 100, seg = inside - 160, at = f2.startEpoch } },
+      nDeaths = { me = 1, party = 0 }, deaths = { { o = 65, me = true, enc = 481, foe = "Mutanus the Devourer", back = 95 } },
+      xp = { gain = 4200, kill = 3000, quest = 0, n = 14, l0 = 12, p0 = 0.2, l1 = 12, p1 = 0.6, need = 10000 },
+      gold = { looted = 4321, quests = 0, lootValue = 12000, items = 9, purse = 6000 }, firstPull = 60 }) }
     L[#L + 1] = { kind = "LEVELUP", t = (f2.startEpoch or 0) + 130, text = "Level 13!", s = ns.DB.active }
     return f2
   end
@@ -440,7 +446,7 @@ return function(P)
   for _, data in ipairs({ "normal", "long" }) do
     P.open("combat", "dungeons", 900, 580, data)
     addRun(); reopen("Combat", "dungeons")
-    local runs = T.buildRuns()
+    local runs = T.runViews(true)
     local run = runs[#runs]
     run.notable = { { item = "Cruel Barb", count = 17777, src = "Riverpaw Gnoll", t = run.startT + 60, q = "ff0070dd" } }
     T.openRun(run); M.settle()
@@ -477,6 +483,60 @@ return function(P)
     check("Dungeon run " .. data .. ": a wider window lays the run out again", dv.child._w > w0 and dv.renderedW == dv.child._w, dv.child._w)
     runAudit("Dungeon run 1600x1000 " .. data)
     dv:Hide()
+  end
+
+  -- ── Combat / Dungeons (0.9.50): the empty state, and the row and the page of the run in progress, at both sizes
+  for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+    local tag = ("Dungeons %dx%d"):format(size[1], size[2])
+    P.open("combat", "dungeons", size[1], size[2], "normal")
+    local me = ns.char()
+    local keep, keepOpen = me.dungeonRuns, me.dungeonRun
+    me.dungeonRuns, me.dungeonRun = nil, nil
+    local dv = T.dungeonDetail(); dv:Hide()
+    local lv = T.dungeonList(); lv:Show(); M.settle()
+    local e = lv.tbl.empty
+    check(tag .. ": with no run the list says how runs get there and since when they are kept", e.shown ~= false and lv.tbl.shownN == 0
+      and e.text == "No dungeon runs yet. Enter a dungeon and it shows up here.\nRuns are kept from version 0.9.50 on.", e.text)
+    local eb, pb = P.box(e), P.box(lv)
+    check(tag .. ": the empty text sits inside the pane", eb.l >= pb.l - 0.5 and eb.l + eb.w <= pb.l + pb.w + 0.5, eb.w)
+    -- a run in progress: 15 minutes inside so far, one boss down, one still up
+    local t = GetServerTime()
+    local rec = T.runRecord("Maraudon", t - 900, 900, { firstPull = 100,
+      bosses = { { enc = 422, name = "Noxxion", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 52, kill = 373, seg = 273, at = t - 579 },
+        { enc = 423, name = "Razorlash", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 0 } } })
+    rec.why, rec.gold, rec.visits[1].o, rec.visits[1].out = nil, nil, nil, nil
+    rec.st, rec.mark, rec.beat, rec.encs, rec.bossFrom = "in", t, t, { [423] = { t = t - 20, o = 880, d = 0 } }, t - 20
+    me.dungeonRun = rec
+    lv = T.dungeonList(); M.settle()
+    local row
+    for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run and r.run.id == rec.id then row = r end end
+    check(tag .. ": the run in progress is a row, marked in words and with the dot", row ~= nil and row.c.name.text == "Maraudon  ·  in progress" and row.c.live.text == "•"
+      and row.c.dur.text == "15m 0s" and row.c.boss.text == "1" and row.c.death.text == "0", row and row.c.name.text)
+    check(tag .. ": its name and its numbers are in full", row ~= nil and not row.c.name:IsTruncated() and not row.c.dur:IsTruncated() and not row.c.rate:IsTruncated() and not row.c.loot:IsTruncated())
+    if row then
+      local tips = lv.tipLines(row.run)
+      check(tag .. ": the row's tooltip reads the clocks and the state", tips[1] == "Inside 15m 0s" and tips[2] == "Active 15m 0s" and tips[3] == "In progress", table.concat(tips, " | "))
+      T.openRun(row.run); M.settle()
+      check(tag .. ": its page says in progress and lists both bosses", dv.shown ~= false and dv.run.inProgress == true and tostring(dv.metaFS.text):find("in progress", 1, true) ~= nil and #dv.run.bosses == 2)
+      local res = {}
+      for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and (fs.text == "Killed" or fs.text == "Not killed" or fs.text == "Deathless run.") then res[#res + 1] = fs.text end end
+      check(tag .. ": a boss still up reads Not killed, the page of a run with no death says so", table.concat(res, ",") == "Killed,Not killed,Deathless run.", table.concat(res, ","))
+      -- the page follows the run: five seconds later it reads five seconds more
+      local line0 = dv.timeLine
+      M.epoch = M.epoch + 5
+      check(tag .. ": the open run's page reads the store again", dv.refresh() == true and dv.timeLine ~= line0 and dv.timeLine:find("Inside 15m 5s", 1, true) == 1, dv.timeLine)
+      M.epoch = M.epoch - 5
+      local sfb, past = P.box(dv.sf), {}
+      for _, fs in ipairs(dv.child.fs) do
+        if fs.shown ~= false and fs.text and fs.text ~= "" then
+          local b = P.box(fs)
+          if b.l + b.w > sfb.l + sfb.w + 0.5 then past[#past + 1] = tostring(fs.text):sub(1, 24) end
+        end
+      end
+      check(tag .. ": every text of the open run's page ends inside its list", #past == 0, table.concat(past, " | "))
+    end
+    dv:Hide(); lv:Show()
+    me.dungeonRuns, me.dungeonRun = keep, keepOpen
   end
 
   -- ── Combat / Deaths: the summary wraps and the table moves below it; the gear loss is its own cell

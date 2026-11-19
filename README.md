@@ -48,7 +48,7 @@ Works on the Midnight beta, Anniversary and Classic Era clients. Open the panel 
 
 - `Everbuff/` is the addon source, packaged as `EverbuffJournal/` in a release.
 - Five host tabs, each built from panes: `Home` (Journey.lua: Overview and Sessions; the Timeline pane lives
-  in Emitter.lua), `Combat` (Dungeons.lua, Recording.lua for Fights, Deaths.lua), `Loot` (Emitter.lua Items,
+  in Emitter.lua), `Combat` (Dungeons.lua over the stored runs of Runs.lua, Recording.lua for Fights, Deaths.lua), `Loot` (Emitter.lua Items,
   Economy.lua Gold), `Character` (Progress.lua), `Settings` (Emitter.lua; Capture pane from Sync.lua).
   `Fights.lua` is the per-fight recorder, `UI.lua` the framework (`UI.registerHost`, `UI.registerPane`).
 - `tests/` is the headless LuaJIT harness. Run it before every install.

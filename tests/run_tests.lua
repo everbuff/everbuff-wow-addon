@@ -12,7 +12,7 @@ local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pre
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core", "Deps", "SelfTest" }) do
+for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Runs", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core", "Deps", "SelfTest" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
@@ -159,9 +159,13 @@ M.units.target = nil
 M.inst = { name = "Deadmines", type = "party", diff = 1, mapID = 36 }
 M.fire("PLAYER_ENTERING_WORLD"); M.fire("PLAYER_ENTERING_WORLD")   -- second = a /reload inside
 check("DUNGEON emitted once across reload", count(ns.DB.story.events, function(e) return e.kind == "DUNGEON" end) == 1)
+-- (0.9.50) the stored run opened with the entry, named canonical, and the second load made no second one
+check("run: one run opens, named (canonical)", ns.char().dungeonRun and ns.char().dungeonRun.inst == "The Deadmines" and #ns.char().dungeonRun.visits == 1 and ns.char().dungeonRuns == nil, ns.char().dungeonRun and ns.char().dungeonRun.inst)
+check("run: the Dungeons list reads it from the store, in progress", #T.runViews() == 1 and T.runViews()[1].inProgress == true and T.runViews()[1].name == "The Deadmines")
 M.inst = { name = "Elwynn Forest", type = "none", diff = 0, mapID = 0 }
 M.fire("PLAYER_ENTERING_WORLD")
 check("DUNGEONLEAVE emitted", count(ns.DB.story.events, function(e) return e.kind == "DUNGEONLEAVE" end) == 1)
+check("run: leaving does not close it (20 minutes outside do)", ns.char().dungeonRun and ns.char().dungeonRun.st == "out" and ns.char().dungeonRun.visits[1].out == "alive")
 
 -- ── WoW Forever: GetInstanceInfo says "none" inside a dungeon; the zone name and the map type still tell ──
 do
@@ -191,46 +195,25 @@ do
   M.zone = "Silverpine Forest"; M.fire("ZONE_CHANGED_NEW_AREA")
   check("open world raises nothing", nk("DUNGEON") == d0 + 3 and nk("DUNGEONLEAVE") == l0 + 3)
   M.zone = z0
-  -- the run list sees the Forever runs
-  local rr = T.buildRuns(); local sfk
-  for _, r in ipairs(rr) do if r.name == "Shadowfang Keep" then sfk = r end end
-  check("Forever: Shadowfang Keep run listed and closed", sfk and sfk.inProgress == false, sfk and tostring(sfk.inProgress))
+  -- (0.9.50) the stored run: a zone that only carries a dungeon's name while GetInstanceInfo names a continent map is
+  -- the door, so Shadowfang Keep and Razorfen Kraul above opened none; the dungeon map (Some New Crypt) did, and ended
+  -- the Deadmines run that was still within its 20 minutes (nothing happened in either, so neither is kept)
+  check("Forever: the door of a dungeon opens no stored run, a dungeon map does", ns.char().dungeonRun and ns.char().dungeonRun.inst == "Some New Crypt" and ns.char().dungeonRun.st == "out" and #(ns.char().dungeonRuns or {}) == 0,
+    ns.char().dungeonRun and ns.char().dungeonRun.inst)
   -- one dungeon, two names (Sunken Temple, 2026-11-17): a flip of the zone name inside is no new run
   local dA = nk("DUNGEON")
   M.zone = "Sunken Temple"; M.fire("PLAYER_ENTERING_WORLD")
   M.zone = "The Temple of Atal'Hakkar"; M.fire("ZONE_CHANGED_NEW_AREA")
   check("alias: the second name of the same dungeon raises nothing", nk("DUNGEON") == dA + 1, nk("DUNGEON") - dA)
   M.zone = "Swamp of Sorrows"; M.fire("ZONE_CHANGED_NEW_AREA")
-  -- tonight's pattern in the log: enter, flip names, leave, come back within minutes, many times -> one run
-  do
-    local L, sid, t0 = ns.DB.story.events, ns.DB.active, 1794951106
-    local function ev(kind, t, text) L[#L + 1] = { s = sid, kind = kind, t = t, text = text } end
-    ev("DUNGEON", t0, "Sunken Temple")
-    ev("DUNGEONLEAVE", t0 + 5000, "Left  Sunken Temple"); ev("DUNGEON", t0 + 5001, "The Temple of Atal'Hakkar"); ev("DUNGEONLEAVE", t0 + 5002, "Left  The Temple of Atal'Hakkar")
-    ev("DUNGEON", t0 + 5096, "Sunken Temple")
-    ev("DUNGEONLEAVE", t0 + 7500, "Left  Sunken Temple")
-    ev("DUNGEON", t0 + 7600, "Sunken Temple")
-    ev("DUNGEONLEAVE", t0 + 8500, "Left  Sunken Temple")
-    -- an hour later, the same dungeon again: a second run
-    ev("DUNGEON", t0 + 12100, "Sunken Temple"); ev("DUNGEONLEAVE", t0 + 13000, "Left  Sunken Temple")
-    local st = {}
-    for _, r in ipairs(T.buildRuns()) do if r.name == "Sunken Temple" and r.startT >= t0 then st[#st + 1] = r end end
-    check("re-entries within 20 min and both names make one run", #st == 2, #st)
-    check("the merged run spans the whole visit", st[1] and st[1].startT == t0 and st[1].endT == t0 + 8500 and st[1].reentries == 3,
-      st[1] and (tostring(st[1].endT) .. "/" .. tostring(st[1].reentries)))
-    local noAlias = true
-    for _, r in ipairs(T.buildRuns()) do if r.name == "The Temple of Atal'Hakkar" then noAlias = false end end
-    check("no run carries the second name", noAlias)
-  end
+  -- (the run rules themselves, with the name flips, re-entries and the 20 minutes: tests/runs.lua)
+  ns.char().dungeonRun = nil
   -- clean up so later run-count checks see only the original run
   for i = #ns.DB.story.events, n0 + 1, -1 do table.remove(ns.DB.story.events, i) end
 end
 
--- ── Dungeons run grouping (pure) ──
-local runs = T.buildRuns()
-check("one run built", #runs == 1, #runs)
-check("run named (canonical)", runs[1] and runs[1].name == "The Deadmines", runs[1] and runs[1].name)
-check("run closed (not in progress)", runs[1] and runs[1].inProgress == false)
+-- ── Dungeons: the list reads the store (0.9.50), nothing is rebuilt from story events ──
+check("no stored run, no row: story events alone make no run", #T.runViews() == 0 and count(ns.DB.story.events, function(e) return e.kind == "DUNGEON" end) >= 1, #T.runViews())
 
 -- ── Deaths matching (pure) ──
 ns.DB.story.events[#ns.DB.story.events + 1] = { s = ns.DB.active, kind = "DEATH", t = M.epoch, text = "You died  ·  Level 12", zone = "Elwynn Forest", foe = "Kobold Miner", x = 0.5, y = 0.25 }
@@ -876,28 +859,43 @@ check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Lin
 do
   local t0 = M.epoch + 100000
   local L, Fz = ns.DB.story.events, ns.DB.combat.fights
-  L[#L + 1] = { s = ns.DB.active, kind = "DUNGEON", t = t0, text = "Ragefire Chasm" }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 60, duration = 20, foes = { "Ragefire Trogg" } }                      -- trash
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {} }                                     -- trash, the foe's name hidden
   Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  L[#L + 1] = { s = ns.DB.active, kind = "DEATH", t = t0 + 165, text = "You died", foe = "Taragaman the Hungerer", downtime = 80 }
   Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
   Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" } }                        -- after the run
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
-  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 354, money = 1500, src = "Taragaman the Hungerer" }
-  L[#L + 1] = { s = ns.DB.active, kind = "DUNGEONLEAVE", t = t0 + 600, text = "Ragefire Chasm" }
-  local runs = T.buildRuns(); local run = runs[#runs]
+  -- a rare picked up after the run, its row still stamped with the dungeon's zone (the stamp is the last loot window's)
+  ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 950, item = "Stray Blade", count = 1, q = "ff0070dd", src = "Creature", zone = "Ragefire Chasm" }
+  -- the stored run (0.9.50): two bosses from the encounter events, one death, its own gold block
+  ns.char().dungeonRuns = ns.char().dungeonRuns or {}
+  local list = ns.char().dungeonRuns
+  list[#list + 1] = T.runRecord("Ragefire Chasm", t0, 600, {
+    bosses = { { enc = 1443, name = "Taragaman the Hungerer", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 95, kill = 350, seg = 230, at = t0 + 300 },
+      { enc = 1444, name = "Jergosh the Invoker", pulls = 1, wipes = 0, resets = 0, unknown = 0, combat = 30, kill = 450, seg = 100, prev = 1443, at = t0 + 420 } },
+    nDeaths = { me = 1, party = 0 }, deaths = { { o = 165, me = true, enc = 1443, foe = "Taragaman the Hungerer", back = 80 } },
+    gold = { looted = 1500, quests = 0, lootValue = 900, items = 2, purse = 1500 }, firstPull = 120 })
+  local runs = T.runViews(true); local run = runs[#runs]
   check("run has two bosses in pull order", run and #run.bosses == 2 and run.bosses[1].name == "Taragaman the Hungerer", run and #run.bosses)
   local tara = run and run.bosses[1]
-  check("boss attempts count wipes before the kill", tara and tara.attempts == 2 and tara.wipes == 1, tara and tara.attempts)
-  check("boss kill time is relative to the run start", tara and tara.killedAt == t0 + 350, tara and tara.killedAt)
-  check("boss combat time sums the attempts", tara and tara.combat == 95, tara and tara.combat)
-  check("trash pulls counted separately", run and run.trash == 1, run and run.trash)
-  check("deaths listed with downtime", run and #run.deathRows == 1 and run.deathRows[1].downtime == 80)
-  check("notable loot lists rare+ only", run and #run.notable == 1 and run.notable[1].item == "Cursed Felblade", run and #run.notable)
-  check("run totals still count every item and coin", run and run.items == 2 and run.gold == 1500)
+  check("boss pulls count the wipe before the kill", tara and tara.pulls == 2 and tara.wipes == 1 and run.pulls == 3 and run.wipes == 1 and run.bossesDown == 2, tara and tara.pulls)
+  check("boss kill time is on the run's clock", tara and tara.kill == 350 and ns.Runs.bossResult(tara) == "Killed", tara and tara.kill)
+  check("the fights of the run are those inside its visits (4 of 5), the trash pull among them", run and #run.fights == 4, run and #run.fights)
+  check("deaths listed with the time back", run and #run.deathRows == 1 and run.deathRows[1].back == 80 and run.deaths == 1)
+  check("notable loot lists rare+ only, by the time of the visits and never by a row's zone", run and #run.notable == 1 and run.notable[1].item == "Cursed Felblade", run and #run.notable)
+  check("run totals come from its own gold block", run and run.items == 2 and run.coin == 1500)
   local okR, errR = xpcall(function() return T.renderRun(run) end, debug.traceback)
   check("run detail renders bosses, deaths and loot without error", okR and #M.errors == 0, errR)
+  -- a fight inside an instance with no foe and no death is a trash pull, not a flight (57 of 57 in Maraudon read "Fled")
+  local dvR = T.dungeonDetail()
+  local trash, fled = 0, 0
+  for _, b in ipairs(dvR and dvR.child.btn or {}) do
+    if b.shown ~= false and b.re then
+      if b.re.text == "Trash" then trash = trash + 1 elseif b.re.text == "Fled" then fled = fled + 1 end
+    end
+  end
+  check("run detail: a fight with no foe reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
 end
 ns.DB.settings = ns.DB.settings or {}
 -- ── loot toast threshold ──
@@ -1517,9 +1515,9 @@ end
 do
   local t0 = M.epoch + 700000
   local L = ns.DB.story.events
-  L[#L + 1] = { kind = "DUNGEON", t = t0, text = "Wailing Caverns", s = ns.DB.active }
+  ns.char().dungeonRuns = ns.char().dungeonRuns or {}
+  table.insert(ns.char().dungeonRuns, T.runRecord("Wailing Caverns", t0, 600))
   ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
-  L[#L + 1] = { kind = "DUNGEONLEAVE", t = t0 + 600, text = "Wailing Caverns", s = ns.DB.active }
   local dv = T.fightDetail(); if dv then dv:Hide() end          -- an earlier test left the replay open; the list only rebuilds when visible
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
@@ -2109,6 +2107,11 @@ do
   L[#L + 1] = { s = "ut-23", kind = "REP", t = t0 + 1320, text = "Undercity:  now Friendly", standing = "Friendly" }
   L[#L + 1] = { s = "ut-23", kind = "SKILLUP", t = t0 + 1330, text = "Skill up:  Mining 99" }
   L[#L + 1] = { s = "ut-23", kind = "DUNGEONLEAVE", t = t0 + 1400, text = "Shadowfang Keep" }
+  -- his stored dungeon run lives in his own character block (0.9.50)
+  local utHad = ns.DB.characters[UT] ~= nil
+  ns.DB.characters[UT] = ns.DB.characters[UT] or ns.newCharBlock()
+  ns.DB.characters[UT].dungeonRuns = { T.runRecord("Shadowfang Keep", t0 + 1100, 300, { nDeaths = { me = 1, party = 0 },
+    gold = { looted = 777, quests = 0, lootValue = 0, items = 1, purse = 777 } }) }
   local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9 }
   Fz[#Fz + 1] = utF
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1195, item = "Undertaker Shroud", count = 1, q = "ff0070dd", src = "Undertaker Bane" }
@@ -2132,7 +2135,7 @@ do
   ns.UI.Open("Combat", "fights"); M.tick()
   local fr = shownRows(fl.rows)
   check("#23 Hart: Combat / Fights shows his fight (named by `session`) and leaves out Undertaker's", has(fr, function(r) return r.fight == hartF end) and not has(fr, function(r) return r.fight == utF end), #fr)
-  check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.buildRuns(), function(r) return r.name == "Shadowfang Keep" end))
+  check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.runViews(), function(r) return r.name == "Shadowfang Keep" end))
   check("#23 Hart: Combat / Deaths leaves out Undertaker's death", not has(T.collectDeaths(), function(d) return d.killer == "Undertaker Bane" end))
   local qRows = T.buildQuests()
   check("#23 Hart: Character / Quests leaves out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
@@ -2157,8 +2160,8 @@ do
   ns.UI.Open("Combat", "fights"); M.tick()
   fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
-  local runs = T.buildRuns()
-  check("#23 Undertaker: Combat / Dungeons shows only his run, with his fight, kill, death and loot", #runs == 1 and runs[1].name == "Shadowfang Keep" and #runs[1].fights == 1 and runs[1].kills == 1 and runs[1].deaths == 1 and runs[1].items == 1 and runs[1].gold == 777, #runs)
+  local runs = T.runViews(true)
+  check("#23 Undertaker: Combat / Dungeons shows only his run, with his fight, death, drop and coin", #runs == 1 and runs[1].name == "Shadowfang Keep" and #runs[1].fights == 1 and runs[1].fights[1] == utF and runs[1].deaths == 1 and runs[1].items == 1 and runs[1].coin == 777 and #runs[1].notable == 1, #runs)
   local ds = T.collectDeaths()
   check("#23 Undertaker: Combat / Deaths shows only his death, linked to his fight", #ds == 1 and ds[1].killer == "Undertaker Bane" and ds[1].fight == utF, #ds)
   qRows = T.buildQuests()
@@ -2185,6 +2188,7 @@ do
   table.remove(Fz); table.remove(Lg); table.remove(Lg); table.remove(R); table.remove(ah.sold)
   table.remove(Fz); table.remove(L); table.remove(L); table.remove(Lg)   -- Hart's marker rows
   ns.DB.sessions["ut-23"] = nil; ns.DB.sessions[hs] = nil
+  if utHad then ns.DB.characters[UT].dungeonRuns = nil else ns.DB.characters[UT] = nil end
 end
 -- #23 migration (founder rule, 2026-10-05, everbuff-wow-addon #23): the account-wide block, the old loot.gold ledger and
 -- the characterLegacy copy mix every character, so the load deletes them; nothing is kept or attributed
@@ -2232,13 +2236,13 @@ do
   local resumes = 0; for _, r in ipairs(sess and sess.segments or {}) do if r:find("\tRESUME\treload", 1, true) then resumes = resumes + 1 end end
   check("export: the reload left one RESUME row", resumes == 1, resumes)
   local fights = db.combat and db.combat.fights or {}
-  local okF = #fights == 3
+  local okF = #fights == 4
   for _, fg in ipairs(fights) do okF = okF and fg.session == ids[1] and type(fg.uid) == "string" and type(fg.startLocalHi) == "number" and type(fg.startMono) == "number" and fg.outcome == "kill" end
-  check("export: three fights, each with its session, uid and clocks", okF, #fights)
+  check("export: four fights (the last is the boss of the dungeon run), each with its session, uid and clocks", okF and fights[4].bossName == "Rhahk'Zor", #fights)
   local mine = true
   for _, r in ipairs(db.loot and db.loot.log or {}) do mine = mine and r.s == ids[1] end
   for _, e in ipairs(db.story and db.story.events or {}) do mine = mine and e.s == ids[1] end
-  check("export: every loot row and story event carries the session id", mine and #db.loot.log == 5 and #db.story.events == 7, #(db.loot and db.loot.log or {}))
+  check("export: every loot row and story event carries the session id", mine and #db.loot.log == 6 and #db.story.events == 9, #(db.loot and db.loot.log or {}))
   -- 0.9.49: the session ends with a short dungeon visit, so the sample the backend copies holds the new diagnostics
   local st = db.settings and db.settings.selftest or {}
   local dm = type(st.instances) == "table" and st.instances["The Deadmines"] or nil
@@ -2252,18 +2256,30 @@ do
   check("export: the last dungeon check is the one after leaving (no sig when the verdict is none)", type(st.instance) == "table" and st.instance.verdict == "none" and st.instance.sig == nil)
   local kinds = {}
   for _, e in ipairs(db.story and db.story.events or {}) do kinds[#kinds + 1] = e.kind end
-  check("export: the visit left its two story rows and no XP from the hidden line", kinds[6] == "DUNGEON" and kinds[7] == "DUNGEONLEAVE"
+  check("export: the visit left its story rows (entry, boss, kill, exit) and no XP from the hidden line", kinds[6] == "DUNGEON" and kinds[7] == "BOSS" and kinds[8] == "KILL" and kinds[9] == "DUNGEONLEAVE"
     and db.characters["Player-1-000001"].xp.fromKills == 155, table.concat(kinds, ","))
+  -- 0.9.50: the visit is a stored dungeon run, closed by the 20 minutes outside
+  local ch = db.characters["Player-1-000001"] or {}
+  local dr = type(ch.dungeonRuns) == "table" and ch.dungeonRuns[1] or nil
+  check("export: one closed dungeon run on the character, none open", ch.dungeonRun == nil and type(ch.dungeonRuns) == "table" and #ch.dungeonRuns == 1 and dr.v == 1
+    and dr.inst == "The Deadmines" and dr.key == "the deadmines" and dr.kind == "party" and dr.map == 36 and dr.open == "zone" and dr.why == "left", dr and dr.why)
+  check("export: its clocks sum to the wall time and it ends where the character was last inside", dr and dr.secs.inside == 100 and dr.secs.wall == 100 and dr.endT - dr.t == 100
+    and dr.secs.ghost + dr.secs.outside + dr.secs.offline == 0 and dr.secs.combat == 30 and dr.secs.boss == 25 and #dr.visits == 1 and dr.visits[1].out == "alive", dr and dr.secs.wall)
+  check("export: its boss is the encounter, killed once, linked to the fight", dr and #dr.bosses == 1 and dr.bosses[1].enc == 1144 and dr.bosses[1].name == "Rhahk'Zor" and dr.bosses[1].pulls == 1
+    and dr.bosses[1].kill == 70 and dr.bosses[1].combat == 25 and dr.bosses[1].ok == 1 and dr.bosses[1].fight == fights[4].uid and dr.bosses[1].at == fights[4].startEpoch + 5, dr and dr.bosses[1] and dr.bosses[1].kill)
+  check("export: its gold is the coin looted inside, the purse agrees, the hidden XP line is counted", dr and dr.gold.looted == 240 and dr.gold.purse == 240 and dr.gold.items == 0
+    and dr.hidden.xp == 1 and dr.xp == nil and dr.nDeaths.me == 0 and #dr.deaths == 0, dr and dr.gold.looted)
+  check("export: the session counts that one run", sess and sess.dungeons == 1, sess and sess.dungeons)
   check("export: the character block sits under the player GUID", db.characters["Player-1-000001"] and db.characters["Player-1-000001"].xp.fromQuests == 600)
   -- 0.9.44 (#43): the scripted session is one server day; its row sums to the ledger, the reorder moved nothing
   local ch = db.characters["Player-1-000001"]
   local days, row = 0, nil
   for _, r in pairs(ch.goldDays or {}) do days = days + 1; row = r end
-  check("export: one day row, equal to the character's ledger: 287 looted, 350 from the quest, nothing unexplained", days == 1 and row.g == ch.gold.gained and row.s == ch.gold.spent and row.looted == ch.gold.looted
-    and row.looted == 287 and row.quests == 350 and row.unexplained == nil and row.o == 1520 and row.c == ch.gold.balance and row.n == 4, row and row.g)
+  check("export: one day row, equal to the character's ledger: 527 looted (240 of it in the dungeon run), 350 from the quest, nothing unexplained", days == 1 and row.g == ch.gold.gained and row.s == ch.gold.spent and row.looted == ch.gold.looted
+    and row.looted == 527 and row.quests == 350 and row.unexplained == nil and row.o == 1520 and row.c == ch.gold.balance and row.n == 5, row and row.g)
   check("export: roster facts, goldSince and the server day base are in the file", ch.class == "WARRIOR" and ch.faction == "Alliance" and ch.level == 13 and type(ch.seen) == "number" and type(ch.goldSince) == "number"
     and db.settings.gold.dayBase.kind == "server" and db.settings.gold.dayBase.offset == 25200 and type(db.settings.gold.weekAnchor) == "number")
-  check("export: the session's gold ledger is what it was before the source order changed", sess.gold.looted == 287 and sess.gold.quests == 350 and sess.gold.gained == 637 and #sess.goldLog == 4)
+  check("export: the session's gold ledger is what it was before the source order changed", sess.gold.looted == 527 and sess.gold.quests == 350 and sess.gold.gained == 877 and #sess.goldLog == 5)
 end
 
 -- #31: gold changed while the addon did not see it, booked at the first read of a load; coin traded with a player
@@ -2342,6 +2358,12 @@ do
   local ok, err = pcall(dofile("tests/guards.lua"), { check = check, M = M, ns = ns })
   check("0.9.49 tests/guards.lua runs to its end", ok, err)
 end
+-- 0.9.50 (#51): the durable dungeon run (Everbuff/Runs.lua): visits and typed gaps, the encounter state machine, XP
+-- and gold per visit, the purse check, the learned alias, the cap and the size of a record (on a save file of its own)
+do
+  local ok, err = pcall(dofile("tests/runs.lua"), { check = check, M = M, ns = ns })
+  check("0.9.50 tests/runs.lua runs to its end", ok, err)
+end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
 -- process each, because a profile has to be in place when the addon files load): the stub as it is, the WoW
 -- Forever profile (no legacy global that has a namespaced replacement), and a bare client with none of the events
@@ -2379,7 +2401,7 @@ do
       if line:find(dash, 1, true) then bad[#bad + 1] = path .. ":" .. n end
     end
   end
-  check("copy: the lint read the addon's files", #files >= 19, #files)
+  check("copy: the lint read the addon's files", #files >= 20, #files)
   check("copy: no em dash in any file the addon ships", #bad == 0, table.concat(bad, ", "))
 end
 

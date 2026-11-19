@@ -4,7 +4,7 @@
 --
 -- A scripted play session runs through the REAL addon files under tests/wow_stub.lua: a login, two fights with
 -- loot and coin, a quest, a level-up, a /reload (a fresh Lua state that loads the save file the logout wrote, as
--- the client does), a third fight and a logout. The save file is written the way the client writes it
+-- the client does), a third fight, a dungeon run with a boss kill and a logout. The save file is written the way the client writes it
 -- (`Name = { ... }` per SavedVariable in the TOC), with sorted keys and a fixed clock and random seed, so the
 -- same addon code always produces the same bytes. The backend checks in this file and ingests it with exact
 -- counts (everbuff-backend tests/ingest_addon_export.rs), so a change to what the addon saves shows up here first.
@@ -194,9 +194,24 @@ local function playSession()
   M.fire("CHAT_MSG_COMBAT_XP_GAIN", hidden)
   M.secrets[hidden] = nil
   advance(20)
+  -- the visit is a dungeon run (0.9.50, characters[guid].dungeonRuns): a boss pulled out of combat and killed, coin
+  -- looted inside, then out; 20 minutes later the next dungeon check closes the run into the list
+  M.units.target = { name = "Rhahk'Zor", hostile = true, guid = "Creature-0-4618-36-1-644-000A1B2C40", cls = "elite" }
+  M.inCombat = true; M.fire("PLAYER_REGEN_DISABLED")
+  advance(5)
+  M.fire("ENCOUNTER_START", 1144, "Rhahk'Zor", 1, 5)
+  advance(25)
+  M.fire("ENCOUNTER_END", 1144, "Rhahk'Zor", 1, 5, 1)
+  M.units.target.dead = true; M.inCombat = false
+  M.fire("PLAYER_REGEN_ENABLED")
+  M.fire("LOOT_OPENED"); M.money = M.money + 240; M.fire("PLAYER_MONEY"); M.fire("LOOT_CLOSED")
+  M.units.target = nil
+  advance(30)
   M.zone = "Elwynn Forest"; M.inst = { name = "Elwynn Forest", type = "none", diff = 0, mapID = 0 }
   M.fire("PLAYER_ENTERING_WORLD", false, false)
   M.runTimers()
+  advance(21 * 60)
+  M.fire("ZONE_CHANGED_NEW_AREA")
   -- then a logout
   M.fire("PLAYER_LOGOUT")
   local errors = M.errors

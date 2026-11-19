@@ -4,34 +4,104 @@ EverbuffDB = {
 	["characters"] = {
 		["Player-1-000001"] = {
 			["class"] = "WARRIOR",
+			["dungeonRuns"] = {
+				{
+					["bosses"] = {
+						{
+							["at"] = 1793000276,
+							["combat"] = 25,
+							["dur"] = 25,
+							["enc"] = 1144,
+							["fight"] = "Hart-Realm-1793000271-753a",
+							["kill"] = 70,
+							["name"] = "Rhahk'Zor",
+							["ok"] = 1,
+							["pulls"] = 1,
+							["seg"] = 30,
+						}, -- [1]
+					},
+					["deaths"] = {
+					},
+					["diff"] = 1,
+					["endT"] = 1793000331,
+					["firstPull"] = 40,
+					["gold"] = {
+						["items"] = 0,
+						["lootValue"] = 0,
+						["looted"] = 240,
+						["purse"] = 240,
+						["quests"] = 0,
+					},
+					["hidden"] = {
+						["loot"] = 0,
+						["rep"] = 0,
+						["xp"] = 1,
+					},
+					["id"] = "1-000001-1793000231-9df3",
+					["inst"] = "The Deadmines",
+					["key"] = "the deadmines",
+					["kind"] = "party",
+					["map"] = 36,
+					["nDeaths"] = {
+						["me"] = 0,
+						["party"] = 0,
+					},
+					["open"] = "zone",
+					["secs"] = {
+						["active"] = 0,
+						["boss"] = 25,
+						["combat"] = 30,
+						["ghost"] = 0,
+						["inside"] = 100,
+						["offline"] = 0,
+						["outside"] = 0,
+						["wall"] = 100,
+					},
+					["t"] = 1793000231,
+					["uiMap"] = 37,
+					["v"] = 1,
+					["visits"] = {
+						{
+							["how"] = "zone",
+							["i"] = 0,
+							["looted"] = 240,
+							["o"] = 100,
+							["out"] = "alive",
+							["purse"] = 240,
+							["secs"] = 100,
+						}, -- [1]
+					},
+					["why"] = "left",
+				}, -- [1]
+			},
 			["durability"] = {
-				["at"] = 1793000271,
+				["at"] = 1793000331,
 				["pct"] = 90,
 			},
 			["faction"] = "Alliance",
 			["gold"] = {
-				["balance"] = 2157,
-				["gained"] = 637,
-				["looted"] = 287,
+				["balance"] = 2397,
+				["gained"] = 877,
+				["looted"] = 527,
 				["quests"] = 350,
 				["spent"] = 0,
 			},
 			["goldBest"] = {
 				["day"] = {
 					["key"] = "20261026",
-					["net"] = 637,
+					["net"] = 877,
 				},
 				["session"] = {
 					["at"] = 1793000000,
-					["net"] = 637,
+					["net"] = 877,
 				},
 			},
 			["goldDays"] = {
 				["20261026"] = {
-					["c"] = 2157,
-					["g"] = 637,
-					["looted"] = 287,
-					["n"] = 4,
+					["c"] = 2397,
+					["g"] = 877,
+					["looted"] = 527,
+					["n"] = 5,
 					["o"] = 1520,
 					["quests"] = 350,
 					["s"] = 0,
@@ -39,7 +109,7 @@ EverbuffDB = {
 				},
 			},
 			["goldRate"] = {
-				["last"] = 1793000181,
+				["last"] = 1793000301,
 				["m"] = {
 					[29883334] = {
 						["a"] = 0,
@@ -53,24 +123,31 @@ EverbuffDB = {
 						["f"] = 95,
 						["s"] = 0,
 					},
+					[29883338] = {
+						["a"] = 0,
+						["e"] = 240,
+						["f"] = 240,
+						["s"] = 0,
+					},
 				},
 			},
-			["goldRun"] = {
-				["inst"] = "The Deadmines",
-				["items"] = 0,
-				["left"] = 1793000271,
-				["lootValue"] = 0,
-				["looted"] = 0,
-				["quests"] = 0,
-				["secs"] = 0,
-				["t"] = 1793000231,
+			["goldRuns"] = {
+				{
+					["inst"] = "The Deadmines",
+					["items"] = 0,
+					["lootValue"] = 0,
+					["looted"] = 240,
+					["quests"] = 0,
+					["secs"] = 0,
+					["t"] = 1793000231,
+				}, -- [1]
 			},
 			["goldSince"] = 1793000042,
 			["goldZones"] = {
 				[37] = {
-					["last"] = 1793000181,
-					["looted"] = 287,
-					["name"] = "Elwynn Forest",
+					["last"] = 1793000301,
+					["looted"] = 527,
+					["name"] = "The Deadmines",
 					["quests"] = 350,
 					["secs"] = 0,
 				},
@@ -93,7 +170,7 @@ EverbuffDB = {
 					["standing"] = 5,
 				},
 			},
-			["seen"] = 1793000271,
+			["seen"] = 1793001591,
 			["seenZones"] = {
 				["Elwynn Forest"] = 1793000000,
 				["The Deadmines"] = 1793000231,
@@ -111,7 +188,7 @@ EverbuffDB = {
 		},
 	},
 	["combat"] = {
-		["fightSeq"] = 3,
+		["fightSeq"] = 4,
 		["fights"] = {
 			{
 				["auras"] = {
@@ -383,6 +460,98 @@ EverbuffDB = {
 				["y"] = 0.637,
 				["zone"] = "Elwynn Forest",
 			}, -- [3]
+			{
+				["auras"] = {
+				},
+				["bossName"] = "Rhahk'Zor",
+				["difficultyID"] = 1,
+				["duration"] = 30,
+				["encounterID"] = 1144,
+				["endEpoch"] = 1793000301,
+				["endLocalHi"] = 1793000300,
+				["endMono"] = 831301.5,
+				["enemies"] = {
+					{
+						["auras"] = {
+						},
+						["firstT"] = 0,
+						["guid"] = "Creature-0-4618-36-1-644-000A1B2C40",
+						["name"] = "Rhahk'Zor",
+					}, -- [1]
+				},
+				["foes"] = {
+					"Rhahk'Zor", -- [1]
+				},
+				["gear"] = {
+					["initial"] = {
+						[2] = {
+							["icon"] = 135274,
+							["id"] = 12019,
+							["name"] = "Cerulean Ring",
+							["quality"] = 2,
+						},
+						[16] = {
+							["icon"] = 135274,
+							["id"] = 2488,
+							["name"] = "Gladius",
+							["quality"] = 2,
+						},
+					},
+					["swaps"] = {
+					},
+				},
+				["id"] = 4,
+				["instanceMapID"] = 36,
+				["instanceType"] = "party",
+				["level"] = 13,
+				["map"] = 37,
+				["outcome"] = "kill",
+				["player"] = "Hart",
+				["realm"] = "Realm",
+				["schema"] = 1,
+				["session"] = "261026073319-8b60",
+				["spec"] = "Arms",
+				["startEpoch"] = 1793000271,
+				["startLocal"] = 1793000270,
+				["startLocalHi"] = 1793000270,
+				["startMono"] = 831271.5,
+				["stats"] = {
+					{
+						["ap"] = 100,
+						["armor"] = 120,
+						["block"] = 0,
+						["crit"] = 5,
+						["dodge"] = 3,
+						["hp"] = 1000,
+						["ilvl"] = 18,
+						["level"] = 13,
+						["mana"] = 500,
+						["parry"] = 0,
+						["prim"] = {
+							12, -- [1]
+							12, -- [2]
+							12, -- [3]
+							12, -- [4]
+							12, -- [5]
+						},
+						["rap"] = 50,
+						["spellCrit"] = 4,
+						["t"] = 0,
+						["weapon"] = {
+							["mainHigh"] = 20,
+							["mainLow"] = 10,
+							["mainSpeed"] = 2,
+							["offHigh"] = 0,
+							["offLow"] = 0,
+						},
+					}, -- [1]
+				},
+				["uid"] = "Hart-Realm-1793000271-753a",
+				["uploaded"] = false,
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "The Deadmines",
+			}, -- [4]
 		},
 	},
 	["loot"] = {
@@ -447,6 +616,16 @@ EverbuffDB = {
 				["y"] = 0.637,
 				["zone"] = "Elwynn Forest",
 			}, -- [5]
+			{
+				["guid"] = "Creature-0-4618-36-1-644-000A1B2C40",
+				["money"] = 240,
+				["s"] = "261026073319-8b60",
+				["src"] = "Rhahk'Zor",
+				["t"] = 1793000301,
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "The Deadmines",
+			}, -- [6]
 		},
 		["reserves"] = {
 		},
@@ -454,19 +633,19 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.49",
+			["addonVersion"] = "0.9.50",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
 			["deaths"] = 0,
 			["dungeons"] = 1,
 			["endedBy"] = "logout",
-			["endedEpoch"] = 1793000271,
-			["endedLocal"] = 1793000270,
-			["endedMono"] = 831271.5,
-			["fights"] = 3,
+			["endedEpoch"] = 1793001591,
+			["endedLocal"] = 1793001590,
+			["endedMono"] = 832591.5,
+			["fights"] = 4,
 			["flavor"] = "mainline",
-			["gained"] = 637,
+			["gained"] = 877,
 			["gold"] = {
 				["auctionSales"] = 0,
 				["auctions"] = 0,
@@ -474,8 +653,8 @@ EverbuffDB = {
 				["awayIn"] = 0,
 				["awayOut"] = 0,
 				["flights"] = 0,
-				["gained"] = 637,
-				["looted"] = 287,
+				["gained"] = 877,
+				["looted"] = 527,
 				["mail"] = 0,
 				["mailSpent"] = 0,
 				["other"] = 0,
@@ -493,13 +672,14 @@ EverbuffDB = {
 				"831077.5	112	looted	1712	", -- [2]
 				"831097.5	350	quests	2062	quest=176", -- [3]
 				"831181.5	95	looted	2157	", -- [4]
+				"831301.5	240	looted	2397	", -- [5]
 			},
 			["goldLogDropped"] = 0,
 			["guid"] = "Player-1-000001",
 			["guild"] = "",
 			["id"] = "261026073319-8b60",
 			["items"] = 2,
-			["kills"] = 3,
+			["kills"] = 4,
 			["level"] = 13,
 			["level0"] = 12,
 			["logging"] = {
@@ -519,7 +699,9 @@ EverbuffDB = {
 				"6	1793000137	831137.500	SESSION_END	logout", -- [6]
 				"7	1793000142	831142.500	RESUME	reload", -- [7]
 				"8	1793000181	831181.500	KILL	Defias Thug", -- [8]
-				"9	1793000271	831271.500	SESSION_END	logout", -- [9]
+				"9	1793000276	831276.500	BOSS	Rhahk'Zor", -- [9]
+				"10	1793000301	831301.500	KILL	Rhahk'Zor", -- [10]
+				"11	1793001591	832591.500	SESSION_END	logout", -- [11]
 			},
 			["spent"] = 0,
 			["startedEpoch"] = 1793000000,
@@ -627,7 +809,7 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [84]
 				"UIErrorsFrame", -- [85]
 			},
-			["addon"] = "0.9.49",
+			["addon"] = "0.9.50",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
 			["chatSecret"] = {
@@ -756,16 +938,42 @@ EverbuffDB = {
 				["zone"] = "The Deadmines",
 			}, -- [6]
 			{
+				["combat"] = true,
+				["foe"] = "Rhahk'Zor",
+				["kind"] = "BOSS",
+				["map"] = 37,
+				["s"] = "261026073319-8b60",
+				["shown"] = 831276.5,
+				["t"] = 1793000276,
+				["text"] = "Pull:  Rhahk'Zor",
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "The Deadmines",
+			}, -- [7]
+			{
+				["combat"] = true,
+				["foe"] = "Rhahk'Zor",
+				["kind"] = "KILL",
+				["map"] = 37,
+				["s"] = "261026073319-8b60",
+				["shown"] = 831301.5,
+				["t"] = 1793000301,
+				["text"] = "Rhahk'Zor down!",
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "The Deadmines",
+			}, -- [8]
+			{
 				["kind"] = "DUNGEONLEAVE",
 				["map"] = 37,
 				["s"] = "261026073319-8b60",
-				["shown"] = 831271.5,
-				["t"] = 1793000271,
+				["shown"] = 831331.5,
+				["t"] = 1793000331,
 				["text"] = "Left  The Deadmines",
 				["x"] = 0.421,
 				["y"] = 0.637,
 				["zone"] = "Elwynn Forest",
-			}, -- [7]
+			}, -- [9]
 		},
 	},
 }

@@ -371,6 +371,74 @@ Size, measured by the soak in `tests/gold_show.lua` (10,000 purse changes over 2
 save file lays tables out): zones, runs and records are about 9 KB for the six characters together, day rows and
 the rate window about 56 KB. A full list of 300 places is about 20 KB and 50 runs about 5 KB per character.
 
+## Dungeon runs (`characters[guid].dungeonRun`, `dungeonRuns`, 0.9.50, everbuff-wow-addon #51)
+
+Until 0.9.49 a dungeon run was rebuilt at view time from the `DUNGEON` and `DUNGEONLEAVE` story events, which the
+500 row cap and the acknowledgement remove within hours. From 0.9.50 a run is a stored record of the character
+logged in (`Everbuff/Runs.lua`). Additive, schema 2, no schema bump. Nothing before 0.9.50 is backfilled: the list
+starts empty and says "Runs are kept from version 0.9.50 on." The acknowledgement never touches these keys. No key
+is added to fights, story rows, loot rows or gold records: the link runs one way, the run names the fight uid.
+Uploaded with the save file and not read by ingest until a backend gate of its own.
+
+`characters[guid].dungeonRun` is the run that is open (absent when none is). `characters[guid].dungeonRuns[]` holds
+the closed runs, oldest first, at most 100 (`Runs.CAP`); the oldest without `keep` goes first. A run with under 60
+seconds inside and no fight, boss, death, XP, coin or item is not stored. On load a record with a higher `v` or
+another shape is dropped. Times are server epoch seconds. Offsets are seconds on the run's own clock (inside plus
+running back as a ghost) unless they are named wall offsets.
+
+| field | type | notes |
+| --- | --- | --- |
+| `id` | string | `<last 8 of the GUID>-<t>-<4 hex digits>`, random: a counter restarts when the save is lost |
+| `v` | int | record version, 1 |
+| `inst`, `key` | string | the dungeon's canonical name (`Emitter.canonInstance`) and its lowercase form; the key is always the name |
+| `kind` | string | `party` or `raid` |
+| `map?`, `diff?`, `uiMap?` | int | GetInstanceInfo's map id and difficulty and the UI map at the first entry, attributes only, absent when the client hid them |
+| `t`, `endT` | epoch | first entry; the moment the character was last inside. Time outside after `endT` is not part of the run |
+| `open` | string | how it opened: `zone` (the dungeon check), `login` (found inside at a login or a /reload), `boss` (an ENCOUNTER_START where the dungeon check did not say inside) |
+| `why` | string | closed runs: `left` (20 minutes alive outside), `other` (another instance through a loading screen), `ghost` (a ghost outside for over 30 minutes), `manual` (`Runs.endNow`), `lost` (the game closed without saving) |
+| `partial?` | string | `state lost before this login` or `ended while a boss was in progress`: the record is incomplete and stays out of every later statistic |
+| `visits[]` | object | one row per stretch inside, at most 20, then the last row absorbs (`n` counts the stretches it took). `i`, `o`: wall offsets from `t` (`o` absent while inside). `how`: `zone`, `login`, `reload`, `ghost` (back in after a ghost run), `boss`. `out`: `alive`, `ghost`, `offline`, or `other` and `manual` when the run closed while inside. Sums of the visit: `secs` (inside), `active`, `xp`, `xpKill`, `xpQuest`, `kills`, `looted`, `quests`, `lootValue`, `items`, `unpriced`, `purse` (copper, the raw change of the purse inside). On a closed run a sum that is 0 is absent |
+| `secs` | object | `{ wall, inside, ghost, outside, offline, active, combat, boss }`. `inside + ghost + outside + offline = wall = endT - t`. `active` is inside time at the keyboard (10 second tick, same rule as the gold tick); every rate divides by it. `combat`: PLAYER_REGEN_DISABLED to ENABLED while inside. `boss`: time with at least one encounter open |
+| `firstPull?` | number | offset of the first combat or encounter start |
+| `bosses[]` | object | one row per encounter id in pull order, at most 20, from ENCOUNTER_START and ENCOUNTER_END themselves (never from a fight record). `enc` (encounter id), `name?`, `pulls`, `wipes?` (non-success END with an own death in the pull), `resets?` (non-success END with none), `unknown?` (the END was not seen, or its success was hidden), `combat` (END minus START, summed), `ok?` and `dur?` (the raw success value and the length of the last END seen), and once killed: `kill` (offset, stored once), `at` (epoch of the kill pull's START), `seg` (seconds since the kill before, or since `firstPull`), `prev?` (encounter id of the kill before), `fight?` (uid of the fight running at the END, else of the last one that ended inside the pull) |
+| `nDeaths` | object | `{ me, party }`, never capped. `party` stays 0 until party deaths are tracked |
+| `deaths[]` | object | the character's own deaths inside, at most 40 rows: `o`, `me = true`, `enc?` (the encounter open at the death), `foe?`, `back?` (seconds until alive again) |
+| `xp?` | object | `{ gain, kill, quest, n, l0, p0, l1, p1, need }`: XP gained inside (PLAYER_XP_UPDATE differences, a level-up carries the old maximum), XP and count of named kill lines, quest XP turned in inside, level and bar fraction at both ends, the bar's size at the close. Absent when UnitXPMax is not a plain positive number or nothing was gained |
+| `gold` | object | closed runs: `{ looted, quests, lootValue, items, unpriced?, purse }`, the sum of the visits. A visit takes the difference of the character's gold run counters (`goldRun`, `goldRuns`, `goldRunsEvicted` together) between its two ends, so it holds whatever lifetime the gold run has. `purse` is the change of GetMoney inside less `quests`; the page shows it beside `looted` when the two differ |
+| `hidden` | object | `{ xp, rep, loot }`: chat lines of that kind that arrived as secret values while inside |
+| `keep?` | bool | protected from eviction (set from 0.9.51) |
+
+Only on the open run: `st` (`in`, `ghost`, `out`, `off`), `mark` and `beat` (epoch of the last clock reading),
+`left` (epoch alive outside began), `ghostAt`, `gap` (`{ ghost, outside, offline }`, the seconds since the last
+visit, added to `secs` only when the character goes back in), `encs` (the open encounters, a map encounter id ->
+`{ t, o, d }`), `bossFrom`, `deadSince`, `m0` and `g0` (the purse and the gold counters at the last reading),
+`bossIn` (`{ zone, map }` after a boss pull put the character inside).
+
+Rules a reader can rely on:
+
+- Inside is what the dungeon check says, with one exception: when only the zone name says dungeon and
+  GetInstanceInfo's map is a continent, the character stands at the door (the halls outside Sunken Temple carry the
+  dungeon's name). A door visit is time outside and opens no run. A boss pull there, or on a map that is no
+  continent where the check says outside, puts the character inside until the zone or the map changes.
+- Only time alive outside runs the 20 minutes. A ghost gap is on the run's clock; it ends at a resurrect outside,
+  or closes the run after 30 minutes. A /reload stays on the clock the run was on; only a login makes offline time.
+- Several encounters can be open at once. A second END of one encounter and an END without a START are ignored.
+  A pull whose outcome was not seen is resolved by a later kill of the same encounter in the same run.
+- A loot row's zone is never used to give loot to a run: the page lists rows by the time of the run's visits.
+- A session's `dungeons` counts runs opened in it from 0.9.50 (it counted `DUNGEON` events before: 22 in one
+  evening at the Sunken Temple door).
+
+`settings.instanceAlias` (map lowercase name -> canonical name, at most 40): a second name the client gave a dungeon
+while the character was inside it with GetInstanceInfo's map id unchanged. `Emitter.canonInstance` reads it after
+its built-in list. Diagnostics, nothing shown: `settings.selftest.runs` (whole-number counters: `door`,
+`discarded`, `outdoorBoss`, `endNoStart`, `restart`, `alias`, `lost`, `dropped`) and
+`settings.selftest.aliasCandidates[]` (at most 20, `{ from, to, map0?, map1?, at, n }`: a name change inside with no
+loading screen that was not learned).
+
+Size, measured by `tests/runs.lua` as the save file lays tables out: the real shape of the Maraudon run of
+2026-11-18 (2 visits, 8 bosses, 1 death) is 3.8 KB, the worst case at the caps 15.6 KB, 100 runs of the real shape
+375 KB per character. The tests fail above 4.5 KB and 18 KB.
+
 ## Gold display (0.9.44 and 0.9.45, everbuff-wow-addon #43, decision 5)
 
 The sentence "nothing is drawn in game, nothing goes to chat" above scopes the gold journal of #36. What the addon
@@ -532,7 +600,9 @@ From 0.9.44 `characters[guid].goldDays`, `goldSince`, the roster facts and `sett
 (the Gold pane's periods, Days and Characters), and from 0.9.45 `goldRate` and `goldTimer` belong to it (the rate
 and the farm timer), and from 0.9.47 `goldZones`, `goldZonesEvicted`, `goldRun`, `goldRuns`, `goldRunsEvicted`,
 `goldMonths` and `goldBest` (places, dungeon runs, folded months, records): uploaded with the save file, not read by
-ingest until a backend gate of its own. They were not in the file measured here.
+ingest until a backend gate of its own. They were not in the file measured here. From 0.9.50 the stored dungeon
+runs (`characters[guid].dungeonRun`, `dungeonRuns`, `settings.instanceAlias`) are a sixth: they back Combat >
+Dungeons and are not read by ingest.
 
 Together 14.4 KB, 0.7 % of the file; the fights are 1.47 MB (71 %). Dropping them would remove in-game panes and save
 almost nothing, so they stay. Reading them on the backend (per-gain reputation, auction postings) needs a place in

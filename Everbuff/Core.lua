@@ -272,6 +272,8 @@ SlashCmdList.EVERBUFF = function(arg)
   do
     local head, rest = tostring(arg or ""):match("^%s*(%S+)%s*(.-)%s*$")
     if head and head:lower() == "gold" and ns.Gold and ns.Gold.slash then ns.Gold.slash(rest); return end
+    -- /eb run: the open dungeon run, else the last, as one line in the player's own chat (0.9.50, #51)
+    if head and head:lower() == "run" and ns.Runs and ns.Runs.slash then ns.Runs.slash(rest); return end
   end
   if ns.blockedInCombat() then return end
   arg = (arg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
@@ -350,7 +352,7 @@ SlashCmdList.EVERBUFF = function(arg)
     local on = not arg:match("off")
     if ns.Emitter then ns.Emitter.testCombat(on); ns.msg("combat indicator " .. (on and "ON (crossed swords)" or "off")) end
   else
-    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb gold stats · /eb gold timer · /eb gold audit · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
+    ns.msg("commands: /eb (open) · /eb status · /eb gold · /eb gold chars · /eb gold stats · /eb gold timer · /eb gold audit · /eb run · /eb corner tl|tr|bl|br · /eb testevent · /eb ack <code> · /eb debug · /eb errors · /eb export · /eb wipe")
   end
 end
 

@@ -385,7 +385,8 @@ function Emitter.event(kind, d, quiet)
     ns.DB.story.events[#ns.DB.story.events + 1] = rec
     ns.trimToCap(ns.DB.story.events, 500)
     if ns.Recorder and ns.Recorder.bump then
-      if kind == "KILL" then ns.Recorder.bump("kills") elseif kind == "DEATH" then ns.Recorder.bump("deaths") elseif kind == "DUNGEON" then ns.Recorder.bump("dungeons") end
+      -- (a session's `dungeons` counts runs from 0.9.50, bumped where a run opens, Runs.lua; it counted DUNGEON events)
+      if kind == "KILL" then ns.Recorder.bump("kills") elseif kind == "DEATH" then ns.Recorder.bump("deaths") end
     end
   end
   -- a high-value journey milestone just happened: ask Fights to protect it with a save reminder soon
@@ -493,7 +494,13 @@ Emitter.INSTANCE_ALIAS = {
 }
 function Emitter.canonInstance(name)
   if type(name) ~= "string" then return name end
-  return Emitter.INSTANCE_ALIAS[name:lower()] or name
+  local k = name:lower()
+  local a = Emitter.INSTANCE_ALIAS[k]
+  if a then return a end
+  -- a second name the addon learned for a dungeon it was inside (0.9.50, Runs.alias: settings.instanceAlias)
+  local L = ns.DB and ns.DB.settings and ns.DB.settings.instanceAlias
+  local l = type(L) == "table" and L[k] or nil
+  return type(l) == "string" and l or name
 end
 function Emitter.instanceNow()
   -- (plainNum is declared further down; the same guard inline)
@@ -521,6 +528,8 @@ function Emitter.instanceNow()
   elseif byName[zone:lower()] then name, kind, sig = zone, byName[zone:lower()], "name" end
   if kind and (not name or name == "") then name = (zone ~= "" and zone) or iname or "Dungeon" end
   Emitter._sig = sig
+  -- the whole answer of this check, for the dungeon run (0.9.50, Runs.lua: Runs.where reads it)
+  Emitter._det = { name = name, kind = kind, sig = sig, zone = zone, map = plainNum(imap), diff = plainNum(diff), uiMap = mapID }
   if ns.DB and ns.DB.settings then
     ns.DB.settings.selftest = ns.DB.settings.selftest or {}
     ns.DB.settings.selftest.instance = { zone = zone, name = iname, type = itype, diff = plainNum(diff), map = plainNum(imap),
@@ -573,6 +582,8 @@ end
 -- Announce a dungeon entry or exit when the answer changed (deduped on the character across /reload).
 function Emitter.checkInstance()
   local iname, kind = Emitter.instanceNow()
+  -- a second name of the dungeon the character is inside is learned before the names are compared (0.9.50)
+  if ns.Runs and ns.Runs.alias then pcall(ns.Runs.alias) end
   iname = Emitter.canonInstance(iname)
   local announced = ns.DB and Emitter.canonInstance(ns.char().inInstance)   -- per character (#23): another character is not in this dungeon
   -- state FIRST, then the event/toast: if presentation ever throws, the dedupe state is still correct
@@ -586,6 +597,8 @@ function Emitter.checkInstance()
   end
   -- the gold of a dungeon run follows the same answer (0.9.47, #43: characters[guid].goldRun and goldRuns)
   if ns.Gold and ns.Gold.runSync then pcall(ns.Gold.runSync) end
+  -- and so does the stored dungeon run (0.9.50, #51: characters[guid].dungeonRun and dungeonRuns)
+  if ns.Runs and ns.Runs.sync then pcall(ns.Runs.sync) end
   return kind ~= nil
 end
 
@@ -636,6 +649,7 @@ local XP_PATS = {
   { fmtToPattern(COMBATLOG_XPGAIN_FIRSTPERSON or "%s dies, you gain %d experience."), 2 },
   { fmtToPattern(COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED or "You gain %d experience."), 1 },
 }
+Emitter.XP_PATS = XP_PATS   -- read by Runs.lua (the named forms count a kill of the run)
 local function killXpFrom(msg)
   for _, pp in ipairs(XP_PATS) do
     local caps = { msg:match(pp[1]) }
@@ -2415,6 +2429,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       C_Timer.After(12, function() if RequestTimePlayed then pcall(RequestTimePlayed) end end) -- /played once on login
       C_Timer.After(15, function() if RequestRaidInfo then pcall(RequestRaidInfo) end end)     -- lockouts once on login
     end
+    if ns.Runs and ns.Runs.loaded then pcall(ns.Runs.loaded, a1, a2) end   -- the dungeon run learns what kind of load this is
     pcall(Emitter.checkInstance)   -- dungeon entry or exit, deduped on the character across /reload
     lastZone = GetRealZoneText()
     if ns.DB and lastZone then   -- the zone you log into is "seen", not discovered
@@ -2475,6 +2490,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     pushed.durBefore = ns.DB and ns.char().durability and ns.char().durability.pct or nil   -- gear health going in
     local hit = pushed.lastHit
     Emitter.event("DEATH", { foe = (hit and hit.name and (GetTime() - hit.at) < 10) and hit.name or nil })
+    if ns.Runs and ns.Runs.deathFoe then pcall(ns.Runs.deathFoe, (hit and hit.name and (GetTime() - hit.at) < 10) and hit.name or nil) end
   elseif event == "PLAYER_UNGHOST" or event == "PLAYER_ALIVE" then
     -- only a real resurrection, not the PLAYER_ALIVE that also fires on login
     if wasDead and (not UnitIsDeadOrGhost or not UnitIsDeadOrGhost("player")) then
@@ -3400,6 +3416,8 @@ ns._test.newLoad = function()
   Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading, Emitter._awayWait = nil, nil, nil, nil, nil, nil
   Emitter._pend, Emitter._ah = { sell = {}, buy = {}, back = {} }, { claims = {} }
   if ns.Gold then ns.Gold._seenRead, ns.Gold._seenBefore = nil, nil end
+  Emitter._det = nil
+  if ns.Runs and ns.Runs.newLoad then ns.Runs.newLoad() end
 end
 ns._test.CREATE_PAT, ns._test.SKILLUP_PAT = CREATE_PAT, SKILLUP_PAT
 ns._test.DISCOVER_XP_PAT, ns._test.DISCOVER_PAT = DISCOVER_XP_PAT, DISCOVER_PAT

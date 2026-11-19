@@ -2364,22 +2364,6 @@ function Gold.runLine(r)
   if r.perHour then parts[#parts + 1] = Gold.fmt(r.perHour, { rate = true }) .. "/h" end
   return table.concat(parts, SEP)
 end
--- the run record that began with a run of Combat > Dungeons (its name and the time it began), or nil
-function Gold.runFor(name, startT, endT)
-  if type(name) ~= "string" then return nil end
-  if ns.Emitter and ns.Emitter.canonInstance then name = ns.Emitter.canonInstance(name) end
-  startT = num(startT)
-  local best, bd
-  for _, r in ipairs(Gold.runs().rows) do
-    -- (only a record that began with the run covers it: one opened later, by an update in the middle of a run,
-    -- counted a part of it, and the loot log's line is the fuller one)
-    if r.inst == name and math.abs(r.t - startT) <= 90 then
-      local d = math.abs(r.t - startT)
-      if not bd or d < bd then best, bd = r, d end
-    end
-  end
-  return best
-end
 
 -- The month fold, for the logged-in character at its own login: the day rows past the Gold.DAY_CAP newest go into
 -- their month's row, oldest first, so every sum over days and months stays what it was. Returns the days folded.
