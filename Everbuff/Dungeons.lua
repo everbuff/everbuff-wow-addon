@@ -65,7 +65,9 @@ local function deltaWord(run, short)
   local FIRST = short and "first run" or "first run here"
   if not cmp then return "", C.dim end
   if cmp.mode == "same" then
-    if cmp.isBest then return cmp.first and FIRST or "best", C.gold end
+    -- (a run whose route skipped bosses of the dungeon's list says which best: "best (5/12)")
+    local n, of = Runs.routePart(run)
+    if cmp.isBest then return cmp.first and FIRST or (n and ("best (%d/%d)"):format(n, of) or "best"), C.gold end
     return Runs.deltaText(cmp.delta), cmp.delta > 0 and C.red or C.green
   end
   if cmp.mode == "prefix" and run.inProgress then return Runs.deltaText(cmp.delta), cmp.delta > 0 and C.red or C.green end
@@ -90,7 +92,8 @@ local function paceLines(run)
   local when = date("%d %b", cmp.bestAt or 0)
   local mine = fmtDur(cmp.best + cmp.delta) .. " (" .. Runs.deltaText(cmp.delta) .. ")"
   if cmp.mode == "same" then
-    local l1 = ("Best %s on %s, %s"):format(fmtDur(cmp.best), when, MEASURE) .. SEP .. (cmp.isBest and "this run is the best" or ("this run " .. mine))
+    local n = Runs.routePart(run)
+    local l1 = ("Best%s %s on %s, %s"):format(n and (" for these %d bosses"):format(n) or "", fmtDur(cmp.best), when, MEASURE) .. SEP .. (cmp.isBest and "this run is the best" or ("this run " .. mine))
     return l1, cmp.sumBest and ("Sum of best segments " .. fmtDur(cmp.sumBest)) or nil
   end
   return ("At boss %d of %d: best %s on %s, from the first pull"):format(cmp.at, cmp.of, fmtDur(cmp.best), when) .. SEP .. "this run " .. mine, nil
@@ -788,8 +791,12 @@ local function buildList(content)
     if partial then out[#out + 1] = partial end
     -- (LENGTH is the run's clock; the delta beside it is on the measure of a best)
     local cmp = run.cmp
-    if cmp and cmp.mode and cmp.best and cmp.delta then
-      out[#out + 1] = ("Against the best: first pull to last boss kill, %s here, best %s"):format(fmtDur(cmp.best + cmp.delta), fmtDur(cmp.best))
+    if cmp and cmp.mode == "same" and cmp.best and cmp.delta then
+      local n = Runs.routePart(run)
+      out[#out + 1] = ("Against the best%s: first pull to last boss kill, %s here, best %s"):format(n and (" for these %d bosses"):format(n) or "", fmtDur(cmp.best + cmp.delta), fmtDur(cmp.best))
+    elseif cmp and cmp.mode == "prefix" and cmp.best and cmp.delta then
+      -- (against the route that shares this run's start: up to the boss they share, as Pace says it)
+      out[#out + 1] = ("Against the best at boss %d of %d: from the first pull, %s here, best %s"):format(cmp.at, cmp.of, fmtDur(cmp.best + cmp.delta), fmtDur(cmp.best))
     end
     return out
   end

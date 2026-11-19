@@ -770,7 +770,8 @@ return function(P)
     for _, fs in ipairs(T.dungeonDetail().child.fs) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said = fs.text end end
     check("repull: the page of the closed run says possibly two runs", said ~= nil and said:find("visit 3", 1, true) ~= nil, said)
     R.split(r.id, 2)
-    check("repull: a split before that visit moves the mark to its new place", closed()[1].repull == nil and closed()[2].repull == 2)
+    -- (the copies decide: the second part holds the boss's one copy left, so neither side has a mark)
+    check("repull: a split before that visit leaves the mark on no side that holds one copy of the boss", closed()[1].repull == nil and closed()[2].repull == nil)
     R.join(closed()[2].id)
     check("repull: and the join puts it back", closed()[1].repull == 3 and #closed() == 1)
     R.split(closed()[1].id, 3)
@@ -1253,6 +1254,261 @@ return function(P)
     check("ticker: the Fights list is drawn again on screen, never with the window closed", onScreen >= 1 and calls == 0, onScreen .. " " .. calls)
     ns.DungeonRuns = real0
     if wasShown and not root:IsShown() then ns.UI.Toggle() end
+  end
+
+  -- ── review round 3: copies of a boss row, the measure of a best, the guards of the statistics ────────────────
+  local RZ = "Rhahk'Zor"
+  local function visitIn() enter("Deadmines", { map = DMAP }); play(30); combat(true) end
+  local function visitOut(gap) combat(false); play(10); leave(); if gap then play(gap) else expire() end end
+  local function parts(b) local n, x = 0, b; while x do n = n + 1; x = x.r2 end; return n end
+  local function sumOf(rows, k) local s = 0; for _, b in ipairs(rows) do s = s + (b and (k == "pulls" and (b.pulls or 1) or (b[k] or 0)) or 0) end; return s end
+  local function strip(x) x.edited, x.pb, x.done = nil, nil, nil; return x end
+  -- a second copy over two visits: a wipe in visit 2, the run back, the kill in visit 3
+  do
+    fresh()
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); START(644, RZ); play(15); die(); play(10); END(644, RZ, 0); rise(); visitOut(60)
+    visitIn(); kill(644, RZ, 30); visitOut()
+    local orig = deepcopy(raw())
+    local b0 = boss(orig, 644)
+    check("copies: a second copy over two visits keeps its mark on the visit it began in", orig.repull == 2 and #orig.visits == 3 and parts(b0) == 2 and b0.r2.v == 2
+      and b0.r2.pulls == 2 and b0.r2.wipes == 1 and b0.r2.combat == 55 and b0.r2.kill ~= nil and b0.pulls == 3 and b0.combat == 75, tostring(orig.repull))
+    R.split(orig.id, orig.repull)
+    local A, B = closed()[1], closed()[2]
+    local a, b = boss(A, 644), boss(B, 644)
+    check("copies: Split here at the hinted visit gives the second part its kill, its wipe and both its pulls", a and a.kill == b0.kill and (a.pulls or 1) == 1 and a.combat == 20 and a.r2 == nil
+      and b and b.kill ~= nil and b.pulls == 2 and b.wipes == 1 and b.combat == 55 and b.r2 == nil and A.repull == nil and B.repull == nil, b and tostring(b.pulls))
+    invariants("copies over two visits")
+    R.join(B.id)
+    local J = strip(deepcopy(closed()[1]))
+    check("copies: and the join gives the original back, its mark worked out again", #closed() == 1 and (same(J, strip(deepcopy(orig)))), select(2, same(J, strip(deepcopy(orig)))))
+  end
+  -- three copies, one per visit, Rhahk'Zor killed in each: split in both orders
+  do
+    fresh()
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); kill(644, RZ, 25); visitOut(300)
+    visitIn(); kill(644, RZ, 35); visitOut()
+    local orig = deepcopy(raw())
+    local b0 = boss(orig, 644)
+    local starts = R.visitClocks(orig)
+    local k1, k2, k3 = b0.kill, b0.r2 and b0.r2.kill, b0.r2 and b0.r2.r2 and b0.r2.r2.kill
+    check("copies: three copies are three parts, each with its own kill and its first visit", orig.repull == 2 and parts(b0) == 3 and b0.pulls == 3 and b0.combat == 80
+      and b0.r2.v == 2 and b0.r2.pulls == 2 and b0.r2.combat == 60 and b0.r2.r2.v == 3 and (b0.r2.r2.pulls or 1) == 1 and b0.r2.r2.combat == 35
+      and k1 and k2 and k3 and k1 < starts[2] and k2 > starts[2] and k2 < starts[3] and k3 > starts[3], tostring(parts(b0)))
+    -- order 1: at visit 3, then the first part at visit 2
+    R.split(orig.id, 3)
+    local A, B = closed()[1], closed()[2]
+    local a, b = boss(A, 644), boss(B, 644)
+    check("copies: split at visit 3, the third copy is the second part's own row", a and a.pulls == 2 and a.combat == 45 and parts(a) == 2 and a.r2.v == 2 and a.r2.kill == k2 and A.repull == 2
+      and b and (b.pulls or 1) == 1 and b.combat == 35 and b.kill == k3 - starts[3] and b.r2 == nil and B.repull == nil, a and tostring(a.pulls))
+    R.split(A.id, 2)
+    local rows = { boss(closed()[1], 644), boss(closed()[2], 644), boss(closed()[3], 644) }
+    check("copies: then at visit 2, each part has its own kill row, and the pulls and combat add up", #closed() == 3 and rows[1] and rows[2] and rows[3]
+      and rows[1].combat == 20 and rows[2].combat == 25 and rows[3].combat == 35 and rows[1].kill and rows[2].kill and rows[3].kill
+      and sumOf(rows, "pulls") == 3 and sumOf(rows, "combat") == 80 and parts(rows[1]) == 1 and parts(rows[2]) == 1, ("%s %s"):format(sumOf(rows, "pulls"), sumOf(rows, "combat")))
+    invariants("three copies, order 1")
+    R.join(closed()[2].id); R.join(closed()[2].id)
+    local J = strip(deepcopy(closed()[1]))
+    check("copies: joined back in two steps, the original record", #closed() == 1 and (same(J, strip(deepcopy(orig)))), select(2, same(J, strip(deepcopy(orig)))))
+    -- order 2: at visit 2, then the second part at its visit 2
+    R.split(closed()[1].id, 2)
+    A, B = closed()[1], closed()[2]
+    a, b = boss(A, 644), boss(B, 644)
+    check("copies: split at visit 2, the second part holds copies 2 and 3 apart, its mark on its own visit 2", a and (a.pulls or 1) == 1 and a.combat == 20 and a.r2 == nil and A.repull == nil
+      and b and b.pulls == 2 and b.combat == 60 and parts(b) == 2 and b.r2.v == 2 and b.kill == k2 - starts[2] and b.r2.kill == k3 - starts[2] and B.repull == 2, b and tostring(b.pulls))
+    R.split(B.id, 2)
+    rows = { boss(closed()[1], 644), boss(closed()[2], 644), boss(closed()[3], 644) }
+    check("copies: then the second part at its visit 2: copy 3 keeps its own kill, pull and combat", #closed() == 3 and rows[2] and rows[3] and (rows[2].pulls or 1) == 1 and rows[2].combat == 25
+      and (rows[3].pulls or 1) == 1 and rows[3].combat == 35 and rows[3].kill == k3 - starts[3] and sumOf(rows, "pulls") == 3 and sumOf(rows, "combat") == 80
+      and R.routeOf(closed()[3]) == "644", rows[3] and tostring(rows[3].combat))
+    invariants("three copies, order 2")
+  end
+  -- a row whose first copy began after the cut goes whole to the second part, its parts rebased; split again there
+  do
+    fresh()
+    visitIn(); play(20); visitOut(300)                            -- (trash only)
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); kill(644, RZ, 30); visitOut()
+    local orig = deepcopy(raw())
+    local b0, starts = boss(orig, 644), R.visitClocks(orig)
+    R.split(orig.id, 2)
+    local B = closed()[2]
+    local b = boss(B, 644)
+    check("copies: the whole row goes to the second part, its second copy rebased and its mark moved", boss(closed()[1], 644) == nil and b and b.pulls == 2 and b.kill == b0.kill - starts[2]
+      and b.r2 and b.r2.kill == b0.r2.kill - starts[2] and b.r2.v == 2 and B.repull == 2, b and tostring(b.kill))
+    R.split(B.id, 2)
+    local c3 = boss(closed()[3], 644)
+    check("copies: Split here at that mark gives the second copy its own row on its own clock", c3 and c3.kill == b0.r2.kill - starts[3] and (c3.pulls or 1) == 1 and c3.combat == 30
+      and closed()[2].repull == nil and closed()[3].repull == nil, c3 and tostring(c3.kill))
+    invariants("whole row to B")
+  end
+  -- an END never seen on a pull of a later copy: by leaving, and by a START again
+  do
+    fresh()
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); START(644, RZ); play(10); combat(false); leave(); play(300)
+    visitIn(); START(644, RZ); play(5); START(644, RZ); play(20); END(644, RZ, 1); visitOut()
+    local b = boss(raw(), 644)
+    -- (the copy's part: 3 pulls, one ended by leaving, one by a START again, both counted unseen; one kill)
+    check("copies: an END missed on a later copy is unseen on its part too, by leaving and by a restart", b and b.unknown == 2 and b.r2 and b.r2.unknown == 2 and b.r2.pulls == 3 and b.r2.kill ~= nil
+      and b.pulls == 4 and parts(b) == 2, b and b.r2 and tostring(b.r2.unknown))
+  end
+  -- joins: A already holds a second copy and B pulls the boss again; A never killed and B holds two copies
+  do
+    fresh()
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); kill(644, RZ, 25); visitOut()
+    local A = deepcopy(raw())
+    visitIn(); kill(644, RZ, 35); visitOut()
+    R.join(raw().id)
+    local j = boss(closed()[1], 644)
+    check("join: a copy more onto a row that has two: three parts, each its own kill, B's in its own visit", #closed() == 1 and j and j.pulls == 3 and j.combat == 80 and parts(j) == 3
+      and j.r2.pulls == 2 and j.r2.combat == 60 and j.r2.kill == boss(A, 644).r2.kill and j.r2.r2.v == 3 and j.r2.r2.combat == 35 and closed()[1].repull == 2, j and tostring(j.pulls))
+    fresh()
+    visitIn(); START(644, RZ); play(15); die(); play(10); END(644, RZ, 0); rise(); visitOut()
+    A = deepcopy(raw())
+    visitIn(); kill(644, RZ, 20); visitOut(300)
+    visitIn(); kill(644, RZ, 30); visitOut()
+    local Bb = boss(raw(), 644)
+    local cJ = A.secs.inside + (A.secs.ghost or 0) + (raw().visits[1].gg or 0)
+    R.join(raw().id)
+    j = boss(closed()[1], 644)
+    check("join: A's wipe and B's first kill are one copy, B's second copy a part of its own, both on the joined clock", j and j.pulls == 3 and j.wipes == 1 and j.kill == Bb.kill + cJ
+      and parts(j) == 2 and j.r2.kill == Bb.r2.kill + cJ and j.r2.v == #A.visits + 2 and (j.r2.pulls or 1) == 1 and j.r2.combat == 30 and closed()[1].repull == 3, j and tostring(j.kill))
+  end
+  -- Join with the previous run while a pull of a boss that run killed is still open: its END goes to the copy
+  do
+    fresh()
+    visitIn(); kill(644, RZ, 20); visitOut()
+    visitIn(); START(644, RZ)
+    local ok = R.join(open().id)
+    play(20); END(644, RZ, 1); combat(false)
+    local b = boss(open(), 644)
+    check("join: an open pull of a boss killed before ends on the second copy's part", ok and #closed() == 0 and b and b.pulls == 2 and b.combat == 40 and b.r2 and b.r2.kill ~= nil
+      and b.r2.kill > b.kill and (b.r2.pulls or 1) == 1 and b.r2.combat == 20 and b.r2.v == 2 and open().repull == 2, b and b.r2 and tostring(b.r2.kill))
+    leave(); expire()
+  end
+
+  -- the best of a route that skipped bosses says so; the hover of a run compared at a boss says at which
+  do
+    fresh()
+    local K4 = function(o) return { { id = 1, at = 100 + o }, { id = 2, at = 200 + o }, { id = 3, at = 300 + o }, { id = 4, at = 400 + o } } end
+    clear("Deadmines", DMAP, 10, K4(0)); clear("Deadmines", DMAP, 10, K4(20))
+    local part = clear("Deadmines", DMAP, 10, { { id = 1, at = 100 }, { id = 2, at = 200 } })
+    local v
+    for _, x in ipairs(R.views()) do if x.id == part.id then v = x end end
+    T.renderRun(v)
+    local dv = T.dungeonDetail()
+    local m = R.fmtDur(R.measure(part))
+    check("route: a run of 2 of 4 bosses is the best of its own route, and its page names the route", v and v.cmp and v.cmp.mode == "same" and v.cmp.isBest and v.total == 4
+      and dv.paceLine == ("Best for these 2 bosses %s on %s, first pull to last kill"):format(m, date("%d %b", part.t)) .. SEP .. "this run is the best" and dv.deltaText == "best (2/4)", dv.paceLine)
+    local rows = {}
+    for _, r in ipairs(T.dungeonList().tbl.rows) do if r.shown ~= false and r.run then rows[r.run.id] = r end end
+    local hov = table.concat(T.dungeonList().tipLines(v), "|")
+    check("route: LENGTH and the hover say which best, never a bare one", rows[part.id] and rows[part.id].c.dur.text:find(" · best %(2/4%)$") ~= nil
+      and hov:find("Against the best for these 2 bosses: first pull to last boss kill, " .. m .. " here, best " .. m, 1, true) ~= nil, (rows[part.id] and rows[part.id].c.dur.text or "") .. " " .. hov)
+    -- (a full clear still reads a bare best)
+    local full
+    for _, x in ipairs(R.views()) do if x.cmp and x.cmp.isBest and x.id ~= part.id then full = x end end
+    check("route: a full clear's best stays a bare best", full and rows[full.id] and rows[full.id].c.dur.text:find(" · best$") ~= nil, full and rows[full.id] and rows[full.id].c.dur.text)
+    -- an edited run of 1, 2 and 5 has no best of its own: compared at boss 2 of 4 against the route that shares its start
+    local c = me()
+    local ed = T.runRecord(DM, M.epoch - 100, 900, { firstPull = 10, diff = 1, size = 1, edited = true, map = DMAP,
+      bosses = { { enc = 1, combat = 10, kill = 150 }, { enc = 2, combat = 10, kill = 260 }, { enc = 5, combat = 10, kill = 600 } } })
+    c.dungeonRuns[#c.dungeonRuns + 1] = ed; R.statsAdd(c, ed)
+    local ve
+    for _, x in ipairs(R.views()) do if x.id == ed.id then ve = x end end
+    hov = table.concat(T.dungeonList().tipLines(ve), "|")
+    check("route: a run compared at a boss of another route says at which, from the first pull", ve and ve.cmp and ve.cmp.mode == "prefix" and ve.cmp.at == 2
+      and hov:find(("Against the best at boss 2 of %d: from the first pull, %s here, best %s"):format(ve.cmp.of, R.fmtDur(250), R.fmtDur(ve.cmp.best)), 1, true) ~= nil
+      and not hov:find("last boss kill", 1, true), hov)
+  end
+
+  -- the guards of the statistics: a folded dungeon's run and a dropped route's run are never its `last` or its best
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local function add(inst, t, enc, kill)
+      local r = T.runRecord(inst, t, 200, { firstPull = 10, bosses = { { enc = enc, name = "B", combat = 5, kill = kill or 50 } }, size = 1, diff = 1 })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+      return r
+    end
+    local X = add("Dungeon 1", M.epoch - 100000, 9001)
+    for i = 2, R.STATS_CAP + 1 do add("Dungeon " .. i, M.epoch - 100000 + i * 100, 9000 + i) end
+    -- (made again by a run with an older start than the folded one, then by the newest)
+    local Y1 = add("Dungeon 1", X.t - 50, 9001)
+    local Y2 = add("Dungeon 1", M.epoch - 100, 9001)
+    R.delete(Y2.id)
+    local s = stats("Dungeon 1")
+    check("fold: deleting the newest run puts last back on the dungeon's own runs, never the folded one", X.notIn and X.notIn.dungeon and s and s.last == Y1.t and s.routes["9001/d1/solo"].last == Y1.t,
+      s and tostring(s.last))
+  end
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local function add(t, enc, kill)
+      local r = T.runRecord("Deadmines", t, 200, { firstPull = 10, bosses = { { enc = enc, combat = 5, kill = kill or 50 } }, size = 1 })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+      return r
+    end
+    local T0 = M.epoch - 50000
+    for i = 1, 3 do add(T0 + i, 700) end
+    local O = add(T0 + 9000, 701, 20)                             -- (a recent run with the best measure of its route)
+    for i = 2, R.ROUTE_CAP - 1 do add(T0 + 100 * i, 700 + i); add(T0 + 100 * i + 1, 700 + i) end
+    add(T0 + 2000, 709)                                           -- (the ninth route: 701, run once, goes)
+    local RT = stats("Deadmines").routes
+    check("guards: the route run once goes at the cap, its run marked", RT["701/solo"] == nil and O.notIn and O.notIn.route == true, O.notIn and tostring(O.notIn.route))
+    local N1 = add(T0 + 5000, 701, 60)                            -- (made again: an older start than O's)
+    local N2 = add(T0 + 20000, 701, 40)                           -- (the newest, and the route's best)
+    check("guards: the route made again holds its own runs", RT["701/solo"] and RT["701/solo"].n == 2 and RT["701/solo"].bestId == N2.id)
+    R.delete(N2.id)
+    local r = stats("Deadmines").routes["701/solo"]
+    check("guards: deleting the made-again route's best and newest run takes neither from the dropped run", r and r.n == 1 and r.bestId == N1.id and r.best == 50 and r.last == N1.t,
+      r and (tostring(r.bestId == O.id) .. " " .. tostring(r.last)))
+    -- room again: the marked run, counted by a recompute, is in its route from then on
+    local gone = {}
+    for _, x in ipairs(c.dungeonRuns) do local e = x.bosses[1].enc; if e >= 702 and e <= 705 then gone[#gone + 1] = x.id end end
+    for _, id in ipairs(gone) do R.delete(id) end
+    R.statsRebuild(c, true)
+    check("guards: a recompute counts the marked run in its route again and clears its mark", stats("Deadmines").routes["701/solo"].n == 2 and O.notIn == nil, O.notIn and tostring(O.notIn.route))
+    R.delete(O.id)
+    local after = deepcopy(me().dungeonStats)
+    R.statsRebuild(c, true)
+    check("guards: and deleting it then takes it out of its route", after.deadmines.routes["701/solo"].n == 1 and (same(after, me().dungeonStats)), select(2, same(after, me().dungeonStats)))
+  end
+  -- a tie at the route cap: the same runs and the same last start, the lowest key goes
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    for i = 1, R.ROUTE_CAP + 1 do
+      local r = T.runRecord("Deadmines", M.epoch - 5000, 100, { firstPull = 10, bosses = { { enc = 720 + i, combat = 5, kill = 50 } }, size = 1 })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+    end
+    local RT = stats("Deadmines").routes
+    local keys = {}
+    for k in pairs(RT) do keys[#keys + 1] = k end
+    table.sort(keys)
+    check("guards: a tie at the route cap drops the lowest key", RT["721/solo"] == nil and #keys == R.ROUTE_CAP and keys[1] == "722/solo", table.concat(keys, " "))
+  end
+  -- a run evicted from the list is read again: the run left is now the only one of its dungeon
+  do
+    fresh()
+    local c = me()
+    local P = T.runRecord("Shadowfang Keep", M.epoch - 9000, 300, { firstPull = 10, partial = "ended while a boss was in progress", bosses = { { enc = 3, combat = 5, kill = 50 } } })
+    local Q = T.runRecord("Shadowfang Keep", M.epoch - 5000, 300, { firstPull = 10, bosses = { { enc = 3, combat = 5, kill = 50 } }, size = 1 })
+    c.dungeonRuns = { P, Q }
+    R.statsRebuild(c, true)
+    local before = R.view(Q, false).cmp.first
+    local cap = R.CAP
+    R.CAP = 1
+    R.evict(c.dungeonRuns, c)
+    R.CAP = cap
+    local after = R.view(Q, false).cmp.first
+    check("cache: an eviction reads the runs left again", before == false and after == true and #c.dungeonRuns == 1, tostring(before) .. " " .. tostring(after))
   end
 
   -- ── the contract of the new keys ─────────────────────────────────────────────────────────────────────────────

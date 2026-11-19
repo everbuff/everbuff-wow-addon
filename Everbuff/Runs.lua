@@ -251,7 +251,8 @@ function Runs.closeEncs(run)
     local b = bossRow(run, id)
     if b then
       b.unknown = num(b.unknown) + 1
-      if type(e) == "table" and e.rp and type(b.r2) == "table" then b.r2.unknown = num(b.r2.unknown) + 1 end
+      local L = Runs.levels(b, type(e) == "table" and plainNum(e.rp) or 0)
+      for i = 2, #L do L[i].unknown = num(L[i].unknown) + 1 end
     end
     n = n + 1
   end
@@ -264,6 +265,78 @@ function Runs.pullOf(b)
   if plainNum(b.p) then return b.p end
   if plainNum(b.kill) then return b.kill - num(b.dur or b.combat) end
   return 0
+end
+-- The copies of a boss row. A boss killed in an earlier visit and pulled again keeps those pulls apart on its row
+-- (`r2`, Runs.encStart), and once that part has a kill and the boss is pulled in a later visit still, a part of its
+-- own inside it (`r2.r2`): each part holds its copy and every later one, `v` the visit of its first pull, at most
+-- Runs.PART_CAP parts (later pulls go to the last). Runs.levels: the row and its parts, outermost first, at most `d`
+-- parts when given. Runs.parts: the copies one by one (each part less the one inside it), every field explicit.
+-- Runs.stack: the row again from such a list, the fields of `base` (enc, name) on the outermost.
+Runs.PART_CAP = 2
+Runs.PART_SUM = { "wipes", "resets", "unknown", "combat" }
+function Runs.levels(b, d)
+  local out, x = { b }, b
+  while type(x.r2) == "table" and #out <= (d or Runs.PART_CAP) do x = x.r2; out[#out + 1] = x end
+  return out
+end
+function Runs.parts(b)
+  local L, out = Runs.levels(b), {}
+  for i, x in ipairs(L) do
+    local nx = L[i + 1]
+    local y = { p = Runs.pullOf(x), kill = plainNum(x.kill), fight = x.fight, ok = x.ok, dur = num(x.dur or x.combat), v = i > 1 and plainNum(x.v) or nil }
+    y.pulls = max(1, (x.pulls or 1) - (nx and (nx.pulls or 1) or 0))
+    for _, k in ipairs(Runs.PART_SUM) do y[k] = max(0, num(x[k]) - (nx and num(nx[k]) or 0)) end
+    out[i] = y
+  end
+  return out
+end
+function Runs.stack(P, base)
+  -- (past the cap, the later copies go to the last part kept, as Runs.encStart puts them)
+  while #P > Runs.PART_CAP + 1 do
+    local z, y = table.remove(P), P[#P]
+    y.pulls = y.pulls + z.pulls
+    for _, k in ipairs(Runs.PART_SUM) do y[k] = y[k] + z[k] end
+  end
+  local below
+  for i = #P, 1, -1 do
+    local s = P[i]
+    local x = i == 1 and Runs.copy(base) or {}
+    x.p, x.kill, x.fight, x.ok, x.dur, x.v = s.p, s.kill, s.fight, s.ok, s.dur, i > 1 and s.v or nil
+    x.pulls = s.pulls + (below and below.pulls or 0)
+    for _, k in ipairs(Runs.PART_SUM) do x[k] = s[k] + (below and below[k] or 0) end
+    x.r2 = below
+    below = x
+  end
+  return below
+end
+-- the visit "Possibly two runs" points at: the first visit of a part of a copy after the first, on any boss row (nil
+-- when no part says which visit it began in: a record of 0.9.51's review round 2 keeps its own mark)
+function Runs.repullOf(rec)
+  local v
+  for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do
+    local L = Runs.levels(b)
+    for i = 2, #L do local x = plainNum(L[i].v); if x and x >= 2 and (not v or x < v) then v = x end end
+  end
+  return v
+end
+function Runs.hasParts(rec)
+  for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do if type(b.r2) == "table" and plainNum(b.r2.v) then return true end end
+  return false
+end
+-- A run's route against its dungeon's learned list (`v`, a view): the kills and the list's size when the route
+-- skipped bosses of the list, so a best on it is named "best (5/12)" or "the best for these 5 bosses"; nil for a full
+-- clear, or while the dungeon has no list
+function Runs.routePart(v)
+  if type(v) ~= "table" or v.done or not plainNum(v.total) then return nil end
+  local n = num(v.bossesDown)
+  if n >= v.total then return nil end
+  return n, v.total
+end
+-- the visit of a record a clock offset lies in (`starts`, Runs.visitClocks)
+function Runs.visitAt(starts, o)
+  local j = 1
+  for q = 2, #starts do if starts[q] <= o then j = q end end
+  return j
 end
 -- The kills of a run in groups, in kill order: kills whose pulls overlapped (the Zul'Farrak pair, two bosses pulled
 -- 17 ms apart and killed 5 s apart) are one group, so a split and a segment never depend on which of the two died
@@ -477,10 +550,7 @@ function Runs.lean(run)
   for _, v in ipairs(run.visits) do
     for _, k in ipairs(Runs.LEAN_VISIT) do if v[k] == 0 then v[k] = nil end end
   end
-  for _, b in ipairs(run.bosses) do
-    Runs.leanBoss(b)
-    if type(b.r2) == "table" then Runs.leanBoss(b.r2) end
-  end
+  for _, b in ipairs(run.bosses) do for _, x in ipairs(Runs.levels(b)) do Runs.leanBoss(x) end end
   -- (the first visit's first combat is the run's own `firstPull`; XP counts of 0 a reader takes as 0)
   local v1 = run.visits[1]
   if v1 and v1.fc ~= nil and v1.fc == run.firstPull then v1.fc = nil end
@@ -777,26 +847,32 @@ function Runs.encStart(id, name)
   local was = run.encs[id]
   if was then                                                    -- its END was never seen
     b.unknown = num(b.unknown) + 1; Runs.note("restart")
-    if type(was) == "table" and was.rp and type(b.r2) == "table" then b.r2.unknown = num(b.r2.unknown) + 1 end
+    local L = Runs.levels(b, type(was) == "table" and plainNum(was.rp) or 0)
+    for i = 2, #L do L[i].unknown = num(L[i].unknown) + 1 end
   end
   local o = Runs.clock(run, at)
   -- A boss killed before this visit began is pulled again: possibly a new copy of the dungeon (plan section 6, rule
-  -- 3). Only a flag and the Split button at that visit; never a split by itself. The pulls after the kill, in a
-  -- later visit, are also kept apart on the row (`r2`, the second copy's part), so Split here at that visit gives
-  -- them to the second part as a row of its own (Runs.splitRec) and a join puts them back.
-  local rp = type(b.r2) == "table"
-  if plainNum(b.kill) and #run.visits > 1 then
+  -- 3). Only a flag and the Split button at that visit; never a split by itself. The pulls of that copy, in this
+  -- visit and any later one, are also kept apart on the row (a part, Runs.levels), so Split here at the visit the
+  -- copy began in gives them to the second part as a row of its own (Runs.splitRec) and a join puts them back. The
+  -- part of the newest copy takes every later pull until it has a kill and the boss is pulled in a later visit
+  -- still: then a part of its own begins there. The mark stays on the first visit a copy began in.
+  local L = Runs.levels(b)
+  local tail = L[#L]
+  if plainNum(tail.kill) and #run.visits > 1 and #L <= Runs.PART_CAP then
     local starts = Runs.visitClocks(run)
-    if starts and b.kill < num(starts[#run.visits]) then run.repull = #run.visits; Runs.note("repull"); rp = true end
+    local n = #run.visits
+    if starts and tail.kill < num(starts[n]) then
+      tail.r2 = { pulls = 0, wipes = 0, resets = 0, unknown = 0, combat = 0, p = o, v = n }
+      L[#L + 1] = tail.r2
+      if not (plainNum(run.repull) and run.repull <= n) then run.repull = n end
+      Runs.note("repull")
+    end
   end
-  run.encs[id] = { t = at, o = o, d = 0, rp = rp and 1 or nil }
-  if num(b.pulls) == 0 then b.p = o end
-  b.pulls = num(b.pulls) + 1
-  if rp then
-    local r2 = type(b.r2) == "table" and b.r2 or { pulls = 0, wipes = 0, resets = 0, unknown = 0, combat = 0 }
-    b.r2 = r2
-    if num(r2.pulls) == 0 then r2.p = o end
-    r2.pulls = num(r2.pulls) + 1
+  run.encs[id] = { t = at, o = o, d = 0, rp = #L > 1 and (#L - 1) or nil }
+  for _, x in ipairs(L) do
+    if num(x.pulls) == 0 then x.p = o end
+    x.pulls = num(x.pulls) + 1
   end
   pulled(run, o)
 end
@@ -854,9 +930,7 @@ function Runs.encEnd(id, name, success)
   -- must not move where the kill pull began, Runs.pullOf and Runs.groups)
   -- (the second copy's part of a row, Runs.encStart, gets the same: its own kill, pull length and counts, and the
   -- row keeps the sums of both)
-  local rows = { b }
-  if e.rp and type(b.r2) == "table" then rows[2] = b.r2 end
-  for i, x in ipairs(rows) do
+  for i, x in ipairs(Runs.levels(b, plainNum(e.rp) or 0)) do
     if i > 1 then x.combat = num(x.combat) + dur end
     if not x.kill then x.ok, x.dur = ok, dur end
     if ok == 1 then
@@ -1780,7 +1854,7 @@ local function openBlocks(r)
   for _, k in ipairs({ "xp", "rep", "loot" }) do r.hidden[k] = num(r.hidden[k]) end
   for _, k in ipairs(Runs.SECS) do r.secs[k] = num(r.secs[k]) end
   for _, b in ipairs(r.bosses) do
-    for _, x in ipairs({ b, type(b.r2) == "table" and b.r2 or nil }) do
+    for _, x in ipairs(Runs.levels(b)) do
       x.pulls = x.pulls or 1
       for _, k in ipairs(Runs.LEAN_BOSS) do x[k] = num(x[k]) end
       x.combat = num(x.combat)
@@ -1865,25 +1939,19 @@ function Runs.splitRec(rec, k, isOpen)
     if x.kill then x.kill = x.kill + d end
     if plainNum(x.p) then x.p = x.p + d end                      -- (below 0: first pulled before the cut)
   end
+  -- each copy of a boss row (Runs.parts: a boss killed before the cut and pulled again after it) goes whole to the
+  -- side of its kill, else of its first pull; the copies of one side are that side's row again
   for _, b in ipairs(rec.bosses) do
-    local x = copyT(b)
-    local r2 = type(b.r2) == "table" and b.r2 or nil
-    if (plainNum(b.kill) or Runs.pullOf(b)) >= cB then
-      rebase(x, -cB)
-      if x.r2 then rebase(x.r2, -cB) end
-      B.bosses[#B.bosses + 1] = x
-    elseif r2 and Runs.pullOf(r2) >= cB then
-      -- a boss killed before the cut and pulled again after it (the repull of a second copy): the pulls after the
-      -- kill are the second part's own row, the row before keeps the rest
-      x.r2 = nil
-      x.pulls = max(1, (b.pulls or 1) - (r2.pulls or 1))
-      for _, k in ipairs({ "wipes", "resets", "unknown", "combat" }) do x[k] = max(0, num(b[k]) - num(r2[k])) end
-      A.bosses[#A.bosses + 1] = x
-      local y = copyT(r2)
-      y.enc, y.name, y.p = b.enc, b.name, Runs.pullOf(r2)
-      rebase(y, -cB)
-      B.bosses[#B.bosses + 1] = y
-    else A.bosses[#A.bosses + 1] = x end
+    local pa, pb = {}, {}
+    for _, s in ipairs(Runs.parts(b)) do
+      if #pb > 0 or (s.kill or s.p) >= cB then
+        rebase(s, -cB)
+        if s.v then s.v = s.v - k + 1 end
+        pb[#pb + 1] = s
+      else pa[#pa + 1] = s end
+    end
+    if #pa > 0 then A.bosses[#A.bosses + 1] = Runs.stack(pa, b) end
+    if #pb > 0 then B.bosses[#B.bosses + 1] = Runs.stack(pb, b) end
   end
   A.deaths, B.deaths = {}, {}
   for _, d in ipairs(type(rec.deaths) == "table" and rec.deaths or {}) do
@@ -1905,9 +1973,12 @@ function Runs.splitRec(rec, k, isOpen)
       for _, b in ipairs(B.bosses) do local p0 = Runs.pullOf(b); if not B.firstPull or p0 < B.firstPull then B.firstPull = max(0, p0) end end
     end
   end
-  -- "Possibly two runs" goes with its visit: gone when the cut is at it, on the side that holds it otherwise
+  -- "Possibly two runs" goes with the copies: each side's mark is the first visit a later copy of a boss began in
+  -- on that side (gone on a side that holds one copy of each boss); a record whose parts do not say which visit
+  -- moves its mark with its visit, gone when the cut is at it
   local rp = plainNum(rec.repull)
-  if rp and rp < k then A.repull = rp elseif rp and rp > k then B.repull = rp - k + 1 end
+  if Runs.hasParts(rec) then A.repull, B.repull = Runs.repullOf(A), Runs.repullOf(B)
+  elseif rp and rp < k then A.repull = rp elseif rp and rp > k then B.repull = rp - k + 1 end
   if type(rec.xp) == "table" then
     local function xpOf(H)
       return { gain = sumV(H.visits, "xp"), kill = sumV(H.visits, "xpKill"), quest = sumV(H.visits, "xpQuest"), n = sumV(H.visits, "kills") }
@@ -1928,7 +1999,15 @@ function Runs.splitRec(rec, k, isOpen)
   B.hidden = { xp = 0, rep = 0, loot = 0 }
   if isOpen then
     for _, key in ipairs(Runs.OPEN_KEYS) do B[key] = copyT(rec[key]) end
-    for _, e in pairs(type(B.encs) == "table" and B.encs or {}) do if type(e) == "table" then e.o = num(e.o) - cB end end
+    for id, e in pairs(type(B.encs) == "table" and B.encs or {}) do
+      if type(e) == "table" then
+        e.o = num(e.o) - cB
+        -- (a pull still open belongs to the newest copy of its row, which is B's when B has the row)
+        local n
+        for _, x in ipairs(B.bosses) do if x.enc == id then n = #Runs.levels(x) - 1 end end
+        e.rp = (n and n > 0) and n or nil
+      end
+    end
     openBlocks(B)
   end
   return Runs.closeRec(A), isOpen and B or Runs.closeRec(B)
@@ -1948,7 +2027,7 @@ function Runs.joinRec(A, B, isOpen)
   if A.inst ~= B.inst or A.kind ~= B.kind then return nil, "other" end
   if #A.visits + #B.visits > Runs.VISIT_CAP then return nil, "visits" end
   local _, gA = Runs.visitClocks(A)
-  local _, gB = Runs.visitClocks(B)
+  local sB, gB = Runs.visitClocks(B)
   if not (gA and gB) then return nil, "old" end
   local wJ, gapW = B.t - A.t, B.t - A.endT
   if gapW < 0 then return nil, "order" end
@@ -1961,7 +2040,6 @@ function Runs.joinRec(A, B, isOpen)
   -- (a closed record keeps `size` only for a run played alone: no size is a group; the joined run is alone only
   -- when both were)
   if A.size or B.size then J.size = max(plainNum(A.size) or 2, plainNum(B.size) or 2) end
-  J.repull = plainNum(A.repull) or (plainNum(B.repull) and B.repull + #A.visits) or nil
   J.visits = {}
   for j, x in ipairs(A.visits) do local y = copyT(x); if j >= 2 then setGap(y, gA[j]) end; J.visits[#J.visits + 1] = y end
   for j, x in ipairs(B.visits) do
@@ -1984,43 +2062,35 @@ function Runs.joinRec(A, B, isOpen)
     for j = 2, #B.visits do if B.visits[j].fc == B.firstPull then other = true end end
     if not other then bf.fc = B.firstPull + cJ end
   end
+  -- Rows of the same boss are one row again: the copies of A's row, then B's (Runs.parts). B's first copy goes on
+  -- A's last when that one has no kill (the same copy, pulled again after the gap); else it is a copy of its own,
+  -- a boss killed before pulled again (Runs.encStart), in the visit it began in.
   local rows, byEnc = {}, {}
-  for i, b in ipairs(A.bosses) do local x = copyT(b); rows[#rows + 1] = { b = x, i = i }; byEnc[x.enc] = x end
-  local KEEP2 = { "wipes", "resets", "unknown", "combat" }
+  for i, b in ipairs(A.bosses) do local r = { b = copyT(b), i = i }; rows[#rows + 1] = r; byEnc[b.enc] = r end
   for i, b in ipairs(B.bosses) do
-    local x = copyT(b)
-    if x.kill then x.kill = x.kill + cJ end
-    if plainNum(x.p) then x.p = x.p + cJ end
-    if type(x.r2) == "table" then
-      if x.r2.kill then x.r2.kill = x.r2.kill + cJ end
-      if plainNum(x.r2.p) then x.r2.p = x.r2.p + cJ end
+    local P = Runs.parts(b)
+    for q, s in ipairs(P) do
+      local v = (q > 1 and s.v) or Runs.visitAt(sB, s.p)
+      if s.kill then s.kill = s.kill + cJ end
+      s.p, s.v = s.p + cJ, v + #A.visits
     end
-    local e = byEnc[x.enc]
-    if e then
-      e.p = Runs.pullOf(e)
-      local killed, eDur = e.kill ~= nil, e.dur or e.combat
-      e.pulls = (e.pulls or 1) + (x.pulls or 1)
-      for _, k in ipairs(KEEP2) do e[k] = num(e[k]) + num(x[k]) end
-      if killed then
-        e.dur = eDur                                             -- (the kill pull's length stays, as in Runs.encEnd)
-        -- the later run's pulls of a boss killed before are the second copy's part of the row (Runs.encStart)
-        local r2 = type(e.r2) == "table" and e.r2 or nil
-        if r2 then
-          r2.pulls = (r2.pulls or 1) + (x.pulls or 1)
-          for _, k in ipairs(KEEP2) do r2[k] = num(r2[k]) + num(x[k]) end
-          if not r2.kill and x.kill then r2.kill, r2.fight, r2.ok, r2.dur = x.kill, x.fight, x.ok, x.dur end
-        else
-          r2 = { p = Runs.pullOf(x), pulls = x.pulls, kill = x.kill, fight = x.fight, ok = x.ok, dur = x.dur }
-          for _, k in ipairs(KEEP2) do r2[k] = num(x[k]) end
-          e.r2 = r2
-        end
-      else
-        if x.kill then e.kill, e.fight = x.kill, x.fight end
-        e.ok, e.dur = x.ok, x.dur or x.combat
-        if type(x.r2) == "table" then e.r2 = x.r2 end
+    local r = byEnc[b.enc]
+    if r then
+      local PA = Runs.parts(r.b)
+      local last = PA[#PA]
+      local from = 1
+      if not last.kill then
+        local f = P[1]
+        last.pulls = last.pulls + f.pulls
+        for _, k in ipairs(Runs.PART_SUM) do last[k] = last[k] + f[k] end
+        last.kill, last.fight, last.ok, last.dur = f.kill, f.fight, f.ok, f.dur
+        from = 2
       end
-      if not e.name then e.name = x.name end
-    else rows[#rows + 1] = { b = x, i = 1000 + i }; byEnc[x.enc] = x end
+      for q = from, #P do PA[#PA + 1] = P[q] end
+      local name = r.b.name or b.name
+      r.b = Runs.stack(PA, r.b)
+      r.b.name = name
+    else r = { b = Runs.stack(P, b), i = 1000 + i }; rows[#rows + 1] = r; byEnc[b.enc] = r end
   end
   if #rows > Runs.BOSS_CAP then return nil, "bosses" end
   table.sort(rows, function(x, y)
@@ -2030,6 +2100,9 @@ function Runs.joinRec(A, B, isOpen)
   end)
   J.bosses = {}
   for _, r in ipairs(rows) do J.bosses[#J.bosses + 1] = r.b end
+  -- (the mark of the copies, as Runs.splitRec gives it; a record whose parts do not say which visit keeps its own)
+  if Runs.hasParts(J) then J.repull = Runs.repullOf(J)
+  else J.repull = plainNum(A.repull) or (plainNum(B.repull) and B.repull + #A.visits) or nil end
   J.deaths = {}
   for _, d in ipairs(type(A.deaths) == "table" and A.deaths or {}) do J.deaths[#J.deaths + 1] = copyT(d) end
   for _, d in ipairs(type(B.deaths) == "table" and B.deaths or {}) do local x = copyT(d); x.o = num(x.o) + cJ; J.deaths[#J.deaths + 1] = x end
@@ -2049,9 +2122,10 @@ function Runs.joinRec(A, B, isOpen)
     for id, e in pairs(type(J.encs) == "table" and J.encs or {}) do
       if type(e) == "table" then
         e.o = num(e.o) + cJ
-        -- (a pull still open of a boss the run before killed: its END goes to the second copy's part too)
-        local x = byEnc[id]
-        if x and type(x.r2) == "table" and x.kill and x.kill < cJ then e.rp = 1 end
+        -- (a pull still open belongs to the newest copy of its row: a boss the run before killed is a copy more)
+        local r = byEnc[id]
+        local n = r and (#Runs.levels(r.b) - 1) or 0
+        e.rp = n > 0 and n or nil
       end
     end
     openBlocks(J)
