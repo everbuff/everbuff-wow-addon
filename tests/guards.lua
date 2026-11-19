@@ -188,8 +188,10 @@ return function(P)
     M.groupN = 1; M.timers = {}; M.now = M.now + 100
     roster(); M.runTimers()
   end
+  -- the stub's C_Timer.After drops the seconds; here every delay asked for is kept, so a re-read that is not 2 s fails
+  local realAfter, delays = C_Timer.After, {}
+  C_Timer.After = function(s, fn) delays[#delays + 1] = s; return realAfter(s, fn) end
   do
-    local on = { e = false, f = false }
     check("UNIT_NAME_UPDATE is registered on the Emitter's frame", T.emitterFrame.events.UNIT_NAME_UPDATE == true)
     -- the save file of 2026-11-17: "Equi joined the group", then "Unknown joined the group", "Unknown left the group"
     resetRoster()
@@ -199,6 +201,7 @@ return function(P)
     M.units.party2 = { name = "Unknown" }; M.groupN = 3; roster()
     check("#42 a member with the placeholder name is not written", nk("ROSTERJOIN") == j0 + 1 and anyText("Unknown") == nil, anyText("Unknown"))
     check("#42 the roster is marked as waiting for a name", type(E._rosterWait) == "table" and #M.timers >= 1)
+    check("#42 the re-read is asked for in 2 s", delays[#delays] == 2, tostring(delays[#delays]))
     roster(); roster()
     check("#42 more roster updates while waiting write nothing", nk("ROSTERJOIN") == j0 + 1 and nk("ROSTERLEAVE") == l0)
     nameUpdate("target")
@@ -218,12 +221,15 @@ return function(P)
     -- the client never sends UNIT_NAME_UPDATE: the roster is read again 2 s later
     resetRoster()
     j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    local d0 = #delays
     M.units.party1 = { name = "Unknown" }; M.groupN = 2; roster()
-    check("#42 without the event: nothing yet, one re-read is scheduled", nk("ROSTERJOIN") == j0 and #M.timers == 1, #M.timers)
+    check("#42 without the event: nothing yet, one re-read is scheduled, due in 2 s", nk("ROSTERJOIN") == j0 and #M.timers == 1
+      and #delays == d0 + 1 and delays[#delays] == 2, tostring(delays[#delays]))
     roster()
-    check("#42 a second update does not schedule a second re-read", #M.timers == 1, #M.timers)
+    check("#42 a second update does not schedule a second re-read", #M.timers == 1 and #delays == d0 + 1, #M.timers)
     M.now = M.now + 2; M.runTimers()
-    check("#42 still unnamed after 2 s: nothing, and the next re-read is scheduled", nk("ROSTERJOIN") == j0 and #M.timers == 1, #M.timers)
+    check("#42 still unnamed after 2 s: nothing, and the next re-read is scheduled, again in 2 s", nk("ROSTERJOIN") == j0 and #M.timers == 1
+      and #delays == d0 + 2 and delays[#delays] == 2, tostring(delays[#delays]))
     M.units.party1.name = "Oxii"; M.now = M.now + 2; M.runTimers()
     check("#42 the re-read finds the name: one join", named("ROSTERJOIN", "Oxii") == 1 and nk("ROSTERJOIN") == j0 + 1 and #M.timers == 0, #M.timers)
 
@@ -243,7 +249,8 @@ return function(P)
       and nk("ROSTERJOIN") == j0 + 1 and nk("ROSTERLEAVE") == l0 + 1)
     M.runTimers()
 
-    -- a name that never comes: after ROSTER_WAIT the roster is diffed as it reads, and no timer keeps running
+    -- a name that never comes: the re-reads stop after ROSTER_WAIT, and the member is never written as gone (it is
+    -- there, without a name). Its leave is written when it does leave.
     resetRoster()
     j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
     M.units.party1 = { name = "Ann" }; M.groupN = 2; roster()
@@ -253,10 +260,89 @@ return function(P)
     check("#42 a name that never comes: for 28 s nothing is written and a re-read stays scheduled", rounds == 14 and #M.timers == 1
       and nk("ROSTERLEAVE") == l0 and named("ROSTERJOIN", "Ann") == 1 and anyText("Unknown") == nil, rounds)
     while #M.timers > 0 and rounds < 100 do M.now = M.now + 2; M.runTimers(); rounds = rounds + 1 end
-    check("#42 the re-reads stop after the wait", rounds == 15 and #M.timers == 0, rounds)
-    check("#42 the last re-read writes the roster as it reads: the leave, still no placeholder", named("ROSTERLEAVE", "Ann") == 1 and anyText("Unknown") == nil)
-    roster(); roster()
-    check("#42 and later updates add no second leave and no timer", named("ROSTERLEAVE", "Ann") == 1 and nk("ROSTERLEAVE") == l0 + 1 and #M.timers == 0)
+    check("#42 the re-reads stop after the wait", rounds == 15 and #M.timers == 0 and E.ROSTER_WAIT == 30, rounds)
+    check("#42 a member still unnamed after the wait has not left", nk("ROSTERLEAVE") == l0 and anyText("Unknown") == nil)
+    M.now = M.now + 10; roster(); roster()
+    check("#42 and later updates write no leave and start no timer for it", nk("ROSTERLEAVE") == l0 and nk("ROSTERJOIN") == j0 + 1 and #M.timers == 0, #M.timers)
+    -- a second member joins unnamed after that: it gets its own wait, its own re-reads and its join (no event sent)
+    M.units.party2 = { name = "Unknown" }; M.groupN = 3; roster()
+    check("#42 after one name never came, the next unnamed member is waited for again", #M.timers == 1 and delays[#delays] == 2 and nk("ROSTERJOIN") == j0 + 1, #M.timers)
+    M.units.party2.name = "Bea"; M.now = M.now + 2; M.runTimers()
+    check("#42 and joins once, by the re-read alone, with no leave row", named("ROSTERJOIN", "Bea") == 1 and nk("ROSTERJOIN") == j0 + 2 and nk("ROSTERLEAVE") == l0)
+    check("#42 its wait is over, the old one stays quiet", #M.timers == 0 and type(E._rosterWait) == "table", #M.timers)
+    -- the seen member Bea reads as the placeholder for one update: held, not left, not joined again
+    M.units.party2.name = "Unknown"; roster()
+    check("#42 a seen member unnamed for a moment, while another name never came: no leave", nk("ROSTERLEAVE") == l0 and #M.timers == 1, #M.timers)
+    M.units.party2.name = "Bea"; nameUpdate("party2"); M.runTimers()
+    check("#42 and no second join when its name is back", nk("ROSTERJOIN") == j0 + 2 and nk("ROSTERLEAVE") == l0)
+    -- the name that never came is back after all: nothing to write, Ann was there all along
+    M.units.party1.name = "Ann"; nameUpdate("party1")
+    check("#42 a name back after more than the wait is neither a leave nor a join", nk("ROSTERJOIN") == j0 + 2 and nk("ROSTERLEAVE") == l0 and E._rosterWait == nil)
+    M.units.party1 = M.units.party2; M.units.party2 = nil; M.groupN = 2; roster()
+    check("#42 and when that member does leave, the leave is written once", named("ROSTERLEAVE", "Ann") == 1 and nk("ROSTERLEAVE") == l0 + 1)
+    M.runTimers()
+
+    -- every name hidden for a whole encounter (a secret value, no UNIT_NAME_UPDATE): no leave, no join
+    resetRoster()
+    local four = { "Ada", "Bix", "Cid", "Dee" }
+    for i, nm in ipairs(four) do M.units["party" .. i] = { name = nm } end
+    M.groupN = 5; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    for _, nm in ipairs(four) do M.secrets[nm] = true end
+    roster()
+    for _ = 1, 20 do M.now = M.now + 2; M.runTimers() end          -- 40 s
+    roster()
+    check("#42 four names hidden for 40 s and a roster update: no row", nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0 and #M.timers == 0, nk("ROSTERLEAVE") - l0)
+    M.now = M.now + 20; nameUpdate("party3"); roster()
+    check("#42 still hidden at 60 s: no row", nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0)
+    for _, nm in ipairs(four) do M.secrets[nm] = nil end
+    roster()
+    check("#42 readable again: still no row, nothing waited for", nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0 and E._rosterWait == nil)
+    -- one of the hidden four really leaves: written when the names are readable, and only that one
+    for _, nm in ipairs(four) do M.secrets[nm] = true end
+    roster()
+    M.units.party2 = M.units.party3; M.units.party3 = M.units.party4; M.units.party4 = nil; M.groupN = 4; roster()
+    M.now = M.now + 40; roster()
+    check("#42 a leave among hidden names is not guessed", nk("ROSTERLEAVE") == l0 and nk("ROSTERJOIN") == j0)
+    for _, nm in ipairs(four) do M.secrets[nm] = nil end
+    roster()
+    check("#42 and is written for the right member once the names are readable", named("ROSTERLEAVE", "Bix") == 1 and nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0)
+    M.runTimers()
+
+    -- with readable GUIDs a leave does not wait for a name: the GUID of the member is no longer in the group
+    resetRoster()
+    M.units.party1 = { name = "Ivy", guid = "Player-1-00000A" }; M.units.party2 = { name = "Bob", guid = "Player-1-00000B" }
+    M.groupN = 3; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.secrets["Ivy"] = true; roster()
+    M.units.party2 = nil; M.groupN = 2; roster()
+    check("#42 GUIDs readable: the leave of a named member is written while another name is hidden", named("ROSTERLEAVE", "Bob") == 1 and nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0)
+    M.units.party2 = { name = "Unknown", guid = "Player-1-00000C" }; M.groupN = 3; roster()
+    check("#42 GUIDs readable: a hidden member and an unnamed newcomer: no row", nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0)
+    M.secrets["Ivy"] = nil       -- (the stub hides by value; the name the addon kept from before is plain in the client)
+    M.units.party1 = M.units.party2; M.units.party2 = nil; M.groupN = 2; roster()
+    check("#42 GUIDs readable: a member leaves while the newcomer is still unnamed: its leave is written at once", named("ROSTERLEAVE", "Ivy") == 1
+      and nk("ROSTERLEAVE") == l0 + 2 and nk("ROSTERJOIN") == j0 and type(E._rosterWait) == "table")
+    M.units.party1.name = "Cy"; nameUpdate("party1")
+    check("#42 GUIDs readable: the newcomer joins under its name, known by its GUID after the tokens moved", named("ROSTERJOIN", "Cy") == 1 and nk("ROSTERJOIN") == j0 + 1 and E._rosterWait == nil)
+    M.runTimers()
+
+    -- a loading screen with one member unnamed (the seed is silent): real joins and leaves in that time are written
+    resetRoster()
+    M.units.party1 = { name = "Ann" }; M.units.party2 = { name = "Kip" }; M.groupN = 3; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1 = { name = "Unknown" }
+    M.fire("PLAYER_ENTERING_WORLD", false, false)
+    check("#42 loading screen, a seen member unnamed: nothing written", nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0 and type(E._rosterWait) == "table")
+    M.now = M.now + 3; M.units.party3 = { name = "Rob" }; M.groupN = 4; roster()
+    check("#42 a real join 3 s after the loading screen is written", named("ROSTERJOIN", "Rob") == 1 and nk("ROSTERJOIN") == j0 + 1 and nk("ROSTERLEAVE") == l0)
+    M.now = M.now + 2; M.units.party2 = M.units.party3; M.units.party3 = nil; M.groupN = 3; roster()
+    check("#42 a real leave in that time waits for the name", nk("ROSTERLEAVE") == l0)
+    M.now = M.now + 2; M.units.party1 = { name = "Ann" }; nameUpdate("party1")
+    check("#42 and is written when the name is there: Kip left, Ann neither left nor joined", named("ROSTERLEAVE", "Kip") == 1 and nk("ROSTERLEAVE") == l0 + 1
+      and nk("ROSTERJOIN") == j0 + 1 and E._rosterWait == nil)
+    M.runTimers(); roster()
+    check("#42 nothing more after that", nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0 + 1)
 
     -- login with a group whose names are not there yet: the seed stays silent when they arrive
     resetRoster()
@@ -270,6 +356,20 @@ return function(P)
     check("#42 a real join after that is written", named("ROSTERJOIN", "Dave") == 1 and nk("ROSTERJOIN") == j0 + 1)
     M.units.party1 = nil; M.units.party1 = M.units.party2; M.units.party2 = M.units.party3; M.units.party3 = nil; M.groupN = 3; roster()
     check("#42 and a real leave too (the unit tokens moved up)", named("ROSTERLEAVE", "Crowbar") == 1 and nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0 + 1)
+    -- the same with a name that takes longer than the wait, and a real join in between
+    resetRoster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1 = { name = "Unknown" }; M.units.party2 = { name = "Ida" }; M.groupN = 3
+    M.fire("PLAYER_ENTERING_WORLD", true, false)
+    M.now = M.now + 5; M.units.party3 = { name = "Fay" }; M.groupN = 4; roster()
+    check("#42 a real join while a name of the seed is still missing is written", named("ROSTERJOIN", "Fay") == 1 and nk("ROSTERJOIN") == j0 + 1)
+    M.now = M.now + 40; roster()
+    M.units.party1.name = "Gus"; nameUpdate("party1")
+    check("#42 a name of the seed arriving after more than the wait is still no join", nk("ROSTERJOIN") == j0 + 1 and nk("ROSTERLEAVE") == l0 and named("ROSTERJOIN", "Gus") == 0
+      and named("ROSTERJOIN", "Ida") == 0)
+    M.units.party3 = nil; M.groupN = 3; roster()
+    check("#42 (and the leave of the one who joined is written)", named("ROSTERLEAVE", "Fay") == 1 and nk("ROSTERLEAVE") == l0 + 1)
+    M.runTimers()
 
     -- a hidden name: no row, no error, no comparison
     resetRoster()
@@ -281,9 +381,39 @@ return function(P)
     M.secrets["Veiled"] = nil
     nameUpdate("party1")
     check("#42 readable again: the join is written", named("ROSTERJOIN", "Veiled") == 1)
+    -- "is this unit the player" is an answer the client can hide or refuse (the raid tokens include the player)
     resetRoster()
-    check("#42 the 153 grouped fights of the real save have no Unknown member; this suite is synthetic by design", true)
+    local realIsUnit, realRaid, realGUID = _G.UnitIsUnit, _G.IsInRaid, _G.UnitGUID
+    _G.IsInRaid = function() return true end
+    M.units.raid1 = { name = "Hart", guid = "Player-1-000001" }; M.units.raid2 = { name = "Gil", guid = "Player-1-00000G" }; M.groupN = 2
+    j0, l0, e0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE"), errs()
+    _G.UnitIsUnit = function() error("blocked") end
+    roster()
+    check("#42 UnitIsUnit refused: no error, and the player is no member of its own roster", errs() == e0 and named("ROSTERJOIN", "Gil") == 1 and nk("ROSTERJOIN") == j0 + 1, lastErr())
+    _G.UnitIsUnit = function() return thrower() end
+    local okT, mineT, otherT = pcall(function() return ns.isPlayerUnit("raid1"), ns.isPlayerUnit("raid2") end)
+    check("ns.isPlayerUnit: an answer that is no plain boolean is not tested, the GUIDs decide", okT and mineT == true and otherT == false, mineT)
+    _G.UnitGUID = function() return nil end
+    check("ns.isPlayerUnit: without GUIDs the names decide", ns.isPlayerUnit("raid1") == true and ns.isPlayerUnit("raid2") == false and ns.isPlayerUnit("player") == true)
+    check("ns.unitGUID: nothing readable is nil", ns.unitGUID("raid1") == nil)
+    _G.UnitGUID = realGUID
+    _G.UnitIsUnit = realIsUnit
+    M.secrets[true], M.secrets[false] = true, true        -- every boolean reads as hidden for these two calls
+    local okP, mine, other = pcall(function() return ns.isPlayerUnit("raid1"), ns.isPlayerUnit("raid2") end)
+    M.secrets[true], M.secrets[false] = nil, nil
+    check("ns.isPlayerUnit: a hidden answer is not tested either", okP and mine == true and other == false, mine)
+    check("ns.isPlayerUnit: the plain answer is taken as it is", ns.isPlayerUnit("raid1") == false and ns.isPlayerUnit("player") == true)
+    M.secrets["Player-1-000001"] = true
+    check("ns.unitGUID: never a hidden one", ns.unitGUID("player") == nil)
+    M.secrets["Player-1-000001"] = nil
+    check("ns.unitGUID: a plain GUID", ns.unitGUID("player") == "Player-1-000001" and ns.unitGUID("raid2") == "Player-1-00000G")
+    M.units.raid1, M.units.raid2 = nil, nil; M.groupN = 1
+    _G.IsInRaid = realRaid
+    roster(); M.runTimers()
+    -- (the 153 grouped fights of the real save have no Unknown member; this suite is synthetic by design)
+    resetRoster()
   end
+  C_Timer.After = realAfter
   -- the group of a fight
   do
     resetRoster()
@@ -293,6 +423,8 @@ return function(P)
     check("UNIT_NAME_UPDATE is registered on the fights frame", fightFrame ~= nil and fightFrame.events.PLAYER_REGEN_DISABLED == true)
     M.units.party1 = { name = "Equi" }; M.units.party2 = { name = "Unknown" }; M.units.party3 = { name = "Unknown" }; M.groupN = 4
     M.auras.party2 = { HELPFUL = { { name = "Mark of the Wild", icon = 136078, spellId = 1126, auraInstanceID = 901 } }, HARMFUL = {} }
+    M.auras.party1 = { HELPFUL = { { name = "Mark of the Wild", icon = 136078, spellId = 1126, auraInstanceID = 801 } }, HARMFUL = {} }
+    M.auras.party3 = { HELPFUL = { { name = "Thorns", icon = 136104, spellId = 467, auraInstanceID = 951 } }, HARMFUL = {} }
     roster()
     local e0 = errs()
     M.units.target = { name = "Noxxion", hostile = true }
@@ -306,7 +438,16 @@ return function(P)
     M.now = M.now + 3
     M.units.party2.name = "Pebbles"; nameUpdate("party2")
     check("#42 fight: the name arrives during the fight", member("party2").name == "Pebbles" and member("party3").name == nil)
-    check("#42 fight: its aura timeline starts then", type(cf.memberAuras["Pebbles"]) == "table")
+    local function pullRows(log, aura)
+      local n = 0
+      for _, a in ipairs(log or {}) do if a.gain and a.atPull and a.t == 0 and a.name == aura then n = n + 1 end end
+      return n
+    end
+    check("#42 fight: its aura timeline is its own from the pull on: the buff it held at the pull is there", type(cf.memberAuras["Pebbles"]) == "table"
+      and pullRows(cf.memberAuras["Pebbles"], "Mark of the Wild") == 1 and pullRows(cf.memberAuras["Equi"], "Mark of the Wild") == 1, #(cf.memberAuras["Pebbles"] or {}))
+    -- a member already named keeps the name of the pull, whatever its unit token says later
+    M.units.party1.name = "Someone Else"; nameUpdate("party1")
+    check("#42 fight: a member named at the pull keeps that name", member("party1").name == "Equi")
     M.now = M.now + 2
     M.auras.party2.HELPFUL[2] = { name = "Power Word: Fortitude", icon = 135987, spellId = 1243, auraInstanceID = 902 }
     M.fire("UNIT_AURA", "party2")
@@ -317,6 +458,7 @@ return function(P)
     M.now = M.now + 2; M.units.party3.dead = true; M.fire("UNIT_HEALTH", "party3")
     check("#42 fight: the death of a member not named yet is counted", cf.memberDeaths == 1 and member("party3").deadT ~= nil, cf.memberDeaths)
     -- the last name is there when the fight closes
+    M.auras.party3.HELPFUL = {}                                       -- its buff drops while it has no name yet
     M.units.party3.name = "Oxii"
     M.now = M.now + 5; M.inCombat = false; M.units.target = nil; M.fire("PLAYER_REGEN_ENABLED")
     local sf = ns.DB.combat.fights[#ns.DB.combat.fights]
@@ -324,6 +466,15 @@ return function(P)
     for _, m in ipairs(sf and sf.group or {}) do names[#names + 1] = tostring(m.name) end
     table.sort(names)
     check("#42 fight: the stored group names everyone, the close read the last name", table.concat(names, ",") == "Equi,Hart,Oxii,Pebbles", table.concat(names, ","))
+    check("#42 fight: a member named at the pull is stored under that name", sf.memberAuras["Equi"] ~= nil and sf.memberAuras["Someone Else"] == nil)
+    M.units.party1.name = "Equi"
+    local oxii, lost = sf.memberAuras["Oxii"], 0
+    for _, a in ipairs(oxii or {}) do if a.gain == false and a.name == "Thorns" then lost = lost + 1 end end
+    check("#42 fight: a name that only arrives at the close still gets the whole timeline (held at the pull, lost in the fight)",
+      pullRows(oxii, "Thorns") == 1 and lost == 1, oxii and #oxii)
+    local private = sf._pendAuras ~= nil
+    for _, m in ipairs(sf.group) do if m._guid ~= nil then private = true end end
+    check("#42 fight: the working state of unnamed members is not stored", not private)
     check("#42 fight: no handler threw", errs() == e0, lastErr())
     -- a name that never comes, and a hidden one: the member is stored without a name
     M.secrets["Veiled"] = true
@@ -338,10 +489,53 @@ return function(P)
     for k in pairs(sf2 and sf2.memberAuras or {}) do if k == "Unknown" or k == "Veiled" then bad = k end end
     check("#42 fight: a name that never comes and a hidden one are stored as no name", sf2 ~= sf and sf2.group and #sf2.group == 4 and unnamed == 2 and bad == nil and errs() == e0, bad or unnamed)
     M.secrets["Veiled"] = nil
-    -- the pane that lists a group shows such a member as "?" (Recording.lua, Dungeons.lua): no string is built from nil
+    local nAuras = 0
+    for _ in pairs(sf2.memberAuras or {}) do nAuras = nAuras + 1 end
+    check("#42 fight: a member never named has no stored timeline (there is no name to store it under)", nAuras == 1 and sf2.memberAuras["Equi"] ~= nil and sf2._pendAuras == nil, nAuras)
     local okSan, clean = pcall(T.sanitize, sf2)
     check("#42 fight: the stored fight passes the save sanitizer", okSan and clean ~= nil, clean)
+    -- the panes that list a group show such a member as "?" (Recording.lua, Dungeons.lua): no string is built from nil
+    local function shown(word)
+      local n = 0
+      for _, fr in ipairs(M.frames) do if type(fr.text) == "string" and fr.text:find(word, 1, true) == 1 then n = n + 1 end end
+      return n
+    end
+    local q0 = shown("?")
+    local okOpen, errOpen = pcall(ns.OpenFightDetail, sf2)
+    M.runTimers()
+    local dv = T.fightDetail()
+    check("#42 fight: the replay of a fight with unnamed members opens without an error", okOpen and errs() == e0 and dv ~= nil, errOpen or lastErr())
+    check("#42 fight: and lists each of the two as \"?\"", shown("?") == q0 + 2, shown("?") - q0)
+    if dv then dv:Hide() end
+    local lv = T.fightsList(); if lv then lv:Show() end              -- back to the list, as the Back button does
+    local okRun, errRun = pcall(T.renderRun, { name = "Maraudon", startT = M.epoch, duration = 60, group = sf2.group, bosses = {}, deathRows = {}, notable = {} })
+    check("#42 fight: the run page lists a party with unnamed members without an error", okRun and errs() == e0, errRun or lastErr())
     M.auras = {}
+    -- the unit tokens move during the fight (a member leaves): the unnamed row never takes another member's name
+    local function shiftFight(guids)
+      resetRoster()
+      M.units.party1 = { name = "Equi", guid = guids and "Player-1-0000E1" or nil }
+      M.units.party2 = { name = "Unknown", guid = guids and "Player-1-0000E2" or nil }
+      M.units.party3 = { name = "Dave", guid = guids and "Player-1-0000E3" or nil }
+      M.groupN = 4; roster()
+      M.units.target = { name = "Noxxion", hostile = true }
+      M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED")
+      -- Equi leaves: party1 is now the member that had no name (Pebbles), party2 is Dave
+      local p2, p3 = M.units.party2, M.units.party3
+      p2.name = "Pebbles"
+      M.units.party1, M.units.party2, M.units.party3 = p2, p3, nil; M.groupN = 3
+      roster(); nameUpdate("party1"); nameUpdate("party2")
+      M.now = M.now + 5; M.inCombat = false; M.units.target = nil; M.fire("PLAYER_REGEN_ENABLED")
+      local f = ns.DB.combat.fights[#ns.DB.combat.fights]
+      local out = {}
+      for _, m in ipairs(f.group) do out[#out + 1] = tostring(m.name) end
+      return table.concat(out, ",")
+    end
+    local got = shiftFight(false)
+    check("#42 fight: tokens moved, no GUID readable: the unnamed row stays unnamed, there is one Dave", got == "Hart,Equi,nil,Dave", got)
+    got = shiftFight(true)
+    check("#42 fight: tokens moved, GUIDs readable: the row is named from the unit that is still that member", got == "Hart,Equi,Pebbles,Dave", got)
+    check("#42 fight: no handler threw in either", errs() == e0, lastErr())
     resetRoster()
     check("#42 fight: F.groupNames with no fight is harmless", pcall(F.groupNames))
   end
@@ -367,6 +561,8 @@ return function(P)
     check("a dead party member as target is not the foe either", n == 1 and text == "an enemy down!", text)
     n, text = fightWith({ name = "Stormwind Guard", hostile = false, friend = true })
     check("a friendly NPC is not the foe", n == 1 and text == "an enemy down!", text)
+    n, text = fightWith({ name = "Escort Npc", hostile = false, friend = true, dead = true })
+    check("a dead friendly NPC (an escort, a guard, a pet) is not the foe", n == 1 and text == "an enemy down!", text)
     n, text = fightWith({ name = "Cavern Shambler", hostile = false, friend = false, dead = true })
     check("a dead mob (no longer attackable) still names the kill", n == 1 and text == "Cavern Shambler down!", text)
     n, text = fightWith({ name = "Enemy Rogue", hostile = false, friend = false, dead = true, player = true })
@@ -435,6 +631,11 @@ return function(P)
     check("instances: the weakest is the name alone, with the continent the client answered and both names", st and st.weak and st.weak.sig == "name" and st.weak.map == 0
       and st.weak.type == "none" and st.weak.zone == "The Temple of Atal'Hakkar" and st.weak.name == "Eastern Kingdoms" and st.weak.inInstance == false, st and st.weak and st.weak.sig)
     check("instances: the record's time is the last time either was seen", st and st.at == M.epoch and st.strong.at == M.epoch - 600)
+    -- the weakest answer seen again: its record is the newest one of that rank, the strongest is untouched
+    local strongAt = st.strong.at
+    M.epoch = M.epoch + 300; M.fire("ZONE_CHANGED_NEW_AREA")
+    check("instances: the weakest answer seen again is refreshed", st.weak.sig == "name" and st.weak.at == M.epoch and st.at == M.epoch, st.weak.at)
+    check("instances: and the strongest is unchanged by it", st.strong.sig == "type" and st.strong.at == strongAt)
     -- the map type signal in between replaces neither
     local weak0, strong0 = st.weak, st.strong
     M.mapType = 4; M.fire("ZONE_CHANGED_NEW_AREA")

@@ -2135,46 +2135,89 @@ end
 -- snapshotGroup() in Fights captures the party once at pull; here we diff the roster on every change so
 -- a run with a swap or a resummon reads correctly ("Dave joined", "Mia left"). Login seeds silently.
 -- #42 (0.9.49): when GROUP_ROSTER_UPDATE fires the client may not know a new member's name yet and answers its
--- placeholder ("Unknown"); the addon wrote "Unknown joined the group" and then "Unknown left the group". A member
--- whose name is not readable is now waited for (ns.unitName, Logging.lua): nothing is written under the placeholder,
--- the roster is read again on UNIT_NAME_UPDATE and, should that event not come, every 2 s for at most
--- Emitter.ROSTER_WAIT seconds. While a name is waited for no leave is written (the member not named yet may be one
--- of the names already seen), and names that resolve after the silent seed at login are not joins.
+-- placeholder ("Unknown"); the addon wrote "Unknown joined the group" and then "Unknown left the group". The client
+-- can also hide a name (a secret value) for as long as an encounter lasts. A member whose name is not readable
+-- (ns.unitName, Logging.lua) is there, without a name:
+--   * nothing is written under the placeholder; the join is written when the name is readable;
+--   * a name already seen that is missing is NOT a leave while any member is unnamed (it may be that member), however
+--     long that lasts. The leave is written once every name is readable, or at once when the GUIDs are readable and
+--     the member's GUID is no longer in the group;
+--   * each unnamed member has its own record (Emitter._rosterWait, keyed by GUID, else by unit token): the roster is
+--     read again on UNIT_NAME_UPDATE and, should that event not come, every 2 s for Emitter.ROSTER_WAIT seconds
+--     counted per member, so a name that never comes does not switch the re-reads off for the next one;
+--   * a member unnamed at a silent seed (login, loading screen) is part of that seed whenever its name arrives:
+--     not a join. Every other join and leave during that time is written as usual.
+-- State lives on the Emitter table: this file has no room for another file-level local.
 local rosterSeen, rosterSeeded = {}, false
 Emitter.ROSTER_WAIT = 30
 local function currentRoster()
-  local set, waiting = {}, false
+  local set, units = {}, {}
   local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
   local raid = IsInRaid and IsInRaid()
   for i = 1, n do
     local u = (raid and "raid" or "party") .. i
-    if UnitExists(u) and not (UnitIsUnit and UnitIsUnit(u, "player")) then
+    if UnitExists(u) and not ns.isPlayerUnit(u) then
       local nm, wait = ns.unitName(u)
-      if nm then set[nm] = true elseif wait then waiting = true end
+      if nm then set[nm] = true end
+      if nm or wait then units[#units + 1] = { unit = u, name = nm, guid = ns.unitGUID(u) } end
     end
   end
-  return set, waiting
+  return set, units
 end
 local function diffRoster(fire)
-  local now, waiting = currentRoster()
-  local w = Emitter._rosterWait
-  if waiting and not w then w = { since = GetTime(), seed = not fire }; Emitter._rosterWait = w end
-  local fresh = w ~= nil and (GetTime() - w.since) < Emitter.ROSTER_WAIT
-  local hold = waiting and fresh                 -- a name is still to come: no leave yet
-  if w and w.seed and fresh then fire = false end   -- the names of the login seed arriving late are not joins
-  if fire then
-    for nm in pairs(now) do if not rosterSeen[nm] then Emitter.event("ROSTERJOIN", { name = nm }, true) end end
-    if hold then
-      for nm in pairs(rosterSeen) do now[nm] = true end   -- kept as seen until every name is readable
+  local now, units = currentRoster()
+  local t, old = GetTime(), Emitter._rosterWait
+  if type(Emitter._rosterGuid) ~= "table" then Emitter._rosterGuid = {} end
+  local guidOf = Emitter._rosterGuid             -- name -> GUID, for the names seen with a readable GUID
+  local pend, fresh, silent = nil, false, {}
+  local allGuid, here = true, {}                 -- is every unit's GUID readable, and which GUIDs are in the group
+  for _, x in ipairs(units) do
+    if x.guid then here[x.guid] = true else allGuid = false end
+    local rec = old and ((x.guid and old[x.guid]) or old[x.unit]) or nil
+    if x.name then
+      if rec and rec.seed then silent[x.name] = true end   -- unnamed at a silent seed: part of it, not a join
+      if x.guid then guidOf[x.name] = x.guid end
     else
-      for nm in pairs(rosterSeen) do if not now[nm] then Emitter.event("ROSTERLEAVE", { name = nm }, true) end end
+      rec = rec or { since = t, seed = not fire }
+      pend = pend or {}
+      pend[x.guid or x.unit] = rec
+      if t - rec.since < Emitter.ROSTER_WAIT then fresh = true end
     end
   end
+  -- the names seen before that are not readable now: gone for sure (its GUID is not in the group), or maybe unnamed
+  local gone, maybe = {}, {}
+  for nm in pairs(rosterSeen) do
+    if not now[nm] then
+      local g = guidOf[nm]
+      if g and allGuid and not here[g] then gone[#gone + 1] = nm else maybe[#maybe + 1] = nm end
+    end
+  end
+  if fire then
+    for nm in pairs(now) do
+      if not rosterSeen[nm] and not silent[nm] then Emitter.event("ROSTERJOIN", { name = nm }, true) end
+    end
+    for _, nm in ipairs(gone) do Emitter.event("ROSTERLEAVE", { name = nm }, true) end
+    for _, nm in ipairs(maybe) do
+      if pend then now[nm] = true                -- kept as seen until every name is readable
+      else Emitter.event("ROSTERLEAVE", { name = nm }, true) end
+    end
+  elseif pend then
+    -- a silent seed forgets who is gone, but not a member who is only unnamed right now: as many names as there
+    -- are unnamed units can be those units. More missing names than that: the old roster says nothing, it is dropped.
+    local n = 0
+    for _ in pairs(pend) do n = n + 1 end
+    if #maybe <= n then for _, nm in ipairs(maybe) do now[nm] = true end end
+  end
+  for nm in pairs(guidOf) do if not now[nm] then guidOf[nm] = nil end end
   rosterSeen = now; rosterSeeded = true
-  if not waiting then Emitter._rosterWait = nil
-  elseif fresh and not w.timer and C_Timer and C_Timer.After then
-    w.timer = true
-    C_Timer.After(2, function() w.timer = nil; if Emitter._rosterWait == w then pcall(Emitter.rosterReread) end end)
+  Emitter._rosterWait = pend
+  -- one re-read at a time (a re-read due for more than 4 s never ran: schedule again)
+  if fresh and not (Emitter._rosterTimer and t - Emitter._rosterTimer < 4) and C_Timer and C_Timer.After then
+    Emitter._rosterTimer = t
+    C_Timer.After(2, function()
+      Emitter._rosterTimer = nil
+      if Emitter._rosterWait then pcall(Emitter.rosterReread) end
+    end)
   end
 end
 function Emitter.rosterReread() diffRoster(rosterSeeded) end
@@ -2385,7 +2428,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if not wasDead then
       local foe = combatFoe   -- already safeStr at capture (a plain string or nil)
       -- (0.9.49: the target only when it is an enemy. With the enemy's name hidden, a healer's friendly target was
-      -- taken for the foe and the row read "KILL <party member>", 30 rows over four dungeon evenings.)
+      -- taken for the foe and the row read "<party member> down!", seen in the save of 2026-11-19.)
       if not foe and Emitter.targetIsFoe() then foe = safeStr(UnitName("target")) end
       -- don't credit a kill if that foe is still ALIVE in front of us (we fled / it evaded / a group-mate
       -- was fighting it). Only meaningful when we actually have a plain foe name to compare.
@@ -2480,7 +2523,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
   elseif event == "GROUP_ROSTER_UPDATE" then
     diffRoster(rosterSeeded)
   elseif event == "UNIT_NAME_UPDATE" then
-    if Emitter._rosterWait then diffRoster(rosterSeeded) end   -- only while a member's name is waited for (#42)
+    if Emitter._rosterWait then pcall(diffRoster, rosterSeeded) end   -- only while a member has no readable name (#42)
   elseif event == "MAIL_SHOW" then mailOpen = true
   elseif event == "MAIL_CLOSED" then mailOpen = false
   elseif event == "AUCTION_HOUSE_SHOW" then auctionOpen = true

@@ -199,7 +199,7 @@ ns.deps = {
   { "function", "UnitIsDeadOrGhost", "guarded" },
   { "function", "UnitIsFriend", "guarded" },
   { "function", "UnitIsPlayer", "guarded" },
-  { "function", "UnitIsUnit", "required" },
+  { "function", "UnitIsUnit", "guarded" },
   { "function", "UnitLevel", "guarded" },
   { "function", "UnitName", "required" },
   { "function", "UnitNameUnmodified", "required" },

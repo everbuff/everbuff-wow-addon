@@ -64,9 +64,14 @@ end
 --                    (it answers its placeholder, UNKNOWNOBJECT, "Unknown" in English) or hides it (a secret
 --                    value): the unit is there, its name is not readable yet. The caller records nothing under the
 --                    placeholder and reads again on UNIT_NAME_UPDATE.
+--   ns.unitGUID(u)   a unit's GUID as a plain, non-empty string, else nil (never a secret, never an error)
+--   ns.isPlayerUnit(u)  is this unit token the player? UnitIsUnit answers a value the addon may not test while unit
+--                    comparison is restricted (SecretWhenUnitComparisonRestricted in the 70959 documentation), so
+--                    it is read guarded; without a plain answer the GUIDs decide, then the names, then "no".
 do
   local function cat0(v) return v == "" or (v .. "") end
   local function add0(v) return v + 0 end
+  local function isTrue(v) return v == true end
   function ns.safeStr(v)
     if type(v) ~= "string" then return nil end
     if issecretvalue and issecretvalue(v) then return nil end
@@ -87,6 +92,26 @@ do
     if not name then return nil, true end                       -- hidden by the client: there, not readable
     if name == "" or name == (UNKNOWNOBJECT or "Unknown") then return nil, true end
     return name, false
+  end
+  function ns.unitGUID(unit)
+    if type(UnitGUID) ~= "function" then return nil end
+    local ok, raw = pcall(UnitGUID, unit)
+    local guid = ok and ns.safeStr(raw) or nil
+    return guid ~= "" and guid or nil
+  end
+  function ns.isPlayerUnit(unit)
+    if unit == "player" then return true end
+    if type(UnitIsUnit) == "function" then
+      local ok, same = pcall(UnitIsUnit, unit, "player")
+      if ok and type(same) == "boolean" and not (issecretvalue and issecretvalue(same)) then
+        local okT, yes = pcall(isTrue, same)   -- (the test itself is tried too: it must not end the caller)
+        if okT then return yes end
+      end
+    end
+    local g = ns.unitGUID(unit)
+    if g then return g == ns.unitGUID("player") end
+    local name = ns.unitName(unit)
+    return name ~= nil and name == ns.unitName("player")
   end
 end
 

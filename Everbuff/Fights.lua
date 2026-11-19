@@ -350,9 +350,10 @@ end
 local function diffMember(unit)
   if not cur or not cur._memberByUnit or not cur.memberAuras then return end
   local m = cur._memberByUnit[unit]
-  if m and not m.me and m.name and cur.memberAuras[m.name] then
-    diffAurasFor(unit, cur.memberAuras[m.name], "_ms_" .. unit)
-  end
+  if not m or m.me then return end
+  -- (a member not named yet has its timeline under its unit token until the name is there, F.groupNames)
+  local log = (m.name and cur.memberAuras[m.name]) or (not m.name and cur._pendAuras and cur._pendAuras[unit]) or nil
+  if log then diffAurasFor(unit, log, "_ms_" .. unit) end
 end
 
 -- ── enemy (monster) auras ──────────────────────────────────────────────────────
@@ -642,24 +643,55 @@ local function snapshotGroup()
     local _, class = try(UnitClass, u)
     local race = try(UnitRace, u)
     out[#out + 1] = { name = name, class = safeKey(class), race = safeKey(race), level = plain(try(UnitLevel, u)), unit = u, me = me or nil }
+    if not name then out[#out]._guid = ns.unitGUID(u) end   -- who the row is, for F.groupNames; never stored
   end
   -- party excludes the player from party1..N; raid includes everyone in raid1..N
   if not raid then add("player", true) end
-  for i = 1, n do add(unit .. i, raid and UnitIsUnit(unit .. i, "player") or nil) end
+  for i = 1, n do add(unit .. i, raid and ns.isPlayerUnit(unit .. i) or nil) end
   return (#out > 0) and out or nil
 end
 
 -- A member snapshotted without a name gets it once the client knows it (UNIT_NAME_UPDATE, and once more at the
 -- close). A member already named keeps the name of the pull: the unit token can point at someone else by then.
+-- The same holds for the unnamed row, so its name is only taken from a unit that is still that member: the unit
+-- (its own token first, then the others of the group) whose GUID is the one read at the pull. Where no GUID was
+-- readable the token is trusted, except for a name another row of the group already carries (the tokens moved up).
+-- The aura timeline kept under the unit token since the pull (cur._pendAuras) becomes the member's own.
+local function unitOfRow(m)
+  if not m._guid then return UnitExists(m.unit) and m.unit or nil end
+  local g = ns.unitGUID(m.unit)
+  if g == m._guid then return m.unit end
+  local kind = type(m.unit) == "string" and m.unit:match("^(%a+)%d+$") or nil
+  local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+  if kind then
+    for i = 1, n do
+      local u = kind .. i
+      if u ~= m.unit and ns.unitGUID(u) == m._guid then return u end
+    end
+  end
+  if g then return nil end                       -- the token holds someone else and the member is not found
+  return UnitExists(m.unit) and m.unit or nil    -- no GUID readable now: the token, as without one
+end
 function F.groupNames()
   if not cur or not cur.group then return end
+  local taken
   for _, m in ipairs(cur.group) do
-    if not m.name and m.unit and UnitExists(m.unit) then
-      local name = ns.unitName(m.unit)
-      if name then
-        m.name = name
-        if cur.memberAuras and not m.me and not cur.memberAuras[name] then
-          cur.memberAuras[name] = {}; cur["_ms_" .. m.unit] = scanAuras(m.unit)   -- its timeline starts here
+    if not m.name and m.unit then
+      local u = unitOfRow(m)
+      local name = u and ns.unitName(u) or nil
+      if name and not taken then
+        taken = {}
+        for _, o in ipairs(cur.group) do if o.name then taken[o.name] = true end end
+      end
+      if name and not taken[name] then
+        m.name = name; taken[name] = true
+        if cur.memberAuras and not m.me then
+          local log = cur._pendAuras and cur._pendAuras[m.unit]
+          if cur._pendAuras then cur._pendAuras[m.unit] = nil end
+          if not cur.memberAuras[name] then
+            cur.memberAuras[name] = log or {}
+            if not log then cur["_ms_" .. m.unit] = scanAuras(m.unit) end
+          end
         end
       end
     end
@@ -797,11 +829,17 @@ local function beginFight()
     if cur.group and #cur.group <= 6 then
       cur.memberAuras = {}
       for _, m in ipairs(cur.group) do
-        if not m.me and m.name then               -- (a member not named yet gets its timeline with its name)
+        if not m.me then
           local set = scanAuras(m.unit)
           local log = {}
           for _, a in pairs(set) do log[#log + 1] = { t = 0, gain = true, name = a.name, icon = a.icon, debuff = a.debuff, inst = a.inst, sid = a.sid, atPull = true } end
-          cur.memberAuras[m.name] = log
+          if m.name then cur.memberAuras[m.name] = log
+          else
+            -- a member not named yet: the same timeline from the pull on, kept under its unit token until
+            -- F.groupNames has the name (never under the placeholder). Never named: never stored.
+            cur._pendAuras = cur._pendAuras or {}
+            cur._pendAuras[m.unit] = log
+          end
           cur["_ms_" .. m.unit] = set            -- working set for this unit's diffs
         end
       end
@@ -836,7 +874,10 @@ local function endFight(interrupted)
     backfillAuras(cur.auras, cur._auraSet)
     if cur.group and cur.memberAuras then
       for _, m in ipairs(cur.group) do
-        if not m.me and m.name then backfillAuras(cur.memberAuras[m.name], cur["_ms_" .. m.unit]) end
+        if not m.me then
+          local log = (m.name and cur.memberAuras[m.name]) or (not m.name and cur._pendAuras and cur._pendAuras[m.unit]) or nil
+          backfillAuras(log, cur["_ms_" .. m.unit])
+        end
       end
     end
   end)
@@ -854,8 +895,10 @@ local function endFight(interrupted)
   if cur.group then
     for _, m in ipairs(cur.group) do
       if not m.me then cur["_ms_" .. m.unit] = nil end
+      m._guid = nil
     end
   end
+  cur._pendAuras = nil
   cur._auraSet = nil
   cur._lastStatSig = nil
   cur._enemyByGuid = nil          -- working sets: never persist
