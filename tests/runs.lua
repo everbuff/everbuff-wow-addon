@@ -148,12 +148,13 @@ return function(P)
   end
   local RUN = { id = "string", v = "number", inst = "string", kind = "string", map = "number", diff = "number", uiMap = "number", t = "number", endT = "number",
     open = "string", why = "string", partial = "string", visits = "table", secs = "table", firstPull = "number", bosses = "table", nDeaths = "table", deaths = "table", xp = "table",
-    gold = "table", hidden = "table", keep = "boolean",
+    gold = "table", hidden = "table", keep = "boolean", size = "number", done = "boolean", pb = "boolean", exact = "boolean", edited = "boolean", repull = "number", copied = "boolean",
     st = "string", mark = "number", beat = "number", left = "number", ghostAt = "number", gap = "table", encs = "table", deadSince = "number", m0 = "number", g0 = "table", bossIn = "table", bossWin = "table", prov = "boolean" }
   local VISIT = { i = "number", o = "number", how = "string", out = "string", n = "number", secs = "number", active = "number", xp = "number", xpKill = "number", xpQuest = "number", kills = "number",
-    looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number", gaps = "table" }
+    looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number", gaps = "table",
+    gg = "number", go = "number", gf = "number", combat = "number", boss = "number" }
   local BOSS = { enc = "number", name = "string", pulls = "number", wipes = "number", resets = "number", unknown = "number", combat = "number", kill = "number",
-    fight = "string", ok = "number", dur = "number" }
+    fight = "string", ok = "number", dur = "number", p = "number" }
   local SECS = { inside = "number", ghost = "number", outside = "number", offline = "number", active = "number", combat = "number", boss = "number" }
   local GOLD = { looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number" }
   local function contract(run, isOpen)
@@ -207,7 +208,7 @@ return function(P)
       ids[stored.id] = true
       local run = isOpen and stored or norm(stored)
       local s = run.secs
-      local vs = { secs = 0, active = 0, xp = 0, looted = 0, quests = 0, lootValue = 0, items = 0 }
+      local vs = { secs = 0, active = 0, xp = 0, looted = 0, quests = 0, lootValue = 0, items = 0, combat = 0, boss = 0, gg = 0, go = 0, gf = 0 }
       for _, v in ipairs(run.visits) do
         for k in pairs(vs) do vs[k] = vs[k] + (v[k] or 0) end
         if (v.active or 0) > (v.secs or 0) then why = "a visit with more active seconds than seconds" end
@@ -218,6 +219,18 @@ return function(P)
         if run.visits[#run.visits].o == nil then why = "the last visit of a closed run has no end" end
       end
       if vs.secs ~= s.inside then why = ("inside %d is not the sum of the visits %d"):format(s.inside, vs.secs) end
+      -- (0.9.51, record version 2) the visits hold the combat and boss seconds, and the gaps before them by kind
+      if (stored.v or 1) >= 2 then
+        if vs.combat ~= s.combat then why = ("combat %d is not the sum of the visits %d"):format(s.combat, vs.combat) end
+        if vs.boss ~= s.boss then why = ("boss %d is not the sum of the visits %d"):format(s.boss, vs.boss) end
+        local absorbed = (run.visits[#run.visits].n or 0) > 0
+        local first = run.visits[1]
+        local g1 = (first.gg or 0) + (first.go or 0) + (first.gf or 0)
+        if not absorbed and (vs.gg - (first.gg or 0) ~= s.ghost or vs.go - (first.go or 0) ~= s.outside or vs.gf - (first.gf or 0) ~= s.offline) then
+          why = "the gaps before the visits are not the ghost, outside and offline clocks"
+        end
+        if g1 > 0 and not stored.edited then why = "a first visit with a gap before it on a run that was never split" end
+      end
       if vs.active ~= s.active then why = "active is not the sum of the visits" end
       if s.active > s.inside then why = "more active seconds than seconds inside" end
       if vs.xp ~= (run.xp and run.xp.gain or 0) then why = "xp is not the sum of the visits" end
@@ -238,7 +251,7 @@ return function(P)
     enter("Deadmines", { map = 36 })
     local id = open() and open().id
     check("1: entering opens a run named canonical, with its attributes", open() and open().inst == "The Deadmines" and open().kind == "party"
-      and open().map == 36 and open().diff == 1 and open().t == t0 and open().open == "zone" and open().v == 1 and open().st == "in", open() and open().inst)
+      and open().map == 36 and open().diff == 1 and open().t == t0 and open().open == "zone" and open().v == R.V and R.V == 2 and open().st == "in", open() and open().inst)
     check("1: the id is the last 8 of the GUID, the time and four hex digits", type(id) == "string" and id:match("^" .. ME:sub(-8):gsub("%-", "%%-") .. "%-" .. t0 .. "%-%x%x%x%x$") ~= nil, id)
     -- the four hex digits come from the random source (a counter would start again when the save file is lost)
     local realRandom = math.random
@@ -649,7 +662,9 @@ return function(P)
     play(30); END(601, "Shadowpriest Sezz'ziz", 1); play(5); END(602, "Nekrum Gutchewer", 1)
     local a, c2 = boss(open(), 601), boss(open(), 602)
     check("11: two overlapping encounters give two kills", a.kill == 230 and c2.kill == 235 and #open().bosses == 3 and R.views()[1].bossesDown == 3, tostring(a.kill) .. " " .. tostring(c2.kill))
-    check("11: the END of the second, 5 s after the first, is kept", seg(open(), 602) == 5 and prev(open(), 602) == 601 and prev(open(), 601) == 600 and seg(open(), 601) == 90 and c2.combat == 35)
+    -- (0.9.51: kills whose pulls overlapped are one split, so the order the pair died in never changes a segment)
+    check("11: the END of the second, 5 s after the first, is kept, and the pair is one split", seg(open(), 602) == 95 and seg(open(), 601) == 95 and prev(open(), 602) == 600
+      and prev(open(), 601) == 600 and R.splits(open())[601].key == "601+602" and c2.combat == 35)
     check("11: time with a boss up is counted once while two are up", open().secs.boss == 40 + 35 and open().encs == nil, open().secs.boss)
     invariants("11")
 
@@ -902,11 +917,13 @@ return function(P)
     -- it, at the depth a run sits at in the file (EverbuffDB.characters[guid].dungeonRuns[i]).
     local stored = raw()
     local size = svSize(stored)
-    check("15: the real Maraudon shape is under 3 KB in the save file", size < 3 * 1024, size)
+    -- (budget per milestone: 0.9.50 measured 2903 bytes; 0.9.51 adds the gap before a visit, per visit combat and boss
+    -- seconds, the group size and the best mark, 3025 bytes measured)
+    check("15: the real Maraudon shape is under 3 KB in the save file (0.9.51 budget)", size < 3 * 1024, size)
     local hundred = {}
     for i = 1, R.CAP do hundred[i] = deepcopy(stored) end
     local all = svSize(hundred)
-    check("15: 100 stored runs of the real shape, serialised together, are under 300 KB per character", all < 300 * 1024, all)
+    check("15: 100 stored runs of the real shape, serialised together, are under 320 KB per character (0.9.51 budget, 310 KB measured)", all < 320 * 1024, all)
     realPrint(("dungeon run size: the Maraudon shape (2 visits, 8 bosses, 1 death) is %d bytes in SavedVariables format; 100 of them %.0f KB"):format(size, all / 1024))
     invariants("Maraudon")
     -- The worst case at the caps of this version, every optional key present and not 0: 20 visits with every
@@ -914,6 +931,7 @@ return function(P)
     -- closed the way a run is (Runs.lean), so the rows past Runs.DEATH_FULL keep no `foe` and `back`.
     local worst = deepcopy(stored)
     worst.partial, worst.firstPull, worst.keep = "ended while a boss was in progress", 12345, true
+    worst.size, worst.done, worst.pb, worst.exact, worst.edited = 40, true, true, true, true
     worst.secs = { inside = 86399, ghost = 12345, outside = 23456, offline = 34567, active = 45678, combat = 23456, boss = 12345 }
     worst.xp = { gain = 123456, kill = 98765, quest = 23456, n = 1234, l0 = 59, l1 = 60, p0 = 0.123, p1 = 0.987, need = 209800 }
     worst.hidden, worst.nDeaths = { xp = 1234, rep = 1234, loot = 1234 }, { me = 45, party = 45 }
@@ -921,11 +939,11 @@ return function(P)
     worst.visits, worst.bosses, worst.deaths = {}, {}, {}
     for i = 1, R.VISIT_CAP do
       worst.visits[i] = { i = 80000 + i, o = 80100 + i, how = "reload", out = "offline", n = 12, secs = 12345, active = 12345, xp = 12345, xpKill = 12345, xpQuest = 12345, kills = 123,
-        looted = 12345, quests = 12345, lootValue = 12345, items = 123, unpriced = 12, purse = 12345 }
+        looted = 12345, quests = 12345, lootValue = 12345, items = 123, unpriced = 12, purse = 12345, combat = 12345, boss = 12345, gg = 1234, go = 1234, gf = 1234 }
     end
     for i = 1, R.BOSS_CAP do
       worst.bosses[i] = { enc = 12345 + i, name = "High Interrogator Gerstahn the Unseen", pulls = 12, wipes = 11, resets = 10, unknown = 10, combat = 12345, kill = 12345 + i, ok = 1, dur = 123,
-        fight = "Hart-Realm-1795033978-216-a1b2" }
+        fight = "Hart-Realm-1795033978-216-a1b2", p = 1234 }
     end
     for i = 1, R.DEATH_CAP do worst.deaths[i] = { o = 40000 + i, enc = 12345, foe = "High Interrogator Gerstahn", back = 1234 } end
     worst.visits[R.VISIT_CAP].gaps = {}
@@ -934,7 +952,8 @@ return function(P)
     local missing = {}
     for _, k in ipairs(R.LEAN_VISIT) do if worst.visits[R.VISIT_CAP][k] == nil then missing[#missing + 1] = k end end
     if #(worst.visits[R.VISIT_CAP].gaps or {}) ~= 2 * R.GAP_CAP then missing[#missing + 1] = "gaps" end
-    for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "name" }) do if worst.bosses[R.BOSS_CAP][k] == nil then missing[#missing + 1] = k end end
+    for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "name", "p" }) do if worst.bosses[R.BOSS_CAP][k] == nil then missing[#missing + 1] = k end end
+    for _, k in ipairs({ "gg", "go", "gf" }) do if worst.visits[R.VISIT_CAP][k] == nil then missing[#missing + 1] = k end end
     check("15: the worst case carries every optional key on every row, and is a record of the contract", #missing == 0 and contract(worst, false) == nil and R.valid(worst)
       and worst.deaths[R.DEATH_FULL].foe ~= nil and worst.deaths[R.DEATH_FULL + 1].foe == nil and worst.deaths[R.DEATH_CAP].back == nil and worst.deaths[R.DEATH_CAP].enc == 12345,
       table.concat(missing, ",") .. " " .. tostring(contract(worst, false)))
@@ -942,7 +961,7 @@ return function(P)
     local unk = T.runRecord("The Deadmines", 1000, 100, { bosses = { { enc = 1, name = "Rhahk'Zor", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 50, ok = 0, dur = 20 } } }).bosses[1]
     check("15: lean keeps ok and dur on a boss row with no kill", unk.ok == 0 and unk.dur == 20 and unk.wipes == 1 and unk.resets == nil, tostring(unk.ok))
     local wsize = svSize(worst)
-    check("15: the worst case at the caps is under 22 KB (measured 21.0 KB with 20 gaps; plan 4.6 names 3 KB as a target to be measured)", wsize < 22 * 1024, wsize)
+    check("15: the worst case at the caps is under 25 KB (0.9.51 budget: measured 23.8 KB with 20 gaps and the keys of 0.9.51; plan 4.6 names 3 KB as a target to be measured)", wsize < 25 * 1024, wsize)
     realPrint(("dungeon run size: worst case at the caps (20 visits, 20 gaps, 20 bosses, 40 deaths, every key) is %d bytes"):format(wsize))
     -- the caps themselves
     fresh()
@@ -966,7 +985,7 @@ return function(P)
     -- on load, a record of a later version or of another shape is dropped
     local c = me()
     local good = raw()
-    local later = T.runRecord("Uldaman", M.epoch - 500, 100, { v = 2 })
+    local later = T.runRecord("Uldaman", M.epoch - 500, 100, { v = R.V + 1 })
     local broken = T.runRecord("Uldaman", M.epoch - 400, 100); broken.secs = nil
     c.dungeonRuns = { later, good, "junk", broken }
     c.dungeonRun = { v = 1, id = "x", inst = "Uldaman" }

@@ -1556,9 +1556,10 @@ function Gold.resetHistory(now)
   return true
 end
 
--- ── glance texts: the six values a pill or a bar can show ──────────────────────────────────────────────────────
+-- ── glance texts: the seven values a pill or a bar can show ────────────────────────────────────────────────────
+-- (the dungeon run from 0.9.51, everbuff-wow-addon #51 decision 8: "Deadmines 18:22 · 3/7 · +0:41", Runs.glance)
 Gold.GLANCE = { { "balance", "Balance" }, { "total", "Account total" }, { "session", "Session net" }, { "today", "Today net" },
-  { "rate", "Per hour" }, { "timer", "Farm timer" } }
+  { "rate", "Per hour" }, { "timer", "Farm timer" }, { "dungeon", "Dungeon run" } }
 Gold.GLANCE_LABEL = {}
 for _, g in ipairs(Gold.GLANCE) do Gold.GLANCE_LABEL[g[1]] = g[2] end
 local function dimText(s)
@@ -1582,6 +1583,10 @@ function Gold.glance(id, label)
     local t = Gold.timer()
     if not t then return "Farm timer off" end
     return ("Farm %s in %s"):format(Gold.fmt(t.value, { signed = true }), Gold.fmtSpan(t.elapsed))
+  elseif id == "dungeon" then
+    local ok, s = pcall(function() return ns.Runs and ns.Runs.glance and ns.Runs.glance() end)
+    if ok and type(s) == "string" then return s end
+    return dimText("No dungeon run")
   end
   return named("Balance", Gold.fmt(Gold.metric("balance")))
 end
@@ -2000,7 +2005,7 @@ end
 
 -- ── bar text: LibDataBroker data sources, only when another addon brought the library (#43, decision 18) ─────────
 Gold.BROKER = { { "balance", "everbuff.gg Balance" }, { "total", "everbuff.gg Account total" }, { "today", "everbuff.gg Today" },
-  { "rate", "everbuff.gg Per hour" } }
+  { "rate", "everbuff.gg Per hour" }, { "dungeon", "everbuff.gg Dungeon" } }
 function Gold.brokerInit()
   if Gold._broker then return true end
   local LS = rawget(_G, "LibStub")   -- another addon's library, not a client function
@@ -2041,7 +2046,7 @@ end
 function Gold.rateOnScreen()
   local p = Gold.pill
   if p and p:IsShown() then
-    for _, m in ipairs(Gold.pillMetrics()) do if m == "rate" or m == "timer" then return true end end
+    for _, m in ipairs(Gold.pillMetrics()) do if m == "rate" or m == "timer" or m == "dungeon" then return true end end
   end
   if Gold._broker then return true end
   if Gold._tipOwner and GameTooltip and type(GameTooltip.IsOwned) == "function" and GameTooltip:IsOwned(Gold._tipOwner) == true then return true end

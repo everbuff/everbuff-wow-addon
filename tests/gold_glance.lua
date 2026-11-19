@@ -290,8 +290,8 @@ return function(P)
     local items = G.menuItems()
     local kinds = {}
     for _, it in ipairs(items) do kinds[#kinds + 1] = it.kind .. ":" .. it.text end
-    check("menu: Show, the six values, the second value, the label, the timer, the reset, Lock, Hide, Open gold", table.concat(kinds, "|") ==
-      "title:Show|radio:Balance|radio:Account total|radio:Session net|radio:Today net|radio:Per hour|radio:Farm timer|sub:Second value|check:Show label|button:Restart farm timer|button:Reset per hour|check:Lock|button:Hide|button:Open gold",
+    check("menu: Show, the seven values (0.9.51: Dungeon run), the second value, the label, the timer, the reset, Lock, Hide, Open gold", table.concat(kinds, "|") ==
+      "title:Show|radio:Balance|radio:Account total|radio:Session net|radio:Today net|radio:Per hour|radio:Farm timer|radio:Dungeon run|sub:Second value|check:Show label|button:Restart farm timer|button:Reset per hour|check:Lock|button:Hide|button:Open gold",
       table.concat(kinds, "|"))
     -- without MenuUtil: the addon's own list
     _G.MenuUtil = nil
@@ -303,7 +303,7 @@ return function(P)
     check("menu: a click picks and closes", G.pillMetrics()[1] == "today" and G._menu.shown == false)
     G.menu(p)
     row("Second value  ›").scripts.OnClick(row("Second value  ›"))
-    check("menu: the second value opens as a list of its own, with a way back", G._menu.shown == true and row("None") ~= nil and row("‹ Back") ~= nil and row("None").ebSelected == true and G._menu.count == 9, G._menu.count)
+    check("menu: the second value opens as a list of its own, with a way back", G._menu.shown == true and row("None") ~= nil and row("‹ Back") ~= nil and row("None").ebSelected == true and G._menu.count == 10, G._menu.count)
     row("Balance").scripts.OnClick(row("Balance"))
     check("menu: picking the second value", G.pillMetrics()[2] == "balance" and G._menu.shown == false)
     G.menu(p); G.menu(p)
@@ -349,7 +349,7 @@ return function(P)
     check("menu: with MenuUtil the client's menu is used and the own list stays closed", G.menu(p) == "MenuUtil" and opened == p and G._menu.shown == false)
     local radios = 0
     for _, c in ipairs(calls) do if c:find("^radio:") then radios = radios + 1 end end
-    check("menu: the same entries, the second value as a submenu", calls[1] == "title:Show" and radios == 13 and #calls == #items + 7, #calls)
+    check("menu: the same entries, the second value as a submenu", calls[1] == "title:Show" and radios == 15 and #calls == #items + 8, #calls)
     kids["Reset per hour"]()
     check("menu: a button of the client's menu runs its action", me().goldRate == nil)
     -- a MenuUtil that throws, and one whose root lacks a method: the own list, and it is remembered
@@ -375,7 +375,7 @@ return function(P)
     _G.MenuUtil = { CreateContextMenu = function(owner, gen) later = function() gen(owner, node()) end; return { menu = true } end }
     check("menu: a MenuUtil that hands back its menu and builds later is the client's menu, one menu only", G.menu(p) == "MenuUtil" and G._menu.shown == false and G._menuFail == nil and #calls == 0)
     later()
-    check("menu: built later, it carries the same entries", calls[1] == "title:Show" and #calls == #items + 7 and G._menuFail == nil and G._menu.shown == false, #calls)
+    check("menu: built later, it carries the same entries", calls[1] == "title:Show" and #calls == #items + 8 and G._menuFail == nil and G._menu.shown == false, #calls)
     _G.MenuUtil = { CreateContextMenu = function(owner, gen) later = function() gen(owner, { CreateTitle = function() end }) end; return { menu = true } end }
     check("menu: one that hands back a menu whose root lacks the methods", G.menu(p) == "MenuUtil" and G._menuFail == nil)
     later()
@@ -413,12 +413,12 @@ return function(P)
     check("broker: at PLAYER_LOGIN the library is asked for silently", asked ~= nil and asked[1] == _G.LibStub and asked[2] == "LibDataBroker-1.1" and asked[3] == true)
     local names = {}
     for _, m in ipairs(made) do names[#names + 1] = m.name end
-    check("broker: four data sources", table.concat(names, "|") == "everbuff.gg Balance|everbuff.gg Account total|everbuff.gg Today|everbuff.gg Per hour" and made[1].obj.type == "data source", table.concat(names, "|"))
+    check("broker: five data sources (0.9.51: the dungeon run)", table.concat(names, "|") == "everbuff.gg Balance|everbuff.gg Account total|everbuff.gg Today|everbuff.gg Per hour|everbuff.gg Dungeon" and made[1].obj.type == "data source", table.concat(names, "|"))
     check("broker: the texts are set", made[1].obj.text == fmt(M.money, { short = true }) and made[2].obj.text ~= "" and made[3].obj.text:find("^[%+%-]") ~= nil and made[4].obj.text:find("Farming", 1, true) ~= nil, made[1].obj.text)
     money(123400)
     check("broker: a text follows the purse in the frame of the change", made[1].obj.text == fmt(M.money, { short = true }))
     M.fire("PLAYER_LOGIN")
-    check("broker: registering happens once", #made == 4)
+    check("broker: registering happens once", #made == 5)
     check("broker: bar text keeps the 10 s repaint running", G._rateTicker ~= nil)
     local tipF = { lines = {} }
     function tipF:AddLine(t) self.lines[#self.lines + 1] = t end
