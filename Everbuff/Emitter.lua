@@ -449,7 +449,33 @@ end
 -- instance type "none" (a session there started with context "Shadowfang Keep" from the zone text and recorded no
 -- DUNGEON), so one signal is not enough. Any of these says yes, in order: GetInstanceInfo's type, IsInInstance's
 -- type, the map the player stands on being a dungeon map (C_Map mapType 4), the zone being a known instance by name.
--- Returns name, kind ("party" or "raid") or nil. The raw answers go to settings.selftest.instance for the next look.
+-- Returns name, kind ("party" or "raid") or nil. The raw answers go to settings.selftest.instance for the next look,
+-- and (0.9.49) to settings.selftest.instances, one sticky record per dungeon: `sig` names the signal that fired
+-- ("type", "ptype", "mapType" or "name", strongest first) and the newest answer under each signal is kept
+-- (instances[name].bySig[sig]), so one evening's save says what the client answers inside every dungeon visited,
+-- inside it when the type reads "none" (sig "mapType": the map id in question) and at its door (sig "name").
+-- The signal of the last check of this load is Emitter._sig (nil before the first check and outside).
+Emitter.SIG_RANK = { type = 4, ptype = 3, mapType = 2, name = 1 }
+Emitter.INSTANCES_CAP = 40
+function Emitter.noteInstance(key, rec)
+  local st = ns.DB and ns.DB.settings and ns.DB.settings.selftest
+  if type(st) ~= "table" or type(key) ~= "string" or key == "" then return end
+  if type(st.instances) ~= "table" then st.instances = {} end
+  local R, e = Emitter.SIG_RANK, st.instances[key]
+  if type(e) ~= "table" then
+    local n, oldK, oldAt = 0, nil, nil
+    for k, v in pairs(st.instances) do
+      n = n + 1
+      local at = type(v) == "table" and type(v.at) == "number" and v.at or 0
+      if not oldAt or at < oldAt then oldK, oldAt = k, at end
+    end
+    if n >= Emitter.INSTANCES_CAP and oldK ~= nil then st.instances[oldK] = nil end   -- the one not seen for longest
+    e = {}; st.instances[key] = e
+  end
+  e.at = rec.at
+  if type(e.bySig) ~= "table" then e.bySig = {} end
+  if R[rec.sig] then e.bySig[rec.sig] = rec end   -- the newest answer per signal: at most four small records
+end
 Emitter.INSTANCES = {
   party = { "Ragefire Chasm", "Wailing Caverns", "The Deadmines", "Deadmines", "Shadowfang Keep", "Blackfathom Deeps",
     "The Stockade", "Stormwind Stockade", "Gnomeregan", "Razorfen Kraul", "Scarlet Monastery", "Razorfen Downs",
@@ -488,18 +514,61 @@ function Emitter.instanceNow()
     local ok3, m = pcall(C_Map.GetBestMapForUnit, "player"); mapID = ok3 and plainNum(m) or nil
     if mapID then local ok4, info = pcall(C_Map.GetMapInfo, mapID); mapType = ok4 and type(info) == "table" and plainNum(info.mapType) or nil end
   end
-  local name, kind
-  if itype == "party" or itype == "raid" then name, kind = iname, itype
-  elseif inInst and (ptype == "party" or ptype == "raid") then name, kind = iname, ptype
-  elseif mapType == 4 then kind = byName[zone:lower()] or "party"; name = zone
-  elseif byName[zone:lower()] then name, kind = zone, byName[zone:lower()] end
+  local name, kind, sig
+  if itype == "party" or itype == "raid" then name, kind, sig = iname, itype, "type"
+  elseif inInst and (ptype == "party" or ptype == "raid") then name, kind, sig = iname, ptype, "ptype"
+  elseif mapType == 4 then kind = byName[zone:lower()] or "party"; name = zone; sig = "mapType"
+  elseif byName[zone:lower()] then name, kind, sig = zone, byName[zone:lower()], "name" end
   if kind and (not name or name == "") then name = (zone ~= "" and zone) or iname or "Dungeon" end
+  Emitter._sig = sig
   if ns.DB and ns.DB.settings then
     ns.DB.settings.selftest = ns.DB.settings.selftest or {}
     ns.DB.settings.selftest.instance = { zone = zone, name = iname, type = itype, diff = plainNum(diff), map = plainNum(imap),
-      inInstance = inInst and true or false, ptype = ptype, uiMap = mapID, mapType = mapType, verdict = kind or "none" }
+      inInstance = inInst and true or false, ptype = ptype, uiMap = mapID, mapType = mapType, verdict = kind or "none", sig = sig }
+    if kind then
+      pcall(Emitter.noteInstance, Emitter.canonInstance(name), { zone = zone, name = iname, type = itype, ptype = ptype,
+        diff = plainNum(diff), map = plainNum(imap), inInstance = inInst and true or false, uiMap = mapID, mapType = mapType,
+        sig = sig, at = (GetServerTime and GetServerTime()) or time() })
+    end
   end
   return name, kind
+end
+-- A chat line as text the addon may match (0.9.49). The client can hand a chat line over as a secret value inside
+-- an instance; matching, comparing or indexing one throws, so every chat handler asks here first and drops a line
+-- it may not read. While the character is inside an instance the line is counted by kind and by the signal that
+-- says "inside" in settings.selftest.chatSecret[kind][sig] = { plain, secret }: a later version reads there whether
+-- XP, reputation, loot and system lines can be trusted inside. Inside is what the last dungeon check of this load
+-- answered (Emitter._sig), never the flag saved on the character: a line that arrives before the first check of a
+-- load is not counted, and neither is one at the door (sig "name": the open world in front of the portal, whose
+-- zone carries the dungeon's name). Lines under sig "mapType" (the client's type reads "none") have their own
+-- counters, apart from those where the client itself says instance. `kind` nil: guard only, nothing counted.
+function Emitter.chatText(kind, v)
+  local s = safeStr(v)
+  local sig = Emitter._sig
+  if kind and type(v) ~= "nil" and (sig == "type" or sig == "ptype" or sig == "mapType") and ns.DB and ns.DB.settings then
+    local st = ns.DB.settings.selftest
+    if type(st) ~= "table" then st = {}; ns.DB.settings.selftest = st end
+    if type(st.chatSecret) ~= "table" then st.chatSecret = {} end
+    local k = st.chatSecret[kind]
+    if type(k) ~= "table" then k = {}; st.chatSecret[kind] = k end
+    local c = k[sig]
+    if type(c) ~= "table" then c = { plain = 0, secret = 0 }; k[sig] = c end
+    if s then c.plain = (tonumber(c.plain) or 0) + 1 else c.secret = (tonumber(c.secret) or 0) + 1 end
+  end
+  return s
+end
+-- Is the target something the player can have killed? A unit the player can attack, or a corpse that is neither a
+-- friend nor a player (a dead mob may read as not attackable). No answer from the client: no.
+function Emitter.targetIsFoe()
+  local there = UnitExists("target")
+  if not there or type(UnitCanAttack) ~= "function" then return false end
+  local ok, can = pcall(UnitCanAttack, "player", "target")
+  if ok and can == true then return true end
+  if type(UnitIsDead) ~= "function" or type(UnitIsFriend) ~= "function" or type(UnitIsPlayer) ~= "function" then return false end
+  local ok1, dead = pcall(UnitIsDead, "target")
+  local ok2, friend = pcall(UnitIsFriend, "player", "target")
+  local ok3, isPlayer = pcall(UnitIsPlayer, "target")
+  return ok1 and ok2 and ok3 and dead == true and friend == false and isPlayer == false
 end
 -- Announce a dungeon entry or exit when the answer changed (deduped on the character across /reload).
 function Emitter.checkInstance()
@@ -2071,27 +2140,93 @@ end
 -- ── group roster over time ──────────────────────────────────────────────────────
 -- snapshotGroup() in Fights captures the party once at pull; here we diff the roster on every change so
 -- a run with a swap or a resummon reads correctly ("Dave joined", "Mia left"). Login seeds silently.
+-- #42 (0.9.49): when GROUP_ROSTER_UPDATE fires the client may not know a new member's name yet and answers its
+-- placeholder ("Unknown"); the addon wrote "Unknown joined the group" and then "Unknown left the group". The client
+-- can also hide a name (a secret value) for as long as an encounter lasts. A member whose name is not readable
+-- (ns.unitName, Logging.lua) is there, without a name:
+--   * nothing is written under the placeholder; the join is written when the name is readable;
+--   * a name already seen that is missing is NOT a leave while any member is unnamed (it may be that member), however
+--     long that lasts. The leave is written once every name is readable, or at once when the GUIDs are readable and
+--     the member's GUID is no longer in the group;
+--   * each unnamed member has its own record (Emitter._rosterWait, keyed by GUID, else by unit token): the roster is
+--     read again on UNIT_NAME_UPDATE and, should that event not come, every 2 s for Emitter.ROSTER_WAIT seconds
+--     counted per member, so a name that never comes does not switch the re-reads off for the next one;
+--   * a member unnamed at a silent seed (login, loading screen) is part of that seed whenever its name arrives:
+--     not a join. Every other join and leave during that time is written as usual.
+-- State lives on the Emitter table: this file has no room for another file-level local.
 local rosterSeen, rosterSeeded = {}, false
+Emitter.ROSTER_WAIT = 30
 local function currentRoster()
-  local set = {}
+  local set, units = {}, {}
   local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
   local raid = IsInRaid and IsInRaid()
   for i = 1, n do
     local u = (raid and "raid" or "party") .. i
-    if UnitExists(u) and not (UnitIsUnit and UnitIsUnit(u, "player")) then
-      local nm = safeStr(UnitName(u)); if nm then set[nm] = true end
+    if UnitExists(u) and not ns.isPlayerUnit(u) then
+      local nm, wait = ns.unitName(u)
+      if nm then set[nm] = true end
+      if nm or wait then units[#units + 1] = { unit = u, name = nm, guid = ns.unitGUID(u) } end
     end
   end
-  return set
+  return set, units
 end
 local function diffRoster(fire)
-  local now = currentRoster()
-  if fire then
-    for nm in pairs(now) do if not rosterSeen[nm] then Emitter.event("ROSTERJOIN", { name = nm }, true) end end
-    for nm in pairs(rosterSeen) do if not now[nm] then Emitter.event("ROSTERLEAVE", { name = nm }, true) end end
+  local now, units = currentRoster()
+  local t, old = GetTime(), Emitter._rosterWait
+  if type(Emitter._rosterGuid) ~= "table" then Emitter._rosterGuid = {} end
+  local guidOf = Emitter._rosterGuid             -- name -> GUID, for the names seen with a readable GUID
+  local pend, fresh, silent = nil, false, {}
+  local allGuid, here = true, {}                 -- is every unit's GUID readable, and which GUIDs are in the group
+  for _, x in ipairs(units) do
+    if x.guid then here[x.guid] = true else allGuid = false end
+    local rec = old and ((x.guid and old[x.guid]) or old[x.unit]) or nil
+    if x.name then
+      if rec and rec.seed then silent[x.name] = true end   -- unnamed at a silent seed: part of it, not a join
+      if x.guid then guidOf[x.name] = x.guid end
+    else
+      rec = rec or { since = t, seed = not fire }
+      pend = pend or {}
+      pend[x.guid or x.unit] = rec
+      if t - rec.since < Emitter.ROSTER_WAIT then fresh = true end
+    end
   end
+  -- the names seen before that are not readable now: gone for sure (its GUID is not in the group), or maybe unnamed
+  local gone, maybe = {}, {}
+  for nm in pairs(rosterSeen) do
+    if not now[nm] then
+      local g = guidOf[nm]
+      if g and allGuid and not here[g] then gone[#gone + 1] = nm else maybe[#maybe + 1] = nm end
+    end
+  end
+  if fire then
+    for nm in pairs(now) do
+      if not rosterSeen[nm] and not silent[nm] then Emitter.event("ROSTERJOIN", { name = nm }, true) end
+    end
+    for _, nm in ipairs(gone) do Emitter.event("ROSTERLEAVE", { name = nm }, true) end
+    for _, nm in ipairs(maybe) do
+      if pend then now[nm] = true                -- kept as seen until every name is readable
+      else Emitter.event("ROSTERLEAVE", { name = nm }, true) end
+    end
+  elseif pend then
+    -- a silent seed forgets who is gone, but not a member who is only unnamed right now: as many names as there
+    -- are unnamed units can be those units. More missing names than that: the old roster says nothing, it is dropped.
+    local n = 0
+    for _ in pairs(pend) do n = n + 1 end
+    if #maybe <= n then for _, nm in ipairs(maybe) do now[nm] = true end end
+  end
+  for nm in pairs(guidOf) do if not now[nm] then guidOf[nm] = nil end end
   rosterSeen = now; rosterSeeded = true
+  Emitter._rosterWait = pend
+  -- one re-read at a time (a re-read due for more than 4 s never ran: schedule again)
+  if fresh and not (Emitter._rosterTimer and t - Emitter._rosterTimer < 4) and C_Timer and C_Timer.After then
+    Emitter._rosterTimer = t
+    C_Timer.After(2, function()
+      Emitter._rosterTimer = nil
+      if Emitter._rosterWait then pcall(Emitter.rosterReread) end
+    end)
+  end
 end
+function Emitter.rosterReread() diffRoster(rosterSeeded) end
 
 local ef = CreateFrame("Frame")
 ns.eventFrames[#ns.eventFrames + 1] = ef
@@ -2112,6 +2247,7 @@ for _, e in ipairs({
   "UNIT_SPELLCAST_SUCCEEDED",                            -- gathering casts (herb / mine / skin / fish)
   "UNIT_SPELLCAST_SENT",                                 -- Opening casts name the world object being clicked
   "GROUP_ROSTER_UPDATE",                                 -- party/raid joins and leaves over time
+  "UNIT_NAME_UPDATE",                                    -- a member's name arrived after the roster change (#42)
   "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED", "TAXIMAP_OPENED",  -- gold sink context
   "MAIL_SHOW", "MAIL_CLOSED", "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED",                -- mailbox / auction context
   "UPDATE_INVENTORY_DURABILITY",                         -- gear health
@@ -2192,7 +2328,9 @@ end
 Emitter.REPGAIN_PAT = fmtToPattern(FACTION_STANDING_INCREASED or "Reputation with %s increased by %d.")
 function Emitter.repGain(msg)
   if not ns.DB then return end
-  local faction, amount = (msg or ""):match(Emitter.REPGAIN_PAT)
+  msg = Emitter.chatText("rep", msg)      -- a line the client hides is counted and dropped (0.9.49)
+  if not msg then return end
+  local faction, amount = msg:match(Emitter.REPGAIN_PAT)
   faction, amount = safeStr(faction), tonumber(amount)
   if not faction or faction == "" or not amount then return end
   local now = (GetServerTime and GetServerTime()) or time()
@@ -2295,7 +2433,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     --  re-derive it here. skips if a boss ENCOUNTER_END just logged the same name.)
     if not wasDead then
       local foe = combatFoe   -- already safeStr at capture (a plain string or nil)
-      if not foe and UnitExists("target") then foe = safeStr(UnitName("target")) end
+      -- (0.9.49: the target only when it is an enemy. With the enemy's name hidden, a healer's friendly target was
+      -- taken for the foe and the row read "<party member> down!", seen in the save of 2026-11-19.)
+      if not foe and Emitter.targetIsFoe() then foe = safeStr(UnitName("target")) end
       -- don't credit a kill if that foe is still ALIVE in front of us (we fled / it evaded / a group-mate
       -- was fighting it). Only meaningful when we actually have a plain foe name to compare.
       local tname = UnitExists("target") and safeStr(UnitName("target")) or nil
@@ -2361,7 +2501,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       if nm then Emitter.event("SPELL", { name = nm }, true) end   -- recorded, not flagged (can be frequent)
     end
   elseif event == "CHAT_MSG_SKILL" then
-    local skill, val = (a1 or ""):match(SKILLUP_PAT)
+    local skill, val = (Emitter.chatText(nil, a1) or ""):match(SKILLUP_PAT)
     if skill then
       local d = { name = skill, level = tonumber(val) }
       -- if we crafted something in the last few seconds, this profession skill-up came from it
@@ -2371,7 +2511,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       Emitter.event("SKILLUP", d)
     end
   elseif event == "CHAT_MSG_SYSTEM" then
-    local msg = a1 or ""
+    local msg = Emitter.chatText("system", a1) or ""
     local area = msg:match(DISCOVER_XP_PAT) or msg:match(DISCOVER_PAT)
     local recipe = msg:match(RECIPE_PAT)
     if recipe then
@@ -2388,6 +2528,8 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if repSeeded then scanRep(true) end   -- a rep gain just happened: re-scan and emit only genuine tier-ups
   elseif event == "GROUP_ROSTER_UPDATE" then
     diffRoster(rosterSeeded)
+  elseif event == "UNIT_NAME_UPDATE" then
+    if Emitter._rosterWait then pcall(diffRoster, rosterSeeded) end   -- only while a member has no readable name (#42)
   elseif event == "MAIL_SHOW" then mailOpen = true
   elseif event == "MAIL_CLOSED" then mailOpen = false
   elseif event == "AUCTION_HOUSE_SHOW" then auctionOpen = true
@@ -2413,7 +2555,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     end
   elseif event == "SKILL_LINES_CHANGED" then scanProfessions(profSeeded)
   elseif event == "CHAT_MSG_COMBAT_XP_GAIN" then
-    local kxp = killXpFrom(a1 or "")
+    local kxp = killXpFrom(Emitter.chatText("xp", a1) or "")
     if kxp and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromKills = (ns.char().xp.fromKills or 0) + kxp end
   elseif event == "NEW_RECIPE_LEARNED" then
     local nm
@@ -2496,7 +2638,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     lootWindowUntil = GetTime() + 3   -- coin gained in this window is attributed to this loot source
     -- (kept until the next loot; NOT cleared on LOOT_CLOSED, since loot messages can arrive at/after close)
   elseif event == "CHAT_MSG_LOOT" then
-    local msg = a1 or ""
+    local msg = Emitter.chatText("loot", a1) or ""
     -- capture the item name from the link independent of the quality color, so greys log too
     local item = msg:match("|Hitem:.-|h%[(.-)%]|h")
     -- a "You create: [Item]xN" line is a craft, not loot: count it and remember it for skill-ups
@@ -3253,7 +3395,7 @@ ns._test.onMoney, ns._test.onXP, ns._test.onPlayed = onMoney, onXP, onPlayed
 ns._test.newLoad = function()
   pcall(Emitter.repairResolve)   -- a spend still waiting for its repair cost keeps its row
   lastMoney = nil
-  Emitter._zero, Emitter._zeroSeed, Emitter._guidWait = nil, nil, nil
+  Emitter._zero, Emitter._zeroSeed, Emitter._guidWait, Emitter._sig = nil, nil, nil, nil
   Emitter._repair, Emitter._mailQ, Emitter._coin, Emitter._lastLoot, Emitter._respec = {}, {}, nil, nil, nil
   Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading, Emitter._awayWait = nil, nil, nil, nil, nil, nil
   Emitter._pend, Emitter._ah = { sell = {}, buy = {}, back = {} }, { claims = {} }

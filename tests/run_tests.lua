@@ -1866,7 +1866,7 @@ do
       end
     end
   end
-  local build = "1.60.1.70170"
+  local build = "1.60.1.70959"
   setG("GetBuildInfo", function() local v, b = build:match("^(.*)%.(%d+)$"); return v, b, "Oct 1 2026", 120105 end)
   local said = {}
   local oldMsg = ns.msg
@@ -1876,7 +1876,7 @@ do
   local r, ran = ST.run()
   check("selftest: runs at the first login on a build", ran == true)
   check("selftest: a client with everything passes", r.ok == true and #r.missing == 0 and #r.forbidden == 0, table.concat(r.missing, ",") .. " / " .. table.concat(r.forbidden, ",") .. " / " .. tostring(r.error))
-  check("selftest: record carries build, interface, addon, at", r.build == "1.60.1.70170" and r.interface == 120105 and r.addon == ns.VERSION and r.at == M.epoch, tostring(r.build))
+  check("selftest: record carries build, interface, addon, at", r.build == "1.60.1.70959" and r.interface == 120105 and r.addon == ns.VERSION and r.at == M.epoch, tostring(r.build))
   check("selftest: events are checked when the client can say", r.events == "checked" and r.secrets == true)
   check("selftest: silent when everything passes", ST.line(r) == nil)
   local _, again = ST.run()
@@ -2238,7 +2238,22 @@ do
   local mine = true
   for _, r in ipairs(db.loot and db.loot.log or {}) do mine = mine and r.s == ids[1] end
   for _, e in ipairs(db.story and db.story.events or {}) do mine = mine and e.s == ids[1] end
-  check("export: every loot row and story event carries the session id", mine and #db.loot.log == 5 and #db.story.events == 5, #(db.loot and db.loot.log or {}))
+  check("export: every loot row and story event carries the session id", mine and #db.loot.log == 5 and #db.story.events == 7, #(db.loot and db.loot.log or {}))
+  -- 0.9.49: the session ends with a short dungeon visit, so the sample the backend copies holds the new diagnostics
+  local st = db.settings and db.settings.selftest or {}
+  local dm = type(st.instances) == "table" and st.instances["The Deadmines"] or nil
+  local nInst = 0; for _ in pairs(type(st.instances) == "table" and st.instances or {}) do nInst = nInst + 1 end
+  check("export: settings.selftest.instances holds the dungeon visited, with the signal that fired", nInst == 1 and dm and type(dm.at) == "number" and type(dm.bySig) == "table"
+    and type(dm.bySig.type) == "table" and dm.bySig.type.sig == "type" and dm.bySig.type.type == "party" and dm.bySig.type.map == 36
+    and dm.bySig.type.zone == "The Deadmines" and dm.bySig.name == nil and dm.bySig.mapType == nil and dm.bySig.ptype == nil and dm.strong == nil, nInst)
+  local cs = type(st.chatSecret) == "table" and st.chatSecret or {}
+  check("export: settings.selftest.chatSecret counts one plain system line and one hidden XP line", cs.system and cs.system.type and cs.system.type.plain == 1 and cs.system.type.secret == 0
+    and cs.xp and cs.xp.type and cs.xp.type.plain == 0 and cs.xp.type.secret == 1 and cs.loot == nil and cs.rep == nil and cs.system.plain == nil)
+  check("export: the last dungeon check is the one after leaving (no sig when the verdict is none)", type(st.instance) == "table" and st.instance.verdict == "none" and st.instance.sig == nil)
+  local kinds = {}
+  for _, e in ipairs(db.story and db.story.events or {}) do kinds[#kinds + 1] = e.kind end
+  check("export: the visit left its two story rows and no XP from the hidden line", kinds[6] == "DUNGEON" and kinds[7] == "DUNGEONLEAVE"
+    and db.characters["Player-1-000001"].xp.fromKills == 155, table.concat(kinds, ","))
   check("export: the character block sits under the player GUID", db.characters["Player-1-000001"] and db.characters["Player-1-000001"].xp.fromQuests == 600)
   -- 0.9.44 (#43): the scripted session is one server day; its row sums to the ledger, the reorder moved nothing
   local ch = db.characters["Player-1-000001"]
@@ -2320,6 +2335,12 @@ end
 for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
+end
+-- 0.9.49 (#42, plan in #51): the chat guards, the group member not named yet, the friendly target that is no foe,
+-- the sticky dungeon check records and the client's restricted events (on a save file of its own)
+do
+  local ok, err = pcall(dofile("tests/guards.lua"), { check = check, M = M, ns = ns })
+  check("0.9.49 tests/guards.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
 -- process each, because a profile has to be in place when the addon files load): the stub as it is, the WoW

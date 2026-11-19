@@ -244,6 +244,7 @@ _G.UnitName = function(u) if u == "player" then return "Hart", "Realm" end local
 _G.UnitGUID = function(u) if u == "player" then return "Player-1-000001" end local x = M.units[u]; return x and x.guid end
 _G.UnitExists = function(u) return u == "player" or M.units[u] ~= nil end
 _G.UnitCanAttack = function(_, u) local x = M.units[u]; return x and x.hostile or false end
+_G.UnitIsFriend = function(_, u) local x = M.units[u]; if not x then return false end if x.friend ~= nil then return x.friend end return not x.hostile end
 _G.UnitIsDead = function(u) local x = M.units[u]; return x and x.dead or false end
 _G.UnitIsDeadOrGhost = function(u) if u == nil or u == "player" then return M.dead or false end local x = M.units[u]; return x and x.dead or false end
 _G.UnitAffectingCombat = function() return M.inCombat end
@@ -273,6 +274,7 @@ _G.LOOT_ITEM_PUSHED_SELF, _G.LOOT_ITEM_PUSHED_SELF_MULTIPLE = "You receive item:
 _G.LOOT_ITEM_CREATE_SELF, _G.SKILL_RANK_UP = "You create: %s.", "Your skill in %s has increased to %d."
 _G.ERR_ZONE_EXPLORED_XP, _G.ERR_ZONE_EXPLORED = "Discovered %s: %d experience gained.", "Discovered: %s"
 _G.ERR_NEWTAXIPATH = "New flight path discovered!"
+_G.UNKNOWNOBJECT = "Unknown"   -- the client's placeholder for a name it has not resolved yet (#42)
 _G.ERR_LEARN_RECIPE_S = "You have learned how to create a new item: %s."
 _G.COMBATLOG_XPGAIN_FIRSTPERSON = "%s dies, you gain %d experience."
 _G.COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED = "You gain %d experience."
@@ -285,7 +287,7 @@ for _, f in ipairs({ "GameFontNormal", "GameFontNormalLarge", "GameFontNormalSma
 _G.UnitNameUnmodified = _G.UnitName
 _G.UnitGroupRolesAssigned = function() return "NONE" end
 _G.UnitIsConnected = function() return true end
-_G.UnitIsPlayer = function(u) return u == "player" end
+_G.UnitIsPlayer = function(u) if u == "player" then return true end local x = M.units[u]; return x and x.player or false end
 _G.UnitHealthMax, _G.UnitPowerMax = function() return 1000 end, function() return 500 end
 _G.UnitStat, _G.UnitAttackPower, _G.UnitRangedAttackPower = function() return 10, 12 end, function() return 100, 0, 0 end, function() return 50, 0, 0 end
 _G.UnitDamage, _G.UnitAttackSpeed, _G.UnitArmor = function() return 10, 20, 0, 0 end, function() return 2.0 end, function() return 100, 120 end

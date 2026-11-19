@@ -5,7 +5,7 @@ EverbuffDB = {
 		["Player-1-000001"] = {
 			["class"] = "WARRIOR",
 			["durability"] = {
-				["at"] = 1793000142,
+				["at"] = 1793000271,
 				["pct"] = 90,
 			},
 			["faction"] = "Alliance",
@@ -55,6 +55,16 @@ EverbuffDB = {
 					},
 				},
 			},
+			["goldRun"] = {
+				["inst"] = "The Deadmines",
+				["items"] = 0,
+				["left"] = 1793000271,
+				["lootValue"] = 0,
+				["looted"] = 0,
+				["quests"] = 0,
+				["secs"] = 0,
+				["t"] = 1793000231,
+			},
 			["goldSince"] = 1793000042,
 			["goldZones"] = {
 				[37] = {
@@ -83,9 +93,10 @@ EverbuffDB = {
 					["standing"] = 5,
 				},
 			},
-			["seen"] = 1793000201,
+			["seen"] = 1793000271,
 			["seenZones"] = {
 				["Elwynn Forest"] = 1793000000,
+				["The Deadmines"] = 1793000231,
 			},
 			["xp"] = {
 				["cur"] = 55,
@@ -443,16 +454,16 @@ EverbuffDB = {
 	["schema"] = 2,
 	["sessions"] = {
 		["261026073319-8b60"] = {
-			["addonVersion"] = "0.9.47",
+			["addonVersion"] = "0.9.49",
 			["build"] = 120001,
 			["class"] = "WARRIOR",
 			["context"] = "Elwynn Forest",
 			["deaths"] = 0,
-			["dungeons"] = 0,
+			["dungeons"] = 1,
 			["endedBy"] = "logout",
-			["endedEpoch"] = 1793000201,
-			["endedLocal"] = 1793000200,
-			["endedMono"] = 831201.5,
+			["endedEpoch"] = 1793000271,
+			["endedLocal"] = 1793000270,
+			["endedMono"] = 831271.5,
 			["fights"] = 3,
 			["flavor"] = "mainline",
 			["gained"] = 637,
@@ -508,7 +519,7 @@ EverbuffDB = {
 				"6	1793000137	831137.500	SESSION_END	logout", -- [6]
 				"7	1793000142	831142.500	RESUME	reload", -- [7]
 				"8	1793000181	831181.500	KILL	Defias Thug", -- [8]
-				"9	1793000201	831201.500	SESSION_END	logout", -- [9]
+				"9	1793000271	831271.500	SESSION_END	logout", -- [9]
 			},
 			["spent"] = 0,
 			["startedEpoch"] = 1793000000,
@@ -616,9 +627,23 @@ EverbuffDB = {
 				"TRADE_SKILLS", -- [84]
 				"UIErrorsFrame", -- [85]
 			},
-			["addon"] = "0.9.47",
+			["addon"] = "0.9.49",
 			["at"] = 1793000000,
 			["build"] = "12.0.1.60000",
+			["chatSecret"] = {
+				["system"] = {
+					["type"] = {
+						["plain"] = 1,
+						["secret"] = 0,
+					},
+				},
+				["xp"] = {
+					["type"] = {
+						["plain"] = 0,
+						["secret"] = 1,
+					},
+				},
+			},
 			["events"] = "unchecked",
 			["forbidden"] = {
 			},
@@ -632,6 +657,25 @@ EverbuffDB = {
 				["uiMap"] = 37,
 				["verdict"] = "none",
 				["zone"] = "Elwynn Forest",
+			},
+			["instances"] = {
+				["The Deadmines"] = {
+					["at"] = 1793000231,
+					["bySig"] = {
+						["type"] = {
+							["at"] = 1793000231,
+							["diff"] = 1,
+							["inInstance"] = true,
+							["map"] = 36,
+							["mapType"] = 3,
+							["name"] = "The Deadmines",
+							["sig"] = "type",
+							["type"] = "party",
+							["uiMap"] = 37,
+							["zone"] = "The Deadmines",
+						},
+					},
+				},
 			},
 			["interface"] = 120001,
 			["missing"] = {
@@ -700,6 +744,28 @@ EverbuffDB = {
 				["y"] = 0.637,
 				["zone"] = "Elwynn Forest",
 			}, -- [5]
+			{
+				["kind"] = "DUNGEON",
+				["map"] = 37,
+				["s"] = "261026073319-8b60",
+				["shown"] = 831231.5,
+				["t"] = 1793000231,
+				["text"] = "The Deadmines",
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "The Deadmines",
+			}, -- [6]
+			{
+				["kind"] = "DUNGEONLEAVE",
+				["map"] = 37,
+				["s"] = "261026073319-8b60",
+				["shown"] = 831271.5,
+				["t"] = 1793000271,
+				["text"] = "Left  The Deadmines",
+				["x"] = 0.421,
+				["y"] = 0.637,
+				["zone"] = "Elwynn Forest",
+			}, -- [7]
 		},
 	},
 }
