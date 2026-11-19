@@ -655,12 +655,21 @@ return function(P)
       local f = ns.DB.combat.fights[#ns.DB.combat.fights]
       local out = {}
       for _, m in ipairs(f.group) do out[#out + 1] = tostring(m.name) end
-      return table.concat(out, ",")
+      return table.concat(out, ","), f
+    end
+    -- the working state of a stored fight: any key starting with "_" on the fight or on a group row
+    local function working(f)
+      for k in pairs(f) do if type(k) == "string" and k:sub(1, 1) == "_" then return k end end
+      for _, m in ipairs(f.group or {}) do
+        for k in pairs(m) do if type(k) == "string" and k:sub(1, 1) == "_" then return "group[]." .. k end end
+      end
     end
     local got = shiftFight(false)
     check("#42 fight: tokens moved, no GUID readable: the unnamed row stays unnamed, there is one Dave", got == "Hart,Equi,nil,Dave", got)
-    got = shiftFight(true)
+    local fGuid
+    got, fGuid = shiftFight(true)
     check("#42 fight: tokens moved, GUIDs readable: the row is named from the unit that is still that member", got == "Hart,Equi,Pebbles,Dave", got)
+    check("#42 fight: the GUID that named the row is not stored with it", working(fGuid) == nil, working(fGuid))
     -- the unnamed member leaves during the fight and a newcomer takes its unit token: the row is not that newcomer
     resetRoster()
     M.units.party1 = { name = "Equi", guid = "Player-1-0000E1" }; M.units.party2 = { name = "Unknown", guid = "Player-1-0000E2" }
@@ -676,6 +685,8 @@ return function(P)
     check("#42 fight: the token holds someone else (another GUID) and the member is gone: the row keeps no name", row ~= nil and row.name == nil
       and table.concat(n3, ",") == "Hart,Equi,nil", table.concat(n3, ","))
     check("#42 fight: and a player who was not in the pull gets no aura timeline", f3.memberAuras == nil or f3.memberAuras["Newbie"] == nil)
+    check("#42 fight: the row that stays unnamed does not keep its GUID either, nor the fight its pending timelines", row ~= nil and row._guid == nil
+      and f3._pendAuras == nil and working(f3) == nil, working(f3))
     check("#42 fight: no handler threw in any of them", errs() == e0, lastErr())
     resetRoster()
     check("#42 fight: F.groupNames with no fight is harmless", pcall(F.groupNames))
@@ -786,7 +797,7 @@ return function(P)
     check("instances: and the other signal's record is unchanged by it", bs.type == type0 and bs.type.at == typeAt)
     leave()
     -- the record the keying decision needs: inside with the type reading "none", in every order of arrival. The door
-    -- (sig name, map 0), inside by the dungeon map (sig mapType, the map id and uiMap in question), inside by type.
+    -- (sig name: the open world, so the map is the continent's id, 0 Eastern Kingdoms here, never the dungeon's), inside by the dungeon map (sig mapType, the map id and uiMap in question), inside by type.
     local ANSWERS = {
       name = function() M.zone = "Shadowfang Keep"; M.uiMap, M.mapType = 21, 3; M.inst = { name = "Eastern Kingdoms", type = "none", diff = 0, mapID = 0 } end,
       mapType = function() M.zone = "Shadowfang Keep"; M.uiMap, M.mapType = 310, 4; M.inst = { name = "Shadowfang Keep", type = "none", diff = 0, mapID = 33 } end,
@@ -812,6 +823,17 @@ return function(P)
     check("instances: seen from outside only, the name signal is the only record", sigs(st1) == "name")
     enter("Sunken Temple", "party", "Sunken Temple", 109)
     check("instances: then inside: the same two records, whichever came first", sigs(st1) == "name,type" and st1.bySig.name.map == 0 and st1.bySig.type.map == 109)
+    leave()
+    -- a door on Kalimdor (the save of 2026-11-19 reads name "Kalimdor", map 1 in the open world there): the door
+    -- record carries the continent's id 1, so map 0 is not what marks a door; sig name and inInstance false are
+    ns.DB.settings.selftest.instances = nil
+    M.epoch = M.epoch + 60
+    M.zone = "Wailing Caverns"; M.inst = { name = "Kalimdor", type = "none", diff = 0, mapID = 1 }
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    local wc = inst("Wailing Caverns")
+    local wd = wc and wc.bySig and wc.bySig.name
+    check("instances: a Kalimdor door is kept under the name signal with the continent's id 1, not 0 and not the dungeon's", sigs(wc) == "name" and wd ~= nil
+      and wd.sig == "name" and wd.map == 1 and wd.name == "Kalimdor" and wd.type == "none" and wd.inInstance == false and wd.zone == "Wailing Caverns", wd and wd.map)
     leave()
     -- the dungeon map type and IsInInstance as the signal
     M.zone = "Some New Crypt"; M.mapType = 4; M.fire("ZONE_CHANGED_NEW_AREA")
@@ -990,6 +1012,15 @@ return function(P)
       for _, m in ipairs(f.group or {}) do if m.name ~= nil and (type(m.name) ~= "string" or m.name == "" or m.name == "Unknown") then okGroup = false end end
     end
     check("contract: fights[].group[].name is a real name or absent", okGroup)
+    -- and no working key (one starting with "_", as _guid) is stored on a group row
+    local badKey, nRows = nil, 0
+    for _, f in ipairs(ns.DB.combat.fights or {}) do
+      for _, m in ipairs(f.group or {}) do
+        nRows = nRows + 1
+        for k in pairs(m) do if type(k) == "string" and k:sub(1, 1) == "_" then badKey = k end end
+      end
+    end
+    check("contract: fights[].group[] stores no working key (none starts with _)", badKey == nil and nRows > 0, badKey or nRows)
     -- the 60 upvalue limit of a Lua function: Emitter's handler took one branch more and no new upvalue
     local worst, emitterUps = 0, debug.getinfo(T.emitterFrame.scripts.OnEvent, "u").nups
     for _, fr in ipairs(ns.eventFrames) do
