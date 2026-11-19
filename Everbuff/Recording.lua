@@ -873,7 +873,8 @@ UI.registerPane("Combat", 2, "Fights", build, function()
   if (detailView and detailView:IsShown()) or (memberView and memberView:IsShown()) then return end
   if listRebuild then listRebuild() end
   if not ticker then ticker = C_Timer.NewTicker(2, function()
-    if listView and listView:IsShown() and listRebuild then listRebuild() end
+    -- (on screen: IsShown is the frame's own flag, and a pane hides its parent, never this list)
+    if listView and (listView.IsVisible and listView:IsVisible() or (not listView.IsVisible and listView:IsShown())) and listRebuild then listRebuild() end
   end) end
 end)
 

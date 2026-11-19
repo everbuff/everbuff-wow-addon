@@ -77,18 +77,23 @@ local function bossText(run)
   if run.total then return ("%d/%d"):format(n0(run.bossesDown), run.total) end
   return tostring(n0(run.bossesDown))
 end
--- The Pace lines of a run: "Best 28m 41s on 14 Nov  ·  this run +3:29 ↑" and the sum of the best segments when
--- every segment of this run's own order of kills is known; or, with no best on its route, against the best of the
--- route that shares its start: "At boss 3 of 5: best 12m 10s on 14 Nov  ·  this run +0:41 ↑". nil with no best.
+-- The Pace lines of a run: "Best 28m 41s on 14 Nov, first pull to last kill  ·  this run 28m 53s (+0:12 ↑)" and
+-- the sum of the best segments when every segment of this run's own order of kills is known; or, with no best on
+-- its route, against the best of the route that shares its start: "At boss 3 of 5: best 12m 10s on 14 Nov, from the
+-- first pull  ·  this run 12m 51s (+0:41 ↑)". The best and the delta are on that measure, never on the run's
+-- clock of the TIME tile (inside and run back, entrance and looting included), so the line names it and gives
+-- this run's own value on it. nil with no best.
+local MEASURE = "first pull to last kill"
 local function paceLines(run)
   local cmp = run.cmp
   if not (cmp and cmp.mode and cmp.delta and run.cleared) then return nil end   -- (absent before a first full clear)
   local when = date("%d %b", cmp.bestAt or 0)
+  local mine = fmtDur(cmp.best + cmp.delta) .. " (" .. Runs.deltaText(cmp.delta) .. ")"
   if cmp.mode == "same" then
-    local l1 = ("Best %s on %s"):format(fmtDur(cmp.best), when) .. SEP .. (cmp.isBest and "this run is the best" or ("this run " .. Runs.deltaText(cmp.delta)))
+    local l1 = ("Best %s on %s, %s"):format(fmtDur(cmp.best), when, MEASURE) .. SEP .. (cmp.isBest and "this run is the best" or ("this run " .. mine))
     return l1, cmp.sumBest and ("Sum of best segments " .. fmtDur(cmp.sumBest)) or nil
   end
-  return ("At boss %d of %d: best %s on %s"):format(cmp.at, cmp.of, fmtDur(cmp.best), when) .. SEP .. "this run " .. Runs.deltaText(cmp.delta), nil
+  return ("At boss %d of %d: best %s on %s, from the first pull"):format(cmp.at, cmp.of, fmtDur(cmp.best), when) .. SEP .. "this run " .. mine, nil
 end
 -- the lockouts of the account's other characters, for the hover of the "Saved to" line (plan decision 14)
 local function otherLockouts()
@@ -781,6 +786,11 @@ local function buildList(content)
     if n0(run.reentries) > 0 then out[#out + 1] = ("Re-entered %d time%s"):format(run.reentries, run.reentries == 1 and "" or "s") end
     local partial = Runs.partialLine(run)
     if partial then out[#out + 1] = partial end
+    -- (LENGTH is the run's clock; the delta beside it is on the measure of a best)
+    local cmp = run.cmp
+    if cmp and cmp.mode and cmp.best and cmp.delta then
+      out[#out + 1] = ("Against the best: first pull to last boss kill, %s here, best %s"):format(fmtDur(cmp.best + cmp.delta), fmtDur(cmp.best))
+    end
     return out
   end
 
@@ -808,7 +818,8 @@ local function buildList(content)
       if not d then return end
       tip:AddLine(d.name)
       tip:AddLine(("%d run%s, %d full clear%s"):format(d.n, d.n == 1 and "" or "s", d.full, d.full == 1 and "" or "s"))
-      if d.other then tip:AddLine("Dungeons run least recently, counted together once 80 dungeons have numbers of their own.") end
+      if d.other then tip:AddLine("Dungeons run least recently, counted together once 80 dungeons have numbers of their own.")
+      elseif d.best then tip:AddLine("Best and Average: first pull to last boss kill, on the route of the best") end
     end })
   v.dtbl = dtbl
   local function dungeonRebuild()
@@ -885,8 +896,9 @@ end, function()
   end
 end)
 
--- the runs of the logged-in character as the panes read them, oldest first (the Fights list groups by them)
-ns.DungeonRuns = function() return Runs.views() end
+-- the runs of the logged-in character as the Fights list groups by them, oldest first: the light read (name, start,
+-- bosses down, deaths and the record), nothing from the statistics (its list is drawn again every 2 s)
+ns.DungeonRuns = function() return Runs.views(nil, true) end
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

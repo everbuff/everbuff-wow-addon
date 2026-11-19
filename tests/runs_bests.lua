@@ -190,7 +190,8 @@ return function(P)
     -- the Pace lines and the TIME tile of the page
     T.renderRun(v3)
     local dv = T.dungeonDetail()
-    check("3: Pace reads the best, its date and this run's delta", dv.paceLine == ("Best 8m 20s on %s"):format(date("%d %b", r2.t)) .. SEP .. "this run +2:20 " .. R.UP
+    -- (the line names the measure and gives this run's own value on it: 640 s, not the 1000-odd s of its TIME tile)
+    check("3: Pace reads the best, its date, the measure and this run's value and delta", dv.paceLine == ("Best 8m 20s on %s, first pull to last kill"):format(date("%d %b", r2.t)) .. SEP .. "this run 10m 40s (+2:20 " .. R.UP .. ")"
       and dv.paceLine2 == "Sum of best segments 8m 20s", dv.paceLine)
     check("3: the TIME tile carries the delta", dv.deltaText == "+2:20 " .. R.UP, dv.deltaText)
     local vsCells = {}
@@ -199,7 +200,7 @@ return function(P)
     for _, t in ipairs(vsCells) do if not (t:find(R.UP, 1, true) or t:find(R.DOWN, 1, true)) then allMarked = false end end
     check("3: every delta on the page has its sign and its arrow (colour never alone)", allMarked, table.concat(vsCells, " | "))
     T.renderRun(v2)
-    check("3: the best run's page says it is the best", dv.paceLine == ("Best 8m 20s on %s"):format(date("%d %b", r2.t)) .. SEP .. "this run is the best" and dv.deltaText == "best", dv.paceLine)
+    check("3: the best run's page says it is the best", dv.paceLine == ("Best 8m 20s on %s, first pull to last kill"):format(date("%d %b", r2.t)) .. SEP .. "this run is the best" and dv.deltaText == "best", dv.paceLine)
     -- the list: LENGTH carries the delta, BOSSES the learned list (3 runs, 3 bosses each: 3/3)
     local lv = T.dungeonList()
     local rows = {}
@@ -589,8 +590,13 @@ return function(P)
       for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and b.visit == 2 then split = b end end
       split.scripts.OnClick(split)
       check("repull: the second click splits: the first part stored, the page on it", #closed() == 1 and open() and open().repull == nil and dv.run.id == closed()[1].id)
+      local a, b = boss(closed()[1], 644), boss(open(), 644)
+      check("repull: the second kill is the open part's own row, the first part keeps its first pull only", b and b.kill ~= nil and b.pulls == 1 and b.combat == 20
+        and a and (a.pulls or 1) == 1 and a.combat == 20 and a.r2 == nil, b and tostring(b.kill))
     end
     leave(); expire()
+    -- (the first part killed Rhahk'Zor too: two runs on the route "644")
+    check("repull: the second part is counted on its route", R.routeOf(raw()) == "644" and stats(DM).routes[R.sigOf(raw())] ~= nil and stats(DM).routes[R.sigOf(raw())].n == 2)
     invariants("repull")
   end
 
@@ -988,6 +994,265 @@ return function(P)
     local ns0 = 0
     for _ in pairs(stats("Uldaman").routes["1.2.3/d1/solo"].seg) do ns0 = ns0 + 1 end
     check("caps: a route keeps at most its bosses plus 2 best segments", ns0 == 3 + R.SEG_EXTRA, ns0)
+  end
+
+  -- ── review round 2: Split here at a repull, taking a run out of entries it was never in, the light read ───────
+  -- a boss killed in visit 1 and pulled and killed again in visit 2: Split here at visit 2 gives the second kill to
+  -- the second part, and the join gives the original record back
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(30); combat(true); kill(644, "Rhahk'Zor", 20); play(10); kill(645, "Sneed", 30); combat(false); play(10); leave(); play(300)
+    enter("Deadmines", { map = DMAP }); play(30); combat(true)
+    START(644, "Rhahk'Zor"); play(15); die(); play(10); END(644, "Rhahk'Zor", 0); rise(); play(20)   -- (a wipe in the second copy)
+    kill(644, "Rhahk'Zor", 25); combat(false); play(10); leave(); expire()
+    local orig = deepcopy(raw())
+    local b0 = boss(orig, 644)
+    -- (the row: 3 pulls, 20 + 25 + 25 = 70 s, one wipe; the second copy's part: 2 pulls, 50 s, the wipe and its kill)
+    check("repull2: the row keeps the second copy's part apart, the sums of both on the row", orig.repull == 2 and b0.pulls == 3 and b0.combat == 70 and b0.wipes == 1
+      and type(b0.r2) == "table" and b0.r2.pulls == 2 and b0.r2.combat == 50 and b0.r2.wipes == 1 and b0.r2.kill ~= nil and b0.r2.kill > b0.kill and b0.kill ~= nil,
+      b0 and (tostring(b0.pulls) .. " " .. tostring(b0.combat)))
+    R.split(orig.id, 2)
+    local A, B = closed()[1], closed()[2]
+    local a, b = boss(A, 644), boss(B, 644)
+    local cB = orig.visits[1].secs + (orig.visits[2].gg or 0)
+    check("repull2: the first part keeps its own pull and kill only", a and (a.pulls or 1) == 1 and a.combat == 20 and a.wipes == nil and a.r2 == nil and a.kill == b0.kill, a and a.combat)
+    check("repull2: the second part has the second kill, its wipe and its pulls, on its own clock", b and b.pulls == 2 and b.combat == 50 and b.wipes == 1 and b.r2 == nil
+      and b.kill == b0.r2.kill - cB and R.pullOf(b) >= 0, b and b.kill)
+    check("repull2: the second part has a route and is counted on it", R.routeOf(B) == "644" and stats(DM).routes[R.sigOf(B)] ~= nil and stats(DM).routes[R.sigOf(B)].n == 1
+      and R.routeOf(A) == "644.645", R.routeOf(B))
+    check("repull2: the second part's boss seconds have their boss behind them", (B.secs.boss or 0) == 50 and (A.secs.boss or 0) == 50, tostring(B.secs.boss) .. " " .. tostring(A.secs.boss))
+    invariants("repull2 split")
+    R.join(B.id)
+    local J = deepcopy(closed()[1])
+    -- (the mark "possibly two runs" goes with Split here at its visit, and a join by hand does not bring it back)
+    for _, x in ipairs({ J, orig }) do x.edited, x.pb, x.done, x.repull = nil, nil, nil, nil end
+    check("repull2: split then join gives the original record back", #closed() == 1 and (same(J, orig)), select(2, same(J, orig)))
+  end
+  -- two runs joined, a boss killed in the first and pulled again in the second: the kill pull stays the first's
+  do
+    fresh()
+    enter("Deadmines", { map = DMAP }); play(20); combat(true)
+    kill(644, "Rhahk'Zor", 10); play(20); kill(645, "Sneed", 60); combat(false); play(10); leave(); expire()
+    local A = deepcopy(raw())
+    local keysA = {}
+    for _, sp in pairs(R.splits(A)) do keysA[#keysA + 1] = sp.prevKey .. ">" .. sp.key end
+    table.sort(keysA)
+    enter("Deadmines", { map = DMAP }); play(20); combat(true); START(645, "Sneed"); play(90); END(645, "Sneed", 1); combat(false); play(10); leave(); expire()
+    local ok = R.join(raw().id)
+    local J = closed()[1]
+    local x = boss(J, 645)
+    local keysJ = {}
+    for _, sp in pairs(R.splits(J)) do keysJ[#keysJ + 1] = sp.prevKey .. ">" .. sp.key end
+    table.sort(keysJ)
+    check("join: a boss killed in the first run keeps its kill pull's length and start", ok and #closed() == 1 and x.dur == 60 and x.kill == boss(A, 645).kill
+      and R.pullOf(x) == boss(A, 645).kill - 60 and x.combat == 150 and x.pulls == 2, x and x.dur)
+    check("join: the segment keys are the first run's", table.concat(keysJ, " ") == table.concat(keysA, " ") and table.concat(keysA, " ") == "644>645 start>644", table.concat(keysJ, " "))
+    check("join: the later pull is the second copy's part of the row", type(x.r2) == "table" and x.r2.kill ~= nil and x.r2.combat == 90)
+  end
+
+  -- a run taken out subtracts only from what it was counted in: a route dropped at the cap and made again
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local function add(t, enc, kill)
+      local r = T.runRecord("Deadmines", t, 200, { firstPull = 10, bosses = { { enc = enc, combat = 5, kill = kill or 50 } }, size = 1 })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+      return r
+    end
+    -- the most run route first: three runs of 700, then eight routes of one run each
+    for i = 1, 3 do add(M.epoch - 20000 + i * 100, 700, 60 + i) end
+    local old = add(M.epoch - 19000, 701)
+    for i = 2, R.ROUTE_CAP do add(M.epoch - 19000 + i * 100, 700 + i) end
+    local RT = stats("Deadmines").routes
+    check("routes: the least run route goes first, never the most run one", RT["700/solo"] and RT["700/solo"].n == 3 and RT["700/solo"].best == 51 and RT["701/solo"] == nil
+      and RT["708/solo"] ~= nil and old.notIn and old.notIn.route == true, RT["700/solo"] and RT["700/solo"].n)
+    -- route 701 again, by a later run with its own best; the old run of 701 deleted
+    local new = add(M.epoch - 10000, 701, 30)
+    check("routes: a route made again holds the later run", stats("Deadmines").routes["701/solo"].bestId == new.id and stats("Deadmines").routes["702/solo"] == nil)
+    R.delete(old.id)
+    local r = stats("Deadmines").routes["701/solo"]
+    check("routes: deleting the run of the dropped route leaves the route made again", r and r.n == 1 and r.best == 20 and r.bestId == new.id and r.k == 1 and r.tot == 20, r and r.n)
+    local after = deepcopy(me().dungeonStats)
+    R.statsRebuild(me(), true)
+    check("routes: and equals a recompute from the runs left", (same(after, me().dungeonStats)), select(2, same(after, me().dungeonStats)))
+  end
+  -- the same for a boss skipped at the boss cap and made later by another run
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local function add(t, enc)
+      local r = T.runRecord("Blackrock Depths", t, 100, { firstPull = 10, size = 1, diff = 1, bosses = { { enc = enc, name = "B", combat = 5, kill = 50 } } })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+      return r
+    end
+    for i = 1, R.STATS_BOSS_CAP do add(M.epoch - 100000 + i * 100, 3000 + i) end
+    local skipped = add(M.epoch - 50000, 3999)
+    check("bosscap: a boss past the cap is not counted, and the run says so", stats("Blackrock Depths").bosses[3999] == nil and skipped.notIn and skipped.notIn.bosses and skipped.notIn.bosses[3999] == true)
+    R.delete(c.dungeonRuns[1].id)                                 -- (boss 3001's only run: its row goes, a place is free)
+    add(M.epoch - 40000, 3999)
+    check("bosscap: a later run makes the row", stats("Blackrock Depths").bosses[3999] and stats("Blackrock Depths").bosses[3999].seenIn == 1)
+    R.delete(skipped.id)
+    local x = stats("Blackrock Depths").bosses[3999]
+    check("bosscap: deleting the run that was never counted in it leaves the row", x and x.seenIn == 1 and x.kills == 1, x and x.seenIn)
+    local after = deepcopy(me().dungeonStats)
+    R.statsRebuild(me(), true)
+    check("bosscap: and equals a recompute from the runs left", (same(after, me().dungeonStats)), select(2, same(after, me().dungeonStats)))
+  end
+  -- and for a dungeon folded into `other` and run again later
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    for i = 1, R.STATS_CAP + 1 do
+      local r = T.runRecord("Dungeon " .. i, M.epoch - 100000 + i * 100, 100, { firstPull = 10, bosses = { { enc = 9000 + i, name = "B", combat = 5, kill = 50 } }, size = 1, diff = 1 })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+    end
+    local first = c.dungeonRuns[1]
+    check("fold: the folded dungeon's run says it is counted in other", first.notIn and first.notIn.dungeon == true and c.dungeonStats.other.n == 1)
+    local again = T.runRecord("Dungeon 1", M.epoch - 1000, 300, { firstPull = 10, bosses = { { enc = 9001, name = "B", combat = 5, kill = 70 } }, size = 1, diff = 1 })
+    c.dungeonRuns[#c.dungeonRuns + 1] = again; R.statsAdd(c, again)
+    check("fold: run again, the dungeon has statistics of its own again (and the next least recent folds)", c.dungeonStats["dungeon 1"] and c.dungeonStats["dungeon 1"].n == 1
+      and c.dungeonStats.other.n == 2 and c.dungeonStats["dungeon 2"] == nil)
+    R.delete(first.id)
+    local s1 = c.dungeonStats["dungeon 1"]
+    check("fold: deleting the old run takes it out of other, not out of the dungeon run again", s1 and s1.n == 1 and s1.secs == 300 and s1.routes["9001/d1/solo"] and s1.routes["9001/d1/solo"].best == 60
+      and c.dungeonStats.other.n == 1 and c.dungeonStats.other.secs == 100, s1 and s1.n)
+  end
+
+  -- BY DUNGEON: the sums and the rates worked out by hand
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local function secs(inside, active) return { inside = inside, ghost = 0, outside = 0, offline = 0, active = active, combat = 0, boss = 0 } end
+    -- run 1: 600 s inside, 400 active, 2 own deaths (and 1 of the party), 3000 XP, 1g 20s looted and 30s from quests
+    local r1 = T.runRecord("Razorfen Kraul", M.epoch - 5000, 600, { firstPull = 10, size = 1, diff = 1, secs = secs(600, 400), nDeaths = { me = 2, party = 1 },
+      xp = { gain = 3000 }, gold = { looted = 12000, quests = 3000, lootValue = 5000, items = 4 }, bosses = { { enc = 1, combat = 5, kill = 50, wipes = 1 } } })
+    -- run 2: 900 s inside, 500 active, 1 own death, 2000 XP, 60s looted
+    local r2 = T.runRecord("Razorfen Kraul", M.epoch - 3000, 900, { firstPull = 10, size = 1, diff = 1, secs = secs(900, 500), nDeaths = { me = 1 },
+      xp = { gain = 2000 }, gold = { looted = 6000 }, bosses = { { enc = 1, combat = 5, kill = 70 } } })
+    -- a dungeon with 200 active seconds: under Runs.RATE_WARM, no rate yet
+    local r3 = T.runRecord("Wailing Caverns", M.epoch - 2000, 250, { firstPull = 10, size = 1, diff = 1, secs = secs(250, 200), nDeaths = { me = 1 },
+      xp = { gain = 900 }, gold = { looted = 900 }, bosses = { { enc = 2, combat = 5, kill = 50 } } })
+    for _, r in ipairs({ r1, r2, r3 }) do c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r) end
+    local s = stats("Razorfen Kraul")
+    check("bydungeon: the sums of the dungeon", s.n == 2 and s.deaths == 3 and s.xp == 5000 and s.looted == 18000 and s.quests == 3000 and s.lootValue == 5000
+      and s.active == 900 and s.secs == 1500 and s.wipes == 1, ("%s %s %s %s %s"):format(s.deaths, s.xp, s.looted, s.active, s.secs))
+    local rows = R.dungeonRows()
+    local rk, wc
+    for _, d in ipairs(rows) do if d.name == "Razorfen Kraul" then rk = d elseif d.name == "Wailing Caverns" then wc = d end end
+    -- (coin: (18000 + 3000) * 3600 / 900 = 84000 an hour; XP: 5000 * 3600 / 900 = 20000; deaths 3 / 2 runs; best 40 s
+    -- and average (40 + 60) / 2 = 50 s, first pull to last kill)
+    check("bydungeon: coin and XP per active hour, deaths per run", rk and rk.coinPerHour == 84000 and rk.xpPerHour == 20000 and rk.deathsPerRun == 1.5
+      and rk.best == 40 and rk.avg == 50, rk and rk.coinPerHour)
+    check("bydungeon: under 5 active minutes a dungeon has no rate", wc and wc.coinPerHour == nil and wc.xpPerHour == nil and wc.deathsPerRun == 1)
+    local lv = T.dungeonList()
+    lv.setView("dungeons")
+    local cells, rowOf = {}, {}
+    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow then cells[r.drow.name] = r.c; rowOf[r.drow.name] = r end end
+    local k, w = cells["Razorfen Kraul"], cells["Wailing Caverns"]
+    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "1.5" and k.coin.text ~= "-" and k.best.text == R.fmtDur(40) and k.avg.text == R.fmtDur(50), k and k.xp.text)
+    check("bydungeon: a dungeon under 5 active minutes reads - for coin and XP, its deaths per run as a number", w and w.coin.text == "-" and w.xp.text == "-" and w.dpr.text == "1.0", w and w.coin.text)
+    local tl = {}
+    local tr = rowOf["Razorfen Kraul"]
+    if tr and tr.GetScript and tr:GetScript("OnEnter") then
+      tr:GetScript("OnEnter")(tr)
+      for _, l in ipairs(GameTooltip.lines or {}) do tl[#tl + 1] = tostring(l) end
+      if tr:GetScript("OnLeave") then tr:GetScript("OnLeave")(tr) end
+    end
+    check("bydungeon: the row's hover says what Best and Average measure", table.concat(tl, "|"):find("first pull to last boss kill", 1, true) ~= nil, table.concat(tl, "|"))
+    lv.setView("runs")
+  end
+
+  -- the segment cap keeps the newest runs' segments, and never the one a run just set
+  do
+    fresh()
+    local c = me()
+    c.dungeonRuns = {}
+    local orders = { { 1, 2, 3 }, { 1, 3, 2 }, { 2, 1, 3 }, { 2, 3, 1 }, { 3, 1, 2 }, { 3, 2, 1 } }
+    local ids = {}
+    local function run(t, o)
+      local b = {}
+      for j, e in ipairs(o) do b[j] = { enc = e, combat = 5, kill = 50 * j } end
+      local r = T.runRecord("Uldaman", t, 200, { firstPull = 10, size = 1, diff = 1, bosses = b })
+      c.dungeonRuns[#c.dungeonRuns + 1] = r; R.statsAdd(c, r)
+      return r
+    end
+    for i, o in ipairs(orders) do ids[i] = run(M.epoch - 10000 + i * 100, o).id end
+    local function segs()
+      local out = {}
+      for k, x in pairs(stats("Uldaman").routes["1.2.3/d1/solo"].seg) do
+        local who = "?"
+        for i, id in pairs(ids) do if x.id == id then who = tostring(i) end end
+        out[#out + 1] = k .. "=" .. who
+      end
+      table.sort(out)
+      return table.concat(out, " ")
+    end
+    -- (worked out by hand: every start is 40 s, every later segment 50 s; a tie keeps the older entry, and past the
+    -- cap of 5 the oldest run's entries go first, the lower key first among one run's)
+    check("segcap: the segments of the newest orders stay, those of the oldest runs go", segs() == "1>2=5 2>1=6 3>1=4 3>2=6 start>3=5", segs())
+    -- a run with an older start (a join keeps the first run's id) adds two segments over the cap: they stay
+    ids[7] = run(M.epoch - 20000, { 2, 3, 1 }).id
+    check("segcap: a segment the run just set is never dropped in the same call", segs() == "2>1=6 2>3=7 3>2=6 start>2=7 start>3=5", segs())
+  end
+
+  -- the copy rows: the cap, a raid split, a split of a run older than a day
+  do
+    fresh()
+    local c = me()
+    for i = 1, R.COPY_CAP + 1 do R.copyCheck(c, { t = M.epoch - 5000 + i, inst = "Dungeon " .. i, id = "copy-" .. i, kind = "party" }) end
+    check("copies: at most Runs.COPY_CAP rows, the oldest goes", #c.dungeonCopies == R.COPY_CAP and c.dungeonCopies[1].run == "copy-2" and c.dungeonCopies[R.COPY_CAP].run == "copy-" .. (R.COPY_CAP + 1))
+    fresh()
+    c = me()
+    enter("Molten Core", { type = "raid", map = 409 }); play(200); combat(true); kill(663, "Lucifron", 30); combat(false); leave(); play(60)
+    enter("Molten Core", { type = "raid", map = 409 }); play(100); combat(true); kill(664, "Magmadar", 30); combat(false); leave(); expire()
+    local n0 = #(c.dungeonCopies or {})
+    local okR = R.split(raw().id, 2)
+    check("copies: Split here on a raid adds no row", okR and #closed() == 2 and #(c.dungeonCopies or {}) == n0 and n0 == 0, #(c.dungeonCopies or {}))
+    fresh()
+    c = me()
+    clear("Deadmines", DMAP, 20, K3(100, 200, 900, { leaveC = 60 }))
+    adv(R.COPY_WINDOW + 3600)
+    local before = #R.copiesOf(c, M.epoch)
+    local okO = R.split(raw().id, 2)
+    -- (the rows as stored, not read through Runs.copiesOf, which would let an old row go again at once)
+    check("copies: Split here on a run older than a day adds no row", okO and #closed() == 2 and #(c.dungeonCopies or {}) == before and before == 0, #(c.dungeonCopies or {}))
+  end
+
+  -- the Fights list reads the runs lightly, and only while it is on screen; the Dungeons list keeps what it read
+  do
+    fresh()
+    clear("Deadmines", DMAP, 10, K3(100, 200, 300))
+    clear("Deadmines", DMAP, 10, K3(90, 200, 280))
+    local lite = ns.DungeonRuns()
+    check("light: the Fights list's read has the run headers' fields, nothing from the statistics", #lite == 2 and lite[1].rec ~= nil and lite[1].bossesDown == 3 and lite[1].name == DM
+      and lite[1].startT ~= nil and lite[1].cmp == nil and lite[1].total == nil and lite[1].splits == nil)
+    local v1, v2 = R.views(), R.views()
+    check("cache: the full read keeps the comparison while nothing changed", v1[1].cmp ~= nil and v1[1].cmp == v2[1].cmp and v1[2].cmp == v2[2].cmp and v1[1].total == 3)
+    local hov = table.concat(T.dungeonList().tipLines(v1[1]), "|")
+    -- (run 1: 290 s from its first pull to its last kill, the best 270 s)
+    check("length: the hover of LENGTH says the delta is first pull to last kill, with this run's value", hov:find("Against the best: first pull to last boss kill, 4m 50s here, best 4m 30s", 1, true) ~= nil, hov)
+    clear("Deadmines", DMAP, 10, K3(80, 150, 200))
+    local v3 = R.views()
+    check("cache: and reads it again once the statistics change", v3[1].cmp ~= v1[1].cmp and v3[1].cmp.delta == R.measure(closed()[1]) - 190, v3[1].cmp.delta)
+    -- the Fights pane opened once, then the window closed: its 2 s ticker draws nothing
+    local root = _G.EverbuffFrame
+    local wasShown = root and root:IsShown()
+    ns.UI.Open("Combat", "fights")
+    root = _G.EverbuffFrame
+    local real0, calls = ns.DungeonRuns, 0
+    ns.DungeonRuns = function() calls = calls + 1; return real0() end
+    M.tick()
+    local onScreen = calls
+    if root:IsShown() then ns.UI.Toggle() end
+    calls = 0
+    M.tick(); M.tick()
+    check("ticker: the Fights list is drawn again on screen, never with the window closed", onScreen >= 1 and calls == 0, onScreen .. " " .. calls)
+    ns.DungeonRuns = real0
+    if wasShown and not root:IsShown() then ns.UI.Toggle() end
   end
 
   -- ── the contract of the new keys ─────────────────────────────────────────────────────────────────────────────

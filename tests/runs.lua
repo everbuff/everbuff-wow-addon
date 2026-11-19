@@ -148,13 +148,14 @@ return function(P)
   end
   local RUN = { id = "string", v = "number", inst = "string", kind = "string", map = "number", diff = "number", uiMap = "number", t = "number", endT = "number",
     open = "string", why = "string", partial = "string", visits = "table", secs = "table", firstPull = "number", bosses = "table", nDeaths = "table", deaths = "table", xp = "table",
-    gold = "table", hidden = "table", keep = "boolean", size = "number", done = "boolean", exact = "boolean", edited = "boolean", repull = "number", copied = "boolean",
+    gold = "table", hidden = "table", keep = "boolean", size = "number", done = "boolean", exact = "boolean", edited = "boolean", repull = "number", copied = "boolean", notIn = "table",
     st = "string", mark = "number", beat = "number", left = "number", ghostAt = "number", gap = "table", encs = "table", deadSince = "number", m0 = "number", g0 = "table", bossIn = "table", bossWin = "table", prov = "boolean" }
   local VISIT = { i = "number", o = "number", how = "string", out = "string", n = "number", secs = "number", active = "number", xp = "number", xpKill = "number", xpQuest = "number", kills = "number",
     looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number", gaps = "table",
     gg = "number", go = "number", gf = "number", combat = "number", boss = "number", fc = "number" }
   local BOSS = { enc = "number", name = "string", pulls = "number", wipes = "number", resets = "number", unknown = "number", combat = "number", kill = "number",
-    fight = "string", ok = "number", dur = "number", p = "number" }
+    fight = "string", ok = "number", dur = "number", p = "number", r2 = "table" }
+  local BOSS2 = { pulls = "number", wipes = "number", resets = "number", unknown = "number", combat = "number", kill = "number", fight = "string", ok = "number", dur = "number", p = "number" }
   local SECS = { inside = "number", ghost = "number", outside = "number", offline = "number", active = "number", combat = "number", boss = "number" }
   local GOLD = { looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number", purse = "number" }
   local function contract(run, isOpen)
@@ -169,7 +170,11 @@ return function(P)
         for k, g in ipairs(x.gaps) do if type(g) ~= "number" or (k > 1 and g < x.gaps[k - 1]) then why = why or "visit.gaps is not in order" end end
       end
     end
-    for _, x in ipairs(run.bosses) do why = why or typed(x, BOSS, "boss") end
+    for _, x in ipairs(run.bosses) do why = why or typed(x, BOSS, "boss") or (x.r2 and typed(x.r2, BOSS2, "boss.r2")) end
+    if run.notIn then
+      why = why or typed(run.notIn, { dungeon = "boolean", route = "boolean", bosses = "table" }, "notIn")
+      for enc, x in pairs(run.notIn.bosses or {}) do if type(enc) ~= "number" or x ~= true then why = why or "notIn.bosses" end end
+    end
     for _, x in ipairs(run.deaths or {}) do why = why or typed(x, { o = "number", enc = "number", foe = "string", back = "number" }, "death") end
     if not isOpen then
       for _, k in ipairs(R.OPEN_KEYS) do if run[k] ~= nil then why = why or ("closed run keeps " .. k) end end
@@ -183,7 +188,7 @@ return function(P)
     else
       if not ({ ["in"] = true, ghost = true, out = true, off = true })[run.st] then why = why or "st" end
       -- the open-only tables, typed
-      for id, e in pairs(run.encs or {}) do why = why or (type(id) ~= "number" and "encs key") or typed(e, { t = "number", o = "number", d = "number", r = "number" }, "encs[]") end
+      for id, e in pairs(run.encs or {}) do why = why or (type(id) ~= "number" and "encs key") or typed(e, { t = "number", o = "number", d = "number", r = "number", rp = "number" }, "encs[]") end
       if run.gap then why = why or typed(run.gap, { ghost = "number", outside = "number", offline = "number" }, "gap") end
       if run.g0 then why = why or typed(run.g0, { looted = "number", quests = "number", lootValue = "number", items = "number", unpriced = "number" }, "g0") end
       if run.bossIn then why = why or typed(run.bossIn, { zone = "string", map = "number" }, "bossIn") end
@@ -943,16 +948,20 @@ return function(P)
     end
     for i = 1, R.BOSS_CAP do
       worst.bosses[i] = { enc = 12345 + i, name = "High Interrogator Gerstahn the Unseen", pulls = 12, wipes = 11, resets = 10, unknown = 10, combat = 12345, kill = 12345 + i, ok = 1, dur = 123,
-        fight = "Hart-Realm-1795033978-216-a1b2", p = 1234 }
+        fight = "Hart-Realm-1795033978-216-a1b2", p = 1234,
+        r2 = { p = 5000 + i, pulls = 5, wipes = 4, resets = 3, unknown = 2, combat = 1234, kill = 6000 + i, ok = 1, dur = 99, fight = "Hart-Realm-1795033978-217-a1b3" } }
     end
     for i = 1, R.DEATH_CAP do worst.deaths[i] = { o = 40000 + i, enc = 12345, foe = "High Interrogator Gerstahn", back = 1234 } end
+    worst.notIn = { dungeon = true, route = true, bosses = {} }
+    for i = 1, R.BOSS_CAP do worst.notIn.bosses[12345 + i] = true end
     worst.visits[R.VISIT_CAP].gaps = {}
     for k = 1, R.GAP_CAP do local g = worst.visits[R.VISIT_CAP].gaps; g[#g + 1] = 81000 + 20 * k; g[#g + 1] = 81010 + 20 * k end
     R.lean(worst)
     local missing = {}
     for _, k in ipairs(R.LEAN_VISIT) do if worst.visits[R.VISIT_CAP][k] == nil then missing[#missing + 1] = k end end
     if #(worst.visits[R.VISIT_CAP].gaps or {}) ~= 2 * R.GAP_CAP then missing[#missing + 1] = "gaps" end
-    for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "name", "p" }) do if worst.bosses[R.BOSS_CAP][k] == nil then missing[#missing + 1] = k end end
+    for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "name", "p", "r2" }) do if worst.bosses[R.BOSS_CAP][k] == nil then missing[#missing + 1] = k end end
+    for _, k in ipairs({ "pulls", "wipes", "resets", "unknown", "kill", "dur", "fight", "p" }) do if (worst.bosses[R.BOSS_CAP].r2 or {})[k] == nil then missing[#missing + 1] = "r2." .. k end end
     for _, k in ipairs({ "gg", "go", "gf", "fc" }) do if worst.visits[R.VISIT_CAP][k] == nil then missing[#missing + 1] = k end end
     check("15: the worst case carries every optional key on every row, and is a record of the contract", #missing == 0 and contract(worst, false) == nil and R.valid(worst)
       and worst.deaths[R.DEATH_FULL].foe ~= nil and worst.deaths[R.DEATH_FULL + 1].foe == nil and worst.deaths[R.DEATH_CAP].back == nil and worst.deaths[R.DEATH_CAP].enc == 12345,
@@ -961,7 +970,7 @@ return function(P)
     local unk = T.runRecord("The Deadmines", 1000, 100, { bosses = { { enc = 1, name = "Rhahk'Zor", pulls = 2, wipes = 1, resets = 0, unknown = 0, combat = 50, ok = 0, dur = 20 } } }).bosses[1]
     check("15: lean keeps ok and dur on a boss row with no kill", unk.ok == 0 and unk.dur == 20 and unk.wipes == 1 and unk.resets == nil, tostring(unk.ok))
     local wsize = svSize(worst)
-    check("15: the worst case at the caps is under 25 KB (0.9.51 budget: measured 24.2 KB with 20 gaps and the keys of 0.9.51; plan 4.6 names 3 KB as a target to be measured)", wsize < 25 * 1024, wsize)
+    check("15: the worst case at the caps is under 31 KB (0.9.51 budget: measured 30.1 KB with 20 gaps, the keys of 0.9.51, a second copy's part on every boss row and every `notIn` mark; plan 4.6 names 3 KB as a target to be measured)", wsize < 31 * 1024, wsize)
     realPrint(("dungeon run size: worst case at the caps (20 visits, 20 gaps, 20 bosses, 40 deaths, every key) is %d bytes"):format(wsize))
     -- The statistics of a character (characters[guid].dungeonStats, 0.9.51), never evicted, uploaded with the file
     -- like the runs: measured at their depth in the file for a levelling character (30 dungeons, two routes of 8
