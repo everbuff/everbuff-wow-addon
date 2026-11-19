@@ -18,7 +18,7 @@
 -- (WoW Forever only): their record says skipped = "classic".
 --
 -- The record also carries what Emitter.lua notes about the client between two checks (0.9.41 `instance`, 0.9.49
--- `instances` and `chatSecret`: the answers of the dungeon check and the chat lines the client hid inside). A new
+-- `instances` and `chatSecret`: the answers of the dungeon check per signal, and the chat lines the client hid inside). A new
 -- check replaces the record and keeps those (ST.KEEP): they are collected over many sessions, not by the check.
 
 local ADDON, ns = ...

@@ -182,8 +182,8 @@ local function playSession()
   -- one more fight
   fight("Defias Thug", "Creature-0-4618-0-1-38-000A1B2C3F", 9, { xp = 60, coin = 95 })
   advance(30)
-  -- a short dungeon visit (0.9.49): the dungeon check leaves settings.selftest.instances (each answer with its sig), and the
-  -- chat lines that arrive inside are counted in settings.selftest.chatSecret, one plain and one the client hides
+  -- a short dungeon visit (0.9.49): the dungeon check leaves settings.selftest.instances (the newest answer under each sig), and
+  -- the chat lines that arrive inside are counted in settings.selftest.chatSecret by kind and sig, one plain and one the client hides
   M.zone = "The Deadmines"; M.inst = { name = "The Deadmines", type = "party", diff = 1, mapID = 36 }
   M.fire("PLAYER_ENTERING_WORLD", false, false)
   M.runTimers()

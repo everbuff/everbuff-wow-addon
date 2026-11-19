@@ -451,8 +451,10 @@ end
 -- type, the map the player stands on being a dungeon map (C_Map mapType 4), the zone being a known instance by name.
 -- Returns name, kind ("party" or "raid") or nil. The raw answers go to settings.selftest.instance for the next look,
 -- and (0.9.49) to settings.selftest.instances, one sticky record per dungeon: `sig` names the signal that fired
--- ("type", "ptype", "mapType" or "name", strongest first) and the strongest and the weakest answers seen under a
--- name are both kept, so one evening's save says what the client answers inside every dungeon visited and at its door.
+-- ("type", "ptype", "mapType" or "name", strongest first) and the newest answer under each signal is kept
+-- (instances[name].bySig[sig]), so one evening's save says what the client answers inside every dungeon visited,
+-- inside it when the type reads "none" (sig "mapType": the map id in question) and at its door (sig "name").
+-- The signal of the last check of this load is Emitter._sig (nil before the first check and outside).
 Emitter.SIG_RANK = { type = 4, ptype = 3, mapType = 2, name = 1 }
 Emitter.INSTANCES_CAP = 40
 function Emitter.noteInstance(key, rec)
@@ -471,12 +473,8 @@ function Emitter.noteInstance(key, rec)
     e = {}; st.instances[key] = e
   end
   e.at = rec.at
-  local rs, rw = type(e.strong) == "table" and R[e.strong.sig] or nil, type(e.weak) == "table" and R[e.weak.sig] or nil
-  local r = R[rec.sig] or 0
-  if not rs or r >= rs then
-    if rs and rs < r and (not rw or rs <= rw) then e.weak = e.strong end   -- what was the best answer is now the weakest
-    e.strong = rec
-  elseif not rw or r <= rw then e.weak = rec end
+  if type(e.bySig) ~= "table" then e.bySig = {} end
+  if R[rec.sig] then e.bySig[rec.sig] = rec end   -- the newest answer per signal: at most four small records
 end
 Emitter.INSTANCES = {
   party = { "Ragefire Chasm", "Wailing Caverns", "The Deadmines", "Deadmines", "Shadowfang Keep", "Blackfathom Deeps",
@@ -522,6 +520,7 @@ function Emitter.instanceNow()
   elseif mapType == 4 then kind = byName[zone:lower()] or "party"; name = zone; sig = "mapType"
   elseif byName[zone:lower()] then name, kind, sig = zone, byName[zone:lower()], "name" end
   if kind and (not name or name == "") then name = (zone ~= "" and zone) or iname or "Dungeon" end
+  Emitter._sig = sig
   if ns.DB and ns.DB.settings then
     ns.DB.settings.selftest = ns.DB.settings.selftest or {}
     ns.DB.settings.selftest.instance = { zone = zone, name = iname, type = itype, diff = plainNum(diff), map = plainNum(imap),
@@ -536,17 +535,24 @@ function Emitter.instanceNow()
 end
 -- A chat line as text the addon may match (0.9.49). The client can hand a chat line over as a secret value inside
 -- an instance; matching, comparing or indexing one throws, so every chat handler asks here first and drops a line
--- it may not read. While the character is inside an instance the line is counted by kind in
--- settings.selftest.chatSecret[kind] = { plain, secret }: a later version reads there whether XP, reputation, loot
--- and system lines can be trusted inside. `kind` nil: guard only, nothing counted.
+-- it may not read. While the character is inside an instance the line is counted by kind and by the signal that
+-- says "inside" in settings.selftest.chatSecret[kind][sig] = { plain, secret }: a later version reads there whether
+-- XP, reputation, loot and system lines can be trusted inside. Inside is what the last dungeon check of this load
+-- answered (Emitter._sig), never the flag saved on the character: a line that arrives before the first check of a
+-- load is not counted, and neither is one at the door (sig "name": the open world in front of the portal, whose
+-- zone carries the dungeon's name). Lines under sig "mapType" (the client's type reads "none") have their own
+-- counters, apart from those where the client itself says instance. `kind` nil: guard only, nothing counted.
 function Emitter.chatText(kind, v)
   local s = safeStr(v)
-  if kind and type(v) ~= "nil" and ns.DB and ns.DB.settings and ns.char().inInstance then
+  local sig = Emitter._sig
+  if kind and type(v) ~= "nil" and (sig == "type" or sig == "ptype" or sig == "mapType") and ns.DB and ns.DB.settings then
     local st = ns.DB.settings.selftest
     if type(st) ~= "table" then st = {}; ns.DB.settings.selftest = st end
     if type(st.chatSecret) ~= "table" then st.chatSecret = {} end
-    local c = st.chatSecret[kind]
-    if type(c) ~= "table" then c = { plain = 0, secret = 0 }; st.chatSecret[kind] = c end
+    local k = st.chatSecret[kind]
+    if type(k) ~= "table" then k = {}; st.chatSecret[kind] = k end
+    local c = k[sig]
+    if type(c) ~= "table" then c = { plain = 0, secret = 0 }; k[sig] = c end
     if s then c.plain = (tonumber(c.plain) or 0) + 1 else c.secret = (tonumber(c.secret) or 0) + 1 end
   end
   return s
@@ -3389,7 +3395,7 @@ ns._test.onMoney, ns._test.onXP, ns._test.onPlayed = onMoney, onXP, onPlayed
 ns._test.newLoad = function()
   pcall(Emitter.repairResolve)   -- a spend still waiting for its repair cost keeps its row
   lastMoney = nil
-  Emitter._zero, Emitter._zeroSeed, Emitter._guidWait = nil, nil, nil
+  Emitter._zero, Emitter._zeroSeed, Emitter._guidWait, Emitter._sig = nil, nil, nil, nil
   Emitter._repair, Emitter._mailQ, Emitter._coin, Emitter._lastLoot, Emitter._respec = {}, {}, nil, nil, nil
   Emitter._openGain, Emitter._sold, Emitter._crashed, Emitter._crashAsk, Emitter._reloading, Emitter._awayWait = nil, nil, nil, nil, nil, nil
   Emitter._pend, Emitter._ah = { sell = {}, buy = {}, back = {} }, { claims = {} }

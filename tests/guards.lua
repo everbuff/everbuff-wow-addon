@@ -8,7 +8,7 @@
 --   3. #42: a group member the client has not named yet is never written as "Unknown", in roster events and in the
 --      group of a fight, and is read again when the name arrives;
 --   4. a kill row is never named after a friendly target;
---   5. settings.selftest.instances keeps, per dungeon, the strongest and the weakest answer of the dungeon check;
+--   5. settings.selftest.instances keeps, per dungeon, the newest answer of the dungeon check under each signal;
 --   6. no frame of the addon holds an event the client restricts (tests/api_restricted.lua, build 1.60.1.70959);
 --   7. the contract of the new keys, and the upvalue limit of the handlers.
 return function(P)
@@ -149,7 +149,7 @@ return function(P)
   do
     enter("Maraudon", "party", "Maraudon", 349)
     check("the character is inside", ns.char().inInstance == "Maraudon", tostring(ns.char().inInstance))
-    local function cs(kind) local c = ns.DB.settings.selftest.chatSecret; return c and c[kind] or nil end
+    local function cs(kind, sig) local c = ns.DB.settings.selftest.chatSecret; return c and type(c[kind]) == "table" and c[kind][sig or "type"] or nil end
     for _, L in ipairs(LINES) do
       if L.kind then
         local c0 = cs(L.kind)
@@ -172,12 +172,80 @@ return function(P)
     ns.DB.settings.selftest.chatSecret = "broken"
     local e0 = errs()
     M.fire("CHAT_MSG_LOOT", LINES[5].line)
-    check("a damaged chatSecret record is rebuilt, not an error", errs() == e0 and type(ns.DB.settings.selftest.chatSecret) == "table" and ns.DB.settings.selftest.chatSecret.loot.plain == 1, lastErr())
-    leave()
-    local c1 = ns.DB.settings.selftest.chatSecret.loot.plain
+    check("a damaged chatSecret record is rebuilt, not an error", errs() == e0 and type(ns.DB.settings.selftest.chatSecret) == "table" and cs("loot").plain == 1, lastErr())
+    ns.DB.settings.selftest.chatSecret.loot = 7
     M.now = M.now + 20
     M.fire("CHAT_MSG_LOOT", LINES[5].line)
-    check("after leaving, lines are no longer counted", ns.DB.settings.selftest.chatSecret.loot.plain == c1 and ns.char().inInstance == nil)
+    check("a damaged kind inside it too", errs() == e0 and cs("loot") and cs("loot").plain == 1, lastErr())
+    leave()
+    local c1 = cs("loot").plain
+    M.now = M.now + 20
+    M.fire("CHAT_MSG_LOOT", LINES[5].line)
+    check("after leaving, lines are no longer counted", cs("loot").plain == c1 and ns.char().inInstance == nil and E._sig == nil)
+    -- every line of every kind, plain and hidden, and the sum of all counters
+    local function fireAll()
+      for _, L in ipairs(LINES) do
+        if L.kind then
+          M.now = M.now + 20
+          M.fire(L.ev, L.line)
+          M.secrets[L.line] = true; M.fire(L.ev, L.line); M.secrets[L.line] = nil
+        end
+      end
+    end
+    local function total(sig)
+      local n = 0
+      for _, k in pairs(ns.DB.settings.selftest.chatSecret) do
+        for sg, c in pairs(k) do if not sig or sg == sig then n = n + c.plain + c.secret end end
+      end
+      return n
+    end
+    -- the door: the open world in front of the portal, whose zone text is the dungeon's name. The dungeon check says
+    -- yes there (sig "name", the character is "in" The Deadmines), the client does not: nothing is counted
+    M.zone = "The Deadmines"; M.inst = { name = "Eastern Kingdoms", type = "none", diff = 0, mapID = 0 }
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    local t0 = total()
+    check("at the door the dungeon check says yes by the zone name alone", ns.char().inInstance == "The Deadmines" and ns.DB.settings.selftest.instance.sig == "name"
+      and ns.DB.settings.selftest.instance.inInstance == false and E._sig == "name", tostring(E._sig))
+    fireAll()
+    check("at the door (sig name) no line raises a counter, plain or hidden", total() == t0, total() - t0)
+    local onlyInside = true
+    for _, k in pairs(ns.DB.settings.selftest.chatSecret) do for sg in pairs(k) do if sg == "name" then onlyInside = false end end end
+    check("and no counter exists for the name signal", onlyInside)
+    -- through the portal: the same dungeon, now the client says party
+    M.inst = { name = "The Deadmines", type = "party", diff = 1, mapID = 36 }
+    M.fire("PLAYER_ENTERING_WORLD", false, false); M.runTimers()
+    fireAll()
+    check("through the portal (sig type) the same lines are counted: 4 plain, 4 hidden", total() == t0 + 8 and total("type") == t0 + 8, total() - t0)
+    -- inside with the type reading "none" (Shadowfang Keep): the dungeon map says inside, counted apart
+    M.zone = "Shadowfang Keep"; M.inst = { name = "Kalimdor", type = "none", diff = 0, mapID = 1 }; M.mapType = 4
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    fireAll()
+    local mt = cs("xp", "mapType")
+    check("inside by the dungeon map only (sig mapType): counted under that signal, apart from the others", E._sig == "mapType" and total("mapType") == 8
+      and total("type") == t0 + 8 and mt and mt.plain == 1 and mt.secret == 1, total("mapType"))
+    M.mapType = 3
+    -- IsInInstance as the signal
+    local realIn = _G.IsInInstance
+    _G.IsInInstance = function() return true, "party" end
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    fireAll()
+    check("inside by IsInInstance (sig ptype): counted under that signal", E._sig == "ptype" and total("ptype") == 8 and total("mapType") == 8, total("ptype"))
+    _G.IsInInstance = realIn
+    -- logged out inside, logged in again: the character still carries inInstance from the last session, and system
+    -- lines arrive before PLAYER_ENTERING_WORLD runs the first dungeon check of the load. Not counted.
+    M.zone = "Maraudon"; M.inst = { name = "Maraudon", type = "party", diff = 1, mapID = 349 }
+    M.fire("ZONE_CHANGED_NEW_AREA")
+    T.newLoad()
+    local t1 = total()
+    check("a new load starts with no answer of the dungeon check, the saved flag still says inside", E._sig == nil and ns.char().inInstance == "Maraudon")
+    fireAll()
+    check("lines before the first dungeon check of a load are not counted against the saved flag", total() == t1, total() - t1)
+    M.fire("PLAYER_ENTERING_WORLD", true, false); M.runTimers()
+    fireAll()
+    check("after the first check of the load they are", total() == t1 + 8 and E._sig == "type", total() - t1)
+    leave()
+    fireAll()
+    check("outside again: nothing more", total() == t1 + 8 and ns.char().inInstance == nil, total() - t1)
   end
 
   -- ── 3. #42: a member the client has not named yet ─────────────────────────────────────────────────────────────
@@ -324,7 +392,7 @@ return function(P)
     check("#42 GUIDs readable: a member leaves while the newcomer is still unnamed: its leave is written at once", named("ROSTERLEAVE", "Ivy") == 1
       and nk("ROSTERLEAVE") == l0 + 2 and nk("ROSTERJOIN") == j0 and type(E._rosterWait) == "table")
     M.units.party1.name = "Cy"; nameUpdate("party1")
-    check("#42 GUIDs readable: the newcomer joins under its name, known by its GUID after the tokens moved", named("ROSTERJOIN", "Cy") == 1 and nk("ROSTERJOIN") == j0 + 1 and E._rosterWait == nil)
+    check("#42 GUIDs readable: the newcomer joins under its name after the tokens moved", named("ROSTERJOIN", "Cy") == 1 and nk("ROSTERJOIN") == j0 + 1 and E._rosterWait == nil)
     M.runTimers()
 
     -- a loading screen with one member unnamed (the seed is silent): real joins and leaves in that time are written
@@ -343,6 +411,64 @@ return function(P)
       and nk("ROSTERJOIN") == j0 + 1 and E._rosterWait == nil)
     M.runTimers(); roster()
     check("#42 nothing more after that", nk("ROSTERLEAVE") == l0 + 1 and nk("ROSTERJOIN") == j0 + 1)
+
+    M.runTimers()
+
+    -- GUIDs readable for some units only: a seen member whose unit reads with neither name nor GUID has not left
+    resetRoster()
+    M.units.party1 = { name = "Umah", guid = "Player-1-00001A" }; M.units.party2 = { name = "Rexx", guid = "Player-1-00001B" }
+    M.groupN = 3; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party2 = { name = "Unknown" }; roster()
+    check("#42 one unit without name and GUID: the seen member is not written as gone on the GUIDs of the others", nk("ROSTERLEAVE") == l0 and named("ROSTERLEAVE", "Rexx") == 0
+      and nk("ROSTERJOIN") == j0 and type(E._rosterWait) == "table")
+    M.units.party2 = { name = "Rexx", guid = "Player-1-00001B" }; nameUpdate("party2")
+    check("#42 name and GUID back: no second join, no leave", named("ROSTERJOIN", "Rexx") == 1 and nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0 and E._rosterWait == nil)
+    M.runTimers()
+
+    -- a seen member unnamed BEFORE the loading screen, named after it: the silent seed keeps it as seen
+    resetRoster()
+    M.units.party1 = { name = "Wanda" }; M.groupN = 2; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1.name = "Unknown"; roster()
+    M.fire("PLAYER_ENTERING_WORLD", false, false)
+    M.units.party1.name = "Wanda"; nameUpdate("party1")
+    check("#42 unnamed before a loading screen, named after it: no second join", named("ROSTERJOIN", "Wanda") == 1 and nk("ROSTERJOIN") == j0 and nk("ROSTERLEAVE") == l0
+      and E._rosterWait == nil, named("ROSTERJOIN", "Wanda"))
+    M.runTimers()
+    -- a seen member unnamed at the loading screen who leaves without ever being named: its leave is written
+    resetRoster()
+    M.units.party1 = { name = "Amyx" }; M.groupN = 2; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1.name = "Unknown"
+    M.fire("PLAYER_ENTERING_WORLD", false, false)
+    check("#42 a seen member unnamed at the loading screen: nothing yet", nk("ROSTERLEAVE") == l0 and nk("ROSTERJOIN") == j0)
+    M.units.party1 = nil; M.groupN = 1; roster()
+    check("#42 and when its unit is gone without a name ever read, the leave is written once", named("ROSTERLEAVE", "Amyx") == 1 and nk("ROSTERLEAVE") == l0 + 1
+      and nk("ROSTERJOIN") == j0 and E._rosterWait == nil, named("ROSTERLEAVE", "Amyx"))
+    roster(); M.runTimers()
+    check("#42 (and only once)", nk("ROSTERLEAVE") == l0 + 1)
+    -- a loading screen with more missing names than unnamed units: the old roster says nothing, it is dropped
+    resetRoster()
+    M.units.party1 = { name = "Benn" }; M.units.party2 = { name = "Kitt" }; M.groupN = 3; roster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1 = { name = "Unknown" }; M.units.party2 = nil; M.groupN = 2      -- Kitt left during the loading screen
+    M.fire("PLAYER_ENTERING_WORLD", false, false)
+    M.units.party1.name = "Benn"; nameUpdate("party1")
+    M.runTimers(); roster()
+    check("#42 a loading screen with two names missing and one unit unnamed: the seed stays silent, no leave is guessed", named("ROSTERLEAVE", "Kitt") == 0
+      and nk("ROSTERLEAVE") == l0 and nk("ROSTERJOIN") == j0 and E._rosterWait == nil, named("ROSTERLEAVE", "Kitt"))
+    -- a member unnamed at a silent seed is known by its GUID: its unit token moves before the name arrives
+    resetRoster()
+    j0, l0 = nk("ROSTERJOIN"), nk("ROSTERLEAVE")
+    M.units.party1 = { name = "Ilah", guid = "Player-1-00002B" }; M.units.party2 = { name = "Unknown", guid = "Player-1-00002A" }; M.groupN = 3
+    M.fire("PLAYER_ENTERING_WORLD", false, false)
+    M.units.party1 = M.units.party2; M.units.party2 = nil; M.groupN = 2; roster()      -- Ilah leaves, the unnamed member is party1 now
+    M.units.party1.name = "Halo"; nameUpdate("party1")
+    check("#42 unnamed at the seed, its token moved, then named: still part of the seed, not a join (the wait is kept by GUID)", named("ROSTERJOIN", "Halo") == 0
+      and nk("ROSTERJOIN") == j0 and E._rosterWait == nil, named("ROSTERJOIN", "Halo"))
+    check("#42 (the member who left in that time is written as gone)", named("ROSTERLEAVE", "Ilah") == 1 and nk("ROSTERLEAVE") == l0 + 1)
+    M.runTimers()
 
     -- login with a group whose names are not there yet: the seed stays silent when they arrive
     resetRoster()
@@ -535,7 +661,22 @@ return function(P)
     check("#42 fight: tokens moved, no GUID readable: the unnamed row stays unnamed, there is one Dave", got == "Hart,Equi,nil,Dave", got)
     got = shiftFight(true)
     check("#42 fight: tokens moved, GUIDs readable: the row is named from the unit that is still that member", got == "Hart,Equi,Pebbles,Dave", got)
-    check("#42 fight: no handler threw in either", errs() == e0, lastErr())
+    -- the unnamed member leaves during the fight and a newcomer takes its unit token: the row is not that newcomer
+    resetRoster()
+    M.units.party1 = { name = "Equi", guid = "Player-1-0000E1" }; M.units.party2 = { name = "Unknown", guid = "Player-1-0000E2" }
+    M.groupN = 3; roster()
+    M.units.target = { name = "Noxxion", hostile = true }
+    M.inCombat = true; M.now = M.now + 30; M.fire("PLAYER_REGEN_DISABLED")
+    M.units.party2 = { name = "Newbie", guid = "Player-1-0000E9" }
+    roster(); nameUpdate("party2")
+    M.now = M.now + 5; M.inCombat = false; M.units.target = nil; M.fire("PLAYER_REGEN_ENABLED")
+    local f3 = ns.DB.combat.fights[#ns.DB.combat.fights]
+    local row, n3 = nil, {}
+    for _, m in ipairs(f3.group) do n3[#n3 + 1] = tostring(m.name); if m.unit == "party2" then row = m end end
+    check("#42 fight: the token holds someone else (another GUID) and the member is gone: the row keeps no name", row ~= nil and row.name == nil
+      and table.concat(n3, ",") == "Hart,Equi,nil", table.concat(n3, ","))
+    check("#42 fight: and a player who was not in the pull gets no aura timeline", f3.memberAuras == nil or f3.memberAuras["Newbie"] == nil)
+    check("#42 fight: no handler threw in any of them", errs() == e0, lastErr())
     resetRoster()
     check("#42 fight: F.groupNames with no fight is harmless", pcall(F.groupNames))
   end
@@ -603,14 +744,20 @@ return function(P)
     M.epoch = M.epoch + 60
     enter("Maraudon", "party", "Maraudon", 349)
     local r = inst("Maraudon")
-    check("instances: a visit writes the record under the dungeon's name", r and r.strong and r.at == M.epoch, r and r.at)
-    local s = r and r.strong or {}
+    check("instances: a visit writes the record under the dungeon's name", r and type(r.bySig) == "table" and r.bySig.type and r.at == M.epoch, r and r.at)
+    local s = r and r.bySig and r.bySig.type or {}
     check("instances: the record carries every answer and the signal that fired", s.sig == "type" and s.zone == "Maraudon" and s.name == "Maraudon"
       and s.type == "party" and s.ptype == nil and s.map == 349 and s.diff == 1 and s.inInstance == true and s.at == M.epoch, tostring(s.sig))
-    check("instances: one signal seen, no weakest record yet", r and r.weak == nil)
+    local function sigs(e)
+      local out = {}
+      for k in pairs(e and e.bySig or {}) do out[#out + 1] = k end
+      table.sort(out)
+      return table.concat(out, ",")
+    end
+    check("instances: one signal seen, one record", sigs(r) == "type", sigs(r))
     check("instance: the last check names its signal too", ns.DB.settings.selftest.instance.sig == "type" and ns.DB.settings.selftest.instance.verdict == "party")
     leave()
-    check("instances: leaving does not touch the record (the last check is overwritten, this is not)", inst("Maraudon") == r and r.strong == s
+    check("instances: leaving does not touch the record (the last check is overwritten, this is not)", inst("Maraudon") == r and r.bySig.type == s
       and ns.DB.settings.selftest.instance.verdict == "none" and ns.DB.settings.selftest.instance.sig == nil)
     local n = 0; for _ in pairs(ns.DB.settings.selftest.instances) do n = n + 1 end
     check("instances: the open world writes no record", n == 1, n)
@@ -626,40 +773,55 @@ return function(P)
     M.fire("ZONE_CHANGED_NEW_AREA")
     local st = inst("Sunken Temple")
     check("instances: both names of one dungeon share one record", st ~= nil and inst("The Temple of Atal'Hakkar") == nil)
-    check("instances: the strongest answer is the one from inside", st and st.strong and st.strong.sig == "type" and st.strong.map == 109 and st.strong.name == "Sunken Temple"
-      and st.strong.zone == "Sunken Temple", st and st.strong and st.strong.zone)
-    check("instances: the weakest is the name alone, with the continent the client answered and both names", st and st.weak and st.weak.sig == "name" and st.weak.map == 0
-      and st.weak.type == "none" and st.weak.zone == "The Temple of Atal'Hakkar" and st.weak.name == "Eastern Kingdoms" and st.weak.inInstance == false, st and st.weak and st.weak.sig)
-    check("instances: the record's time is the last time either was seen", st and st.at == M.epoch and st.strong.at == M.epoch - 600)
-    -- the weakest answer seen again: its record is the newest one of that rank, the strongest is untouched
-    local strongAt = st.strong.at
+    local bs = st and st.bySig or {}
+    check("instances: the answer from inside is kept under its signal", bs.type and bs.type.sig == "type" and bs.type.map == 109 and bs.type.name == "Sunken Temple"
+      and bs.type.zone == "Sunken Temple", bs.type and bs.type.zone)
+    check("instances: the door is kept under the name signal, with the continent the client answered and both names", bs.name and bs.name.sig == "name" and bs.name.map == 0
+      and bs.name.type == "none" and bs.name.zone == "The Temple of Atal'Hakkar" and bs.name.name == "Eastern Kingdoms" and bs.name.inInstance == false, sigs(st))
+    check("instances: the record's time is the last time either was seen", st and st.at == M.epoch and bs.type.at == M.epoch - 600)
+    -- an answer seen again: its record is the newest one of that signal, the others are untouched
+    local typeAt, type0 = bs.type.at, bs.type
     M.epoch = M.epoch + 300; M.fire("ZONE_CHANGED_NEW_AREA")
-    check("instances: the weakest answer seen again is refreshed", st.weak.sig == "name" and st.weak.at == M.epoch and st.at == M.epoch, st.weak.at)
-    check("instances: and the strongest is unchanged by it", st.strong.sig == "type" and st.strong.at == strongAt)
-    -- the map type signal in between replaces neither
-    local weak0, strong0 = st.weak, st.strong
-    M.mapType = 4; M.fire("ZONE_CHANGED_NEW_AREA")
-    check("instances: a signal between the two replaces neither", st.weak == weak0 and st.strong == strong0 and ns.DB.settings.selftest.instance.sig == "mapType")
-    M.mapType = 3
+    check("instances: an answer seen again is refreshed", bs.name.sig == "name" and bs.name.at == M.epoch and st.at == M.epoch, bs.name.at)
+    check("instances: and the other signal's record is unchanged by it", bs.type == type0 and bs.type.at == typeAt)
     leave()
+    -- the record the keying decision needs: inside with the type reading "none", in every order of arrival. The door
+    -- (sig name, map 0), inside by the dungeon map (sig mapType, the map id and uiMap in question), inside by type.
+    local ANSWERS = {
+      name = function() M.zone = "Shadowfang Keep"; M.uiMap, M.mapType = 21, 3; M.inst = { name = "Eastern Kingdoms", type = "none", diff = 0, mapID = 0 } end,
+      mapType = function() M.zone = "Shadowfang Keep"; M.uiMap, M.mapType = 310, 4; M.inst = { name = "Shadowfang Keep", type = "none", diff = 0, mapID = 33 } end,
+      type = function() M.zone = "Shadowfang Keep"; M.uiMap, M.mapType = 310, 4; M.inst = { name = "Shadowfang Keep", type = "party", diff = 1, mapID = 33 } end,
+    }
+    for _, order in ipairs({ { "name", "mapType", "type" }, { "type", "name", "mapType" }, { "name", "type", "mapType" }, { "mapType", "type", "name" },
+      { "type", "mapType", "name" }, { "mapType", "name", "type" } }) do
+      ns.DB.settings.selftest.instances = nil
+      for _, sg in ipairs(order) do M.epoch = M.epoch + 60; ANSWERS[sg](); M.fire("ZONE_CHANGED_NEW_AREA") end
+      local k = inst("Shadowfang Keep")
+      local m = k and k.bySig and k.bySig.mapType
+      check("instances: door, inside with type none, inside with type party (" .. table.concat(order, " then ") .. "): all three are kept",
+        sigs(k) == "mapType,name,type" and m and m.sig == "mapType" and m.type == "none" and m.map == 33 and m.uiMap == 310 and m.mapType == 4 and m.inInstance == false
+        and k.bySig.name.map == 0 and k.bySig.name.uiMap == 21 and k.bySig.type.map == 33 and k.bySig.type.type == "party", sigs(k))
+      M.uiMap, M.mapType = 37, 3
+      leave()
+    end
     -- the other order: the halls first, then inside
     ns.DB.settings.selftest.instances = nil
     M.zone = "The Temple of Atal'Hakkar"; M.inst = { name = "Eastern Kingdoms", type = "none", diff = 0, mapID = 0 }
     M.fire("ZONE_CHANGED_NEW_AREA")
     local st1 = inst("Sunken Temple")
-    check("instances: seen from outside only, the name signal is the strongest so far", st1 and st1.strong.sig == "name" and st1.weak == nil)
+    check("instances: seen from outside only, the name signal is the only record", sigs(st1) == "name")
     enter("Sunken Temple", "party", "Sunken Temple", 109)
-    check("instances: then inside: the same two records, whichever came first", st1.strong.sig == "type" and st1.weak and st1.weak.sig == "name" and st1.weak.map == 0)
+    check("instances: then inside: the same two records, whichever came first", sigs(st1) == "name,type" and st1.bySig.name.map == 0 and st1.bySig.type.map == 109)
     leave()
     -- the dungeon map type and IsInInstance as the signal
     M.zone = "Some New Crypt"; M.mapType = 4; M.fire("ZONE_CHANGED_NEW_AREA")
-    check("instances: a dungeon the name list lacks, found by its map type", inst("Some New Crypt") and inst("Some New Crypt").strong.sig == "mapType" and inst("Some New Crypt").strong.mapType == 4)
+    check("instances: a dungeon the name list lacks, found by its map type", inst("Some New Crypt") and inst("Some New Crypt").bySig.mapType.sig == "mapType" and inst("Some New Crypt").bySig.mapType.mapType == 4)
     M.mapType = 3; leave()
     local realIn = _G.IsInInstance
     _G.IsInInstance = function() return true, "raid" end
     M.zone = "Onyxia's Lair"; M.inst = { name = "Onyxia's Lair", type = "none", diff = 0, mapID = 249 }
     M.fire("ZONE_CHANGED_NEW_AREA")
-    check("instances: IsInInstance as the signal", inst("Onyxia's Lair") and inst("Onyxia's Lair").strong.sig == "ptype" and inst("Onyxia's Lair").strong.ptype == "raid")
+    check("instances: IsInInstance as the signal", inst("Onyxia's Lair") and inst("Onyxia's Lair").bySig.ptype.sig == "ptype" and inst("Onyxia's Lair").bySig.ptype.ptype == "raid")
     _G.IsInInstance = realIn
     leave()
     -- the cap: 40 dungeons, the one not seen for longest goes
@@ -684,9 +846,15 @@ return function(P)
     -- a damaged record
     ns.DB.settings.selftest.instances = { ["Maraudon"] = "broken" }
     enter("Maraudon", "party", "Maraudon", 349)
-    check("instances: a damaged entry is replaced, not an error", errs() == e0 and type(inst("Maraudon")) == "table" and inst("Maraudon").strong.sig == "type", lastErr())
+    check("instances: a damaged entry is replaced, not an error", errs() == e0 and type(inst("Maraudon")) == "table" and inst("Maraudon").bySig.type.sig == "type", lastErr())
+    leave()
+    ns.DB.settings.selftest.instances = { ["Maraudon"] = { at = 5, bySig = "broken" } }
+    enter("Maraudon", "party", "Maraudon", 349)
+    check("instances: a damaged bySig is rebuilt, not an error", errs() == e0 and inst("Maraudon").bySig.type.sig == "type" and inst("Maraudon").at == M.epoch, lastErr())
     leave()
     check("Emitter.noteInstance refuses what is no name", pcall(E.noteInstance, nil, { sig = "type", at = 1 }) and pcall(E.noteInstance, "", { sig = "type", at = 1 }) and inst("") == nil)
+    E.noteInstance("Maraudon", { sig = "guess", at = M.epoch })
+    check("Emitter.noteInstance keeps no record under a signal it does not know", sigs(inst("Maraudon")) == "type")
 
     -- the client check on a new build replaces the record and keeps what was collected
     local ST = ns.SelfTest
@@ -784,22 +952,35 @@ return function(P)
       if type(name) ~= "string" or name == "" then okShape, why = false, "a key that is no name" end
       if type(e) ~= "table" or type(e.at) ~= "number" then okShape, why = false, tostring(name) .. " has no at"
       else
-        for k in pairs(e) do if k ~= "at" and k ~= "strong" and k ~= "weak" then okShape, why = false, tostring(name) .. " has an unknown key " .. tostring(k) end end
-        rec(e.strong, name .. ".strong")
-        if e.weak ~= nil then
-          rec(e.weak, name .. ".weak")
-          if okShape and E.SIG_RANK[e.weak.sig] >= E.SIG_RANK[e.strong.sig] then okShape, why = false, name .. ": weak is not weaker than strong" end
+        for k in pairs(e) do if k ~= "at" and k ~= "bySig" then okShape, why = false, tostring(name) .. " has an unknown key " .. tostring(k) end end
+        if type(e.bySig) ~= "table" then okShape, why = false, tostring(name) .. " has no bySig"
+        else
+          local m = 0
+          for sg, r in pairs(e.bySig) do
+            m = m + 1
+            if not SIG[sg] then okShape, why = false, name .. ".bySig has an unknown signal " .. tostring(sg)
+            else
+              rec(r, name .. ".bySig." .. sg)
+              if okShape and r.sig ~= sg then okShape, why = false, name .. ".bySig." .. sg .. " holds a record of sig " .. tostring(r.sig) end
+              if okShape and r.at > e.at then okShape, why = false, name .. ".bySig." .. sg .. " is newer than the entry" end
+            end
+          end
+          if m < 1 or m > 4 then okShape, why = false, name .. " has " .. m .. " records" end
         end
       end
     end
-    check("contract: settings.selftest.instances[name] = { at, strong, weak? }, every record typed", okShape and n > 0 and n <= 40, why or n)
-    local okChat = type(st.chatSecret) == "table"
-    for k, c in pairs(st.chatSecret or {}) do
-      if not ({ xp = 1, rep = 1, loot = 1, system = 1 })[k] or type(c) ~= "table" or type(c.plain) ~= "number" or type(c.secret) ~= "number"
-        or c.plain < 0 or c.secret < 0 or c.plain % 1 ~= 0 or c.secret % 1 ~= 0 then okChat = false end
-      for kk in pairs(type(c) == "table" and c or {}) do if kk ~= "plain" and kk ~= "secret" then okChat = false end end
+    check("contract: settings.selftest.instances[name] = { at, bySig = { [sig] = record } }, every record typed and under its own signal", okShape and n > 0 and n <= 40, why or n)
+    local okChat, nCount = type(st.chatSecret) == "table", 0
+    for k, bySig in pairs(st.chatSecret or {}) do
+      if not ({ xp = 1, rep = 1, loot = 1, system = 1 })[k] or type(bySig) ~= "table" then okChat = false end
+      for sg, c in pairs(type(bySig) == "table" and bySig or {}) do
+        nCount = nCount + 1
+        if not ({ type = 1, ptype = 1, mapType = 1 })[sg] or type(c) ~= "table" or type(c.plain) ~= "number" or type(c.secret) ~= "number"
+          or c.plain < 0 or c.secret < 0 or c.plain % 1 ~= 0 or c.secret % 1 ~= 0 then okChat = false end
+        for kk in pairs(type(c) == "table" and c or {}) do if kk ~= "plain" and kk ~= "secret" then okChat = false end end
+      end
     end
-    check("contract: settings.selftest.chatSecret[kind] = { plain, secret }, whole numbers, four kinds", okChat)
+    check("contract: settings.selftest.chatSecret[kind][sig] = { plain, secret }, whole numbers, four kinds, the three signals that say inside (never name)", okChat and nCount > 0, nCount)
     check("contract: settings.selftest.instance.sig is a signal name or absent", st.instance == nil or st.instance.sig == nil or SIG[st.instance.sig] == true)
     check("contract: the new records are diagnostics under settings, nothing new on the character block",
       ns.char().instances == nil and ns.char().chatSecret == nil and ns.DB.instances == nil)

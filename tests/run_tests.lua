@@ -2243,11 +2243,12 @@ do
   local st = db.settings and db.settings.selftest or {}
   local dm = type(st.instances) == "table" and st.instances["The Deadmines"] or nil
   local nInst = 0; for _ in pairs(type(st.instances) == "table" and st.instances or {}) do nInst = nInst + 1 end
-  check("export: settings.selftest.instances holds the dungeon visited, with the signal that fired", nInst == 1 and dm and type(dm.at) == "number" and type(dm.strong) == "table"
-    and dm.strong.sig == "type" and dm.strong.type == "party" and dm.strong.map == 36 and dm.strong.zone == "The Deadmines" and dm.weak == nil, nInst)
+  check("export: settings.selftest.instances holds the dungeon visited, with the signal that fired", nInst == 1 and dm and type(dm.at) == "number" and type(dm.bySig) == "table"
+    and type(dm.bySig.type) == "table" and dm.bySig.type.sig == "type" and dm.bySig.type.type == "party" and dm.bySig.type.map == 36
+    and dm.bySig.type.zone == "The Deadmines" and dm.bySig.name == nil and dm.bySig.mapType == nil and dm.bySig.ptype == nil and dm.strong == nil, nInst)
   local cs = type(st.chatSecret) == "table" and st.chatSecret or {}
-  check("export: settings.selftest.chatSecret counts one plain system line and one hidden XP line", cs.system and cs.system.plain == 1 and cs.system.secret == 0
-    and cs.xp and cs.xp.plain == 0 and cs.xp.secret == 1 and cs.loot == nil and cs.rep == nil)
+  check("export: settings.selftest.chatSecret counts one plain system line and one hidden XP line", cs.system and cs.system.type and cs.system.type.plain == 1 and cs.system.type.secret == 0
+    and cs.xp and cs.xp.type and cs.xp.type.plain == 0 and cs.xp.type.secret == 1 and cs.loot == nil and cs.rep == nil and cs.system.plain == nil)
   check("export: the last dungeon check is the one after leaving (no sig when the verdict is none)", type(st.instance) == "table" and st.instance.verdict == "none" and st.instance.sig == nil)
   local kinds = {}
   for _, e in ipairs(db.story and db.story.events or {}) do kinds[#kinds + 1] = e.kind end

@@ -632,12 +632,16 @@ EverbuffDB = {
 			["build"] = "12.0.1.60000",
 			["chatSecret"] = {
 				["system"] = {
-					["plain"] = 1,
-					["secret"] = 0,
+					["type"] = {
+						["plain"] = 1,
+						["secret"] = 0,
+					},
 				},
 				["xp"] = {
-					["plain"] = 0,
-					["secret"] = 1,
+					["type"] = {
+						["plain"] = 0,
+						["secret"] = 1,
+					},
 				},
 			},
 			["events"] = "unchecked",
@@ -657,17 +661,19 @@ EverbuffDB = {
 			["instances"] = {
 				["The Deadmines"] = {
 					["at"] = 1793000231,
-					["strong"] = {
-						["at"] = 1793000231,
-						["diff"] = 1,
-						["inInstance"] = true,
-						["map"] = 36,
-						["mapType"] = 3,
-						["name"] = "The Deadmines",
-						["sig"] = "type",
-						["type"] = "party",
-						["uiMap"] = 37,
-						["zone"] = "The Deadmines",
+					["bySig"] = {
+						["type"] = {
+							["at"] = 1793000231,
+							["diff"] = 1,
+							["inInstance"] = true,
+							["map"] = 36,
+							["mapType"] = 3,
+							["name"] = "The Deadmines",
+							["sig"] = "type",
+							["type"] = "party",
+							["uiMap"] = 37,
+							["zone"] = "The Deadmines",
+						},
 					},
 				},
 			},
