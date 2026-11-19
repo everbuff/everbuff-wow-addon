@@ -264,25 +264,25 @@ return function(P)
     E.INSTANCES = real.instances
     E._instByName = nil
   end
-  -- Combat > Dungeons reads the run's own record
+  -- Combat > Dungeons reads the stored dungeon run (0.9.50, Runs.lua), whose gold is the difference of these counters
+  -- between the two ends of each visit
   do
-    local runs = ns.DungeonRuns()
     local first
-    for _, r in ipairs(runs) do if r.name == "Shadowfang Keep" then first = r; break end end
-    local rec = first and G.runFor(first.name, first.startT, first.endT)
-    check("dungeons: a run of Combat > Dungeons finds its gold record", rec ~= nil and rec.looted == 2100 and rec.quests == 1200, first and first.startT)
-    check("dungeons: the line reads items, coin, loot value, coin per hour",
-      rec and G.runLine(rec) == ("4 items  ·  %s coin  ·  loot value about %s  ·  %s/h"):format(fmt(3300), fmt(1200), G.fmt(3300 * 6, { rate = true })), rec and G.runLine(rec))
-    check("dungeons: a run with no record keeps the loot log's line", G.runFor("Uldaman", 5, 10) == nil and G.runFor(nil, 5, 10) == nil)
-    -- a record that began later than the run (the addon was updated in the middle of it) counted a part of the run
-    -- only: the page and the list keep the loot log's fuller line
-    check("dungeons: a record that began after the run started does not stand for it",
-      first and G.runFor(first.name, first.startT - 600, first.endT) == nil and G.runFor(first.name, first.startT - 60, first.endT) ~= nil and G.runFor(first.name, first.startT + 60) ~= nil)
+    for _, r in ipairs(ns._test.runViews(true)) do if r.name == "Shadowfang Keep" then first = r; break end end
+    check("dungeons: the stored run carries the gold of its two visits, to the copper", first ~= nil and first.inProgress == false and #first.visits == 2
+      and first.gold.looted == 2100 and first.gold.quests == 1200 and first.gold.lootValue == 1200 and first.gold.items == 4 and first.gold.unpriced == nil
+      and first.visits[1].looted == 2000 and first.visits[2].looted == 100, first and first.gold.looted)
+    -- the purse gained 3,700 c in the first visit (2,000 looted, 1,200 from the quest, a sale of 900, a repair of 400)
+    -- and 100 c in the second; less the quest coin that is 2,600 c against 2,100 c looted
+    check("dungeons: the purse check is the change of the purse inside less quest coin", first and first.gold.purse == 2600, first and first.gold.purse)
+    check("dungeons: coin looted outside between the visits is in neither", first and first.outside == 600 and first.inside == 600, first and first.inside)
     if first and ns._test.dungeonDetail() then
       ns._test.renderRun(first)
       local dv = ns._test.dungeonDetail()
-      check("dungeons: the open run's page shows that line", dv and dv.lootLine == G.runLine(rec), dv and dv.lootLine)
+      check("dungeons: the run's page reads items, coin and loot value from that block", dv and dv.lootLine == ("4 items  ·  %s coin  ·  loot value about %s"):format(fmt(3300), fmt(1200)), dv and dv.lootLine)
+      check("dungeons: and says when the looted coin is not what the purse gained", dv and dv.purseLine == ("Coin %s of %s gained inside"):format(fmt(2100), fmt(2600)), dv and dv.purseLine)
     end
+    check("dungeons: Gold.runFor is gone with the view-time runs it matched", G.runFor == nil)
   end
   -- a /reload and a relog inside a run keep it
   do
@@ -330,11 +330,14 @@ return function(P)
     -- the acknowledgement prunes sessions, loot rows and story events, never the runs
     local before, zonesBefore, bestBefore = deepcopy(c.goldRuns), deepcopy(c.goldZones), deepcopy(c.goldBest)
     local evBefore = deepcopy(c.goldRunsEvicted)
+    local runsBefore, nViews = deepcopy(c.dungeonRuns), #ns.DungeonRuns()
     local ack = { sessions = {}, through = M.epoch + 10 * DAY }
     for id in pairs(ns.DB.sessions) do ack.sessions[id] = true end
     M.fire("PLAYER_LOGOUT")
     ns.applyAck(ack, "file")
-    check("ack: the story events of the runs are gone", #ns.DungeonRuns() == 0)
+    local nDungeon = 0
+    for _, e in ipairs(ns.DB.story.events) do if e.kind == "DUNGEON" or e.kind == "DUNGEONLEAVE" then nDungeon = nDungeon + 1 end end
+    check("ack: the story events of the runs are gone, the stored dungeon runs are not", nDungeon == 0 and nViews >= 50 and #ns.DungeonRuns() == nViews and same(c.dungeonRuns, runsBefore), #ns.DungeonRuns())
     check("ack: goldRuns, its evicted sum, goldZones and goldBest stay", same(c.goldRuns, before) and same(c.goldRunsEvicted, evBefore) and same(c.goldZones, zonesBefore) and same(c.goldBest, bestBefore))
     check("ack: the Runs view still lists them", #G.runs().rows == 50)
   end

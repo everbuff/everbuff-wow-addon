@@ -19,14 +19,15 @@
 --
 -- The record also carries what Emitter.lua notes about the client between two checks (0.9.41 `instance`, 0.9.49
 -- `instances` and `chatSecret`: the answers of the dungeon check per signal, and the chat lines the client hid inside). A new
--- check replaces the record and keeps those (ST.KEEP): they are collected over many sessions, not by the check.
+-- check replaces the record and keeps those (ST.KEEP): they are collected over many sessions, not by the check. So are
+-- the notes of the dungeon run (0.9.50, Runs.lua: `runs` counters and `aliasCandidates`).
 
 local ADDON, ns = ...
 
 local ST = {}
 ns.SelfTest = ST
 
-ST.KEEP = { "instance", "instances", "chatSecret" }
+ST.KEEP = { "instance", "instances", "chatSecret", "runs", "aliasCandidates" }
 local function keep(res, prev)
   if type(prev) ~= "table" then return end
   for _, k in ipairs(ST.KEEP) do if type(prev[k]) == "table" and res[k] == nil then res[k] = prev[k] end end

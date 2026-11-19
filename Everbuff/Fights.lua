@@ -938,6 +938,8 @@ function F.setOutcome(outcome, bossName)
 end
 
 function F.list() return (ns.DB and ns.DB.combat.fights) or {} end
+-- the uid of the fight being recorded now, or nil (the dungeon run links a boss kill to its fight, Runs.lua)
+function F.currentUid() return cur and cur.uid or nil end
 function F.capInfo() return #F.list(), FIGHT_CAP end
 
 -- Bring the list back to FIGHT_CAP: the oldest fight the desktop already has (uploaded) goes first; only when none

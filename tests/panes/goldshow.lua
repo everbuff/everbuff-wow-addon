@@ -292,43 +292,51 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
   -- ── Combat / Dungeons: the open run's loot line ────────────────────────────────────────────────────────────
   do
     local c = P.open("combat", "dungeons", 900, 580, "normal")
-    -- a run of the running session, in the story events the pane reads
-    local ev = ns.DB.story.events
-    ev[#ev + 1] = { kind = "DUNGEON", text = "Deadmines", t = now - 4000, s = ns.DB.active }
-    ev[#ev + 1] = { kind = "DUNGEONLEAVE", text = "Deadmines", t = now - 2000, s = ns.DB.active }
-    local runs = ns.DungeonRuns()
-    if #runs > 0 then
-      local run = runs[#runs]
-      ns._test.renderRun(run); M.settle()
-      local dv = ns._test.dungeonDetail()
-      eq("Dungeons: a run with no gold record keeps the loot log's line", dv.lootLine, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmt(run.gold or 0)))
-      ns.char().goldRuns = { { t = run.startT, inst = ns.Emitter.canonInstance(run.name), secs = 1800, looted = 32000, quests = 0, lootValue = 51000, items = 12 } }
-      ns._test.renderRun(run); M.settle()
-      eq("Dungeons: a run with its gold record reads items, coin, loot value and coin per hour", dv.lootLine,
-        ("12 items%s%s coin%sloot value about %s%s%s/h"):format(SEP, fmt(32000), SEP, fmt(51000), SEP, Gold.fmt(64000, { rate = true })))
-      ns._test.renderRun(run); M.settle()
-      local found, cut = false, false
+    -- a stored run of the character (0.9.50: the pane reads characters[guid].dungeonRuns), with its own gold block
+    ns.char().dungeonRuns = ns.char().dungeonRuns or {}
+    local list = ns.char().dungeonRuns
+    local rec = ns._test.runRecord("The Deadmines", now - 4000, 1800, { gold = { looted = 32000, quests = 0, lootValue = 51000, items = 12, purse = 32000 } })
+    list[#list + 1] = rec
+    local function view() local vs = ns._test.runViews(true); return vs[#vs] end
+    local run = view()
+    ns._test.renderRun(run); M.settle()
+    local dv = ns._test.dungeonDetail()
+    eq("Dungeons: a run reads items, coin, loot value and coin per hour from its own gold block", dv.lootLine,
+      ("12 items%s%s coin%sloot value about %s%s%s/h"):format(SEP, fmt(32000), SEP, fmt(51000), SEP, Gold.fmt(64000, { rate = true })))
+    local function onPage(text)
+      local found, cutOff = false, false
       for _, fs in ipairs(dv.child.fs) do
-        if fs.shown ~= false and fs.text == dv.lootLine then found = true; if fs.IsTruncated and fs:IsTruncated() then cut = true end end
+        if fs.shown ~= false and fs.text == text then found = true; if fs.IsTruncated and fs:IsTruncated() then cutOff = true end end
       end
-      check("Dungeons: the line is on the run's page in full at 900 px", found and not cut)
-      -- the list row of the run reads the same record as its page
-      local function listLoot()
-        local lv = ns._test.dungeonList(); M.settle()
-        for _, r in ipairs(lv and lv.tbl and lv.tbl.rows or {}) do
-          if r.shown ~= false and r.run and r.run.startT == run.startT and r.run.name == run.name then return r.c.loot.text end
-        end
-      end
-      eq("Dungeons: the list row of that run reads the record's items and coin", listLoot(), "12 · " .. fmt(32000))
-      -- a record that began after the run did (the addon was updated in the middle of the run) counted a part of it:
-      -- page and list keep the loot log's fuller line
-      ns.char().goldRuns[1].t = run.startT + 600
-      ns._test.renderRun(run); M.settle()
-      eq("Dungeons: a record that began later than the run does not replace the loot log's line", dv.lootLine, ("%d item%s  ·  %s"):format(run.items or 0, (run.items == 1) and "" or "s", fmt(run.gold or 0)))
-      eq("Dungeons: nor the list row", listLoot(), ((run.items or 0) > 0 and (run.items .. " · ") or "") .. fmt(run.gold or 0))
-    else
-      check("Dungeons: the suite's data has a dungeon run", false)
+      return found and not cutOff
     end
+    check("Dungeons: the line is on the run's page in full at 900 px", onPage(dv.lootLine))
+    check("Dungeons: no purse line while the looted coin is what the purse gained", dv.purseLine == nil)
+    check("Dungeons: the clocks of the run are two lines, in full", dv.timeLine == "Inside 30m 0s" and dv.timeLine2 == "Active 30m 0s" and onPage(dv.timeLine) and onPage(dv.timeLine2), dv.timeLine)
+    -- the list row of the run reads the same block as its page
+    local function listRow()
+      local lv = ns._test.dungeonList(); M.settle()
+      for _, r in ipairs(lv and lv.tbl and lv.tbl.rows or {}) do
+        if r.shown ~= false and r.run and r.run.id == rec.id then return r end
+      end
+    end
+    local row = listRow()
+    eq("Dungeons: the list row of that run reads the block's items and coin", row and row.c.loot.text, "12 · " .. fmt(32000))
+    eq("Dungeons: and coin per hour while the run has no XP", row and row.c.rate.text, Gold.fmt(64000, { rate = true }) .. "/h")
+    -- the purse gained more inside than was booked as looted (group shares booked as mail, seen 2026-11-18)
+    rec.gold.looted, rec.gold.purse = 365, 11253
+    rec.xp = { gain = 12300, kill = 9000, quest = 0, n = 45, l0 = 23, p0 = 0.4, l1 = 24, p1 = 0.1, need = 30000 }
+    rec.hidden = { xp = 12 }
+    ns._test.renderRun(view()); M.settle()
+    eq("Dungeons: the page says when the looted coin is not what the purse gained", dv.purseLine, ("Coin %s of %s gained inside"):format(fmt(365), fmt(11253)))
+    check("Dungeons: that line is on the page in full", onPage(dv.purseLine))
+    eq("Dungeons: the XP line reads XP, XP per hour, the levels and the runs the next level takes", dv.xpLine,
+      ("12,300 XP%s24,600 per hour%slevel 23.4 to 24.1%sabout 3 more runs to level 25"):format(SEP, SEP, SEP))
+    eq("Dungeons: the kills the client let the addon read are a lower bound, on a line of their own", dv.xpMore, "at least 45 kills")
+    check("Dungeons: the XP lines and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage(dv.xpMore) and onPage("12 XP lines were hidden by the client."))
+    row = listRow()
+    eq("Dungeons: the list row reads XP per hour while the run has XP", row and row.c.rate.text, "24,600 XP/h")
+    table.remove(list)
   end
   ns.Recorder.current = savedCurrent
 end

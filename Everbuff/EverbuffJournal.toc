@@ -3,7 +3,7 @@
 ## Title: Everbuff.GG
 ## Notes: Gameplay recording for data nerds. Captures your fights, loot, deaths and journey for everbuff.gg.
 ## Author: Everbuff.GG
-## Version: 0.9.49
+## Version: 0.9.50
 ## SavedVariables: EverbuffDB, EverbuffTest, EverbuffAck
 ## X-Website: https://everbuff.gg
 ## X-Category: Combat
@@ -18,6 +18,7 @@ UI.lua
 Debug.lua
 Recording.lua
 Economy.lua
+Runs.lua
 Progress.lua
 Market.lua
 Visits.lua
