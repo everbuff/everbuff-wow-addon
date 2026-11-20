@@ -163,7 +163,7 @@ return function(P)
     V.renderLeveling(); M.settle()
     check("Leveling: before 10 active minutes it says the time at this level so far", v.verdict == ("30m at level %d so far"):format(lvl), v.verdict)
     check("Leveling: TIME AT LEVEL card", v.cards.cards[1].label.text == ("TIME AT LEVEL %d"):format(lvl) and v.cards.cards[1].value.text == "30m" and v.cards.cards[1].meta.text == "so far", v.cards.cards[1].value.text)
-    check("Leveling: BEST LEVEL TIME card names the level", v.cards.cards[2].value.text == "1h 0m" and v.cards.cards[2].meta.text == ("level %d"):format(lvl - 1), v.cards.cards[2].value.text)
+    check("Leveling: BEST LEVEL TIME card names the level", v.cards.cards[2].value.text == "1h" and v.cards.cards[2].meta.text == ("level %d"):format(lvl - 1), v.cards.cards[2].value.text)
     db.xp = { cur = 10, max = 100, fromQuests = 630, fromKills = 370 }
     V.renderLeveling(); M.settle()
     check("Leveling: QUEST XP SHARE 63%, kills 37%", v.cards.cards[3].value.text == "63%" and v.cards.cards[3].meta.text:find("kills 37%", 1, true) == 1, v.cards.cards[3].value.text)

@@ -6,7 +6,8 @@ local M = require("wow_stub")
 local passed, failed = 0, 0
 local function check(name, cond, detail)
   if cond then passed = passed + 1
-  else failed = failed + 1; print(("FAIL  %s%s"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
+  -- (io.write, not print: a test file that silences print for the addon's chat lines must not hide a failure)
+  else failed = failed + 1; io.write(("FAIL  %s%s\n"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
 end
 local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pred(v) then n = n + 1 end end return n end
 
@@ -256,7 +257,7 @@ do
 end
 check("fmtTime", T.fmtTime(90061) == "1d 1h" and T.fmtTime(3661) == "1h 1m" and T.fmtTime(300) == "5m" and T.fmtTime(0) == "-")
 check("commas", T.commas(1234567) == "1,234,567" and T.commas(50) == "50")
-check("fmtDur", T.fmtDur(75) == "1:15" and T.fmtDur(9) == "9s")
+check("fmtDur: the fight list speaks the one dialect, never mm:ss", T.fmtDur(75) == "1m 15s" and T.fmtDur(9) == "9s", T.fmtDur(75))
 check("plain passes numbers", T.plain(5) == 5 and T.plain("x") == nil)
 check("safeKey passes plain values", T.safeKey("abc") == "abc" and T.safeKey(nil) == nil)
 check("safeStr type gate", T.safeStr("ok") == "ok" and T.safeStr(5) == nil)
@@ -617,15 +618,15 @@ local lastFight = ns.DB.combat.fights[#ns.DB.combat.fights]
 check("fights capture coordinates at the pull", lastFight and lastFight.x == 0.421 and lastFight.y == 0.637 and lastFight.map == 37, lastFight and lastFight.x)
 -- ── filter tabs on Fights + Timeline ──
 local fl = T.fightsList()
-check("Fights list has a tab control", fl and fl.tabs and fl.tabs.content ~= nil)
+check("Fights list has a filter button and a search in the control row (A3)", fl and fl.filter and fl.search and fl.tabs ~= nil)
 if fl and fl.tabs then
   local okF, errF = pcall(function() fl.tabs.select("death"); fl.tabs.select("notable"); fl.tabs.select("all") end)
   check("Fights filter tabs switch cleanly", okF, errF)
 end
 local tlTab = host("Home") and host("Home").paneByKey.activity
-check("Timeline pane has a filter tab control", tlTab and tlTab.content and tlTab.content.tabs ~= nil)
-if tlTab and tlTab.content and tlTab.content.tabs then
-  local okT, errT = pcall(function() tlTab.content.tabs.select("combat"); tlTab.content.tabs.select("all") end)
+check("Activity pane has a filter button and a search in the control row (A3)", tlTab and tlTab.content and tlTab.content.filterButton ~= nil and tlTab.content.search ~= nil)
+if tlTab and tlTab.content and tlTab.content.setFilter then
+  local okT, errT = pcall(function() tlTab.content.setFilter("combat"); tlTab.content.setFilter("all") end)
   check("Timeline filter tabs switch cleanly", okT, errT)
 end
 -- ── in-combat SECRET aura data (Midnight): tracked by instance id, names resolved / backfilled ──
@@ -872,11 +873,12 @@ check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Lin
 do
   local t0 = M.epoch + 100000
   local L, Fz = ns.DB.story.events, ns.DB.combat.fights
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {} }                                     -- trash, the foe's name hidden
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" } }                        -- after the run
+  -- (the run's fights are in its instance, B3: the zone names it)
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {}, zone = "Ragefire Chasm" }                -- trash, the foe's name hidden
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" }, zone = "Durotar" }                        -- after the run
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
   -- a rare picked up after the run, its row still stamped with the dungeon's zone (the stamp is the last loot window's)
@@ -1407,10 +1409,12 @@ do
   local w = ns._test.timelineWindow()
   check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "activity" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
   local tl = host("Home").paneByKey.activity
-  check("window banner shown", tl.content.timelineBanner.shown == true)
+  local sumText = {}
+  for _, sg in ipairs(tl.content.timelineSummary.segs or {}) do sumText[#sumText + 1] = sg.text end
+  check("the summary line names the window and offers Show everything", table.concat(sumText, "|"):find("Showing", 1, true) ~= nil and table.concat(sumText, "|"):find("Show everything", 1, true) ~= nil, table.concat(sumText, "|"))
   check("events outside the window are filtered out", ns._test.eventMatches(L[#L], "all", "") == false and ns._test.eventMatches(L[#L - 1], "all", "") == true)
-  tl.content.timelineBanner:GetScript("OnClick")(tl.content.timelineBanner)
-  check("clicking the banner clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
+  tl.content.clearWindow()
+  check("Show everything clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
   ns.UI.Open("Home", "overview")
 end
 -- ── durability lost across a death ──
@@ -1536,12 +1540,14 @@ do
   local L = ns.DB.story.events
   ns.char().dungeonRuns = ns.char().dungeonRuns or {}
   table.insert(ns.char().dungeonRuns, T.runRecord("Wailing Caverns", t0, 600))
-  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" }, zone = "Wailing Caverns" }
+  -- (B3: a pull counts for a run only inside its window and in its instance: an open-world pull at the same time gets no run row)
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-out", session = ns.DB.active, startEpoch = t0 + 90, duration = 10, outcome = "kill", foes = { "Plainstrider" }, zone = "The Barrens" }
   local dv = T.fightDetail(); if dv then dv:Hide() end          -- an earlier test left the replay open; the list only rebuilds when visible
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
   local found = false
-  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):find("Wailing Caverns") then found = true end end
+  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):lower():find("wailing caverns", 1, true) then found = true end end
   local diag = {}
   for _, r in ipairs(ns.DungeonRuns()) do if r.name == "Wailing Caverns" then diag[#diag + 1] = ("run %s..%s fights=%d"):format(tostring(r.startT), tostring(r.endT), #(r.fights or {})) end end
   diag[#diag + 1] = "days=" .. tostring(fl.daysFn and #(fl.daysFn() or {}))
@@ -2135,7 +2141,7 @@ do
   ns.DB.characters[UT] = ns.DB.characters[UT] or ns.newCharBlock()
   ns.DB.characters[UT].dungeonRuns = { T.runRecord("Shadowfang Keep", t0 + 1100, 300, { nDeaths = { me = 1, party = 0 },
     gold = { looted = 777, quests = 0, lootValue = 0, items = 1, purse = 777 } }) }
-  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9 }
+  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9, zone = "Shadowfang Keep" }
   Fz[#Fz + 1] = utF
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1195, item = "Undertaker Shroud", count = 1, q = "ff0070dd", src = "Undertaker Bane" }
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1196, money = 777, src = "Undertaker Bane" }

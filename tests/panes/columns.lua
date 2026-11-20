@@ -35,40 +35,71 @@ return function(P)
     local head = UI.LayoutColumns(spec, 700, fixed(320), 12, 8)
     check("LayoutColumns: nor under its header label and measured values", head.name.w == 90 and head.realm.w == UI.COL_FLOOR, ("%d %d"):format(head.name.w, head.realm.w))
   end
+  -- Fights and Activity are kit pages (A4): a place name is never cut under PLACE, the enemy keeps the flex width up
+  -- to its max, an event summary with counts is never cut, and a day row shows only its label (A1)
+  local function kitOf(content, key)
+    for _, f in ipairs(P.descendants(content)) do
+      local t = rawget(f, "ebKitTable")
+      if t and P.visible(f) and t.cols and t.cols[key] then return t end
+    end
+  end
   for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
     local tag = ("%dx%d"):format(size[1], size[2])
     local c = P.open("combat", "fights", size[1], size[2], "normal")
-    local t = c and tableOf(c)
+    local t = c and kitOf(c, "foe")
     check("Fights " .. tag .. ": the list was found", t ~= nil)
     if t then
       local cut = {}
       for _, r in ipairs(rowsOf(t)) do if r.c.loc:IsTruncated() then cut[#cut + 1] = r.c.loc.text end end
-      check("Fights " .. tag .. ": no zone name is cut", #cut == 0, table.concat(cut, ", "))
-      check("Fights " .. tag .. ": Faced and Location share the spare width equally", math.abs(t.cols.foe.w - t.cols.loc.w) <= 1, ("%d vs %d"):format(t.cols.foe.w, t.cols.loc.w))
+      check("Fights " .. tag .. ": no zone name is cut under PLACE", #cut == 0, table.concat(cut, ", "))
+      check("Fights " .. tag .. ": the enemy column is at most 360", t.cols.foe.w <= 360, t.cols.foe.w)
+      check("Fights " .. tag .. ": no group size column (the party is in the tooltip)", t.cols.grp == nil)
     end
     local h = P.open("home", "timeline", size[1], size[2], "normal")
-    local tt = h and tableOf(h)
+    local tt = h and kitOf(h, "ev")
     check("Timeline " .. tag .. ": the list was found", tt ~= nil)
     if tt then
-      local cut = {}
+      local cut, zcut = {}, {}
       for _, r in ipairs(rowsOf(tt)) do
         if r.c.ev:IsTruncated() and tostring(r.c.ev.text):find("%d") then cut[#cut + 1] = r.c.ev.text end
+        if r.c.where:IsTruncated() then zcut[#zcut + 1] = r.c.where.text end
       end
       check("Timeline " .. tag .. ": an event summary with counts is never cut", #cut == 0, table.concat(cut, " | "))
-      -- past the summary's minimum, the foe and the place share the width equally; from 1250 wide a realistic foe
-      -- name is never cut. At 900 the summary is held at its minimum and the names take everything else.
-      if size[1] >= 1250 then
-        check("Timeline " .. tag .. ": While fighting and Location share the spare width equally", math.abs(tt.cols.foe.w - tt.cols.where.w) <= 2, ("%d vs %d"):format(tt.cols.foe.w, tt.cols.where.w))
-        local foes = {}
-        for _, r in ipairs(rowsOf(tt)) do if r.c.foe:IsTruncated() then foes[#foes + 1] = r.c.foe.text end end
-        check("Timeline " .. tag .. ": no realistic foe name is cut under While fighting", #foes == 0, table.concat(foes, ", "))
-      else
-        local evMin = 0
-        for _, r in ipairs(rowsOf(tt)) do
-          if tostring(r.c.ev.text):find("^Auction house: 2 posts, 1 bid, 1 buy$") then evMin = math.ceil(P.G.naturalWidth(r.c.ev)) end
+      check("Timeline " .. tag .. ": no zone name is cut under PLACE", #zcut == 0, table.concat(zcut, " | "))
+    end
+  end
+  -- A1: a day row shows its label and nothing else, after a data row with a stack count was recycled into it
+  do
+    local c = P.open("loot", "items", 1600, 1000, "long")
+    local function dayExtras(content)
+      local bad, n = {}, 0
+      for _, f in ipairs(P.descendants(content)) do
+        local t = rawget(f, "ebKitTable")
+        if t and P.visible(f) then
+          for i = 1, t.shownN do
+            local r = t.rows[i]
+            if r.item and r.item.ebSection then
+              n = n + 1
+              for _, k in ipairs(UI.ROW_EXTRAS) do local x = rawget(r, k); if x and x.shown ~= false then bad[#bad + 1] = ("%s on %s"):format(k, tostring(r.item.ebSection)) end end
+              for key, cell in pairs(r.c) do if cell.shown ~= false and (cell.text or "") ~= "" then bad[#bad + 1] = ("cell %s on %s"):format(key, tostring(r.item.ebSection)) end end
+            end
+          end
         end
-        check("Timeline " .. tag .. ": the event column holds only its measured minimum, the names take the rest", evMin > 0 and tt.cols.ev.w <= evMin + 1, ("%d vs %d"):format(tt.cols.ev.w, evMin))
       end
+      return bad, n
+    end
+    -- sort away and back so day rows land on rows that held items with counts
+    local items = c
+    for _, mode in ipairs({ "newest", "byitem", "newest" }) do
+      if items.setLootMode then pcall(items.setLootMode, mode) end
+      P.M.settle()
+    end
+    local bad, n = dayExtras(c)
+    check("Items: a day row shows only its label, no stack count or icon from a recycled row (A1)", n > 0 and #bad == 0, table.concat(bad, "; "))
+    for _, pg in ipairs({ { "home", "timeline" }, { "combat", "fights" }, { "loot", "gold" } }) do
+      local cc = P.open(pg[1], pg[2], 1600, 1000, "long")
+      local b2 = dayExtras(cc)
+      check(pg[1] .. "/" .. pg[2] .. ": a day row shows only its label (A1)", #b2 == 0, table.concat(b2, "; "))
     end
   end
   -- A left-aligned column right after a right-aligned one needs S5 (24) between them: at S3 two headers read as one

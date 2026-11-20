@@ -194,19 +194,22 @@ return function(P)
     if wide then
       check(tag .. ": PER HOUR is the net over the time played (4.9)", c.shownCards[5].label:GetText() == "PER HOUR" and c.shownCards[5].value:GetText() == Gold.GP.money(card.net * 3600 / sc.elapsed, true), c.shownCards[5].value:GetText())
     end
-    check(tag .. ": NET names the rate in its meta line", c.shownCards[4].meta:GetText() == Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. " per hour", c.shownCards[4].meta:GetText())
+    -- (A16: the rate is said once: on the PER HOUR card at WIDE, on the answer line below it; NET counts its entries)
+    local function rateText() return wide and c.shownCards[5].value:GetText() or c.summary.Text() end
+    check(tag .. ": the rate is said once, on PER HOUR or the answer line", (wide and c.summary.Text():find("per hour", 1, true) == nil) or (not wide and c.summary.Text():find(Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. "** per hour", 1, true) ~= nil or c.summary.Text():find(Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. " per hour", 1, true) ~= nil), c.summary.Text())
+    check(tag .. ": NET counts its entries", c.shownCards[4].meta:GetText():find(" entries$") ~= nil, c.shownCards[4].meta:GetText())
     -- five more minutes of play, then the repaint: the cards follow, an open menu stays open
     Gold._tickAt = M.now
     for _ = 1, 30 do M.now = M.now + 10; M.epoch = M.epoch + 10; Gold.tick() end
     click(c.breakdown)
     check(tag .. ": a menu is open", c.breakdown.menu.shown ~= false)
-    local before = c.shownCards[4].meta:GetText()
+    local before = rateText()
     Gold._rateTicker.fn(); M.settle()
-    check(tag .. ": the repaint draws the rate over the longer play", c.shownCards[4].meta:GetText() ~= before, c.shownCards[4].meta:GetText())
+    check(tag .. ": the repaint draws the rate over the longer play", rateText() ~= before, rateText())
     check(tag .. ": the repaint does not close the open menu", c.breakdown.menu.shown ~= false)
     c.breakdown.menu:Hide()
     Gold.open("all"); M.settle()
-    check(tag .. ": All time has no rate", c.rate == nil and c.shownCards[4].meta:GetText() == "all time")
+    check(tag .. ": All time has no rate and no PER HOUR card (B17)", c.rate == nil and #c.shownCards == 4 and c.summary.Text():find("per hour", 1, true) == nil, #c.shownCards)
     M.epoch, M.now = saved.epoch, saved.now
   end
   _G.EverbuffFrame:Hide()

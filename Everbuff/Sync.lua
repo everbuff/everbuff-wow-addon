@@ -34,16 +34,20 @@ local function ago(t)
   return math.floor(d / 86400) .. " days ago"
 end
 
--- the settings column(s): one of min(CW, 684) (the whole content width at 900, so right-aligned controls end on
--- TEXT_R like every other page), or at WIDE two of 500, S5 apart. sections = { { head, items } } where an item is a
--- frame with its height (ebH, else its own), placed one under the other.
--- Data and sync is one column at every width (`single`): its status lines and the code field are long, and its
--- Advanced rows hold wide controls; a 500 column cut the one and stacked the other.
-UI.SETTINGS_W, UI.SETTINGS_WIDE_W = 684, 500
-local function columnsOf(w, single)
-  if G.isWide(G.winW()) and not single then return { { x = 0, w = UI.SETTINGS_WIDE_W }, { x = UI.SETTINGS_WIDE_W + S.S5, w = UI.SETTINGS_WIDE_W } } end
-  return { { x = 0, w = math.min(w, UI.SETTINGS_W) } }
+-- the settings column(s) span the main column, BOX_L to BOX_L + MAIN_W, as every other page (A2): one column under
+-- WIDE, two halves S5 apart at WIDE, so a control's right edge is the main column's text edge (BOX_L + MAIN_W - S3).
+-- Descriptions stay capped at 520 inside their row. sections = { { head, items } } where an item is a frame with its
+-- height (ebH, else its own), placed one under the other. Data and sync takes two columns at WIDE too (B23): its
+-- status lines wrap inside their half.
+function UI.settingsColumns()
+  local mw = G.mainW(G.winW())
+  if G.isWide(G.winW()) then
+    local half = math.floor((mw - S.S5) / 2)
+    return { { x = 0, w = half }, { x = mw - half, w = half } }
+  end
+  return { { x = 0, w = mw } }
 end
+local function columnsOf() return UI.settingsColumns() end
 local function hOf(f) return f.ebH or tonumber(f:GetHeight()) or 0 end
 local function sectionH(sec)
   local h = H.SECTION
@@ -51,8 +55,8 @@ local function sectionH(sec)
   return h
 end
 -- lay `sections` (and a footer) out on the page; at WIDE the second column takes the sections after the split
-function SET.place(pg, sections, footer, single)
-  local cols = columnsOf(G.cw(G.winW()), single)
+function SET.place(pg, sections, footer)
+  local cols = columnsOf()
   -- every row laid out at its column's width first, so a row that grows (a stacked control, a wrapped status) is
   -- placed at its own height
   for _, sec in ipairs(sections) do
@@ -152,7 +156,7 @@ local LOOT_FROM = { { "uncommon", "Green and better" }, { "rare", "Blue and bett
 local GROUPS = {
   { "travel", "Travel", "Zones, dungeons, discoveries and flight paths." },
   { "quests", "Quests", "Accepted, completed and the reward you chose." },
-  { "kills", "Kills", "Notable enemies and boss pulls." },
+  { "kills", "Kills", "Elites, rares and boss pulls." },
   { "progress", "Progress", "Skill-ups, spells, reputation, achievements and collections." },
 }
 local PREVIEW = { { "LEVELUP", {} }, { "LOOT", { name = "Cursed Felblade", count = 1 } }, { "BOSS", { name = "Edwin VanCleef" } }, { "DEATH", {} }, { "DISCOVERY", { name = "Westfall" } } }
@@ -381,12 +385,12 @@ function SET.placeData()
   if InCombatLockdown and InCombatLockdown() then
     if not d.regen then
       d.regen = CreateFrame("Frame")
-      d.regen:SetScript("OnEvent", function() pcall(SET.place, d.pg, d.sections, d.footer, true) end)
+      d.regen:SetScript("OnEvent", function() pcall(SET.place, d.pg, d.sections, d.footer) end)
       d.regen:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
     return
   end
-  pcall(SET.place, d.pg, d.sections, d.footer, true)
+  pcall(SET.place, d.pg, d.sections, d.footer)
 end
 function SET.applyCode()
   local d = SET.data; if not d then return end
@@ -457,7 +461,7 @@ function SET.refreshData()
   if #errs == 0 then d.ui:SetState("Window: every page built cleanly", "accent")
   else d.ui:SetState("Window: " .. table.concat(errs, " \194\183 "), "warn") end
   d.video:SetState("Video: the desktop app records it; the game cannot see it", "fgFaint")
-  d.footerText:SetText(("Everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)))
+  d.footerText:SetText(("everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)))
   SET.placeData()
 end
 

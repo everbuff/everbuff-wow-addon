@@ -21,7 +21,7 @@ return function(P)
   -- ── formatters (2.5) ──
   eq("fmtDur: seconds", UI.fmtDur(45), "45s")
   eq("fmtDur: minutes and seconds", UI.fmtDur(605), "10m 5s")
-  eq("fmtDur: hours", UI.fmtDur(3600), "1h 0m")
+  eq("fmtDur: a whole hour drops its zero minutes (A19)", UI.fmtDur(3600), "1h")
   eq("fmtDur: days", UI.fmtDur(2 * 86400 + 4 * 3600), "2d 4h")
   local d1, c1 = UI.fmtDelta(-12)
   check("fmtDelta: faster is good", d1 and d1:find("12") and c1 == "good", d1)

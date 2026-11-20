@@ -1488,6 +1488,8 @@ function Runs.isFull(s, rec)
   local killed = {}
   for _, b in ipairs(rec.bosses or {}) do if b.kill then killed[b.enc] = true end end
   for _, enc in ipairs(L) do if not killed[enc] then return false end end
+  -- (a boss the run met and left up is not cleared: the run is no full clear, B1)
+  for _, b in ipairs(rec.bosses or {}) do if not b.kill and b.enc ~= nil then return false end end
   return true
 end
 -- Whether a run holds the best of its route now (worked out from `bestId`, never stored: 0.9.51's review)
@@ -1733,9 +1735,10 @@ function Runs.bossTotal(rec)
   local set, n, missing = {}, 0, {}
   for _, enc in ipairs(L) do set[enc] = true; n = n + 1 end
   local pulled = {}
+  -- (every encounter the run met counts, killed or left up: 6 of 8 with two missed, never 6 of 6, B1)
   for _, b in ipairs(rec.bosses or {}) do
     pulled[b.enc] = true
-    if b.kill and not set[b.enc] then set[b.enc] = true; n = n + 1 end
+    if b.enc ~= nil and not set[b.enc] then set[b.enc] = true; n = n + 1 end
   end
   local s = S[Runs.keyOf(rec)]
   for _, enc in ipairs(L) do
@@ -2289,6 +2292,8 @@ function Runs.view(rec, isOpen, full, light)
     if b.kill then down = down + 1 elseif num(b.unknown) > 0 then unseen = unseen + 1 end
   end
   v.bossesDown, v.pulls, v.wipes, v.unseen = down, pulls, wipes, unseen
+  -- (the run's fights, the one list the run page and the Fights list's group rows count, B23)
+  if full then v.fights = Runs.fightsOf(rec) end
   if light then return v end
   v.splits = Runs.splits(rec)
   -- (0.9.51) the learned boss list, the best, the marks an edit and a repeated pull leave
@@ -2297,14 +2302,18 @@ function Runs.view(rec, isOpen, full, light)
   -- the Pace section waits for the dungeon's first full clear (plan 5.B)
   local S = statsOf(me())
   local st = S and S[Runs.keyOf(rec)]
-  v.cleared = type(st) == "table" and num(st.full) > 0 or nil
+  -- (the Pace section asks for the same bosses killed twice, as its empty sentence says: a full clear, or a route run
+  -- twice; a dungeon with a boss always left up has no full clear and still has a pace)
+  local sig = Runs.sigOf(rec)
+  local route = sig and type(st) == "table" and type(st.routes) == "table" and st.routes[sig] or nil
+  v.cleared = (type(st) == "table" and (num(st.full) > 0 or (route and num(route.n) >= 2))) or nil
   v.done, v.pb, v.edited, v.repull, v.exact, v.keep, v.size = rec.done, vs.pb, rec.edited, rec.repull, rec.exact, rec.keep, rec.size
   local warm = v.active >= Runs.RATE_WARM
   v.xpGain = type(rec.xp) == "table" and num(rec.xp.gain) or 0
   v.xpPerHour = (warm and v.xpGain > 0) and v.xpGain * 3600 / v.active or nil
   v.coinPerHour = warm and v.coin * 3600 / v.active or nil
   if full then
-    v.fights = Runs.rowsOf(rec, ns.Fights and ns.Fights.list and ns.Fights.list(), "startEpoch")
+    v.fights = v.fights or Runs.fightsOf(rec)
     local grp
     for _, f in ipairs(v.fights) do
       if type(f.group) == "table" and (not grp or #f.group > #grp) then grp = f.group end
@@ -2351,6 +2360,21 @@ end
 -- run's start (Runs.TAIL_SLACK rows in a row from before it: a row can sit a little out of order), never the whole
 -- list of up to 5000 fights or 2000 loot rows.
 Runs.TAIL_SLACK = 20
+-- a fight is the run's only in the run's instance (B3): its instance map id (GetInstanceInfo, as the run's) when both
+-- know one, else its zone by name. A fight that names neither cannot be placed and is not counted (the open world
+-- between two visits must never be).
+function Runs.inInstance(rec, f)
+  if type(f) ~= "table" or type(rec) ~= "table" then return false end
+  local fm, rm = plainNum(f.instanceMapID), plainNum(rec.map)
+  if fm and rm then return fm == rm end
+  local z, n = f.zone, rec.inst
+  if type(z) ~= "string" or type(n) ~= "string" then return false end
+  return z:lower() == n:lower()
+end
+-- the fights of a run: the stored fights that began inside one of its visits, in its instance
+function Runs.fightsOf(rec)
+  return Runs.rowsOf(rec, ns.Fights and ns.Fights.list and ns.Fights.list(), "startEpoch", function(f) return Runs.inInstance(rec, f) end)
+end
 function Runs.rowsOf(rec, list, tkey, want)
   local rev, older = {}, 0
   if type(list) ~= "table" then return rev end

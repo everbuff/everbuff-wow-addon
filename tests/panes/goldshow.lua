@@ -223,7 +223,7 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       local ses = ns.Recorder.current()
       ses.gold.other = (ses.gold.other or 0) + 1
       Gold.open("session", "sources"); M.settle()
-      check(tag .. ": a break is said on the untraced line, in fgMuted", c.audit.state == "broken" and c.untraced:GetText():find("Some records do not add up. Hover for details.", 1, true) ~= nil and colorIs(c.untraced, "fgMuted"), c.untraced:GetText())
+      check(tag .. ": a break is said on the untraced line, in fgMuted", c.audit.state == "broken" and c.untraced:GetText():lower():find("some gold changes could not be traced", 1, true) ~= nil and c.untraced:GetText():find("Hover", 1, true) == nil and colorIs(c.untraced, "fgMuted"), c.untraced:GetText())
       local text = tipOf(c.untracedHit)
       check(tag .. ": the hover names the break", text:find("Unexplained spending", 1, true) ~= nil, text)
       ses.gold.other = ses.gold.other - 1

@@ -235,8 +235,25 @@ function UI.fmtDur(s, opts)
     local m, r = math.floor(s / 60), s % 60
     return r > 0 and (m .. "m " .. r .. "s") or (m .. "m")
   end
-  if s < 86400 then return math.floor(s / 3600) .. "h " .. math.floor((s % 3600) / 60) .. "m" end
-  return math.floor(s / 86400) .. "d " .. math.floor((s % 86400) / 3600) .. "h"
+  -- (a zero second unit is dropped at every size: "2m", "1h", "2d", never "1h 0m")
+  if s < 86400 then local h, m = math.floor(s / 3600), math.floor((s % 3600) / 60); return m > 0 and (h .. "h " .. m .. "m") or (h .. "h") end
+  local d, h = math.floor(s / 86400), math.floor((s % 86400) / 3600)
+  return h > 0 and (d .. "d " .. h .. "h") or (d .. "d")
+end
+-- a session's length (and any time played), one function and one rounding everywhere: to the nearest minute ("38m",
+-- "1h 39m"); under half a minute it is "-" (nothing to say). UI.sessionSecs(sess) is the length of a session record,
+-- up to now while it runs.
+function UI.fmtPlayed(s)
+  s = tonumber(s)
+  if not s or s ~= s or s < 30 then return "-" end
+  return UI.fmtDur(s, { minutes = true })
+end
+function UI.sessionSecs(sess, now)
+  if type(sess) ~= "table" then return 0 end
+  local a = tonumber(sess.startedEpoch)
+  if not a then return 0 end
+  local b = tonumber(sess.endedEpoch) or now or nowT()
+  return math.max(0, b - a)
 end
 -- a time against the best: returns the words and the color key ("good", "warn" or nil).
 --   UI.fmtDelta(-42) -> "42s faster", "good"; UI.fmtDelta(209) -> "3m 29s slower", "warn"
@@ -267,6 +284,18 @@ end
 function UI.fmtRange(a, b, live)
   return UI.fmtClock(a) .. " to " .. ((live or not b) and "now" or UI.fmtClock(b))
 end
+-- the TYPE word of every story event kind, sentence case, one table for Activity and every list that names a kind
+-- (docs/UX_OVERHAUL.md 4.2). tests/panes/columns.lua checks that every kind the addon writes has one.
+UI.KIND_LABEL = {
+  LEVELUP = "Level", ZONE = "Zone", FIRSTZONE = "New zone", DISCOVERY = "Discovery", FLIGHT = "Flight path", FLIGHTTRIP = "Flight",
+  DUNGEON = "Dungeon", DUNGEONLEAVE = "Dungeon", QUESTACCEPT = "Quest", QUESTDONE = "Quest", REWARD = "Reward",
+  BOSS = "Boss", KILL = "Kill", WIPE = "Wipe", DEATH = "Died", ALIVE = "Revived", ROSTERJOIN = "Party", ROSTERLEAVE = "Party",
+  LOOT = "Loot", COLLECT = "Collected", UPGRADE = "Gear", BROKEN = "Gear", GOLDAWAY = "Gold",
+  SKILLUP = "Skill", RECIPE = "Recipe", PROFTIER = "Profession", ACHIEV = "Achievement", SPELL = "Learned", REP = "Reputation",
+  VENDOR = "Merchant", TRAINER = "Trainer", MAIL = "Mail", AUCTION = "Auction", TRADE = "Trade", BANK = "Bank",
+}
+-- the event results that carry a colour (2.5 rule 3): a kill is good, a wipe and a death are bad
+UI.KIND_RESULT = { KILL = "good", WIPE = "bad", DEATH = "bad" }
 local PLURAL = { entry = "entries", faction = "factions", copy = "copies", party = "parties", ["party member"] = "party members" }
 -- "1 item", "2 items", "3 entries"
 function UI.plural(n, word, many)
@@ -1320,6 +1349,14 @@ function UI.KitButton(parent, text, style, onClick, opts)
     b:SetAlpha(on and 0.4 or 1)
     paint("rest")
   end
+  -- a filled button turned ghost and back (the hero's button while a run is in progress is never a primary)
+  function b.SetStyle(_, st)
+    if link or not BTN_PAINT[st] or st == "link" then return b end
+    b.ebStyle = st
+    UI.primaries[b] = (st == "primary") or nil
+    paint("rest")
+    return b
+  end
   b:SetLabel(text)
   paint("rest")
   if style == "primary" then UI.primaries[b] = true end
@@ -1528,7 +1565,19 @@ function UI.Summary(parent)
       for _, r in ipairs(runs) do w = w + UI.TextWidth(r[2] and "BODY_STRONG" or "BODY", r[1]) end
       return w
     end
-    for i, sg in ipairs(f.segs) do
+    -- (a segment marked `optional` is the first to go when the whole line does not fit, wherever it stands)
+    local segs = {}
+    for _, sg in ipairs(f.segs) do segs[#segs + 1] = sg end
+    local function total()
+      local t = 0
+      for i, sg in ipairs(segs) do t = t + (i > 1 and sepW or 0) + widthOf(runsOf((sg.dot and UI.dot(sg.dot) or "") .. tostring(sg.text or sg[1] or ""))) end
+      return t
+    end
+    for i = #segs, 1, -1 do
+      if #segs > 1 and segs[i].optional and total() > avail then table.remove(segs, i) end
+    end
+    f.dropped = #f.segs - #segs
+    for i, sg in ipairs(segs) do
       local b = segButton(i)
       local runs = runsOf((sg.dot and UI.dot(sg.dot) or "") .. tostring(sg.text or sg[1] or ""))
       -- (a segment with a short form takes it when its full text does not fit, before the line drops it)
@@ -1756,8 +1805,9 @@ function UI.Hero(parent, opts)
     h.barFrac, h.restedFrac = frac, restedFrac
     if frac then h.track:Show(); h.meta2:Hide() else h.track:Hide(); h.fill:Hide(); h.rested:Hide() end
   end
-  function h.SetButton(_, label, fn)
-    if label then h.button:SetLabel(label); h.button.ebOnClick = fn; h.button:Show() else h.button:Hide() end
+  -- (style: "ghost" for a button that must not be the view's primary)
+  function h.SetButton(_, label, fn, style)
+    if label then h.button:SetStyle(style or "primary"); h.button:SetLabel(label); h.button.ebOnClick = fn; h.button:Show() else h.button:Hide() end
   end
   h:HookScript("OnSizeChanged", function() pcall(h.layout) end)
   return h
@@ -2124,6 +2174,8 @@ UI.STRIPE_ALPHA = 1
 -- the lead column of every table on a detail page ("#", the 20 px icon or the time): the name column after it starts
 -- at table x 60 (inset 12 + 36 + gap 12) on every table of the page
 UI.LEAD_W = 36
+-- the regions a page adds to a table row beside its cells (row[key]); a day or group row hides them all
+UI.ROW_EXTRAS = { "ebCount", "ebBadge", "ebLootIc", "ebBar", "ebDot", "ebIcon" }
 function UI.KitTable(parent, spec, opts)
   opts = opts or {}
   local rowH, headH, dayH = opts.rowHeight or UI.H.ROW, UI.H.TABLE_HEAD, UI.H.DAY_ROW
@@ -2236,7 +2288,7 @@ function UI.KitTable(parent, spec, opts)
     tbl.setSort(tbl.sortKey, tbl.sortAsc)
     for i = 1, tbl.shownN do placeRow(tbl.rows[i]); tbl.rows[i]:SetWidth(tbl.usedW) end
     -- (the inline sentence is as wide as its text, so a link after it stays on its line, right after its last word)
-    if tbl.state and tbl.stateArgs then tbl.setState(tbl.stateArgs[1], tbl.stateArgs[2], tbl.stateArgs[3]) end
+    if tbl.state and tbl.stateArgs then tbl.setState(tbl.stateArgs[1], tbl.stateArgs[2], tbl.stateArgs[3], tbl.stateArgs[4]) end
     if opts.onLayout then pcall(opts.onLayout, tbl) end
   end
   function tbl.setSort(key, asc)
@@ -2306,15 +2358,18 @@ function UI.KitTable(parent, spec, opts)
     if col.strong or col.key == firstText then return C.fg end
     return colorOf(col.color) or C.fgSubtle
   end
-  -- the inline text under the header: "loading", "empty" or "nomatch" (with a link)
-  function tbl.setState(text, linkText, linkFn)
+  -- the inline text under the header: "loading", "empty" or "nomatch" (with a link). noHead: a list with nothing
+  -- to show has no column header either (B24): the sentence takes the header's place.
+  function tbl.setState(text, linkText, linkFn, noHead)
     if not tbl.stateFS then
       tbl.stateFS = UI.Text(f, "BODY", "fgMuted", { wrap = true })
-      tbl.stateFS:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(headH + S.S3))
       tbl.stateLink = UI.KitButton(f, "", "link", nil, { role = "BODY" }); tbl.stateLink:Hide()
     end
-    if not text then tbl.stateFS:Hide(); tbl.stateLink:Hide(); tbl.state, tbl.stateArgs = nil, nil; return end
-    tbl.state, tbl.stateArgs = text, { text, linkText, linkFn }
+    if not text then tbl.stateFS:Hide(); tbl.stateLink:Hide(); tbl.state, tbl.stateArgs = nil, nil; header:Show(); return end
+    tbl.state, tbl.stateArgs = text, { text, linkText, linkFn, noHead }
+    local top = noHead and 0 or headH
+    if noHead then header:Hide() else header:Show() end
+    tbl.stateFS:ClearAllPoints(); tbl.stateFS:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(top + S.S3))
     tbl.shownN = 0
     for _, row in ipairs(tbl.rows) do row:Hide() end
     local maxW = math.min((tbl.usedW or 520) - 2 * S.S3, 520)
@@ -2328,14 +2383,14 @@ function UI.KitTable(parent, spec, opts)
       if tw + S.S1 + UI.TextWidth("BODY", linkText) <= maxW then tbl.stateLink:SetPoint("LEFT", tbl.stateFS, "RIGHT", S.S1, 0)
       else
         th = math.ceil(tw / math.max(1, maxW)) * UI.LINE_H.BODY
-        tbl.stateLink:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(headH + S.S3 + th + S.S1)); th = th + S.S1 + UI.LINE_H.BODY
+        tbl.stateLink:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(top + S.S3 + th + S.S1)); th = th + S.S1 + UI.LINE_H.BODY
       end
       tbl.stateLink:Show()
     else
       tbl.stateLink:Hide()
       if tw > maxW then th = math.ceil(tw / math.max(1, maxW)) * UI.LINE_H.BODY end
     end
-    tbl.height = headH + S.S3 + th + S.S3
+    tbl.height = top + S.S3 + th + S.S3
     f:SetHeight(tbl.height)
     if opts.onHeight then pcall(opts.onHeight, tbl.height) end
   end
@@ -2376,6 +2431,9 @@ function UI.KitTable(parent, spec, opts)
         end
         UI.SetText(row.section, item.ebSection); row.section:Show()
         for _, col in ipairs(full) do row.c[col.key]:Hide() end
+        -- (a recycled data row keeps the regions its page added beside the cells, a stack count, a badge, a loot
+        -- icon: a day row shows its label and nothing else)
+        for _, k in ipairs(UI.ROW_EXTRAS) do local x = row[k]; if x and x.Hide then x:Hide() end end
         row.stripe:SetColorTexture(0, 0, 0, 0)
         row:SetHeight(dayH)
         if row.EnableMouse then row:EnableMouse(false) end
@@ -2387,8 +2445,10 @@ function UI.KitTable(parent, spec, opts)
         if dataI % 2 == 0 then row.stripe:SetColorTexture(unpackc(C.panel, UI.STRIPE_ALPHA)) else row.stripe:SetColorTexture(0, 0, 0, 0) end
         row:SetHeight(rowH)
         if row.EnableMouse then row:EnableMouse(clickable or opts.tooltip ~= nil) end
+        -- (row.ebNoOpen: a fill that knows a row opens nothing says so on the row, so a stored record is never marked)
+        row.ebNoOpen = nil
         if fillFn then fillFn(row, item, i) end
-        if row.c._chev then row.c._chev:SetText((item.ebNoOpen or not clickable) and "" or "\226\128\186") end
+        if row.c._chev then row.c._chev:SetText((item.ebNoOpen or row.ebNoOpen or not clickable) and "" or "\226\128\186") end
         if item == tbl.selected then row.sel:Show(); row.mark:Show() end
         y = y + rowH
       end
@@ -2998,7 +3058,7 @@ end
 --    name the page. Pane key = label lowercased without spaces ("By dungeon" -> "bydungeon").
 local hosts = {}
 -- the panes that are not rebuilt on the kit yet (docs/UX_OVERHAUL.md 0.3): clamped to the main column
-UI.LEGACY_PANES = { ["Home/sessions"] = true, ["Home/activity"] = true, ["Home/fights"] = true }
+UI.LEGACY_PANES = {}
 local function buildHost(t, content)
   table.sort(t.panes, function(a, b) return a.order < b.order end)
   local items = {}

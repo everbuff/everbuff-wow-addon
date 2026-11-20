@@ -690,7 +690,7 @@ return function(P)
     local D = ns.Dungeons.D
     local lines = D.otherLockouts()
     check("lockouts: the hover lists the other characters' lockouts that have not reset, not this one's", #lines == 1 and lines[1] == "Alt: Scholomance 4 of 10, resets in 1d 1h", lines[1])
-    check("lockouts: this character's one lockout is the summary segment, plain text with a tooltip when no run matches", D.lockSegment().text == "Stratholme: saved, resets in 1h 0m" and D.lockSegment().onClick == nil, D.lockSegment().text)
+    check("lockouts: this character's one lockout is the summary segment, plain text with a tooltip when no run matches", D.lockSegment().text == "Stratholme: saved, resets in 1h" and D.lockSegment().onClick == nil, D.lockSegment().text)
     ns.DB.characters["Player-1-000002"] = nil
     check("lockouts: no other character's lockout lists none", #D.otherLockouts() == 0)
   end

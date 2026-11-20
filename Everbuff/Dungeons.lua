@@ -84,7 +84,9 @@ local function knownTotal(name)
   return n
 end
 local function totalOf(run)
-  return run.total or math.max(#(run.bosses or {}) + #(run.missing or {}), n0(run.bossesDown), knownTotal(run.name))
+  -- (the most the run, its dungeon's learned list, its other runs and its lockout know of: the total is never the
+  -- kills alone when an encounter was left up, B1)
+  return math.max(n0(run.total), #(run.bosses or {}) + #(run.missing or {}), n0(run.bossesDown), knownTotal(run.name))
 end
 D.totalOf = totalOf
 -- "2/4", always with the total (table cells); D.bossCount(run) "2 of 4" (cards and heroes)
@@ -287,10 +289,10 @@ local function lockDown(l)
   return l.down
 end
 D.lockDown = lockDown
-local function lockLine(l, nowS, short)
+-- (one form at every size: when the line is too long, another segment goes, never this wording)
+local function lockLine(l, nowS)
   local down = lockDown(l)
   local reset = UI.fmtDur(n0(l.resetAt) - nowS, { minutes = true })
-  if short then return (l.name or "?") .. ((l.bosses and down) and (" %d/%d"):format(down, l.bosses) or "") .. ", resets in " .. reset end
   local prog = (l.bosses and down) and (": %d of %d bosses down"):format(down, l.bosses) or ": saved"
   return (l.name or "?") .. prog .. ", resets in " .. reset
 end
@@ -319,8 +321,8 @@ function D.lockSegment()
   end
   local l = L[1]
   local rec = lockoutRun(l)
-  if rec then return { text = lockLine(l, nowS), short = lockLine(l, nowS, true), tip = tip, onClick = function() UI.Open("Dungeons", "runs"); ns.Dungeons.openRun(rec) end } end
-  return { text = lockLine(l, nowS), short = lockLine(l, nowS, true), tip = function(t2) tip(t2); t2:AddLine(SAVED_BEFORE, 0.78, 0.79, 0.80, true) end }
+  if rec then return { text = lockLine(l, nowS), tip = tip, onClick = function() UI.Open("Dungeons", "runs"); ns.Dungeons.openRun(rec) end } end
+  return { text = lockLine(l, nowS), tip = function(t2) tip(t2); t2:AddLine(SAVED_BEFORE, 0.78, 0.79, 0.80, true) end }
 end
 -- the instance segment: the count this hour (a guessed copy is named in the tooltip, never as a hedge on the line); against the player's own
 -- limit only when one is set (Runs.limit(), unset by default: "of 5" is never invented)
@@ -374,7 +376,7 @@ local function buildDetail(content, list)
   v.sections, v.lines, v.tables, v.btns = {}, {}, {}, {}
   local SECTION_KEYS = { "bosses", "loot", "deaths", "xp", "party", "pace", "visits", "pulls", "edit" }
   local LABELS = { bosses = "Bosses", loot = "Loot", deaths = "Deaths", xp = "XP", party = "Party", pace = "Pace",
-    visits = "Entered and left", pulls = "All pulls in this run", edit = "Edit this run" }
+    visits = "Entered and left", pulls = "All fights in this run", edit = "Edit this run" }
   for _, k in ipairs(SECTION_KEYS) do v.sections[k] = UI.Section(col, LABELS[k]) end
   v.SECTION_KEYS = SECTION_KEYS
   -- the inline sentences and the META lines of the sections: a pool, laid out per render
@@ -690,7 +692,7 @@ local function buildDetail(content, list)
     for i, b in ipairs(kills) do order[b] = i end
     for _, b in ipairs(bosses) do
       local res = Runs.bossResult(b)
-      local tip = { res .. (n0(b.wipes) > 0 and (", " .. UI.plural(b.wipes, "wipe")) or "") .. (n0(b.pulls) > 1 and (" in " .. UI.plural(b.pulls, "pull")) or "") }
+      local tip = { res .. (n0(b.wipes) > 0 and (", " .. UI.plural(b.wipes, "wipe")) or "") .. (n0(b.pulls) > 1 and (" in " .. UI.plural(b.pulls, "fight")) or "") }
       if b.kill and vs[b.enc] and vsAgainst then tip[#tip + 1] = "Vs best: " .. vsAgainst end
       local sp = run.splits and run.splits[b.enc]
       brows[#brows + 1] = { name = b.name or "Boss", kill = b.kill, n = order[b], since = sp and sp.seg, d = b.kill and vs[b.enc], len = b.combat, tip = tip,
@@ -863,7 +865,7 @@ local function buildDetail(content, list)
         nm[#nm + 1] = colored(mm.name or "?", { r2, g2, b2 }) .. (#tail > 0 and (" " .. colored(table.concat(tail, " "), C.fgMuted)) or "")
       end
       v.partyFS = text(line("BODY", "fg"), table.concat(nm, colored(SEP, C.fgMuted)), UI.LINE_H.BODY + S.S1)
-    else v.partyFS = nil; v.empties.party = empty(run.fights and #run.fights > 0 and "You ran it alone." or "No pull of this run is stored, so the party is not known.") end
+    else v.partyFS = nil; v.empties.party = empty(run.fights and #run.fights > 0 and "You ran it alone." or "No fight of this run is stored, so the party is not known.") end
     y = y + S.S5
 
     -- 6 PACE: against the best of the route
@@ -910,10 +912,10 @@ local function buildDetail(content, list)
     end
     y = y + S.S5
 
-    -- 8 ALL PULLS IN THIS RUN: the fights still stored
+    -- 8 ALL FIGHTS IN THIS RUN: the fights still stored, the same list Home > Fights groups under the run (A21, B23)
     v.encounters = #(run.fights or {})
-    section("pulls", v.encounters > 0 and UI.plural(v.encounters, "pull") or nil)
-    if v.encounters == 0 then v.empties.pulls = empty("No pull of this run is stored any more. The desktop app saved them.")
+    section("pulls", v.encounters > 0 and UI.plural(v.encounters, "fight") or nil)
+    if v.encounters == 0 then v.empties.pulls = empty("No fight of this run is stored any more. The desktop app saved them.")
     else
       local prow = {}
       for i = #run.fights, 1, -1 do prow[#prow + 1] = { f = run.fights[i] } end
@@ -1309,7 +1311,8 @@ local function buildList(content)
       else verdict = UI.fmtDur(run.inside) .. " so far" end
       -- (META never repeats the HERO line: the start, then the bosses)
       h:SetMeta("Since " .. UI.fmtClock(run.startT) .. SEP .. bossLine(run, w - 200), nil)
-      h:SetButton(nil)
+      -- (the run in progress opens its page as every other run does, A10; a ghost: no primary while it runs)
+      h:SetButton("Open run", function() v.open(run) end, "ghost")
     else
       if kind == "first" then
         local total = totalOf(run)
@@ -1390,7 +1393,9 @@ local function buildList(content)
     local newest
     for _, r in ipairs(rows) do if not newest or n0(r.startT) > n0(newest.startT) then newest = r end end
     v.heroRefresh(newest)
-    v.section:SetMeta(UI.plural(#rows, "run"))
+    -- (filtered to one dungeon, the section is named after it; a list with no row says no "0 runs", B24)
+    v.section:SetLabel(st.inst or "All runs")
+    v.section:SetMeta(#rows > 0 and UI.plural(#rows, "run") or nil)
     v.place()
     local grouped = st.sortKey == "time"
     tbl.setRows(withDays(rows, grouped), function(row, run)
@@ -1436,7 +1441,7 @@ local function buildList(content)
     for _, r in ipairs(rows) do if r.id == v.selectedId then sel = r end end
     tbl.setSelected(sel)
     if #rows == 0 then
-      tbl.setState(("No run of %s yet."):format(st.inst or "this dungeon"), "Show all dungeons", function() v.pickInst(nil) end)
+      tbl.setState(("No run of %s yet."):format(st.inst or "this dungeon"), "Show all dungeons", function() v.pickInst(nil) end, true)
       v.hero:Hide()
     end
     v.place()
@@ -1563,7 +1568,8 @@ local function buildBy(content)
       or { text = ("Best XP per hour: %s, **%s**"):format(top.name, UI.fmtNum(top.xpPerHour)) }
     elseif #rows > 0 then first = { text = "Pay per hour shows after 5 minutes inside a dungeon" } end
     local segs = {}
-    if first then segs[#segs + 1] = first end
+    -- (the line too long at 900: the pay segment goes first, the lockout keeps its one wording)
+    if first then first.optional = true; segs[#segs + 1] = first end
     segs[#segs + 1] = D.instanceSegment(); segs[#segs + 1] = D.lockSegment()
     v.summary:SetSegments(segs)
     -- (the measure of Best and Average in the copy, not only in a header tooltip: Runs' TIME is the time inside)
@@ -1621,7 +1627,7 @@ end, function() if byView then byView.rebuild() end end,
 
 -- the runs of the logged-in character as the Fights list groups by them, oldest first: the light read (name, start,
 -- bosses down, deaths and the record), nothing from the statistics (its list is drawn again every 2 s)
-ns.DungeonRuns = function() return Runs.views(nil, true) end
+ns.DungeonRuns = function() return Runs.views(true, true) end   -- (light, with each run's fights for the group rows)
 
 -- open a run's page from anywhere (a view, or a stored record: WORTH A LOOK and the lockout link pass a record)
 local function openRun(run)

@@ -175,7 +175,8 @@ return function(P)
       local card = Gold.netCard(sc.ledger, Gold.scopeEntries(sc))
       local line = c.summary.Text()
       check(tag .. ": the answer line: the net this session, what it mostly came from, the rate of play", line:find(money(card.net, true) .. " this session, mostly ", 1, true) == 1
-        and line:find(" per hour of play", 1, true) ~= nil, line)
+        -- (A16: the rate is said once a screen, on the PER HOUR card at WIDE, else on this line)
+        and (line:find(" per hour of play", 1, true) ~= nil) == (not wide), line)
       -- the cards: 4, 5 at WIDE, as wide as the column, S3 apart, values in fg
       local cards = c.shownCards
       eq(tag .. ": the cards", cardLabels(cards), wide and "BALANCE,EARNED,SPENT,NET,PER HOUR" or "BALANCE,EARNED,SPENT,NET")
@@ -197,11 +198,11 @@ return function(P)
       eq(tag .. ": EARNED / SPENT", cards[2].value:GetText() .. " / " .. cards[3].value:GetText(), money(ses.gained, true) .. " / " .. money(-ses.spent, true))
       eq(tag .. ": NET", cards[4].value:GetText(), money(card.net, true))
       check(tag .. ": the cards' meta lines: all characters, entries, per hour", cards[1].meta:GetText():find("^all characters ") ~= nil and cards[2].meta:GetText():find(" entries$") ~= nil
-        and cards[4].meta:GetText():find(" per hour$") ~= nil, cards[1].meta:GetText())
+        and cards[4].meta:GetText():find(" entries$") ~= nil and cards[4].meta:GetText():find("per hour", 1, true) == nil, cards[1].meta:GetText() .. " | " .. cards[4].meta:GetText())
       if wide then check(tag .. ": PER HOUR names its stretch of play", cards[5].meta:GetText():find("^over ") ~= nil and cards[5].value:GetText() == money(c.rate, true), cards[5].meta:GetText()) end
       -- the untraced line: under the cards, fgMuted, never red
       local ub = P.box(c.untraced)
-      check(tag .. ": the untraced line sits S3 under the cards in fgMuted", P.visible(c.untraced) and c.untraced:GetText():find("^While you were away %(in%): ") ~= nil and colorIs(c.untraced, "fgMuted")
+      check(tag .. ": the untraced line sits S3 under the cards in fgMuted", P.visible(c.untraced) and c.untraced:GetText():find("^While you were away: %+.- in") ~= nil and c.untraced:GetText():find("Hover", 1, true) == nil and colorIs(c.untraced, "fgMuted")
         and near(ub.t, first.t + first.h + UI.S.S3), c.untraced:GetText())
       check(tag .. ": its hover explains it", tipOf(c.untracedHit):find(GP.UNTRACED_TIP, 1, true) ~= nil)
       -- the list: SOURCES, Break down by and search at the header's right
@@ -214,7 +215,7 @@ return function(P)
       check(tag .. ": Sources shows, every other table is hidden", P.visible(tbl.frame) and others == 0 and not P.visible(c.dayStrip))
       local secs = {}
       for i, s in ipairs(tbl.sections()) do secs[i] = s:GetText() end
-      eq(tag .. ": the groups: EARNED, SPENT, MOVED", table.concat(secs, " | "), UI.upper("Earned " .. money(ses.gained, true) .. " | Spent " .. money(-ses.spent, true) .. " | Moved between characters and bank " .. money(0)))
+      eq(tag .. ": the groups: EARNED, SPENT, MOVED", table.concat(secs, " | "), UI.upper("Earned " .. money(ses.gained, true) .. " | Spent " .. money(-ses.spent, true)))
       eq(tag .. ": Sources columns", keys(tbl), "src,what,whatAmt,n,share,amount")
       local rows = dataRows(tbl)
       local sbad = {}
@@ -386,8 +387,10 @@ return function(P)
       local band, cb = c.goldBand, P.box(c)
       local bb = P.box(band)
       local ses = ns.Recorder.current()
-      check(tag .. ": the band sits at the pane's bottom, the list ends above it", P.visible(band) and near(bb.t + bb.h, cb.t + cb.h) and P.box(c.tbl.sf).t + P.box(c.tbl.sf).h <= bb.t - UI.SP.M + 0.5)
-      check(tag .. ": the band opens on the running session: date, length, net and pace", band.title.text:find("GOLD  ·  " .. Gold.sessionLabel(ses), 1, true) == 1 and band.title.text:find("net " .. Gold.signed(ses.gained - ses.spent), 1, true) and band.title.text:find("per hour$") ~= nil, band.title.text)
+      -- (A17: the gold block flows S5 under the list, its section header names the session as the list does)
+      local under = c.shortLine:IsShown() and (P.box(c.shortLine).t + UI.H.DAY_ROW) or (P.box(c.tbl.frame).t + c.tbl.height)
+      check(tag .. ": the gold block flows S5 under the list", P.visible(band) and near(P.box(c.goldHead).t, under + UI.S.S5, 1), P.box(c.goldHead).t .. " vs " .. under)
+      check(tag .. ": the block opens on the running session: When, length, net and pace in coins", c.goldHead.label.text:find(UI.fmtWhen(ses.startedEpoch):upper(), 1, true) ~= nil and band.title.text:find("net " .. UI.money(ses.gained - ses.spent, true), 1, true) and band.title.text:find("per hour$") ~= nil, c.goldHead.label.text .. " | " .. band.title.text)
       local bad = {}
       local lastR
       for i, b in ipairs(band.blocks) do
@@ -405,13 +408,13 @@ return function(P)
       end
       -- under WIDE the BEST EARNERS block gives its room to the other three (no line cut at 900)
       check(tag .. ": BEST EARNERS shows at WIDE only", (band.blocks[2].shown ~= false) == UI.G.isWide(UI.G.winW()))
-      local tb, ob = P.box(band.title), P.box(band.open)
-      if tb.l + tb.w > ob.l then bad[#bad + 1] = "title under the button" end
-      check(tag .. ": four blocks side by side inside the band, the title ends before the button", #bad == 0, table.concat(bad, "; "))
+      local tb = P.box(band.title)
+      if tb.l + tb.w > bb.l + bb.w + 0.5 then bad[#bad + 1] = "title past the panel" end
+      check(tag .. ": the blocks side by side inside the panel, S5 apart", #bad == 0, table.concat(bad, "; "))
       eq(tag .. ": block heads", band.blocks[1].head.text .. "|" .. band.blocks[2].head.text .. "|" .. band.blocks[3].head.text .. "|" .. band.blocks[4].head.text, "TOP SOURCES|BEST EARNERS|BIGGEST SINKS|NOTES")
       check(tag .. ": top source, best quest, biggest sink and the strangers are named",
         band.blocks[1].lines[1].text:find("^Trades received  ") and band.blocks[2].lines[1].text:find("^Quest: The Defias Brotherhood") and band.blocks[3].lines[1].text:find("^Auction house  ")
-        and band.blocks[4].lines[1].text:find("^Players you traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^Unexplained: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
+        and band.blocks[4].lines[1].text:find("^Traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^While you were away: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
     end
   end
   do
@@ -422,9 +425,9 @@ return function(P)
     for _, r in ipairs(shown(c.tbl.rows)) do if r.item.endedEpoch and r.item.gold and (r.item.gold.training or 0) == 1200 then prevRow = r end end
     check("Sessions gold: the first evening's row was found", prevRow ~= nil)
     click(prevRow)
-    check("Sessions gold: a click on a row shows that session's gold", band.title.text:find(Gold.sessionLabel(prevRow.item), 1, true) ~= nil and band.blocks[2].lines[1].text:find("^Quest: The Jasperlode Mine") ~= nil and band.blocks[3].lines[1].text:find("^Training  12" .. UI.NBSP .. "|T[^|]*SilverIcon") ~= nil, band.blocks[3].lines[1].text)
-    check("Sessions gold: the shown row's date is marked in fgSubtle, never mint", prevRow.c.date._color and near(prevRow.c.date._color[1], UI.C.fgSubtle[1]))
-    click(band.open)
+    check("Sessions gold: a click on a row shows that session's gold", c.goldHead.label.text:find(UI.fmtWhen(prevRow.item.startedEpoch):upper(), 1, true) ~= nil and band.blocks[2].lines[1].text:find("^Quest: The Jasperlode Mine") ~= nil and band.blocks[3].lines[1].text:find("^Training  12" .. UI.NBSP .. "|T[^|]*SilverIcon") ~= nil, band.blocks[3].lines[1].text)
+    check("Sessions gold: the shown row is the selected one", c.tbl.selected == prevRow.item)
+    click(c.goldHead.link)
     local gold
     for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then gold = tab.paneByKey.gold.content end end
     check("Sessions gold: the button opens that session's journal in the Gold pane", P.visible(gold) and gold.st.scope == prevRow.item.id and gold.st.view == "journal" and gold.more.ebActive == true and #dataRows(gold.tbl.journal) == #prevRow.item.goldLog, gold.st.scope)
@@ -433,7 +436,7 @@ return function(P)
     ses.goldLog, ses.trades, ses.goldLogDropped = nil, nil, nil
     ns.UI.Open("Home", "sessions"); M.settle()
     click(shown(c.tbl.rows)[1])
-    check("Sessions gold: a session without a journal keeps its top sources and says why the rest is empty", band.blocks[1].lines[1].text:find("^Trades received") ~= nil and band.blocks[2].lines[1].text == "Recorded before addon 0.9.40" and band.blocks[4].lines[1].text == "Changed while away: +42s", band.blocks[2].lines[1].text)
+    check("Sessions gold: a session without a journal keeps its top sources and says why the rest is empty", band.blocks[1].lines[1].text:find("^Trades received") ~= nil and band.blocks[2].lines[1].text == "Recorded before addon 0.9.40" and band.blocks[4].lines[1].text:find("^Changed while away: %+42") ~= nil, band.blocks[2].lines[1].text)
   end
   -- ── 0.9.44 (#43): periods by server day, who, Days and Characters ───────────────────────────────────────────
   local DAY = 86400

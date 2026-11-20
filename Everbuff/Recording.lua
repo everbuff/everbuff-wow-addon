@@ -21,11 +21,8 @@ local GEAR_SLOT = {
 }
 
 -- ── formatting helpers ─────────────────────────────────────────────────────────
-local function fmtDur(sec)
-  sec = math.floor((sec or 0) + 0.5)
-  if sec >= 60 then return ("%d:%02d"):format(math.floor(sec / 60), sec % 60) end
-  return sec .. "s"
-end
+-- (one duration dialect everywhere, 2.6: "1m 10s", never mm:ss)
+local function fmtDur(sec) return UI.fmtDur(sec or 0) end
 local function fmtOff(t) return ("+%.1fs"):format(t or 0) end
 -- result glyphs (texture escapes) so kill / wipe / death never rely on color alone
 local GLYPH = {
@@ -739,127 +736,202 @@ ns.OpenFightDetail = function(f)
 end
 
 local function buildList(content)
-  local SP = UI.SP
+  local S, G, H = UI.S, UI.G, UI.H
   local v = CreateFrame("Frame", nil, content)
   v:SetAllPoints(content)
-
-  -- filter TABS on a bordered pane (Notable = bosses + wipes + your deaths cuts through trash fights)
-  local filter = "all"
-  local search   -- text search box (inside the pane)
+  local st = { filter = "all", sortKey = "time", sortAsc = false }
+  v.st = st
+  local FILTERS = { { "all", "All fights" }, { "notable", "Important" }, { "kill", "Kills" }, { "wipe", "Wipes" }, { "death", "Deaths" } }
+  local function filterLabel(key) for _, x in ipairs(FILTERS) do if x[1] == key then return x[2] end end return "All fights" end
+  -- (Important: bosses, wipes and your deaths, the pulls worth a second look)
+  local search
   local function matches(f)
     if not fightMatchesText(f, search and search:GetText()) then return false end
-    if filter == "all" then return true end
-    if filter == "notable" then return (f.bossName ~= nil) or f.outcome == "death" or f.outcome == "wipe" end
-    return f.outcome == filter
+    if st.filter == "all" then return true end
+    if st.filter == "notable" then return (f.bossName ~= nil) or f.outcome == "death" or f.outcome == "wipe" end
+    return f.outcome == st.filter
   end
-  local tabs = UI.Tabs(v, {
-    { key = "all", label = "All" }, { key = "notable", label = "Important" }, { key = "kill", label = "Kills" },
-    { key = "wipe", label = "Wipes" }, { key = "death", label = "Deaths" },
-  }, -30, 2, { shared = true, onSelect = function(key) filter = key; if listRebuild then listRebuild() end end })
-  v.tabs = tabs
-  local pane = tabs.content
-
-  -- first row inside the pane: the text search at the right (it ends where the list ends), the aggregate summary in
-  -- one line to its left
-  search = UI.EditBox(pane, 200, UI.ROW_H, "search foe or zone"); search:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -UI.SCROLLBAR, -SP.XS)
+  -- the page: one scroll holding the summary line, the section header and the list (UI.Page, as Runs)
+  local sf, child = UI.ScrollChild(v, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+  local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
+  v.sf, v.col = sf, col
+  v.summary = UI.Summary(col)
+  v.section = UI.Section(col, "All fights")
+  -- the control row, right to left: the filter, then the search S2 left of it. They belong to the list: the fight's
+  -- page hides them with it.
+  local controls = content.ebControls or v
+  local ctl = CreateFrame("Frame", nil, controls); ctl:SetAllPoints(controls)
+  v.controls = ctl
+  v:HookScript("OnShow", function() ctl:Show() end)
+  v:HookScript("OnHide", function() ctl:Hide() end)
+  v.filter = UI.FilterButton(ctl, { default = "all", label = "All fights",
+    items = function()
+      local out = {}
+      for _, x in ipairs(FILTERS) do out[#out + 1] = { x[1], x[2], st.filter == x[1] } end
+      return out
+    end,
+    onPick = function(key) v.setFilter(key) end })
+  v.filter:SetPoint("TOPRIGHT", ctl, "TOPRIGHT", 0, 0)
+  search = UI.Search(ctl, "Search fights")
+  search:SetPoint("TOPRIGHT", v.filter, "TOPLEFT", -S.S2, 0)
   search:HookScript("OnTextChanged", function() if listRebuild then listRebuild() end end)
-  local summary = UI.FS(pane, "GameFontHighlightSmall", C.gold)
-  if summary.SetWordWrap then summary:SetWordWrap(false) end
-  if summary.SetMaxLines then summary:SetMaxLines(1) end
-  summary:SetJustifyH("LEFT")
-  summary:SetPoint("LEFT", pane, "TOPLEFT", SP.M, -(SP.XS + UI.ROW_H / 2)); summary:SetPoint("RIGHT", search, "LEFT", -SP.M, 0)
-  v.summary, v.search = summary, search
+  v.search = search
+  function v.setFilter(key)
+    st.filter = filterLabel(key) ~= "All fights" and key or "all"
+    v.filter:SetValue(st.filter, filterLabel(st.filter))
+    if listRebuild then listRebuild() end
+  end
+  -- (the old tab control's select, kept as the one way tests and other panes pick a filter)
+  v.tabs = { select = function(key) v.setFilter(key) end }
 
-  -- columns: When · Faced (source) · group size · Location (name) · Coords · Length · Result. Click a header to sort;
-  -- sorted by time the list carries a header per day and per dungeon run.
-  local sortKey, sortAsc = "time", false
-  local tbl = UI.Table(pane, {
-    { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" }, sort = true },
-    -- Faced and Location share the spare width equally, and neither is cut on a realistic name at 900 px
-    { key = "foe", label = "Faced", flex = 1, min = 90, measure = { "Murloc Coastrunner" }, sort = true },
-    { key = "grp", label = "", kind = "tag", color = "dim", measure = { "40-player" } },
-    { key = "loc", label = "Location", flex = 1, min = 90, measure = { "Stranglethorn Vale", "Redridge Mountains" }, color = "dim", sort = true },
-    { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" }, sort = true },
-    { key = "dur", label = "Length", kind = "num", color = "dim", measure = { "999:59" }, sort = true },
-    { key = "res", label = "Result", kind = "tag", measure = { GLYPH.death .. "Death  99 died" }, sort = true },
-  }, { top = -(SP.XS + UI.ROW_H + SP.M), bottom = 2, sortKey = sortKey, sortAsc = sortAsc,
-    onSort = function(key, asc) sortKey, sortAsc = key, asc; if listRebuild then listRebuild() end end,
+  -- When · Enemy (a BOSS badge after a boss) · Place · Length · Result · Coords (WIDE) · ›. The party size is in the
+  -- tooltip, so the enemy keeps the flex width. A header click sorts; in time order the list has a row per day and
+  -- a group row over the pulls of each dungeon run.
+  local tbl = UI.KitTable(col, {
+    { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" }, sort = true },
+    -- (the enemy takes the flex width up to 360, the place the rest: the list spans the main column, B20)
+    { key = "foe", label = "Enemy", flex = 2, min = 120, max = 360, sort = true },
+    { key = "loc", label = "Place", flex = 1, min = 160, sort = true },
+    { key = "dur", label = "Length", kind = "num", min = 56, sort = true },
+    { key = "res", label = "Result", kind = "tag", min = 64, justify = "RIGHT", sort = true, measure = { "Kill", "Wipe", "Died", "Fled" } },
+    { key = "coords", label = "Coords", kind = "num", min = 72, wide = true, sort = true, measure = { "100.0, 100.0" } },
+  }, { sortKey = st.sortKey, sortAsc = st.sortAsc,
+    onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; if listRebuild then listRebuild() end end,
     onClick = function(row) if row.fight then openDetail(row.fight) end end,
+    onHeight = function() if v.place then pcall(v.place) end end,
+    onLayout = function(t) for i = 1, t.shownN do pcall(v.placeBadge, t, t.rows[i]) end end,
     tooltip = function(row, f, tip)
+      if not f or f.ebSection then return end
       tip:AddLine(foesText(f), 1, 1, 1)
-      tip:AddLine(("%s  ·  %s  ·  %s"):format(date("%b %d %H:%M:%S", f.startEpoch or 0), fmtDur(f.duration), ns.FightResult(f)[1]), 0.8, 0.8, 0.8)
-      if f.zone then tip:AddLine(f.zone .. (UI.fmtCoords(f.x, f.y) ~= "" and ("  " .. UI.fmtCoords(f.x, f.y)) or ""), 0.6, 0.7, 0.75) end
-      if f.group and #f.group > 0 then
+      tip:AddLine(("%s \194\183 %s \194\183 %s"):format(UI.fmtWhen(f.startEpoch or 0), UI.fmtDur(f.duration), ns.FightResult(f)[1]), 0.78, 0.79, 0.80)
+      if f.zone then tip:AddLine(f.zone .. (UI.fmtCoords(f.x, f.y) ~= "" and ("  " .. UI.fmtCoords(f.x, f.y)) or ""), 0.78, 0.79, 0.80) end
+      if f.group and #f.group > 1 then
         local names = {}
         for _, m in ipairs(f.group) do names[#names + 1] = (m.name or "?") .. (m.deadT and " (died)" or "") end
-        tip:AddLine("Group: " .. table.concat(names, ", "), 0.6, 0.7, 0.75, true)
+        tip:AddLine(("Party of %d: %s"):format(#f.group, table.concat(names, ", ")), 0.78, 0.79, 0.80, true)
       end
-      if f.spec or f.talents then tip:AddLine((f.spec or "") .. (f.talents and ("  " .. f.talents) or ""), 0.6, 0.7, 0.75) end
-      tip:AddLine("Click to open the replay", 0.5, 0.65, 0.75)
+      local md = tonumber(f.memberDeaths) or 0
+      if md > 0 then tip:AddLine(UI.plural(md, "party member") .. " died", 0.78, 0.79, 0.80) end
+      if f.spec or f.talents then tip:AddLine((f.spec or "") .. (f.talents and ("  " .. f.talents) or ""), 0.78, 0.79, 0.80) end
+      tip:AddLine("Click to open the replay", 0.55, 0.57, 0.59)
     end })
   v.tbl = tbl
   v.rows = tbl.rows      -- exposed for the headless tests
   v.daysFn = tbl.sections
-
+  -- the BOSS badge after the name: the name shortens inside what is left of the column, the badge never does
+  function v.placeBadge(t, row)
+    local cw, fs, b = t.cols and t.cols.foe, row.c and row.c.foe, row.ebBadge
+    if not (cw and fs) then return end
+    if b and b:IsShown() and row.item and not row.item.ebSection then
+      local room = cw.w - (tonumber(b:GetWidth()) or 0) - S.S2
+      local tw = math.max(1, math.min(UI.TextWidth("BODY", fs:GetText() or ""), room))
+      fs:SetWidth(tw)
+      b:ClearAllPoints(); b:SetPoint("LEFT", row, "LEFT", cw.x + tw + S.S2, 0)
+    else
+      if b then b:Hide() end
+      fs:SetWidth(cw.w)
+    end
+  end
   local function fill(row, f)
     row.fight = f
     local c = row.c
-    c.time:SetText(UI.fmtClock(f.startEpoch or 0))   -- (under its day row: TODAY, YESTERDAY, MONDAY 16 NOV)
-    local gn = (f.group and #f.group) or 0
+    c.time:SetText(st.sortKey == "time" and UI.fmtClock(f.startEpoch or 0) or UI.fmtDate(f.startEpoch or 0))
     c.foe:SetText(foesText(f))
-    c.grp:SetText(gn > 1 and ("%d-player"):format(gn) or "")
-    c.loc:SetText(f.zone or "")
-    c.coords:SetText(UI.fmtCoords(f.x, f.y))
-    c.dur:SetText(fmtDur(f.duration))
-    local rc, glyph = ns.FightResult(f)
-    local md = tonumber(f.memberDeaths) or 0
-    c.res:SetText(glyph .. rc[1] .. (md > 0 and ("  |cffe5484d%d died|r"):format(md) or "")); c.res:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
+    if f.bossName then
+      if not row.ebBadge then row.ebBadge = UI.Badge(row, "Boss") end
+      row.ebBadge:Show()
+    elseif row.ebBadge then row.ebBadge:Hide() end
+    c.loc:SetText(f.zone or "-"); if not f.zone then UI.SetColor(c.loc, "fgMuted") end
+    local co = UI.fmtCoords(f.x, f.y)
+    c.coords:SetText(co ~= "" and co or "-"); if co == "" then UI.SetColor(c.coords, "fgMuted") end
+    c.dur:SetText(UI.fmtDur(f.duration))
+    -- (the result word: a kill in good, a wipe and a death in bad with the dot, 2.5 rule 3; anything else fgSubtle)
+    local _, _, key = ns.FightResult(f)
+    if key == "kill" then c.res:SetText("Kill"); UI.SetColor(c.res, "good")
+    elseif key == "wipe" then c.res:SetText(UI.dot("bad") .. "Wipe"); UI.SetColor(c.res, "bad")
+    elseif key == "death" then c.res:SetText(UI.dot("bad") .. "Died"); UI.SetColor(c.res, "bad")
+    else c.res:SetText(key == "trash" and "Trash" or "Fled") end
   end
+  v.place = function()
+    local w = G.mainW(G.winW())
+    col:SetWidth(w)
+    v.summary:ClearAllPoints(); v.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); v.summary:SetWidth(w); pcall(v.summary.layout)
+    local y = H.SUMMARY + S.S3
+    v.section:ClearAllPoints(); v.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); v.section:SetWidth(w); y = y + H.SECTION
+    tbl.frame:ClearAllPoints(); tbl.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); tbl.frame:SetWidth(w)
+    if tbl.width ~= math.min(w, G.TABLE_MAX) then tbl.relayout(w) end
+    y = y + (tbl.height or 0) + S.S4
+    col:SetHeight(y); sf:SetContentHeight(y)
+    v.contentH = y
+  end
+  content:HookScript("OnSizeChanged", function() pcall(v.place) end)
 
   listRebuild = function()
     local fights = ns.mine(ns.Fights and ns.Fights.list())   -- the logged-in character's fights only (#23)
-    local kills, wipes, deaths, secs = 0, 0, 0, 0
+    local wipes, deaths, secs = 0, 0, 0
     for _, f in ipairs(fights) do
-      if f.outcome == "kill" then kills = kills + 1
-      elseif f.outcome == "wipe" then wipes = wipes + 1
-      elseif f.outcome == "death" then deaths = deaths + 1 end
+      if f.outcome == "wipe" then wipes = wipes + 1 elseif f.outcome == "death" then deaths = deaths + 1 end
       secs = secs + (f.duration or 0)
     end
-    summary:SetText(("%s  ·  %s  ·  %s  ·  %s  ·  %s in combat"):format(UI.plural(#fights, "fight"), UI.plural(kills, "kill"), UI.plural(wipes, "wipe"), UI.plural(deaths, "death"), fmtDur(secs)))
-    -- dungeon runs (from the Combat / Dungeons pane) so fights inside one get a run header. A fight is of a run when
-    -- it began in one of the run's visits, the test the run's own page uses (Runs.inRun): a fight in the open world
-    -- between two visits, or after the character left a run that is still open, gets no header.
-    local runs = (sortKey == "time" and ns.DungeonRuns) and ns.DungeonRuns() or {}
-    local function runOf(f)
-      for _, r in ipairs(runs) do if ns.Runs.inRun(r.rec, f.startEpoch) then return r end end
-    end
+    -- the answer: every stored fight, what went wrong, and the time in combat (a duration, never a clock)
+    local segs = { { text = ("**%s**"):format(UI.plural(#fights, "fight")) } }
+    segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(wipes, "wipe")) }
+    segs[#segs + 1] = { text = deaths == 0 and "you did not die" or ("you died **%s**"):format(UI.plural(deaths, "time")) }
+    segs[#segs + 1] = { text = ("**%s** in combat"):format(UI.fmtDur(secs)) }
+    v.summary:SetSegments(segs)
+    -- dungeon runs, so the fights of a run sit under a group row. A fight is the run's only when it began inside one of
+    -- the run's visits and in the run's instance (Runs.rowsOf with Runs.inInstance, the run page's own list): an
+    -- open-world fight between two visits, or after the character left a run that is still open, gets no group row.
+    local runs = (st.sortKey == "time" and ns.DungeonRuns) and ns.DungeonRuns() or {}
+    -- (one count source, B23: a fight is under a run exactly when the run page lists it, Runs.inInstance in its window)
+    local runOfFight = {}
+    for _, r in ipairs(runs) do for _, f in ipairs(r.fights or {}) do runOfFight[f] = r end end
+    local function runOf(f) return runOfFight[f] end
+    local list = {}
+    for _, f in ipairs(sortFights(fights, st.sortKey, st.sortAsc)) do if matches(f) then list[#list + 1] = f end end
+    local perDay = {}
+    for _, f in ipairs(list) do local k = date("%Y-%m-%d", f.startEpoch or 0); perDay[k] = (perDay[k] or 0) + 1 end
     local items, lastDay, lastRun = {}, nil, nil
-    for _, f in ipairs(sortFights(fights, sortKey, sortAsc)) do
-      if matches(f) then
-        if sortKey == "time" then                       -- a day header whenever the date changes
-          local day = date("%Y-%m-%d", f.startEpoch or 0)
-          if day ~= lastDay then
-            lastDay = day; lastRun = nil
-            items[#items + 1] = { ebSection = UI.fmtDay(f.startEpoch):upper() }
-          end
-          local run = runOf(f)
-          if run ~= lastRun then                       -- entering (or leaving) a dungeon run: a run header
-            lastRun = run
-            if run then
-              items[#items + 1] = { ebIndent = SP.M, ebSection = ("|cff0cd29d%s|r  ·  %s  ·  %d boss%s down  ·  %d death%s"):format(run.name or "Dungeon", date("%H:%M", run.startT or 0),
-                run.bossesDown or 0, (run.bossesDown or 0) == 1 and "" or "es", run.deaths or 0, (run.deaths or 0) == 1 and "" or "s") }
-            end
+    for _, f in ipairs(list) do
+      if st.sortKey == "time" then
+        local day = date("%Y-%m-%d", f.startEpoch or 0)
+        if day ~= lastDay then                          -- "TODAY · 82 FIGHTS"
+          lastDay = day; lastRun = nil
+          items[#items + 1] = { ebSection = UI.fmtDay(f.startEpoch) .. " \194\183 " .. UI.plural(perDay[day], "fight") }
+        end
+        local run = runOf(f)
+        if run ~= lastRun then                          -- a dungeon run's own fights: one group row over them
+          local closing = lastRun ~= nil
+          lastRun = run
+          -- (the fights after a run's group are not the run's: a row with their place closes the group)
+          if not run and closing then items[#items + 1] = { ebSection = f.zone or "Open world" } end
+          if run then
+            local nd = (tonumber(run.deaths) or 0) + (tonumber(run.partyDeaths) or 0)
+            items[#items + 1] = { ebRun = true, ebSection = ("%s \194\183 %s \194\183 %s down \194\183 %s"):format(run.name or "Dungeon", UI.fmtClock(run.startT or 0),
+              UI.plural(run.bossesDown or 0, "boss"), nd == 0 and "nobody died" or (UI.plural(nd, "death") .. " in the party")) }
           end
         end
-        items[#items + 1] = f
       end
+      items[#items + 1] = f
     end
+    tbl.setSort(st.sortKey, st.sortAsc)
     tbl.setRows(items, fill)
     for _, row in ipairs(tbl.rows) do if row.item and row.item.ebSection then row.fight = nil end end
-    if #items == 0 then tbl.setEmpty(#fights == 0 and "No fights yet. Enter combat and they show up here." or "No fights match this filter.") end
+    for i = 1, tbl.shownN do pcall(v.placeBadge, tbl, tbl.rows[i]) end
+    v.section:SetMeta(#list > 0 and UI.plural(#list, "fight") or nil)
+    if #items == 0 then
+      local q = search:GetText() or ""
+      if q ~= "" then tbl.setState(('No fight matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
+      elseif #fights == 0 then tbl.setState("Fight anything and the pull shows up here, with a replay you can scrub.")
+      else
+        local none = { notable = "No bosses, wipes or deaths yet.", kill = "No kills yet.", wipe = "No wipes yet.", death = "You have not died yet." }
+        tbl.setState(none[st.filter] or "No fight here yet.", "Show all fights", function() v.setFilter("all") end)
+      end
+    end
+    v.place()
   end
 
-  tabs.select("all")
+  v.setFilter("all")
   return v
 end
 local function build(content)

@@ -168,6 +168,20 @@ function S.apply(ns, M)
     if id ~= ns.DB.active and (not g or ses.guid == g) and (not sid or (tonumber(ses.startedEpoch) or 0) < (tonumber(ns.DB.sessions[sid].startedEpoch) or 0)) then sid = id end
   end
   sid = sid or ns.DB.active
+  -- (A18: the ding to 18 happened inside a session: the newest finished one of 10 minutes or more, which then reads
+  -- "17 to 18"; the ding to 17 is placed in the Wailing Caverns session by tests/dungeon_fixture.lua)
+  local dingSid
+  for id, ses in pairs(ns.DB.sessions or {}) do
+    local a, b = tonumber(ses.startedEpoch), tonumber(ses.endedEpoch)
+    if id ~= ns.DB.active and (not g or ses.guid == g) and a and b and b - a >= 600 and b <= now
+      and (not dingSid or a > (tonumber(ns.DB.sessions[dingSid].startedEpoch) or 0)) then dingSid = id end
+  end
+  if dingSid then
+    local ds = ns.DB.sessions[dingSid]
+    t18 = ds.endedEpoch - 300
+    ds.level0, ds.level = M.level - 1, M.level
+    sid = dingSid
+  end
   if not has[M.level - 1] then table.insert(evs, 1, { t = t18 - 26 * 3600, kind = "LEVELUP", text = ("Ding!  Level %d"):format(M.level - 1), s = sid, zone = "Durotar" }) end
   if not has[M.level] then table.insert(evs, 2, { t = t18, kind = "LEVELUP", text = ("Ding!  Level %d"):format(M.level), s = sid, zone = "The Barrens" }) end
   return undo

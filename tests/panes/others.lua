@@ -109,6 +109,7 @@ return function(P)
     local L = ns.DB.story.events
     local f1, f2 = fl[#fl - 1], fl[#fl]
     f2.bossName, f2.outcome = "Mutanus the Devourer", "kill"
+    f1.zone, f2.zone = "Wailing Caverns", "Wailing Caverns"   -- (a run's pulls are in its instance, B3)
     f1.bossName, f1.outcome = "Mutanus the Devourer", "death"   -- the attempt you died in
     f2.group = { { name = "Hart", class = "WARRIOR", me = true }, { name = "Undertaker", class = "PRIEST" } }
     f2.memberAuras = { Undertaker = { { t = 1.2, gain = true, name = "Power Word: Fortitude" } } }
@@ -140,7 +141,11 @@ return function(P)
         check(tag .. ": the pane opened", content ~= nil)
         if content then
           local tbls = audit(tag, content)
-          if pg[2] ~= "overview" then check(tag .. ": the pane shows a table", #tbls >= 1, #tbls) end
+          if pg[2] ~= "overview" then
+            local kit = 0
+            for _, f in ipairs(P.descendants(content)) do if rawget(f, "ebKitTable") and P.visible(f) then kit = kit + 1 end end
+            check(tag .. ": the pane shows a table", #tbls + kit >= 1, #tbls + kit)
+          end
         end
       end
     end
@@ -148,108 +153,176 @@ return function(P)
 
   -- (Home > Now has its own file, tests/panes/home.lua)
 
-  -- ── Home / Sessions: the two strips share the list's width and start at the table's text inset
+  -- ── Home / Sessions (a kit page): the two charts span the list's text, from the WHEN header to the last column
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     local tag = ("Sessions %dx%d"):format(size[1], size[2])
     local c = P.open("home", "sessions", size[1], size[2], "long")
-    local xs, gs, hb = P.box(c.xpStrip), P.box(c.goldStrip), P.box(c.tbl.head.date.fs)
-    local lastCol = c.tbl.cols.items
-    local listR = P.box(c.tbl.header).l + lastCol.x + lastCol.w
-    check(tag .. ": XP PER SESSION starts where the SESSION header does", near(xs.l, hb.l), ("%s vs %s"):format(xs.l, hb.l))
-    check(tag .. ": the strips are two equal halves L apart, ending at the last column", near(xs.w, gs.w) and near(gs.l - (xs.l + xs.w), UI.SP.L) and math.abs(gs.l + gs.w - listR) <= 1.5, ("%s %s %s/%s"):format(xs.w, gs.l - (xs.l + xs.w), gs.l + gs.w, listR))
-    local outside = 0
+    local tbl = c.tbl
+    local xs, gs, hb = P.box(c.xpStrip), P.box(c.goldStrip), P.box(tbl.head.date.fs)
+    local lastCol = tbl.cols.dung
+    local listR = P.box(tbl.frame).l + lastCol.x + lastCol.w
+    check(tag .. ": XP PER SESSION starts where the WHEN header does", near(xs.l, hb.l), ("%s vs %s"):format(xs.l, hb.l))
+    check(tag .. ": the strips are two equal halves S5 apart, ending at the last column", near(xs.w, gs.w) and near(gs.l - (xs.l + xs.w), UI.S.S5) and math.abs(gs.l + gs.w - listR) <= 1.5, ("%s %s %s/%s"):format(xs.w, gs.l - (xs.l + xs.w), gs.l + gs.w, listR))
+    local outside, colours = 0, {}
     for _, st in ipairs({ c.xpStrip, c.goldStrip }) do
       local sb = P.box(st)
       for _, bar in ipairs(st.bars) do
-        if bar.shown ~= false then local b = P.box(bar); if b.l < sb.l - 0.5 or b.l + b.w > sb.l + sb.w + 0.5 then outside = outside + 1 end end
+        if bar.shown ~= false then
+          local b = P.box(bar); if b.l < sb.l - 0.5 or b.l + b.w > sb.l + sb.w + 0.5 then outside = outside + 1 end
+        end
       end
     end
     eq(tag .. ": every bar stays inside its strip", outside, 0)
+    -- the session list: one When dialect, the LIVE badge after its text, "-" for nothing, no stray dot
+    local live, dots, zeros = nil, {}, {}
+    for i = 1, tbl.shownN do
+      local r = tbl.rows[i]
+      if r.item and not r.item.ebSection then
+        if r.item.endedEpoch == nil then live = r end
+        for k, cell in pairs(r.c) do
+          local t = tostring(cell.text or "")
+          if t:find("\226\128\162", 1, true) then dots[#dots + 1] = k end
+          if (k == "gold" or k == "len") and (t == "0" or t:find("^0[gsc ]") or t == "0m") then zeros[#zeros + 1] = k .. i end
+        end
+      end
+    end
+    check(tag .. ": no stray bullet in any cell (A17)", #dots == 0, table.concat(dots, ","))
+    check(tag .. ": zero money and zero length read -, never 0 (B11)", #zeros == 0, table.concat(zeros, ","))
+    if live then
+      local db, tb = P.box(live.ebBadge), P.box(live.c.date)
+      check(tag .. ": the LIVE badge sits S2 after the When text (B11)", live.ebBadge and live.ebBadge.shown ~= false and near(db.l, tb.l + tb.w + UI.S.S2, 1), db and (db.l .. " vs " .. (tb.l + tb.w)))
+    end
+    -- the gold block flows S5 under the list (or under the hidden-sessions line), not pinned to the window bottom
+    if c.goldBand:IsShown() then
+      local under = c.shortLine:IsShown() and P.box(c.shortLine) or P.box(tbl.frame)
+      local gh = P.box(c.goldHead)
+      check(tag .. ": the gold block starts S5 under the list (A17)", near(gh.t, under.t + (c.shortLine:IsShown() and UI.H.DAY_ROW or tbl.height) + UI.S.S5, 1), gh.t .. " vs " .. under.t)
+    end
+  end
+  -- short empty sessions are hidden behind one line with the link that shows them
+  do
+    local c = P.open("home", "sessions", 900, 580, "normal")
+    local S0 = ns.DB.sessions
+    local id = "short-empty-test"
+    S0[id] = { id = id, startedEpoch = M.epoch - 7200, endedEpoch = M.epoch - 7200 + 40, char = ns.DB.active and S0[ns.DB.active] and S0[ns.DB.active].char, guid = ns.DB.active and S0[ns.DB.active] and S0[ns.DB.active].guid }
+    for k, v in pairs(S0[ns.DB.active] or {}) do if k ~= "id" and k ~= "startedEpoch" and k ~= "endedEpoch" and type(v) ~= "table" and type(v) ~= "number" then S0[id][k] = S0[id][k] or v end end
+    ns.UI.Open("Home", "sessions"); M.settle()
+    if ns._test.sessionIsShort(S0[id], M.epoch) then
+      local listed = false
+      for _, s in ipairs(c.shownSessions or {}) do if s.id == id then listed = true end end
+      check("Sessions: a 40 s empty session is hidden (B11)", not listed and c.shortLine:IsShown(), tostring(c.shortText.text))
+      c.shortLink:GetScript("OnClick")(c.shortLink); M.settle()
+      listed = false
+      for _, s in ipairs(c.shownSessions or {}) do if s.id == id then listed = true end end
+      check("Sessions: Show them lists it", listed)
+      c.shortLink:GetScript("OnClick")(c.shortLink); M.settle()
+    end
+    S0[id] = nil
+    ns.UI.Open("Home", "sessions"); M.settle()
   end
 
-  -- ── Home / Timeline: a section row per day, event rows with the tooltip on the event cell
+  -- ── Home / Activity (a kit page): a day row per day, the Type word, the chevron in its own column
   do
     local c = P.open("home", "timeline", 900, 580)
     addRun(); reopen("Home", "timeline")
     local tbl = c.timelineTable
     local secs, evs = 0, 0
-    for _, r in ipairs(shownRows(tbl)) do
+    local bad = {}
+    for i = 1, tbl.shownN do
+      local r = tbl.rows[i]
       if r.item and r.item.ebSection then
         secs = secs + 1
-        check("Timeline: a day row takes no mouse (no hover, no click)", r._mouse == false)
-        check("Timeline: a day row's cells are empty", (r.c.ev.text or "") == "" and r.section.shown ~= false)
-      elseif r.ev then evs = evs + 1 end
+        check("Activity: a day row takes no mouse (no hover, no click)", r._mouse == false)
+        if not tostring(r.item.ebSection):find("EVENT", 1, true) and not tostring(r.item.ebSection):lower():find("event", 1, true) then bad[#bad + 1] = r.item.ebSection end
+      elseif r.ev then
+        evs = evs + 1
+        local word = tostring(r.c.type.text or "")
+        if word:upper() == word and #word > 3 then bad[#bad + 1] = "type upper " .. word end
+        if tostring(r.c.ev.text):find("  ", 1, true) then bad[#bad + 1] = "double space " .. tostring(r.c.ev.text) end
+      end
     end
-    check("Timeline: day rows and event rows", secs >= 1 and evs >= 3, secs .. "/" .. evs)
-    eq("Timeline: tbl.sections() lists the day rows", #tbl.sections(), secs)
+    check("Activity: day rows and event rows", secs >= 1 and evs >= 3, secs .. "/" .. evs)
+    check("Activity: day rows name their count, Type is a sentence-case word, no double space (A5)", #bad == 0, table.concat(bad, " | "))
+    eq("Activity: tbl.sections() lists the day rows", #tbl.sections(), secs)
+    check("Activity: no While fighting column (A5)", tbl.cols.foe == nil)
     local row
-    for _, r in ipairs(shownRows(tbl)) do if r.ev and r.ev.kind == "LOOT" then row = r; break end end
-    check("Timeline: a loot event is listed", row ~= nil)
+    for i = 1, tbl.shownN do local r = tbl.rows[i]; if r.ev and r.ev.kind == "LOOT" then row = r; break end end
+    check("Activity: a loot event is listed", row ~= nil)
     if row then
-      check("Timeline: the open marker is its own cell, not in the event text", row.c.open.text == "\226\128\186" and not tostring(row.c.ev.text):find(">", 1, true))
+      check("Activity: the open marker is its own 12 px column, not in the event text", row.c._chev and row.c._chev.text == "\226\128\186" and tbl.cols._chev and tbl.cols._chev.w == 12 and not tostring(row.c.ev.text):find(">", 1, true))
+      check("Activity: a stored event is never marked by the list", row.ev.ebNoOpen == nil)
       row:GetScript("OnEnter")(row)
       local tip = _G.GameTooltip
-      check("Timeline: the tooltip is anchored to the event cell", tip.owner == row and tip._pts and tip._pts[1].rel == row.c.ev, tip._pts and tostring(tip._pts[1].rel))
-      check("Timeline: the tooltip shows the event and the click hint", tip.lines[1] == (row.ev.text or row.ev.kind) and tip.lines[#tip.lines] == "Click to open")
+      check("Activity: the tooltip shows the event and the click hint", tip.lines[#tip.lines] == "Click to open", tip.lines[#tip.lines])
       row:GetScript("OnLeave")(row)
       row:GetScript("OnClick")(row, "LeftButton")
-      check("Timeline: clicking a loot event opens Loot / Items", host("Loot").ctl.active == "items")
+      check("Activity: clicking a loot event opens Loot / Items", host("Loot").ctl.active == "items")
     end
-    -- the window banner spans from the pane's left to the search box, its text on one line
+    -- the control row: the search 176 x 24, S2 left of the filter button, which ends on the list's right edge
     c = P.open("home", "timeline", 900, 580)
-    ns.OpenTimelineWindow(0, 1, ("Kobold Miner of the Scarlet Monastery Cathedral "):rep(4)); M.settle()
-    local bb, sb2 = P.box(c.timelineBanner), P.box(c.search)
-    check("Timeline: the window banner ends before the search box", bb.l + bb.w <= sb2.l - UI.SP.M + 0.5, bb.l + bb.w)
-    check("Timeline: the banner's text stays one line inside it", c.timelineBanner.text._wrap == false and P.box(c.timelineBanner.text).l + P.box(c.timelineBanner.text).w <= bb.l + bb.w)
-    c.timelineBanner:GetScript("OnClick")(c.timelineBanner)
-    check("Timeline: the search sits inside the pane's list edge", near(sb2.l + sb2.w, P.box(c.tabs.content).l + P.box(c.tabs.content).w - UI.SCROLLBAR))
+    local sb, fb = P.box(c.search), P.box(c.filterButton)
+    check("Activity: the search is 176 x 24, S2 left of the filter (A3)", near(sb.w, 176) and near(sb.h, 24) and near(fb.l - (sb.l + sb.w), UI.S.S2), ("%s x %s, gap %s"):format(sb.w, sb.h, fb.l - (sb.l + sb.w)))
+    check("Activity: search and filter sit on one row", near(sb.t, fb.t), sb.t .. " vs " .. fb.t)
+    ns.OpenTimelineWindow(0, 1, "Kobold Miner"); M.settle()
+    local segs = {}
+    for _, sg in ipairs(c.timelineSummary.segs or {}) do segs[#segs + 1] = sg.text end
+    check("Activity: a window is said on the summary line with the way back", table.concat(segs, "|"):find("Show everything", 1, true) ~= nil, table.concat(segs, "|"))
+    c.clearWindow()
   end
 
-  -- ── Combat / Fights: day and run sections, sorting by a header, the replay laid out again for a new width
+  -- ── Home / Fights (a kit page): day and run rows, sorting by a header, durations in one dialect
   do
     local c = P.open("combat", "fights", 900, 580)
     addRun(); reopen("Combat", "fights")
     local fl = T.fightsList()
     local tbl = fl.tbl
-    local runHead = false
-    for _, s in ipairs(tbl.sections()) do if tostring(s.text):find("Wailing Caverns", 1, true) then runHead = true end end
-    check("Fights: a run row heads the fights inside a dungeon run", runHead)
-    local grpCell
-    for _, r in ipairs(shownRows(tbl)) do if r.fight and r.fight.group and #r.fight.group > 1 then grpCell = r end end
-    check("Fights: the group size is its own cell, not in the name", grpCell and grpCell.c.grp.text == "2-player" and not tostring(grpCell.c.foe.text):find("player", 1, true))
-    -- sort by Length: no sections, longest first, the arrow on Length
+    local runHead, dayHead = nil, nil
+    for _, s in ipairs(tbl.sections()) do
+      local t = tostring(s.text):lower()
+      if t:find("wailing caverns", 1, true) then runHead = s.text end
+      if t:find("fight", 1, true) then dayHead = s.text end
+    end
+    check("Fights: a run row heads the fights inside a dungeon run", runHead ~= nil)
+    check("Fights: a day row counts its fights (A4)", dayHead ~= nil, dayHead)
+    if runHead then check("Fights: the run row names its death count (A7)", tostring(runHead):lower():find("death", 1, true) ~= nil or tostring(runHead):lower():find("nobody died", 1, true) ~= nil, runHead) end
+    local bad = {}
+    for i = 1, tbl.shownN do
+      local r = tbl.rows[i]
+      if r.fight then
+        local d = tostring(r.c.dur.text or "")
+        if d:find(":", 1, true) then bad[#bad + 1] = d end
+        if tostring(r.c.foe.text):find("player", 1, true) then bad[#bad + 1] = "size in name" end
+      elseif r.item and r.item.ebSection then
+        if r.section and r.section.shown ~= false and not near(P.box(r.section).l, P.box(tbl.frame).l + UI.S.S3) then bad[#bad + 1] = "group row x" end
+      end
+    end
+    check("Fights: lengths read 1m 10s, never mm:ss; the party size is not in the name (A6)", #bad == 0, table.concat(bad, ","))
+    -- sort by Length: no sections, longest first, the glyph on Length
     local hb = tbl.head.dur
     hb:GetScript("OnClick")(hb)
-    local rows, prev, ordered = shownRows(tbl), math.huge, true
-    for _, r in ipairs(rows) do
+    if tbl.sortAsc then hb:GetScript("OnClick")(hb) end
+    local prev, ordered, n = math.huge, true, 0
+    for i = 1, tbl.shownN do
+      local r = tbl.rows[i]
       if r.item and r.item.ebSection then ordered = false end
       local d = r.fight and r.fight.duration or 0
       if d > prev then ordered = false end
-      prev = d
+      prev = d; n = n + 1
     end
-    check("Fights: sorted by length, longest first, without day rows", ordered and #rows > 2)
-    check("Fights: the sort arrow sits on the Length header", hb.arrow.shown ~= false and tbl.head.time.arrow.shown == false)
-    for _ = 1, 2 do   -- back to newest first
+    check("Fights: sorted by length, longest first, without day rows", ordered and n > 2)
+    check("Fights: the sort glyph sits on the Length header", hb.glyph and hb.glyph.shown ~= false and tbl.sortKey == "dur")
+    for _ = 1, 2 do
       if not (tbl.sortKey == "time" and tbl.sortAsc == false) then tbl.head.time:GetScript("OnClick")(tbl.head.time) end
     end
     check("Fights: back to newest first with the day rows", #tbl.sections() >= 1 and tbl.sortKey == "time" and tbl.sortAsc == false)
-    -- hover: the fight's tooltip on the name cell
     local r1
-    for _, r in ipairs(shownRows(tbl)) do if r.fight then r1 = r; break end end
+    for i = 1, tbl.shownN do local r = tbl.rows[i]; if r.fight then r1 = r; break end end
     r1:GetScript("OnEnter")(r1)
-    check("Fights: the tooltip is anchored to the name cell and ends with the click hint", _G.GameTooltip._pts and _G.GameTooltip._pts[1].rel == r1.c.foe and _G.GameTooltip.lines[#_G.GameTooltip.lines] == "Click to open the replay")
-    -- a shortened foe is already the tooltip's first line: it is not added a second time
-    local cutRow
-    for _, r in ipairs(shownRows(tbl)) do if r.fight and r.c.foe:IsTruncated() then cutRow = r; break end end
-    if cutRow then
-      r1:GetScript("OnLeave")(r1)
-      cutRow:GetScript("OnEnter")(cutRow)
-      local n = 0
-      for _, l in ipairs(_G.GameTooltip.lines) do if l == cutRow.c.foe.text then n = n + 1 end end
-      eq("Fights: a shortened foe the tooltip already names shows once", n, 1)
-      r1 = cutRow
-    end
+    check("Fights: the tooltip ends with the click hint", _G.GameTooltip.lines[#_G.GameTooltip.lines] == "Click to open the replay")
     r1:GetScript("OnLeave")(r1)
+    -- the control row as on Activity
+    local sb, fb = P.box(fl.search), P.box(fl.filter)
+    check("Fights: the search is 176 x 24, S2 left of the filter (A3)", near(sb.w, 176) and near(sb.h, 24) and near(fb.l - (sb.l + sb.w), UI.S.S2), ("%s x %s, gap %s"):format(sb.w, sb.h, fb.l - (sb.l + sb.w)))
   end
   -- the replay: built for the width it has, and again for a new one; nothing past the list
   do

@@ -31,13 +31,13 @@ return function(P)
 
   -- every setting row of a page: its label at x 12 of its column, its control's right edge at the column's text
   -- edge, inside the pane; no two texts over each other
-  local function audit(tag, pane, pg, sections, single)
+  local function audit(tag, pane, pg, sections)
     local pb = P.box(pane)
     local cb = P.box(pg.col)
     local bad = {}
-    -- (Data and sync is one column at every width)
-    local wide = G.isWide(G.winW()) and not single
-    local colW = wide and UI.SETTINGS_WIDE_W or math.min(G.cw(G.winW()), UI.SETTINGS_W)
+    -- (A2: the columns span the main column; two halves S5 apart at WIDE, Data and sync too, B23)
+    local wide = G.isWide(G.winW())
+    local colW = UI.settingsColumns()[1].w
     local cols = {}
     for _, sec in ipairs(sections) do
       local hb = P.box(sec.head)
@@ -103,13 +103,13 @@ return function(P)
     check(tag .. ": Data and sync opened", d ~= nil and P.visible(d.pane))
     if d then
       ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
-      audit(tag .. " Data and sync (Advanced open)", d.pane, d.pg, d.sections, true)
+      audit(tag .. " Data and sync (Advanced open)", d.pane, d.pg, d.sections)
       ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
-      audit(tag .. " Data and sync", d.pane, d.pg, d.sections, true)
+      audit(tag .. " Data and sync", d.pane, d.pg, d.sections)
       local pb, ab, rb = P.box(d.ackBox), P.box(d.ackBtn), P.box(d.pasteRow)
       check(tag .. ": the paste box is 24 high and stretches: Apply S2 after it ends on the column's text edge", d.ackBox._h == 24 and pb and ab and rb
         and math.abs(pb.l + pb.w + UI.S.S2 - ab.l) < 0.5 and math.abs(ab.l + ab.w - (rb.l + rb.w - UI.S.S3)) < 0.5, pb and ab and rb and ("%s %s %s"):format(pb.l + pb.w, ab.l, rb.l + rb.w))
-      check(tag .. ": the footer names the version and /eb help", d.footerText.text == ("Everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)) and P.visible(d.footer))
+      check(tag .. ": the footer names the version and /eb help", d.footerText.text == ("everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)) and P.visible(d.footer))
     end
   end
   UI.SetWindowSize(900, 580)

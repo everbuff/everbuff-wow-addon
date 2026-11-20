@@ -69,19 +69,20 @@ return function(P)
         eq(tag .. ": the hero box starts at BOX_L", wx(c.hero), G.BOX_L)
         eq(tag .. ": the hero is as wide as the main column", P.box(c.hero).w, mainW)
         eq(tag .. ": the hero is 104 high", P.box(c.hero).h, H.HERO)
-        eq(tag .. ": the THIS SESSION header at 208", wy(c.sesHead), 208)
+        eq(tag .. ": the THIS SESSION header at 220, S5 under the hero (A11)", wy(c.sesHead), 220)
         eq(tag .. ": its label at TEXT_L", wx(c.sesHead.label), G.TEXT_L)
-        eq(tag .. ": the cards at 232", wy(c.cards), 232)
+        eq(tag .. ": the cards at 244", wy(c.cards), 244)
         local cw = math.floor((mainW - 3 * S.S3) / 4)
         eq(tag .. ": four cards of (main - 36) / 4", P.box(c.cards.cards[1]).w, cw)
-        eq(tag .. ": the NEXT header at 336", wy(c.nextHead), 336)
+        eq(tag .. ": the NEXT header at 348 (S5 under the hero, A11)", wy(c.nextHead), 348)
         check(tag .. ": the cards' last box edge is the main column's", near(P.box(c.cards.cards[4]).l + P.box(c.cards.cards[4]).w, P.box(c.hero).l + mainW))
         -- every card's period is on the card or its group header
         -- (the PLAYED card names the period, "21:35 to now"; the group header has no META)
         local p1 = tostring(c.cards.cards[1].meta.text or "")
         check(tag .. ": the PLAYED card names the period, the header no second one", p1:find("^%d%d:%d%d to now$") ~= nil and c.sesHead.meta.shown == false, p1)
         local d4 = tostring(c.cards.cards[4].meta.text or "")
-        check(tag .. ": the DEATHS card's META is about deaths", d4:find("kill", 1, true) == nil and d4:find("item", 1, true) == nil, d4)
+        -- (B8: the META is this session's kills and items, "26 kills · 3 items"; the lifetime counts are in the tooltip)
+        check(tag .. ": the DEATHS card's META is the session's kills and items", d4:find("^[%d,]+ kills? \194\183 [%d,]+ items?$") ~= nil, d4)
         for i, card in ipairs(c.cards.cards) do
           check(tag .. ": card " .. i .. " label fits", not card.label:IsTruncated(), card.label.text)
           check(tag .. ": card " .. i .. " value is never cut", not card.value:IsTruncated(), card.value.text)
@@ -100,7 +101,7 @@ return function(P)
         if #ev > 0 then check(tag .. ": no 'Nothing yet' while the session has events", not c.lookEmpty:IsShown()) end
         check(tag .. ": the +N more row shows exactly when the list is past its cap", c.more:IsShown() == (#c.lookList > cap))
         eq(tag .. ": one primary on the view", UI.CountPrimaries(c), c.notice:IsShown() and 1 or 0)
-        check(tag .. ": the page's height is what it holds", c.sf.contentH and c.sf.contentH >= 336 - G.CONTENT_TOP + H.SECTION)
+        check(tag .. ": the page's height is what it holds", c.sf.contentH and c.sf.contentH >= 348 - G.CONTENT_TOP + H.SECTION)
       end
     end
   end
@@ -150,7 +151,7 @@ return function(P)
       end
       local got = {}
       for _, it in ipairs(Now.lookItems()) do got[it.kind] = it end
-      check("Now: the session's best drop is the green one", got.loot and got.loot.title == "Best drop: Pikeman Shield" and got.loot.meta:find("^From Westfall") ~= nil, got.loot and (got.loot.title .. " | " .. got.loot.meta) or "none")
+      check("Now: the session's best drop is the green one", got.loot and got.loot.title == "Best drop: |cff1eff00Pikeman Shield|r" and got.loot.meta:find("^From Westfall") ~= nil, got.loot and (got.loot.title .. " | " .. got.loot.meta) or "none")
       check("Now: the quests turned in are one row", got.quest and got.quest.title == "2 quests turned in" and got.quest.meta:find("^%+900 XP \194\183 ") ~= nil and got.quest.meta:find("last: The Defias Brotherhood 2", 1, true) ~= nil, got.quest and got.quest.meta)
       for i = #log, lootN + 1, -1 do log[i] = nil end
       for i = #evs, evN + 1, -1 do evs[i] = nil end

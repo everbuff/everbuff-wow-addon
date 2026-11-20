@@ -143,7 +143,11 @@ return function(P)
     check(tag .. ": the death of a party member names her", d1 and d1.c.who.text == "Tessa" and d1.c.foe.text == "Taragaman the Hungerer"
       and d1.c.where.text ~= d1.c.foe.text and (d1.c.where.text == "-" or d1.c.where.text:find("^at boss %d") ~= nil), d1 and (d1.c.who.text .. " / " .. d1.c.where.text))
     local trash, fled = 0, 0
-    for _, r in ipairs(shown(dv.tables.pulls)) do if r.c.re.text == "Trash" then trash = trash + 1 elseif r.c.re.text == "Fled" then fled = fled + 1 end end
+    -- (a pull with no foe; Jergosh and Bazzalan, left up on the way out, are flights with a foe)
+    for _, r in ipairs(shown(dv.tables.pulls)) do
+      local f = r.item and r.item.f
+      if f and #(f.foes or {}) == 0 then if r.c.re.text == "Trash" then trash = trash + 1 elseif r.c.re.text == "Fled" then fled = fled + 1 end end
+    end
     check(tag .. ": a pull with no foe inside the run reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
     local label, _, key = ns.FightResult(fights[#fights])
     check(tag .. ": the shared reading says the same", key == "trash" and label[1] == "Trash")
@@ -164,8 +168,8 @@ return function(P)
     table.insert(ns.char().dungeonRuns, 1, bare)
     T.openRun(bare); M.settle()
     local want = { bosses = "No boss pulled in this run.", loot = "Nothing looted.", deaths = "Nobody died. Clean run.", xp = "No XP in this run.",
-      party = "No pull of this run is stored, so the party is not known.", pace = "Kill the same bosses twice to see your pace.",
-      pulls = "No pull of this run is stored any more. The desktop app saved them." }
+      party = "No fight of this run is stored, so the party is not known.", pace = "Kill the same bosses twice to see your pace.",
+      pulls = "No fight of this run is stored any more. The desktop app saved them." }
     local bad = {}
     for k, s in pairs(want) do
       local fs = dv.empties[k]
@@ -207,7 +211,8 @@ return function(P)
 
     -- ── a run in progress: no primary, the hero follows it, the page follows it every second ──
     lv, fx = open("live")
-    eq(tag .. ": the run in progress is the hero, with no button", lv.heroRun and lv.heroRun.inProgress, true)
+    eq(tag .. ": the run in progress is the hero", lv.heroRun and lv.heroRun.inProgress, true)
+    check(tag .. ": its hero opens the run with a ghost Open run (A10)", lv.hero.button and lv.hero.button.shown ~= false and lv.hero.button.text.text == "Open run" and lv.hero.button.ebStyle == "ghost")
     eq(tag .. ": no primary while a run is in progress", UI.CountPrimaries(content), 0)
     local liveRow
     for _, r in ipairs(shown(lv.tbl)) do if r.run.inProgress then liveRow = r end end
@@ -266,7 +271,9 @@ return function(P)
     local wcRow
     for _, r in ipairs(shown(by.dtbl)) do if r.drow.name == "Wailing Caverns" then wcRow = r end end
     check(tag .. ": the Wailing Caverns row: two runs, the best, your level", wcRow and wcRow.c.n.text == "2" and wcRow.c.best.text == "28m 41s" and wcRow.c.lvl.text == "17", wcRow and wcRow.c.best.text)
-    check(tag .. ": the summary names the dungeon that pays best", by.summary.Text():find("^Best XP per hour: ") ~= nil, by.summary.Text())
+    -- (A15: one lockout wording at every size; at 900 the "Best XP per hour" segment is the one that gives way)
+    if UI.G.isWide(UI.G.winW()) then check(tag .. ": the summary names the dungeon that pays best", by.summary.Text():find("Best XP per hour: ", 1, true) ~= nil, by.summary.Text())
+    else check(tag .. ": at 900 the summary keeps the lockout whole and drops the pay segment", by.summary.Text():find("Best XP per hour", 1, true) == nil and by.summary.Text():find("resets in", 1, true) ~= nil, by.summary.Text()) end
     cut, past = audit(by, wb.l + wb.w)
     check(tag .. ": nothing on By dungeon is cut or past the window", #cut == 0 and #past == 0, table.concat(cut, " | ") .. " || " .. table.concat(past, " | "))
     wcRow:GetScript("OnClick")(wcRow, "LeftButton"); M.settle()
@@ -281,4 +288,51 @@ return function(P)
     T.dungeonList()
   end
   P.size = nil
+
+  -- ── the fixture's story holds together (A7, B1, B3, B4, B23) ──
+  for _, state in ipairs({ "", "live" }) do
+    local tag = "fixture " .. (state == "" and "normal" or state)
+    P.open("dungeons", "runs", 900, 580, "normal")
+    local fx = install(state)
+    local runs = ns.DungeonRuns()
+    -- every fight that began inside a run's window carries the run's zone: the open world waits until the run is over
+    local bad = {}
+    for _, f in ipairs(ns.mine(ns.Fights.list())) do
+      for _, r in ipairs(runs) do
+        if ns.Runs.inRun(r.rec, f.startEpoch) and tostring(f.zone or ""):lower() ~= tostring(r.name):lower() then bad[#bad + 1] = ("%s at %s in %s"):format(tostring(f.foes and f.foes[1]), UI.fmtClock(f.startEpoch or 0), tostring(f.zone)) end
+      end
+    end
+    check(tag .. ": every fight inside a run's window is in the run's instance (A7)", #bad == 0, table.concat(bad, "; "))
+    -- a boss total equals the kills only when every encounter the run met was killed
+    local tb = {}
+    for _, r in ipairs(runs) do
+      local allKilled = true
+      for _, b in ipairs(r.bosses or {}) do if not b.kill then allKilled = false end end
+      if ns.Dungeons.D.totalOf(r) == r.bossesDown and not allKilled then tb[#tb + 1] = r.name .. " " .. ns.Dungeons.D.bossCount(r) end
+    end
+    check(tag .. ": a boss total is never the kills while an encounter was left up (B1)", #tb == 0, table.concat(tb, "; "))
+    for _, r in ipairs(runs) do
+      if r.name == "Wailing Caverns" then eq(tag .. ": Wailing Caverns reads 6 of 8", ns.Dungeons.D.bossCount(r), "6 of 8") end
+    end
+    -- the run page and the Fights list count the same fights (one store, B23)
+    if fx.rfc then
+      local rv
+      for _, r in ipairs(runs) do if r.id == fx.rfc.id then rv = r end end
+      local fl = T.fightsList(); fl:Show(); fl.setFilter("all"); ns.UI.Open("Home", "fights"); M.settle()
+      local under, inRun = 0, false
+      for i = 1, fl.tbl.shownN do
+        local row = fl.tbl.rows[i]
+        if row.item and row.item.ebSection then inRun = row.item.ebRun and tostring(row.item.ebSection):find("Ragefire Chasm \194\183 " .. UI.fmtClock(fx.rfc.t), 1, true) ~= nil
+        elseif inRun and row.fight then under = under + 1 end
+      end
+      check(tag .. ": the Fights list groups as many fights under the run as the run page lists (B23)", rv and under == #rv.fights and #rv.fights == 10, ("%d vs %s"):format(under, rv and #rv.fights or "?"))
+    end
+    -- a run in progress keeps the earlier run of the hour (B2)
+    if state == "live" then
+      local n = 0
+      for _, r in ipairs(runs) do if r.name == "Ragefire Chasm" then n = n + 1 end end
+      eq(tag .. ": the live state keeps the 21:39 run beside the one in progress (B2)", n, 2)
+    end
+    unwind()
+  end
 end

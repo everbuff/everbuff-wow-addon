@@ -2798,18 +2798,19 @@ if ns.UI and ns.UI.registerTab then
     if ns.BuildSettings then ns.BuildSettings(content) end
   end, function() end, nil, "bottom", "How the window and notifications behave, and whether your data reaches everbuff.gg.")
 
-  -- ── Events tab: a filterable timeline of everything Everbuff.GG detected, newest first ──
-  -- Journey / Combat / Travel / Loot chips cut the firehose; a Where column surfaces the coordinates
-  -- every event already carries; combat rows jump to their fight, loot rows to the Loot tab.
+  -- ── Home > Activity (docs/UX_OVERHAUL.md 4.2): everything you did, newest first under day rows, on the kit table.
+  --    The group filter and the search sit in the control row; a fight's window (ns.OpenTimelineWindow) shows on the
+  --    summary line with a link back to everything. Every kind the addon writes is in exactly one group.
   local eventsRebuild, eventsTicker, eventsView
   local EVENT_GROUP = {
-    journey = { LEVELUP = true, ACHIEV = true, SPELL = true, REP = true, SKILLUP = true, REWARD = true, QUESTACCEPT = true, QUESTDONE = true, BROKEN = true, COLLECT = true, PROFTIER = true, RECIPE = true, UPGRADE = true },
-    combat  = { BOSS = true, KILL = true, WIPE = true, DEATH = true, ALIVE = true, ROSTERJOIN = true, ROSTERLEAVE = true },
-    travel  = { ZONE = true, DUNGEON = true, DUNGEONLEAVE = true, DISCOVERY = true, FLIGHT = true, FIRSTZONE = true, FLIGHTTRIP = true },
-    loot    = { LOOT = true },
-    professions = { SKILLUP = true, PROFTIER = true, RECIPE = true },
+    journey = { QUESTACCEPT = true, QUESTDONE = true, REWARD = true, LEVELUP = true, REP = true, ACHIEV = true, SPELL = true },
+    combat  = { KILL = true, BOSS = true, WIPE = true, DEATH = true, ALIVE = true, ROSTERJOIN = true, ROSTERLEAVE = true },
+    travel  = { ZONE = true, FIRSTZONE = true, DISCOVERY = true, FLIGHT = true, FLIGHTTRIP = true, DUNGEON = true, DUNGEONLEAVE = true },
+    loot    = { LOOT = true, COLLECT = true, UPGRADE = true, BROKEN = true, GOLDAWAY = true },
+    town    = { VENDOR = true, TRAINER = true, MAIL = true, AUCTION = true, TRADE = true, BANK = true },
+    professions = { SKILLUP = true, RECIPE = true, PROFTIER = true },
   }
-  -- an optional time window (a fight's span) set by ns.OpenTimelineWindow; cleared from the banner
+  -- an optional time window (a fight's span) set by ns.OpenTimelineWindow; cleared from the summary line
   local window = nil   -- { t0, t1, label }
   local function eventMatches(e, filter, q)
     if window and ((e.t or 0) < window.t0 or (e.t or 0) > window.t1) then return false end
@@ -2832,113 +2833,158 @@ if ns.UI and ns.UI.registerTab then
     end
   end
   ns.UI.registerPane("Home", 3, "Activity", function(content)
-    local C, UI = ns.UI.C, ns.UI
-    local SP = UI.SP
+    local UI = ns.UI
+    local S, G, H = UI.S, UI.G, UI.H
     eventsView = content
-    local LABELS = {
-      LEVELUP = "Level up", ZONE = "Zone", DUNGEON = "Dungeon", DUNGEONLEAVE = "Dungeon",
-      QUESTACCEPT = "Quest", QUESTDONE = "Quest", BOSS = "Boss", KILL = "Kill", WIPE = "Wipe",
-      DEATH = "Death", ALIVE = "Revived", SKILLUP = "Skill up", DISCOVERY = "Discovery",
-      LOOT = "Loot", REWARD = "Reward",
-      ACHIEV = "Achievement", SPELL = "Learned", REP = "Reputation", FLIGHT = "Flight path",
-      FIRSTZONE = "First visit", ROSTERJOIN = "Joined", ROSTERLEAVE = "Left", BROKEN = "Broken gear",
-      COLLECT = "Collected", PROFTIER = "Profession", FLIGHTTRIP = "Flight", RECIPE = "Recipe", UPGRADE = "Gear up",
-    }
     -- pane state on one table (no new upvalues for the module's event handler)
-    local st = { filter = "all" }
-    -- filter TABS on a bordered pane; the list lives inside the pane
-    local tabs = UI.Tabs(content, {
-      { key = "all", label = "All" }, { key = "journey", label = "Journey" }, { key = "combat", label = "Combat" },
-      { key = "travel", label = "Travel" }, { key = "loot", label = "Loot" }, { key = "professions", label = "Professions" },
-    }, -30, 2, { shared = true, onSelect = function(key) st.filter = key; if eventsRebuild then eventsRebuild() end end })
-    content.tabs = tabs
-    local pane = tabs.content
-    -- first row: the text search at the right (it ends where the list ends), the window banner to its left
-    local search = UI.EditBox(pane, 180, UI.ROW_H, "search events"); search:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -UI.SCROLLBAR, -SP.XS)
-    -- window banner: "Showing <fight> · clear", from the pane's left to the search box, its text on one line
-    local banner = UI.Button(pane, "", 320, UI.ROW_H, function() window = nil; if eventsRebuild then eventsRebuild() end end)
-    banner:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, -SP.XS); banner:SetPoint("RIGHT", search, "LEFT", -SP.M, 0); banner:Hide()
-    banner.text:ClearAllPoints(); banner.text:SetPoint("LEFT", banner, "LEFT", SP.M, 0); banner.text:SetPoint("RIGHT", banner, "RIGHT", -SP.M, 0)
-    if banner.text.SetWordWrap then banner.text:SetWordWrap(false) end
-    content.timelineBanner = banner
+    local A = { filter = "all", GROUPS = {
+      { "all", "Everything" }, { "journey", "Quests and levels" }, { "combat", "Fights" }, { "travel", "Travel" },
+      { "loot", "Loot and gear" }, { "town", "Town visits" }, { "professions", "Professions" } } }
+    function A.groupLabel(key) for _, g in ipairs(A.GROUPS) do if g[1] == key then return g[2] end end return "Everything" end
+    -- the event text as the player reads it: one space between words (the stored notification text has two after
+    -- its colon; that text is what the desktop reads on screen, so it is kept as written)
+    function A.text(e) return (tostring(e.text or UI.KIND_LABEL[e.kind] or e.kind or "?"):gsub("%s%s+", " ")) end
+    -- the page: one scroll holding the summary line, the section header and the list
+    local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
+    local sf, col = UI.ScrollChild(v, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+    A.col = CreateFrame("Frame", nil, col); A.col:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); A.col:SetSize(1, 1)
+    col = A.col
+    A.summary = UI.Summary(col)
+    A.section = UI.Section(col, "All activity")
+    content.timelineSummary, content.timelineSection = A.summary, A.section
+    -- the control row, right to left: the group filter, then the search S2 left of it (as Loot > Items)
+    local controls = content.ebControls or v
+    A.filterBtn = UI.FilterButton(controls, { default = "all", label = "Everything",
+      items = function()
+        local out = {}
+        for _, g in ipairs(A.GROUPS) do out[#out + 1] = { g[1], g[2], A.filter == g[1] } end
+        return out
+      end,
+      onPick = function(key) content.setFilter(key) end })
+    A.filterBtn:SetPoint("TOPRIGHT", controls, "TOPRIGHT", 0, 0)
+    local search = UI.Search(controls, "Search activity")
+    search:SetPoint("TOPRIGHT", A.filterBtn, "TOPLEFT", -S.S2, 0)
+    search:HookScript("OnTextChanged", function() if eventsRebuild then eventsRebuild() end end)
+    content.search, content.filterButton = search, A.filterBtn
+    function content.setFilter(key)
+      A.filter = EVENT_GROUP[key] and key or "all"
+      A.filterBtn:SetValue(A.filter, A.groupLabel(A.filter))
+      if eventsRebuild then eventsRebuild() end
+    end
+    content.filter = function() return A.filter end
     ns.OpenTimelineWindow = function(t0, t1, label)
       window = { t0 = t0, t1 = t1, label = label or "this window" }
       if UI.Open then UI.Open("Home", "activity") end
       if eventsRebuild then eventsRebuild() end
     end
+    content.clearWindow = function() window = nil; if eventsRebuild then eventsRebuild() end end
     ns._test.timelineWindow = function() return window end
-    search:HookScript("OnTextChanged", function() if eventsRebuild then eventsRebuild() end end)
-    content.search = search
     local typeNames = {}
-    for _, label in pairs(LABELS) do typeNames[#typeNames + 1] = label end
-    -- columns: Time · Type · Event · (opens) · Location (name) · Coords · While fighting (source); a header per day
-    local tbl = UI.Table(pane, {
-      { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "23:59:59" } },
-      { key = "type", label = "Type", kind = "tag", measure = typeNames },
-      -- the event summary carries counts: its minimum is the widest realistic summary line, so the counts are not
-      -- what the ellipsis takes. Past that minimum it has no more weight than the names beside it: the place and the
-      -- foe share what is left equally (as Faced and Location do on Fights), so neither name is starved for it
-      { key = "ev", label = "Event", flex = 1, min = 120, measure = { "Auction house: 2 posts, 1 bid, 1 buy" } },
-      { key = "open", label = "", kind = "tag", color = "fgFaint", measure = { "\226\128\186" } },
-      { key = "where", label = "Location", flex = 1, min = 80, color = "dim" },
-      { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } },
-      { key = "foe", label = "While fighting", flex = 1, min = 80 },
-    }, { top = -(SP.XS + UI.ROW_H + SP.M), bottom = 2,
-      onClick = function(r)
-        local ev = r.ev; if not ev then return end
+    for _, label in pairs(UI.KIND_LABEL) do typeNames[#typeNames + 1] = label end
+    -- When · Type · Event · Place · Coords (WIDE) · ›. Type is a word in BODY fgSubtle; only a kill, a wipe and a
+    -- death carry a colour (2.5 rule 3). The chevron is the last 12 px column.
+    local tbl = UI.KitTable(col, {
+      { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" } },
+      { key = "type", label = "Type", kind = "tag", min = 72, measure = typeNames },
+      { key = "ev", label = "Event", flex = 1, min = 120 },
+      { key = "where", label = "Place", kind = "tag", min = 140, max = 140 },
+      { key = "coords", label = "Coords", kind = "num", min = 72, wide = true, measure = { "100.0, 100.0" } },
+    }, {
+      onClick = function(_, ev)
+        if not ev or ev.ebSection then return end
         if EVENT_GROUP.combat[ev.kind] then
           local f = fightAt(ev.t or 0); if f and ns.OpenFightDetail then ns.OpenFightDetail(f) end
         elseif ev.kind == "LOOT" and UI.Open then UI.Open("Loot", "items") end
       end,
+      onHeight = function() if A.place then pcall(A.place) end end,
       tooltip = function(r, ev, tip)
-        tip:AddLine(ev.text or ev.kind or "?", 1, 1, 1, true)
-        tip:AddLine(date("%b %d, %H:%M:%S", ev.t or 0) .. "  ·  " .. (LABELS[ev.kind] or ev.kind or ""), 0.8, 0.8, 0.8)
+        if not ev or ev.ebSection then return end
+        tip:AddLine(A.text(ev), 1, 1, 1, true)
+        tip:AddLine(UI.fmtWhen(ev.t or 0) .. " \194\183 " .. (UI.KIND_LABEL[ev.kind] or ev.kind or ""), 0.78, 0.79, 0.80)
         local place = UI.fmtPlace(ev.zone, ev.sub); local co = UI.fmtCoords(ev.x, ev.y)
-        if place ~= "" or co ~= "" then tip:AddLine(place .. (co ~= "" and ("  " .. co) or ""), 0.6, 0.7, 0.75) end
-        if ev.standing then tip:AddLine("Standing: " .. tostring(ev.standing), 0.6, 0.7, 0.75) end
-        if ev.craft then tip:AddLine(("Crafted: %s x%s"):format(tostring(ev.craft), tostring(ev.crafted or 1)), 0.6, 0.7, 0.75) end
-        if ev.foe then tip:AddLine("While fighting: " .. tostring(ev.foe), 1.0, 0.44, 0.30) end
-        if ev.downtime then tip:AddLine(("Back on your feet after %ds"):format(ev.downtime), 0.6, 0.7, 0.75) end
-        if ev.guid then tip:AddLine("GUID: " .. tostring(ev.guid), 0.45, 0.5, 0.55) end
-        if r.clickable then tip:AddLine("Click to open", 0.5, 0.65, 0.75) end
+        if place ~= "" or co ~= "" then tip:AddLine(place .. (co ~= "" and ("  " .. co) or ""), 0.78, 0.79, 0.80) end
+        if ev.standing then tip:AddLine("Standing: " .. tostring(ev.standing), 0.78, 0.79, 0.80) end
+        if ev.craft then tip:AddLine(("Crafted: %s x%s"):format(tostring(ev.craft), tostring(ev.crafted or 1)), 0.78, 0.79, 0.80) end
+        -- (the enemy you were fighting, only when the event does not already name it)
+        if ev.foe and not A.text(ev):find(tostring(ev.foe), 1, true) then tip:AddLine("While fighting " .. tostring(ev.foe), 0.78, 0.79, 0.80) end
+        if ev.downtime then tip:AddLine("Back on your feet after " .. UI.fmtDur(ev.downtime), 0.78, 0.79, 0.80) end
+        if r.clickable then tip:AddLine("Click to open", 0.55, 0.57, 0.59) end
       end })
     content.timelineTable = tbl
     content.timelineRows = tbl.rows   -- exposed for the headless tests
-    local function fill(row, e)
+    function A.fill(row, e)
       row.ev = e
       row.clickable = (EVENT_GROUP.combat[e.kind] and fightAt(e.t or 0) ~= nil) or e.kind == "LOOT"
+      row.ebNoOpen = (not row.clickable) or nil
       local c = row.c
       c.time:SetText(UI.fmtClock(e.t or 0))
-      c.type:SetText(LABELS[e.kind] or e.kind or "?")
-      local col = COLORS[e.kind] or C.dim
-      c.type:SetTextColor(col[1], col[2], col[3])
-      c.ev:SetText(e.text or e.kind or "?")
-      c.open:SetText(row.clickable and "\226\128\186" or "")
-      c.where:SetText(UI.fmtPlace(e.zone, e.sub))
-      c.coords:SetText(UI.fmtCoords(e.x, e.y))
-      if e.combat then c.foe:SetText(e.foe or "in combat"); c.foe:SetTextColor(EMBER[1], EMBER[2], EMBER[3]) end
+      local res = UI.KIND_RESULT[e.kind]
+      local word = UI.KIND_LABEL[e.kind] or "Other"
+      c.type:SetText(res == "bad" and (UI.dot("bad") .. word) or word)
+      if res then UI.SetColor(c.type, res) end
+      c.ev:SetText(A.text(e))
+      c.where:SetText(e.zone or "-"); if not e.zone then UI.SetColor(c.where, "fgMuted") end
+      local co = UI.fmtCoords(e.x, e.y)
+      c.coords:SetText(co ~= "" and co or "-"); if co == "" then UI.SetColor(c.coords, "fgMuted") end
+    end
+    A.place = function()
+      local w = G.mainW(G.winW())
+      col:SetWidth(w)
+      A.summary:ClearAllPoints(); A.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); A.summary:SetWidth(w); pcall(A.summary.layout)
+      local y = H.SUMMARY + S.S3
+      A.section:ClearAllPoints(); A.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); A.section:SetWidth(w); y = y + H.SECTION
+      tbl.frame:ClearAllPoints(); tbl.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); tbl.frame:SetWidth(w)
+      if tbl.width ~= math.min(w, G.TABLE_MAX) then tbl.relayout(w) end
+      y = y + (tbl.height or 0) + S.S4
+      col:SetHeight(y); sf:SetContentHeight(y)
+      A.contentH = y
+    end
+    content:HookScript("OnSizeChanged", function() pcall(A.place) end)
+    -- the answer: what this session holds so far, or the fight's window and the way back to everything
+    function A.answer(log)
+      if window then
+        A.summary:SetSegments({ { text = "Showing **" .. tostring(window.label) .. "**" }, { text = "Show everything", onClick = function() content.clearWindow() end } })
+        return
+      end
+      local sid = ns.DB and ns.DB.active
+      local n, kills, quests = 0, 0, 0
+      for _, e in ipairs(log) do
+        if e.s == sid then
+          n = n + 1
+          if e.kind == "KILL" then kills = kills + 1 elseif e.kind == "QUESTDONE" then quests = quests + 1 end
+        end
+      end
+      local segs = { { text = n == 0 and "This session: nothing yet" or ("This session: **%s**"):format(UI.plural(n, "event")) } }
+      if kills > 0 then segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(kills, "kill")) } end
+      if quests > 0 then segs[#segs + 1] = { text = ("**%s** turned in"):format(UI.plural(quests, "quest")) } end
+      A.summary:SetSegments(segs)
     end
     eventsRebuild = function()
       local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's events only (#23)
-      local q = search:GetText()
-      if window then banner.text:SetText(("Showing: %s   ·   click to show everything"):format(window.label)); banner:Show() else banner:Hide() end
+      local q = search:GetText() or ""
+      A.answer(log)
+      local list = {}
+      for i = #log, 1, -1 do if eventMatches(log[i], A.filter, q) then list[#list + 1] = log[i] end end
+      -- a day row over each day: "TODAY · 42 EVENTS"
+      local days = {}
+      for _, e in ipairs(list) do local k = date("%Y-%m-%d", e.t or 0); days[k] = (days[k] or 0) + 1 end
       local items, lastDay = {}, nil
-      for i = #log, 1, -1 do
-        local e = log[i]
-        if eventMatches(e, st.filter, q) then
-          local day = date("%Y-%m-%d", e.t or 0)
-          if day ~= lastDay then                          -- a day header whenever the date changes
-            lastDay = day
-            items[#items + 1] = { ebSection = UI.fmtDay(e.t):upper() }
-          end
-          items[#items + 1] = e
-        end
+      for _, e in ipairs(list) do
+        local k = date("%Y-%m-%d", e.t or 0)
+        if k ~= lastDay then lastDay = k; items[#items + 1] = { ebSection = UI.fmtDay(e.t or 0) .. " \194\183 " .. UI.plural(days[k], "event") } end
+        items[#items + 1] = e
       end
-      tbl.setRows(items, fill)
+      tbl.setRows(items, A.fill)
       for _, row in ipairs(tbl.rows) do if row.item and row.item.ebSection then row.ev, row.clickable = nil, nil end end
-      if #items == 0 then tbl.setEmpty(#log == 0 and "No events yet. Play and they show up here." or "No events match this filter or search.") end
+      A.section:SetMeta(#list > 0 and UI.plural(#list, "event") or nil)
+      if #items == 0 then
+        if q ~= "" then tbl.setState(('No event matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
+        elseif #log == 0 then tbl.setState("Nothing yet. Quests, kills, loot and town visits show here as you play.")
+        else tbl.setState(("Nothing under %s yet."):format(A.groupLabel(A.filter)), "Show everything", function() content.setFilter("all") end) end
+      end
+      A.place()
     end
-    tabs.select("all")
+    content.setFilter("all")
   end, function()
     if eventsRebuild then eventsRebuild() end
     -- rebuild only while this tab is actually visible (the old ticker ran forever, even hidden)

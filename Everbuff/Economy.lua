@@ -2914,7 +2914,7 @@ end
 function GP.auctionTip(row, r, tip)
   if not r then return end
   if r.item then tip:AddLine(r.item, 1, 1, 1)
-  else tip:AddLine("Item from auction mail", 1, 1, 1); line(tip, "The item name was not in the mail. It is counted in your gold all the same.") end
+  else tip:AddLine(GP.unnamedItem(r), 1, 1, 1); line(tip, "The item name was not in the mail. It is counted in your gold all the same.") end
   tip:AddDoubleLine("When", UI.fmtWhen(r.t or 0), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1)
   if r.price and num(r.count) > 1 then tip:AddDoubleLine("Each", fmtMoney(math.floor(r.price / r.count)), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
   if r.cut and r.cut > 0 then tip:AddDoubleLine("House cut", fmtMoney(r.cut), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
@@ -2969,6 +2969,14 @@ function GP.auctions(sc)
   return out, sum
 end
 
+-- an auction row whose mail did not name the item, named by what is known: "Bought item, name not in the mail"
+function GP.unnamedItem(r)
+  local what = r and r.what
+  if what == "Bought" or what == "Sold" or what == "Expired" or what == "Cancelled" then return what .. " item, name not in the mail" end
+  return "Item, name not in the mail"
+end
+-- the PER HOUR card shows at WIDE, except for all time (no rate for all time): then 4 wider cards
+function GP.hasRateCard(c) return UI.G.isWide(UI.G.winW()) and not (c.scopeData and c.scopeData.lifetime) end
 -- ── the top of the page: the answer line, the cards and the untraced line ──
 function GP.paintTop(c)
   local st, sc, g = c.st, c.scopeData, c.scopeData.ledger
@@ -2989,21 +2997,24 @@ function GP.paintTop(c)
   if g.gained == 0 and g.spent == 0 then segs[1] = { text = ("No gold moved %s"):format(words) }
   else
     segs[1] = { text = ("**%s** %s%s"):format(money(net, true), words, top and (", mostly " .. GP.srcLabel(top.key):lower()) or "") }
-    if rate then segs[2] = { text = ("**%s** per hour of play"):format(money(rate, true)), tip = { title = "Per hour of play", text = ("Net over %s of play."):format(UI.fmtDur(sc.elapsed)) } } end
+    -- (the rate is said once on a screen: on the PER HOUR card at WIDE, else here)
+    if rate and not GP.hasRateCard(c) then segs[2] = { text = ("**%s** per hour of play"):format(money(rate, true)), tip = { title = "Per hour of play", text = ("Net over %s of play."):format(UI.fmtPlayed(sc.elapsed)) } } end
   end
   if c.st.view == "auctions" then
     local _, a = GP.auctions(sc)
     -- (Expired rides on Posted, the first segment, so a narrow line never drops it)
     segs = { { text = ("Posted **%d**"):format(a.posted) .. (a.expired > 0 and (", expired **%d**"):format(a.expired) or "") },
       { text = ("Sold **%d** for **%s**"):format(a.sold, money(a.gross)) },
-      { text = ("House cut **%s**"):format(money(a.cut)) }, { text = ("Profit **%s**"):format(money(a.net)) } }
+      { text = ("House cut **%s**"):format(money(a.cut)) },
+      -- (profit is sold minus the house cut minus what buying cost, the three figures beside it)
+      { text = ("Profit **%s**"):format(money(a.net - a.spent, a.spent > 0)), tip = { title = "Profit", text = "What your sales made after the house cut, minus what you spent buying." } } }
     if a.bought > 0 then table.insert(segs, 2, { text = ("Bought **%d** for **%s**"):format(a.bought, money(a.spent)) }) end
   end
   c.summary:SetSegments(segs)
   -- cards
   local ins, outs = 0, 0
   for _, e in ipairs(c.entries) do if e.src ~= "away" then if e.delta > 0 then ins = ins + 1 elseif e.delta < 0 then outs = outs + 1 end end end
-  local cards = (c.wide and c.cards5 or c.cards4).cards
+  local cards = (GP.hasRateCard(c) and c.cards5 or c.cards4).cards
   c.shownCards = cards
   local balLabel, bal, balMeta
   if mine then
@@ -3027,21 +3038,26 @@ function GP.paintTop(c)
   c.cards4.cards[1].ebBal, c.cards5.cards[1].ebBal = bal, bal
   cards[2]:Set("Earned", money(g.gained, g.gained > 0), mine and UI.plural(ins, "entry", "entries") or words)
   cards[3]:Set("Spent", g.spent > 0 and money(-g.spent, true) or money(0), mine and UI.plural(outs, "entry", "entries") or words)
-  cards[4]:Set("Net", money(net, true), rate and (money(rate, true) .. " per hour") or (sc.lifetime and "all time" or (sc.live and "per hour after 5m of play") or words))
+  -- (NET counts its entries as its siblings do; the rate is the PER HOUR card's, or the summary line's)
+  cards[4]:Set("Net", money(net, true), mine and UI.plural(ins + outs, "entry", "entries") or words)
   if cards[5] then
-    if rate then cards[5]:Set("Per hour", money(rate, true), "over " .. UI.fmtDur(sc.elapsed))
-    else cards[5]:Set("Per hour", "-", sc.lifetime and "not for all time" or "shows after 5 minutes") end
+    if rate then cards[5]:Set("Per hour", money(rate, true), "over " .. UI.fmtPlayed(sc.elapsed))
+    else cards[5]:Set("Per hour", "-", "shows after 5 minutes") end
   end
   -- the untraced line: what changed while the addon could not see why. Never red.
   local parts = {}
   local away = sc.lifetime and 0 or card.away
   local inA, outA = num(g.unexplained) + math.max(away, 0), num(g.other) + math.max(-away, 0)
-  if inA > 0 then parts[#parts + 1] = "(in): " .. money(inA) end
-  if outA > 0 then parts[#parts + 1] = "(out): " .. money(outA) end
-  local text
-  if #parts > 0 then text = "While you were away " .. table.concat(parts, ", ") .. ". Hover for details." end
-  if card.crash ~= 0 then text = (text and (text .. " ") or "") .. ("%s: %s, counted in the net."):format(Gold.CRASH_LABEL, money(card.crash, true)) end
-  if c.audit and c.audit.state == "broken" then text = (text and (text .. " ") or "") .. "Some records do not add up. Hover for details." end
+  -- one line in plain words, one tooltip on it (the details), no hover instruction in the copy:
+  -- "While you were away: +25g 72s in, -4g 94s out · 12s 34c unattributed"
+  if inA > 0 then parts[#parts + 1] = money(inA, true) .. " in" end
+  if outA > 0 then parts[#parts + 1] = money(-outA, true) .. " out" end
+  local segs = {}
+  if #parts > 0 then segs[#segs + 1] = "While you were away: " .. table.concat(parts, ", ") end
+  if card.crash ~= 0 then segs[#segs + 1] = money(card.crash, true) .. " unattributed" end
+  c.crashAmt = card.crash
+  if c.audit and c.audit.state == "broken" then segs[#segs + 1] = #segs == 0 and "Some gold changes could not be traced" or "some gold changes could not be traced" end
+  local text = #segs > 0 and table.concat(segs, " \194\183 ") or nil
   c.untracedText = text
   if text then c.untraced:SetText(text); c.untraced:Show() else c.untraced:SetText(""); c.untraced:Hide() end
 end
@@ -3082,8 +3098,11 @@ function GP.paintList(c)
       -- gold between the player's own characters and the bank: counted in its source above, summed here once more
       local moved, nMoved = 0, 0
       for _, e in ipairs(entries) do if e.ref and e.ref.rel == "alt" then moved, nMoved = moved + e.delta, nMoved + 1 end end
-      items[#items + 1] = { ebSection = "Moved between characters and bank " .. money(moved, moved ~= 0), ebTip = GP.MOVED_TIP }
-      if nMoved > 0 then items[#items + 1] = { key = "moved", dir = 0, amount = moved, n = nMoved, share = 0, top = {}, ebNoOpen = true } end
+      -- (a zero total is noise: the group shows only when gold moved)
+      if nMoved > 0 and moved ~= 0 then
+        items[#items + 1] = { ebSection = "Moved between characters and bank " .. money(moved, true), ebTip = GP.MOVED_TIP }
+        items[#items + 1] = { key = "moved", dir = 0, amount = moved, n = nMoved, share = 0, top = {}, ebNoOpen = true }
+      end
     end
     for _, r in ipairs(items) do if r.key and r.key ~= "moved" then r.ebNoOpen = (r.n == 0) or nil end end
     tbl.setRows(items, function(row, r)
@@ -3286,7 +3305,7 @@ function GP.paintList(c)
       if known then
         cc.item:SetText(r.item .. (num(r.count) > 1 and ("|cff8c9197 x" .. r.count .. "|r") or ""))
         if look and look.q then local q = look.q; cc.item:SetTextColor(tonumber(q:sub(3, 4), 16) / 255, tonumber(q:sub(5, 6), 16) / 255, tonumber(q:sub(7, 8), 16) / 255) end
-      else cc.item:SetText("Item from auction mail"); UI.SetColor(cc.item, "fgMuted"); r.item = nil end
+      else cc.item:SetText(GP.unnamedItem(r)); UI.SetColor(cc.item, "fgMuted"); r.item = nil end
       cc.result:SetText(r.what or "")
       cc.buyer:SetText((r.what ~= "Posted" and r.note ~= "" and r.note) or "-")
       cc.dur:SetText(r.hours and UI.fmtDur(r.hours * 3600) or "-")
@@ -3415,8 +3434,9 @@ function GP.place(c)
   put(c.summary, H.SUMMARY); pcall(c.summary.layout); y = y + H.SUMMARY + S.S3
   local wide = G.isWide(G.winW())
   if wide ~= c.wide and c.scopeData then c.wide = wide; GP.paintTop(c) end
-  if wide then c.cards4:Hide(); c.cards5:Show() else c.cards5:Hide(); c.cards4:Show() end
-  local row = wide and c.cards5 or c.cards4
+  local five = GP.hasRateCard(c)
+  if five then c.cards4:Hide(); c.cards5:Show() else c.cards5:Hide(); c.cards4:Show() end
+  local row = five and c.cards5 or c.cards4
   put(row, H.STAT); pcall(row.layout); y = y + H.STAT
   if c.untraced:IsShown() then
     -- one line, or two when the window is too narrow for it
@@ -3582,6 +3602,7 @@ function ns.BuildEconomyPane(pane)
     local g = c.scopeData and c.scopeData.ledger or {}
     if num(g.unexplained) > 0 then tip:AddDoubleLine(GP.UNTRACED.unexplained, fmtMoney(g.unexplained), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
     if num(g.other) > 0 then tip:AddDoubleLine(GP.UNTRACED.other, fmtMoney(g.other), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+    if num(c.crashAmt) ~= 0 then tip:AddDoubleLine("Unattributed", fmtMoney(c.crashAmt), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1); tip:AddLine("The game closed without saving, so the addon could not see where this went. It is counted in the net.", DIM[1], DIM[2], DIM[3], true) end
     if c.audit and c.audit.state == "broken" then Gold.auditTip(tip, c.audit) end
   end)
   -- the list's section header and its controls
@@ -3630,7 +3651,7 @@ function ns.BuildEconomyPane(pane)
     -- (the biggest single entry as a name that may shorten and its amount in a money cell of its own, measured from
     -- its widest two-unit value: a number is never cut, 2.4)
     { key = "what", label = "Biggest single", flex = 1, min = 96, max = 200 },
-    { key = "whatAmt", label = "Value", kind = "money", min = 40, tip = "The amount of the biggest single entry" },
+    { key = "whatAmt", label = "Biggest", kind = "money", min = 40, tip = "The amount of the biggest single entry" },
     { key = "n", label = "Times", kind = "num", min = 48 },
     { key = "share", label = "Share", kind = "num", min = 48, tip = "Share of everything earned, or of everything spent" },
     { key = "amount", label = "Amount", kind = "money", min = 88, strong = true },
@@ -3877,7 +3898,7 @@ function ns.BuildGoldSettings(pane)
   onScreen.items = { pane.cbPill.row, pane.cbTips.row, pane.pick1.row, pane.pick2.row, rateRow, pane.pickFilter.row, pane.cbIcons.row, pane.cbCompact.row, pane.moreBtn.row }
   -- hidden characters, each with "Show again"
   local hiddenSec = section(mainPg, "Hidden characters")
-  local noneNote = SV.note(mainPg.col, "None. Hide a character in Loot, Gold, Characters.")
+  local noneNote = SV.note(mainPg.col, "None. Hide a character in Loot > Gold.")
   pane.hiddenNone = noneNote.text
   pane.hiddenNoneRow = noneNote
   hiddenSec.items[1] = noneNote
