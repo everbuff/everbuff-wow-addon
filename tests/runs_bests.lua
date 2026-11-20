@@ -191,26 +191,32 @@ return function(P)
     T.renderRun(v3)
     local dv = T.dungeonDetail()
     -- (the line names the measure and gives this run's own value on it: 640 s, not the 1000-odd s of its TIME tile)
-    check("3: Pace reads the best, its date, the measure and this run's value and delta", dv.paceLine == ("Best 8m 20s on %s, first pull to last kill"):format(date("%d %b", r2.t)) .. SEP .. "this run 10m 40s (+2:20 " .. R.UP .. ")"
-      and dv.paceLine2 == "Sum of best segments 8m 20s", dv.paceLine)
-    check("3: the TIME tile carries the delta", dv.deltaText == "+2:20 " .. R.UP, dv.deltaText)
-    local vsCells = {}
-    for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and tostring(fs.text):match("^[%+%-]%d+:%d%d") then vsCells[#vsCells + 1] = fs.text end end
-    local allMarked = #vsCells >= 3
-    for _, t in ipairs(vsCells) do if not (t:find(R.UP, 1, true) or t:find(R.DOWN, 1, true)) then allMarked = false end end
-    check("3: every delta on the page has its sign and its arrow (colour never alone)", allMarked, table.concat(vsCells, " | "))
+    local function dm(t) return tostring(tonumber(date("%d", t))) .. date(" %b", t) end
+    check("3: Pace reads the best, its date, the measure and this run's value and delta in words", dv.paceLine == ("Your best for these 3 bosses: 8m 20s on %s, first pull to last kill. This run: 10m 40s, 2m 20s slower."):format(dm(r2.t))
+      and dv.paceLine2 == "If you matched your best on every boss: 8m 20s", dv.paceLine)
+    check("3: the VS YOUR BEST card carries the delta in words", dv.deltaText == "2m 20s slower", dv.deltaText)
+    local vsCells, allWords = {}, true
+    for i = 1, dv.tables.bosses.shownN do
+      local t = dv.tables.bosses.rows[i].c.vs.text
+      vsCells[#vsCells + 1] = t
+      if not (t:find("slower$") or t:find("faster$") or t == "same as best") then allWords = false end
+    end
+    check("3: every delta on the page is a fmtDelta word, no mm:ss and no arrow", #vsCells == 3 and allWords, table.concat(vsCells, " | "))
     T.renderRun(v2)
-    check("3: the best run's page says it is the best", dv.paceLine == ("Best 8m 20s on %s, first pull to last kill"):format(date("%d %b", r2.t)) .. SEP .. "this run is the best" and dv.deltaText == "best", dv.paceLine)
-    -- the list: LENGTH carries the delta, BOSSES the learned list (3 runs, 3 bosses each: 3/3)
+    check("3: the best run's page says it is the best, and by how much it beat the best before it", dv.paceLine == ("Your best for these 3 bosses: 8m 20s on %s, first pull to last kill. This run is your best."):format(dm(r2.t))
+      and dv.deltaText == "1m 40s faster", dv.paceLine .. " | " .. dv.deltaText)
+    -- the list: TIME is the time inside, VS BEST the delta in words, BOSSES the learned list (3 runs, 3 bosses each: 3/3)
     local lv = T.dungeonList()
     local rows = {}
     for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run then rows[r.run.id] = r end end
-    check("3: LENGTH reads the delta after the length", rows[r3.id] and rows[r3.id].c.dur.text == R.fmtDur(v3.duration) .. " · +2:20 " .. R.UP
-      and rows[r2.id].c.dur.text:find(" · best$") ~= nil, rows[r3.id] and rows[r3.id].c.dur.text)
+    check("3: TIME reads the time inside, VS BEST the delta in words with its state dot", rows[r3.id] and rows[r3.id].c.dur.text == ns.UI.fmtDur(v3.inside)
+      and rows[r3.id].c.vs.text:find("2m 20s slower$") ~= nil and rows[r3.id].c.vs.text:find("|T", 1, true) == 1 and rows[r2.id].c.vs.text == "1m 40s faster", rows[r3.id] and rows[r3.id].c.vs.text)
+    check("3: the best run carries the BEST badge, the slower run none", rows[r2.id].ebBadge and rows[r2.id].ebBadge.shown ~= false and rows[r2.id].ebBadge.ebText == "BEST"
+      and not (rows[r3.id].ebBadge and rows[r3.id].ebBadge.shown ~= false))
     check("3: BOSSES reads 3/3 once the dungeon has a learned list", rows[r3.id].c.boss.text == "3/3" and v3.total == 3, rows[r3.id].c.boss.text)
-    check("3: the first run of a dungeon reads 'first run here' while it is the only one", (function()
+    check("3: the first run of a dungeon reads 'first run' while it is the only one", (function()
       fresh(); local r = clear("Deadmines", DMAP, 10, K3(100, 200, 300)); local v = R.views()[1]
-      T.renderRun(v); return v.cmp.isBest and T.dungeonDetail().deltaText == "first run here" and R.isPb(r) and r.done == nil
+      T.renderRun(v); return v.cmp.isBest and T.dungeonDetail().deltaText == "first run" and R.isPb(r) and r.done == nil
         and T.dungeonDetail().paceLine == nil end)())                -- (and no Pace before the dungeon's first full clear)
     invariants("three runs")
   end
@@ -235,8 +241,8 @@ return function(P)
     check("4of5: it reads 4/5 and lists the boss it never pulled", v.total == 5 and v.bossesDown == 4 and #v.missing == 1 and v.missing[1].enc == 5, v.total)
     T.renderRun(v)
     local nk = 0
-    for _, fs in ipairs(T.dungeonDetail().child.fs) do if fs.shown ~= false and fs.text == "Not killed" then nk = nk + 1 end end
-    check("4of5: the known boss not pulled reads Not killed on the page", nk == 1, nk)
+    for _, b in ipairs(T.dungeonDetail().bossRows) do if not b.kill then nk = nk + 1 end end
+    check("4of5: the known boss not pulled is a row with no kill time", nk == 1, nk)
     check("4of5: the 4-boss run against the full route: the shared start, at boss 4", (function()
       local cmp = R.compare(c4, true)                               -- (as a run in progress would read it)
       return cmp and cmp.mode == "prefix" and cmp.at == 4 end)())
@@ -579,7 +585,7 @@ return function(P)
     T.openRun(v)
     local dv = T.dungeonDetail()
     local said2
-    for _, fs in ipairs(dv.child.fs) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said2 = fs.text end end
+    for _, fs in ipairs(dv.lines) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said2 = fs.text end end
     check("repull: the page says possibly two runs and where to split", said2 ~= nil and said2:find("visit 2", 1, true) ~= nil, said2)
     local split
     for _, b in ipairs(dv.actBtns()) do if b.shown ~= false and b.visit == 2 then split = b end end
@@ -613,7 +619,7 @@ return function(P)
     btn("keep").scripts.OnClick(btn("keep"))
     check("buttons: Keep keeps at once (it is undone with Unkeep)", raw().keep == true and btn("keep").label == "Unkeep")
     btn("delete").scripts.OnClick(btn("delete"))
-    check("buttons: Delete asks first, in the page", dv.questionLine == "Delete this run? Its numbers leave the dungeon totals." and btn("delete").label == "Yes, delete" and #closed() == 2)
+    check("buttons: Delete asks first, in the page", dv.questionLine == "Delete this run? Its numbers leave the dungeon totals. Cannot be undone." and btn("delete").label == "Yes, delete" and #closed() == 2)
     btn("join").scripts.OnClick(btn("join"))
     check("buttons: another button asks its own question", dv.questionLine == dv.QUESTION.join and btn("delete").label == "Delete run")
     btn("join").scripts.OnClick(btn("join"))
@@ -681,11 +687,12 @@ return function(P)
     local nowT = GetServerTime()
     ns.DB.characters["Player-1-000002"] = { name = "Alt", lockouts = { { name = "Scholomance", resetAt = nowT + 90000, bosses = 10, down = 4 }, { name = "Gone", resetAt = nowT - 5 } } }
     me().lockouts = { { name = "Stratholme", resetAt = nowT + 3600 } }
-    local lv = T.dungeonList()
-    local lines = lv.lockTipLines()
-    check("lockouts: the hover lists the other characters' lockouts that have not reset, not this one's", #lines == 1 and lines[1] == "Alt: Scholomance 4/10, resets in 1d 1h", lines[1])
+    local D = ns.Dungeons.D
+    local lines = D.otherLockouts()
+    check("lockouts: the hover lists the other characters' lockouts that have not reset, not this one's", #lines == 1 and lines[1] == "Alt: Scholomance 4 of 10, resets in 1d 1h", lines[1])
+    check("lockouts: this character's one lockout is the summary segment, plain text with a tooltip when no run matches", D.lockSegment().text == "Stratholme: saved, resets in 1h 0m" and D.lockSegment().onClick == nil, D.lockSegment().text)
     ns.DB.characters["Player-1-000002"] = nil
-    check("lockouts: none says so", lv.lockTipLines()[1] == "No other character of this account is saved to an instance.")
+    check("lockouts: no other character's lockout lists none", #D.otherLockouts() == 0)
   end
 
   -- ── review round 1 of 0.9.51 ─────────────────────────────────────────────────────────────────────────────────
@@ -767,7 +774,7 @@ return function(P)
     check("repull: the closed run still says which visit to split at", r.repull == 3 and #r.visits == 3)
     T.renderRun(R.view(r, false, true))
     local said
-    for _, fs in ipairs(T.dungeonDetail().child.fs) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said = fs.text end end
+    for _, fs in ipairs(T.dungeonDetail().lines) do if fs.shown ~= false and tostring(fs.text):find("^Possibly two runs") then said = fs.text end end
     check("repull: the page of the closed run says possibly two runs", said ~= nil and said:find("visit 3", 1, true) ~= nil, said)
     R.split(r.id, 2)
     -- (the copies decide: the second part holds the boss's one copy left, so neither side has a mark)
@@ -901,12 +908,12 @@ return function(P)
     fresh()
     for _ = 1, 3 do enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire() end
     local n = 0
-    for _, v in ipairs(R.views()) do T.renderRun(v); if T.dungeonDetail().deltaText ~= "" then n = n + 1 end end
+    for _, v in ipairs(R.views()) do T.renderRun(v); if T.dungeonDetail().deltaText ~= "-" then n = n + 1 end end
     check("first: runs that cannot set a best do not read first run", n == 0, n)
     fresh()
     enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire()
     T.renderRun(R.views()[1])
-    check("first: the only run of a dungeon does", T.dungeonDetail().deltaText == "first run here")
+    check("first: the only run of a dungeon does", T.dungeonDetail().deltaText == "first run")
     clear("Uldaman", 70, 10, { { id = 9, at = 50 } })
     T.renderRun(R.views()[2])
     check("first: the first run of a new route in a dungeon run before reads best", T.dungeonDetail().deltaText == "best", T.dungeonDetail().deltaText)
@@ -933,18 +940,14 @@ return function(P)
     clear("Deadmines", DMAP, 10, K3(100, 200, 300))
     enter("Molten Core", { type = "raid", map = 409 }); play(200); combat(true); kill(663, "Lucifron", 30); combat(false); leave(); expire()
     local lv = T.dungeonList()
-    lv.setView("dungeons")
-    lv.tabs.select("raid")
-    check("filter: the Raids tab lists the raids only", #lv.dshown == 1 and lv.dshown[1].name == "Molten Core")
-    lv.tabs.select("party")
-    check("filter: the Dungeons tab lists the dungeons only", #lv.dshown == 1 and lv.dshown[1].name == DM)
-    lv.tabs.select("all")
+    local by = T.dungeonBy and T.dungeonBy()
+    if not by then lv.setView("dungeons"); by = T.dungeonBy() end
+    check("filter: By dungeon lists the dungeon and the raid (no Raids tab)", #by.dshown == 2, #by.dshown)
     local mc
-    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow and r.drow.name == "Molten Core" then mc = r end end
-    lv.st.kind = "party"                                          -- (a tab that does not hold the clicked row)
+    for _, r in ipairs(by.dtbl.rows) do if r.shown ~= false and r.drow and r.drow.name == "Molten Core" then mc = r end end
     mc:GetScript("OnClick")(mc, "LeftButton")
-    check("filter: a click on a raid shows its runs, on the Raids tab", lv.st.view == "runs" and lv.st.kind == "raid" and #lv.shown == 1, #lv.shown)
-    lv.pickInst(nil); lv.tabs.select("all"); lv.setView("runs")
+    check("filter: a click on a row shows that dungeon's runs on Runs", lv.st.inst == "Molten Core" and #lv.shown == 1 and lv.filter.ebActive == true, #lv.shown)
+    lv.pickInst(nil)
   end
 
   -- an evicted best stays across a /reload, and the statistics are never built again once they exist
@@ -1151,10 +1154,11 @@ return function(P)
     check("bydungeon: under 5 active minutes a dungeon has no rate", wc and wc.coinPerHour == nil and wc.xpPerHour == nil and wc.deathsPerRun == 1)
     local lv = T.dungeonList()
     lv.setView("dungeons")
+    local by = T.dungeonBy()
     local cells, rowOf = {}, {}
-    for _, r in ipairs(lv.dtbl.rows) do if r.shown ~= false and r.drow then cells[r.drow.name] = r.c; rowOf[r.drow.name] = r end end
+    for _, r in ipairs(by.dtbl.rows) do if r.shown ~= false and r.drow then cells[r.drow.name] = r.c; rowOf[r.drow.name] = r end end
     local k, w = cells["Razorfen Kraul"], cells["Wailing Caverns"]
-    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "1.5" and k.coin.text ~= "-" and k.best.text == R.fmtDur(40) and k.avg.text == R.fmtDur(50), k and k.xp.text)
+    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "1.5" and k.coin.text ~= "-" and k.best.text == ns.UI.fmtDur(40) and k.avg.text == ns.UI.fmtDur(50), k and k.xp.text)
     check("bydungeon: a dungeon under 5 active minutes reads - for coin and XP, its deaths per run as a number", w and w.coin.text == "-" and w.xp.text == "-" and w.dpr.text == "1.0", w and w.coin.text)
     local tl = {}
     local tr = rowOf["Razorfen Kraul"]
@@ -1163,7 +1167,7 @@ return function(P)
       for _, l in ipairs(GameTooltip.lines or {}) do tl[#tl + 1] = tostring(l) end
       if tr:GetScript("OnLeave") then tr:GetScript("OnLeave")(tr) end
     end
-    check("bydungeon: the row's hover says what Best and Average measure", table.concat(tl, "|"):find("first pull to last boss kill", 1, true) ~= nil, table.concat(tl, "|"))
+    check("bydungeon: the row's hover says what Best and Average measure", table.concat(tl, "|"):find("First pull to last kill, on the route of your best.", 1, true) ~= nil, table.concat(tl, "|"))
     lv.setView("runs")
   end
 
@@ -1235,7 +1239,7 @@ return function(P)
     check("cache: the full read keeps the comparison while nothing changed", v1[1].cmp ~= nil and v1[1].cmp == v2[1].cmp and v1[2].cmp == v2[2].cmp and v1[1].total == 3)
     local hov = table.concat(T.dungeonList().tipLines(v1[1]), "|")
     -- (run 1: 290 s from its first pull to its last kill, the best 270 s)
-    check("length: the hover of LENGTH says the delta is first pull to last kill, with this run's value", hov:find("Against the best: first pull to last boss kill, 4m 50s here, best 4m 30s", 1, true) ~= nil, hov)
+    check("length: the hover of LENGTH says the delta is first pull to last kill, with this run's value", hov:find("Against your best: first pull to last kill, 4m 50s here, best 4m 30s", 1, true) ~= nil, hov)
     clear("Deadmines", DMAP, 10, K3(80, 150, 200))
     local v3 = R.views()
     check("cache: and reads it again once the statistics change", v3[1].cmp ~= v1[1].cmp and v3[1].cmp.delta == R.measure(closed()[1]) - 190, v3[1].cmp.delta)
@@ -1402,16 +1406,16 @@ return function(P)
     local dv = T.dungeonDetail()
     local m = R.fmtDur(R.measure(part))
     check("route: a run of 2 of 4 bosses is the best of its own route, and its page names the route", v and v.cmp and v.cmp.mode == "same" and v.cmp.isBest and v.total == 4
-      and dv.paceLine == ("Best for these 2 bosses %s on %s, first pull to last kill"):format(m, date("%d %b", part.t)) .. SEP .. "this run is the best" and dv.deltaText == "best (2/4)", dv.paceLine)
+      and dv.paceLine == ("Your best for these 2 bosses: %s on %s, first pull to last kill. This run is your best."):format(ns.UI.fmtDur(R.measure(part)), tostring(tonumber(date("%d", part.t))) .. date(" %b", part.t)) and dv.deltaText == "best", dv.paceLine)
     local rows = {}
     for _, r in ipairs(T.dungeonList().tbl.rows) do if r.shown ~= false and r.run then rows[r.run.id] = r end end
     local hov = table.concat(T.dungeonList().tipLines(v), "|")
-    check("route: LENGTH and the hover say which best, never a bare one", rows[part.id] and rows[part.id].c.dur.text:find(" · best %(2/4%)$") ~= nil
-      and hov:find("Against the best for these 2 bosses: first pull to last boss kill, " .. m .. " here, best " .. m, 1, true) ~= nil, (rows[part.id] and rows[part.id].c.dur.text or "") .. " " .. hov)
+    check("route: LENGTH and the hover say which best, never a bare one", rows[part.id] and rows[part.id].c.vs.text == "best"
+      and hov:find("Against your best for these 2 bosses: first pull to last kill, " .. m .. " here, best " .. m, 1, true) ~= nil, (rows[part.id] and rows[part.id].c.vs.text or "") .. " " .. hov)
     -- (a full clear still reads a bare best)
     local full
     for _, x in ipairs(R.views()) do if x.cmp and x.cmp.isBest and x.id ~= part.id then full = x end end
-    check("route: a full clear's best stays a bare best", full and rows[full.id] and rows[full.id].c.dur.text:find(" · best$") ~= nil, full and rows[full.id] and rows[full.id].c.dur.text)
+    check("route: a full clear's best stays a bare best", full and rows[full.id] and rows[full.id].c.vs.text == "best", full and rows[full.id] and rows[full.id].c.vs.text)
     -- an edited run of 1, 2 and 5 has no best of its own: compared at boss 2 of 4 against the route that shares its start
     local c = me()
     local ed = T.runRecord(DM, M.epoch - 100, 900, { firstPull = 10, diff = 1, size = 1, edited = true, map = DMAP,
@@ -1421,7 +1425,7 @@ return function(P)
     for _, x in ipairs(R.views()) do if x.id == ed.id then ve = x end end
     hov = table.concat(T.dungeonList().tipLines(ve), "|")
     check("route: a run compared at a boss of another route says at which, from the first pull", ve and ve.cmp and ve.cmp.mode == "prefix" and ve.cmp.at == 2
-      and hov:find(("Against the best at boss 2 of %d: from the first pull, %s here, best %s"):format(ve.cmp.of, R.fmtDur(250), R.fmtDur(ve.cmp.best)), 1, true) ~= nil
+      and hov:find(("Against your best at boss 2 of %d: from the first pull, %s here, best %s"):format(ve.cmp.of, R.fmtDur(250), R.fmtDur(ve.cmp.best)), 1, true) ~= nil
       and not hov:find("last boss kill", 1, true), hov)
   end
 

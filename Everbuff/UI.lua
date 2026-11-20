@@ -1482,7 +1482,7 @@ function UI.Summary(parent)
         fs:SetFontObject(UI.F[role]); fs.ebRole = role
         local col = sg.onClick and "accentFg" or sg.color or (r[2] and "fg" or "fgSubtle")
         fs:SetTextColor(unpackc(C[col] or C.fgSubtle))
-        fs:SetText(r[1]); fs:SetWidth(0)
+        fs:SetText(r[1]); fs:SetWidth(UI.TextWidth(role, r[1]) + 2)   -- (its own width: a figure is never shortened)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", b, "LEFT", w, 0)
         fs:Show()
         w = w + UI.TextWidth(role, r[1])

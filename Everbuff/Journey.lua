@@ -298,6 +298,12 @@ local function stripLink(s)
   return (s:gsub("^%[", ""):gsub("%]$", ""))
 end
 Now.stripLink = stripLink
+Now.sellPrice = sellPrice
+-- whether the character is at the level cap (By dungeon sorts by gold per hour then)
+function Now.atMax()
+  local l = plain(call(UnitLevel, "player")) or 0
+  return l >= (plain(call(GetMaxPlayerLevel)) or 60)
+end
 
 -- WORTH A LOOK: what happened this session, in rank order, newest first within a rank (4.1)
 function Now.lookItems(now)

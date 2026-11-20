@@ -285,6 +285,7 @@ local sep = package.config:sub(1, 1)
 os.execute((sep == "\\" and 'mkdir "%s\\fonts" 2>nul' or 'mkdir -p "%s/fonts"'):format(sep == "\\" and OUT:gsub("/", "\\") or OUT))
 for face in pairs(FACES) do copy(FONT_DIR .. face .. ".ttf", OUT .. "/fonts/" .. face .. ".ttf") end
 
+DUNGEON_FIXTURE = dofile("tests/dungeon_fixture.lua")
 local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
 -- the Home > Now states: set the readings, return the function that puts them back
 function NOW_STATE(state)
@@ -337,8 +338,30 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       -- ":welcome", ":welcome2", ":welcome3" (the first-run guide on that step)
       local undo
       if host == "home" and pane == "now" and state ~= "" then undo = NOW_STATE(state) end
-      ns.UI.Open(HOSTS[host] or host, pane); M.tick()
-      ns.UI.Open(HOSTS[host] or host, pane)       -- a second open: the panes read sizes their first build set
+      -- the Dungeons screens on the runs of docs/UX_OVERHAUL.md 4.0 (tests/dungeon_fixture.lua): "dungeons/runs" with
+      -- ":empty", ":nomatch" (filter Shadowfang Keep), ":limit4", ":limit5" (a limit of 5) or ":live" (Ragefire Chasm in
+      -- progress); "dungeons/bydungeon"; "dungeons/run" (the Wailing Caverns BEST run), ":live", ":death" (Tessa's)
+      local openPane, fx = pane, nil
+      if host == "dungeons" then
+        local undoFx
+        undoFx, fx = DUNGEON_FIXTURE.install(ns, M, pane == "run" and (state == "live" and "live" or "") or state)
+        if pane == "run" then openPane = "runs" end
+        undo = function()
+          local lv = ns._test.dungeonList and ns._test.dungeonList()
+          if lv then lv.pickInst(nil) end
+          local dv = ns._test.dungeonDetail and ns._test.dungeonDetail()
+          if dv and dv:IsShown() then dv.d.Close() end
+          undoFx()
+        end
+      end
+      ns.UI.Open(HOSTS[host] or host, openPane); M.tick()
+      ns.UI.Open(HOSTS[host] or host, openPane)   -- a second open: the panes read sizes their first build set
+      if host == "dungeons" and pane == "runs" and state == "nomatch" then ns._test.dungeonList().pickInst("Shadowfang Keep") end
+      if host == "dungeons" and pane == "run" then
+        local rec = state == "live" and fx.open or state == "death" and fx.rfc or fx.wc2
+        ns._test.dungeonList()
+        ns.Dungeons.openRun(rec)
+      end
       if host == "loot" and pane == "gold" then
         if state == "" then ns.Gold.open("session")
         elseif state == "journal" then ns.Gold.open("session", "journal")
@@ -357,7 +380,7 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       end
       M.settle()                                  -- OnSizeChanged to every list whose size the open changed
       local html, info = renderPage(key, sz[1], sz[2], dataTag)
-      if undo then undo(); ns.UI.Open(HOSTS[host] or host, pane); M.settle() end
+      if undo then undo(); ns.UI.Open(HOSTS[host] or host, openPane); M.settle() end
       local name = ("%s-%s%s-%dx%d-%s"):format(host, pane, state ~= "" and ("-" .. state) or "", sz[1], sz[2], dataTag)
       write(OUT .. "/" .. name .. ".html", html)
       write(OUT .. "/" .. name .. ".layout.json", json(info))

@@ -302,10 +302,10 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     ns._test.renderRun(run); M.settle()
     local dv = ns._test.dungeonDetail()
     eq("Dungeons: a run reads items, coin, loot value and coin per hour from its own gold block", dv.lootLine,
-      ("12 items%s%s coin%sloot value about %s%s%s/h"):format(SEP, fmt(32000), SEP, fmt(51000), SEP, Gold.fmt(64000, { rate = true })))
+      ("Coin looted %s · vendor price of items %s · %s per hour"):format(ns.UI.money(32000), ns.UI.money(51000), ns.UI.money(64000, true)))
     local function onPage(text)
       local found, cutOff = false, false
-      for _, fs in ipairs(dv.child.fs) do
+      for _, fs in ipairs(dv.lines) do
         if fs.shown ~= false and fs.text == text then found = true; if fs.IsTruncated and fs:IsTruncated() then cutOff = true end end
       end
       return found and not cutOff
@@ -321,8 +321,9 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       end
     end
     local row = listRow()
-    eq("Dungeons: the list row of that run reads the block's items and coin", row and row.c.loot.text, "12 · " .. fmt(32000))
-    eq("Dungeons: and coin per hour while the run has no XP", row and row.c.rate.text, Gold.fmt(64000, { rate = true }) .. "/h")
+    eq("Dungeons: the list row of that run reads the block's items", row and row.c.loot.text, "12 items")
+    eq("Dungeons: and its coin looted (a WIDE column)", row and row.c.coin.text, ns.UI.money(32000))
+    eq("Dungeons: and no XP per hour while the run has no XP", row and row.c.xph.text, "-")
     -- the purse gained more inside than was booked as looted (group shares booked as mail, seen 2026-11-18)
     rec.gold.looted, rec.gold.purse = 365, 11253
     rec.xp = { gain = 12300, kill = 9000, quest = 0, n = 45, l0 = 23, p0 = 0.4, l1 = 24, p1 = 0.1, need = 30000 }
@@ -331,11 +332,12 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     eq("Dungeons: the page says when the looted coin is not what the purse gained", dv.purseLine, ("Coin %s of %s gained inside"):format(fmt(365), fmt(11253)))
     check("Dungeons: that line is on the page in full", onPage(dv.purseLine))
     eq("Dungeons: the XP line reads XP, XP per hour, the levels and the runs the next level takes", dv.xpLine,
-      ("12,300 XP%s24,600 per hour%slevel 23.4 to 24.1%sabout 3 more runs to level 25"):format(SEP, SEP, SEP))
-    eq("Dungeons: the kills the client let the addon read are a lower bound, on a line of their own", dv.xpMore, "at least 45 kills")
+      "12,300 XP, all from kills")
+    eq("Dungeons: the rate, the levels, the runs the next level takes and the kills (a lower bound) are the line under it", dv.xpMore,
+      "24,600 per hour · level 23.4 to 24.1 · about 3 more runs to level 25 · at least 45 kills")
     check("Dungeons: the XP lines and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage(dv.xpMore) and onPage("12 XP lines were hidden by the client."))
     row = listRow()
-    eq("Dungeons: the list row reads XP per hour while the run has XP", row and row.c.rate.text, "24,600 XP/h")
+    eq("Dungeons: the list row reads XP per hour while the run has XP", row and row.c.xph.text, "24,600")
     table.remove(list)
   end
   ns.Recorder.current = savedCurrent

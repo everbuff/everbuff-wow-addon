@@ -903,10 +903,10 @@ do
   -- a fight inside an instance with no foe and no death is a trash pull, not a flight (57 of 57 in Maraudon read "Fled")
   local dvR = T.dungeonDetail()
   local trash, fled = 0, 0
-  for _, b in ipairs(dvR and dvR.child.btn or {}) do
-    if b.shown ~= false and b.re then
-      if b.re.text == "Trash" then trash = trash + 1 elseif b.re.text == "Fled" then fled = fled + 1 end
-    end
+  local pulls = dvR and dvR.tables.pulls
+  for i = 1, pulls and pulls.shownN or 0 do
+    local t = pulls.rows[i].c.re.text
+    if t == "Trash" then trash = trash + 1 elseif t == "Fled" then fled = fled + 1 end
   end
   check("run detail: a fight with no foe reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
 end
@@ -1429,7 +1429,7 @@ do
   ns.UI.Open("Combat", "dungeons"); M.tick()
   local dg = host("Dungeons").paneByKey.runs
   local txt = T.dungeonsLockText and T.dungeonsLockText() or ""
-  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps 4/6") ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
+  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps: 4 of 6 bosses down", 1, true) ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
   M.saved = {}
 end
 -- ── retail trait string ──
@@ -2386,13 +2386,17 @@ end
 -- 0.9.50 (#51): the durable dungeon run (Everbuff/Runs.lua): visits and typed gaps, the encounter state machine, XP
 -- and gold per visit, the purse check, the learned alias, the cap and the size of a record (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.50 tests/runs.lua runs to its end", ok, err)
 end
 -- 0.9.51 (#51, the plan's milestone 0.9.50): bests per route and the segments, the dungeon statistics, Delete,
 -- Split, Join and Keep, the glance and the instances of the hour (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs_bests.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.51 tests/runs_bests.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
