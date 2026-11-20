@@ -4,7 +4,7 @@
 --   luajit tests/render_html.lua [outdir] [page ...]
 --     outdir   where the pages go (default tests/render_out, which git ignores); fonts are copied to outdir/fonts
 --     page     host/pane keys to render (default: loot/items loot/gold home/now home/activity);
---              settings/general, settings/capture and settings/data open a Settings sub-tab
+--              settings/general, settings/golddisplay and settings/data open a Settings sub-tab
 --   then, on a machine with Chrome (never next to a running WoW client):
 --   node tests/render_shot.js outdir   (puppeteer-core; screenshots every page and writes <page>.findings.json)
 --
@@ -390,7 +390,7 @@ for _, dataTag in ipairs({ "normal", "long" }) do
           end
         end
       end
-      if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, capture, data)
+      if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, golddisplay, data)
         for _, t in ipairs(ns._test.tabs or {}) do
           if t.name == "Settings" and t.content and t.content.subtabs then t.content.subtabs.select(pane) end
         end

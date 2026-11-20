@@ -839,12 +839,13 @@ EverbuffDB = {
 				"FACTION_STANDING_INCREASED", -- [80]
 				"GetContainerNumFreeSlots", -- [81]
 				"GetNumQuestLogEntries", -- [82]
-				"MenuUtil", -- [83]
-				"NUM_BAG_SLOTS", -- [84]
-				"RaidWarningFrame", -- [85]
-				"SECONDARY_SKILLS", -- [86]
-				"TRADE_SKILLS", -- [87]
-				"UIErrorsFrame", -- [88]
+				"ITEM_QUALITY_COLORS", -- [83]
+				"MenuUtil", -- [84]
+				"NUM_BAG_SLOTS", -- [85]
+				"RaidWarningFrame", -- [86]
+				"SECONDARY_SKILLS", -- [87]
+				"TRADE_SKILLS", -- [88]
+				"UIErrorsFrame", -- [89]
 			},
 			["addon"] = "0.9.51",
 			["at"] = 1793000000,

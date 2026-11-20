@@ -421,7 +421,7 @@ function Now.lookItems(now)
     if lastQ then meta[#meta + 1] = "last: " .. lastQ end
     out[#out + 1] = { kind = "quest", rank = 5, t = lastT, icon = UI.KIND_ICON.quest,
       title = UI.plural(quests, "quest") .. " turned in", meta = table.concat(meta, " \194\183 "),
-      onClick = function() UI.Open("Character", "quests") end }
+      onClick = function() UI.Open("Character", "leveling") end }
   end
   -- 6 lockouts that still hold; the › opens the run of that dungeon inside the lockout's life
   for _, l in ipairs(type(db.lockouts) == "table" and db.lockouts or {}) do
@@ -594,7 +594,7 @@ function Now.build(content)
   content.sesHead = UI.Section(col, "This session")
   content.cards = UI.StatRow(col, 4, {
     { onClick = function() UI.Open("Home", "sessions") end },
-    { onClick = function() UI.Open("Character", "quests") end },
+    { onClick = function() UI.Open("Character", "leveling") end },
     { onClick = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session") else UI.Open("Loot", "gold") end end },
     { onClick = function() UI.Open("Home", "deaths") end },
   })

@@ -596,17 +596,17 @@ check("old window keys resolve to their new place", (function()
   local a4, b4 = R("Home", "overview"); local a5, b5 = R("Home", "timeline"); local a6 = R("Combat")
   return a1 == "Dungeons" and b1 == "runs" and a2 == "Home" and b2 == "fights" and a3 == "Home" and b3 == "deaths"
     and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "activity" and a6 == "Dungeons" end)())
-check("Loot hosts Items · Gold; Character hosts Quests · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and c.panes[1].key == "quests" and c.panes[3].key == "professions" end)())
-check("capture pane builder exposed", type(ns.BuildCapturePane) == "function")
+check("Loot hosts Items · Gold; Character hosts Leveling · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and #c.panes == 3 and c.panes[1].key == "leveling" and c.panes[2].key == "reputation" and c.panes[3].key == "professions" end)())
+check("settings builder exposed", type(ns.BuildSettings) == "function")
 -- ── Settings sub-tab control ──
 local settingsTab
 for _, tab in ipairs(T.tabs) do if tab.name == "Settings" then settingsTab = tab end end
 local st = settingsTab and settingsTab.content and settingsTab.content.subtabs
-check("Settings exposes a tab control with three panes", st and st.panes.general and st.panes.capture and st.panes.data)
+check("Settings exposes a tab control with three panes: General, Gold display, Data and sync (4.12)", st and st.panes.general and st.panes.golddisplay and st.panes.data and #st.tabs == 3)
 if st then
-  local okSel, errSel = pcall(function() st.select("capture"); st.select("data"); st.select("general") end)
+  local okSel, errSel = pcall(function() st.select("golddisplay"); st.select("data"); st.select("general") end)
   check("switching sub-tabs renders cleanly", okSel, errSel)
-  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.capture:IsShown() and not st.panes.data:IsShown())
+  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.golddisplay:IsShown() and not st.panes.data:IsShown())
 end
 -- ── Source / Location split ──
 check("fmtLocation zone + coords", ns.UI.fmtLocation("Elwynn Forest", 0.421, 0.637) == "Elwynn Forest  (42.1, 63.7)")
@@ -1159,34 +1159,40 @@ do
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTACCEPT", t = t0 + 10, text = "Quest:  Investigate Echo Ridge", zone = "Elwynn Forest" }
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 300, text = "Complete:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.48, y = 0.41 }
   L[#L + 1] = { s = ns.DB.active, kind = "REWARD", t = t0 + 301, text = "Chose:  Worn Shortsword" }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 302, text = "Complete:  quest", zone = "Elwynn Forest" }
   local rows, sum = T.buildQuests()
-  check("quests: completed and open counted", sum.done >= 1 and sum.open >= 1 and sum.rewards >= 1, sum.done .. "/" .. sum.open)
+  check("quests: every turn-in counted, accepted quests left out (Leveling, 4.10)", sum.done >= 2, sum.done)
   local top = rows[1]
-  check("quests: newest first with a status", top and top.name == "Kobold Camp Cleanup" and top.status == "done", top and top.name)
-  local openRow; for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then openRow = r end end
-  check("quests: accepted but not completed is in progress", openRow and openRow.status == "accepted")
+  check("quests: newest first", top and top.t == t0 + 302 and rows[2].name == "Kobold Camp Cleanup", top and top.name)
+  check("quests: a name the game did not give is never the placeholder", top.name ~= "quest" and top.unnamed == true, top.name)
+  for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then check("quests: an accepted quest is not a turn-in", false) end end
   ns.char().reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
   L[#L + 1] = { s = ns.DB.active, kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
+  ns.DB.story.rep = ns.DB.story.rep or {}
+  table.insert(ns.DB.story.rep, { s = ns.DB.active, t = t0 + 499, faction = "Ironforge", amount = 75, src = "Quest: Kobold Camp Cleanup" })
   local rr, rs = T.buildReputation()
-  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[3].name == "Darnassus", rr[1] and rr[1].name)
-  check("reputation: last standing gain matched to the faction", rr[1].lastUp == t0 + 500 and rs.ups >= 1)
-  ns.char().professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
-  L[#L + 1] = { s = ns.DB.active, kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
+  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[#rr].name == "Darnassus", rr[1] and rr[1].name)
+  local sw; for _, r in ipairs(rr) do if r.name == "Stormwind" then sw = r end end
+  check("reputation: the live bar read from the client (1,500 of 3,000)", sw and sw.progress == 1500 and sw.need == 3000, sw and tostring(sw.progress))
+  check("reputation: this session's gains per faction", rr[1].session == 75 and rs.gained >= 75, rr[1].session)
+  local hist = T.buildRepHistory("Ironforge")
+  check("reputation: how you earned it, newest first, the new standing too", #hist == 2 and hist[1].milestone and hist[2].change == "+75" and hist[2].source == "Quest: Kobold Camp Cleanup", #hist)
+  ns.char().professions = { ["Mining"] = { rank = 118, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
-  L[#L + 1] = { s = ns.DB.active, kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
   local pr, ps = T.buildProfessions()
-  check("professions: highest skill first with rank/max", pr[1] and pr[1].name == "Mining" and pr[1].rank == 78 and pr[1].max == 150, pr[1] and pr[1].name)
-  check("professions: milestones and skill-ups per profession", pr[1].tiers >= 1 and pr[1].skillups >= 1 and ps.recipes >= 1, pr[1].tiers .. "/" .. pr[1].skillups)
-  -- a gathered skill-up has no prof field: its profession comes from the text
+  check("professions: highest skill first with rank/max and the rank's name", pr[1] and pr[1].name == "Mining" and pr[1].rank == 118 and pr[1].max == 150 and pr[1].rankName == "Journeyman", pr[1] and pr[1].name)
+  check("professions: the training line 10 under the next rank", pr[1].training == "Expert training opens at 125", pr[1].training)
+  check("professions: the training line once it is open", T.trainingLine("Tailoring", 125, 150) == "Expert training is open at any Tailoring trainer" and T.trainingLine("Tailoring", 100, 150) == nil)
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
   local pr2 = T.buildProfessions()
   local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
-  check("professions: a skill-up without a prof field still counts", fa and fa.skillups == 1, fa and fa.skillups)
-  local hist = T.buildSkillups()
-  check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
-  check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
-  check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  check("professions: a skill-up without a prof field still counts this session", fa and fa.session == 1, fa and fa.session)
+  ns.char().playedAtLevel = { [11] = 3600, [12] = 7200 }
+  L[#L + 1] = { s = ns.DB.active, kind = "LEVELUP", t = t0 + 700, text = "Ding!  Level 12" }
+  local lv = T.buildLevels(12, t0 + 800)
+  local l11; for _, r in ipairs(lv) do if r.level == 11 then l11 = r end end
+  check("levels: newest level first, the time at a level from the played stamps", lv[1].level == 12 and l11 and l11.at == 3600, lv[1] and lv[1].level)
   -- founder 2026-09-30: nothing opens or moves in combat, so the desktop never loses the flag mid-fight
   do
     local corner0 = ns.DB.settings.emitCorner
@@ -1227,7 +1233,7 @@ do
   local sw; for _, r in ipairs(rh) do if r.faction == "Stormwind" and r.change == "+250" then sw = r end end
   local sorted = true; for i = 2, #rh do if rh[i].t > rh[i - 1].t then sorted = false end end
   check("reputation history: gains and new standings, newest first", #rh >= 2 and sw ~= nil and sorted, #rh)
-  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 1 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
+  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 2 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
   ns.UI.Open("Character", "reputation"); M.tick()
   local rp = host("Character").paneByKey.reputation
   check("Reputation pane with its history builds and renders cleanly", rp and rp.built and rp.buildError == nil and rp.showError == nil, rp and (rp.buildError or rp.showError))
@@ -1247,7 +1253,7 @@ do
   check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.shownCards and gold.content.shownCards[1].value:GetText() ~= nil)
   ns.UI.Open("Home")
   ov.content.cards.cards[2]:GetScript("OnClick")(ov.content.cards.cards[2])
-  check("clicking the XP PER HOUR card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
+  check("clicking the XP PER HOUR card opens Character / Leveling", host("Character").ctl.active == "leveling" and host("Character").paneByKey.leveling.built)
   ns.UI.Open("Home", "sessions")
   local srows = T.sessionRows()
   check("Sessions pane lists the current session first", #srows >= 1 and srows[1].id == ns.DB.active, srows[1] and srows[1].id)
@@ -2158,12 +2164,9 @@ do
   check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.runViews(), function(r) return r.name == "Shadowfang Keep" end))
   check("#23 Hart: Combat / Deaths leaves out Undertaker's death", not has(T.collectDeaths(), function(d) return d.killer == "Undertaker Bane" end))
   local qRows = T.buildQuests()
-  check("#23 Hart: Character / Quests leaves out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
-  local _, repSum = T.buildReputation()
-  local repUps = repSum.ups
+  check("#23 Hart: Character / Leveling's quests leave out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
+  local repUps = #T.buildRepHistory()
   check("#23 Hart: reputation history leaves out Undertaker's gains", not has(T.buildRepHistory(), function(r) return r.faction == "Undercity" end))
-  local mineUps = #T.buildSkillups("Mining")
-  check("#23 Hart: profession history leaves out Undertaker's skill-ups", not has(T.buildSkillups("Mining"), function(r) return r.rank == 99 end))
   check("#23 Hart: the auction rows (Loot > Gold, Auction house) leave out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
   check("#23 Hart: Home / Sessions leaves out Undertaker's session", #T.sessionRows() > 0 and not has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end))
   check("#23 Hart: a fight's loot leaves out another character's pickups", #T.fightLoot(utF) == 0)
@@ -2186,10 +2189,9 @@ do
   local ds = T.collectDeaths()
   check("#23 Undertaker: Combat / Deaths shows only his death, linked to his fight", #ds == 1 and ds[1].killer == "Undertaker Bane" and ds[1].fight == utF, #ds)
   qRows = T.buildQuests()
-  check("#23 Undertaker: Character / Quests shows only his quests", #qRows == 2 and isUT(qRows[1].name) and isUT(qRows[2].name), #qRows)
-  local _, utRep = T.buildReputation()
+  check("#23 Undertaker: Character / Leveling's quests show only his turn-in", #qRows == 1 and isUT(qRows[1].name), #qRows)
   local rh = T.buildRepHistory()
-  check("#23 Undertaker: reputation shows only his gain and his new standing", utRep.ups == 1 and #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
+  check("#23 Undertaker: reputation shows only his gain and his new standing", #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
   check("#23 Undertaker: Loot / Auctions shows only his sale", #(ns.Market.buildAuctions()) == 1 and (ns.Market.buildAuctions())[1].item == "Undertaker Linen")
   local sr = T.sessionRows()
   check("#23 Undertaker: Home / Sessions shows only his session", #sr == 1 and sr[1].id == "ut-23", #sr)
@@ -2197,8 +2199,7 @@ do
 
   -- back on Hart: the same views as before; nothing stored was changed by the filtering
   asHart()
-  local _, repBack = T.buildReputation()
-  check("#23 back on Hart: his reputation and profession counts are unchanged", repBack.ups == repUps and #T.buildSkillups("Mining") == mineUps)
+  check("#23 back on Hart: his reputation history is unchanged", #T.buildRepHistory() == repUps)
   check("#23 filtering changes nothing stored: every row is still in the save", #L == nL0 + 8 and #Fz == nF0 + 1 and #Lg == nLg0 + 2 and #R == nR0 + 1 and ns.DB.sessions["ut-23"] ~= nil)
   -- no GUID yet: there is nothing to tell the characters apart by, so every row shows
   _G.UnitGUID = function() return nil end

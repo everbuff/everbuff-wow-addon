@@ -3757,108 +3757,106 @@ local FILTERS = { { "all", "All characters" }, { "realm", "This realm" }, { "fac
 Gold.FILTERS = FILTERS
 local labelOf = GP.labelOf
 
--- ── Settings > Gold (0.9.45, everbuff-wow-addon #43) ────────────────────────────────────────────────────────────
--- Built into the Gold sub-tab of Settings by Emitter (ns.BuildGoldSettings). The main page holds the eight
--- controls most players touch; the rest sits behind "More". A choice of several values is a button that opens the
--- addon's own list (Gold.ownMenu).
+-- ── Settings > Gold display (0.9.45, everbuff-wow-addon #43; restyled for docs/UX_OVERHAUL.md 4.12) ──────────────
+-- Built into the Gold display sub-tab of Settings by Sync.lua (ns.BuildSettings). The main page holds the controls
+-- most players touch, as setting rows; the rest sits behind "More". A choice of several values is a button that
+-- opens the addon's own list (Gold.ownMenu). Same settings and the same writes as before the restyle.
 function ns.BuildGoldSettings(pane)
-  local X1, X2 = 14, 340
+  local K = UI.S
+  local SV = ns.SettingsView
   local main, more = CreateFrame("Frame", nil, pane), CreateFrame("Frame", nil, pane)
   main:SetAllPoints(pane); more:SetAllPoints(pane); more:Hide()
   pane.main, pane.more = main, more
+  local mainPg, morePg = UI.Page(main), UI.Page(more)
+  pane.mainPg, pane.morePg = mainPg, morePg
   local checks, loading = {}, false
   local function refresh() if pane.refresh then pane.refresh() end end
-  local function header(parent, text, x, y)
-    local h = UI.FS(parent, "GameFontNormal", C.gold); h:SetPoint("TOPLEFT", x, y); h:SetText(text); return h
-  end
-  local function label(parent, text, x, y)
-    local l = UI.FS(parent, "GameFontHighlightSmall", C.dim); l:SetPoint("TOPLEFT", x, y); l:SetJustifyH("LEFT"); l:SetText(text); return l
-  end
-  local function checkbox(parent, text, x, y, get, set)
-    local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate"); cb:SetPoint("TOPLEFT", x, y); cb:SetSize(22, 22)
-    local lbl = UI.FS(parent, "GameFontHighlightSmall"); lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0); lbl:SetJustifyH("LEFT"); lbl:SetText(text)
-    cb.label, cb.get = lbl, get
-    cb:SetScript("OnClick", function(self) set(self:GetChecked() and true or false); refresh() end)
+  local function row(pg, text, desc) return UI.SettingRow(pg.col, text, desc) end
+  local function checkbox(pg, text, get, set, desc)
+    local r = row(pg, text, desc)
+    local cb = UI.Checkbox(r, { onChange = function(on) set(on and true or false); refresh() end })
+    cb.label, cb.get, cb.row = r.label, get, r
+    r:SetControl(cb)
     checks[#checks + 1] = cb
     return cb
   end
   -- a button that opens a list of choices { key, label }; `get` names the current key, `set` takes the picked one
-  local function picker(parent, x, y, choices, get, set)
-    local b
-    b = UI.Button(parent, "", 44, ROW_H, function(bb)
+  local function picker(pg, text, choices, get, set)
+    local r = row(pg, text)
+    local b = UI.Box(r, nil, "lineStrong", 1, "Button")
+    b:SetHeight(UI.H.CONTROL)
+    b.text = UI.Text(b, "BODY_STRONG", "fgSubtle"); b.text:SetPoint("LEFT", b, "LEFT", K.S3, 0)
+    b.chev = UI.Glyph(b, "chevronDown", 8, "fgSubtle"); b.chev:SetPoint("RIGHT", b, "RIGHT", -K.S2, 0)
+    b:SetScript("OnClick", function(bb)
+      UI.Click()
       local items = {}
       for _, ch in ipairs(choices) do
         items[#items + 1] = { kind = "radio", text = ch[2], checked = function() return get() == ch[1] end, pick = function() set(ch[1]); refresh() end }
       end
       Gold.ownMenu(bb, items)
     end)
-    b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-    b.choices, b.get = choices, get
+    b:SetScript("OnEnter", function(s) UI.BoxColors(s, nil, "lineControl") end)
+    b:SetScript("OnLeave", function(s) UI.BoxColors(s, nil, "lineStrong") end)
+    b.choices, b.get, b.row = choices, get, r
+    function b.fit() b:SetWidth(UI.TextWidth("BODY_STRONG", b.text:GetText()) + 44); r:SetControl(b) end
+    r:SetControl(b)
     return b
   end
-  local function slider(parent, name, text, x, y, lo, hi, step, get, set, fmt)
-    local lbl = label(parent, text, x + 4, y)
-    local s = CreateFrame("Slider", name, parent, "OptionsSliderTemplate")
-    s:SetOrientation("HORIZONTAL"); s:SetWidth(240); s:SetHeight(16); s:SetPoint("TOPLEFT", x + 4, y - 18)
-    s:SetMinMaxValues(lo, hi); s:SetValueStep(step); s:SetObeyStepOnDrag(true)
-    for _, part in ipairs({ "Low", "High", "Text" }) do local fs = _G[name .. part]; if fs and fs.SetText then fs:SetText("") end end
-    s.label, s.caption, s.get, s.fmt = lbl, text, get, fmt
-    s:SetScript("OnValueChanged", function(_, v)
-      if loading then return end
-      set(v)
-      lbl:SetText(text .. ": " .. fmt(get()))
-    end)
+  local function slider(pg, text, lo, hi, step, get, set, fmt)
+    local r = row(pg, text)
+    local s = UI.Slider(r, { min = lo, max = hi, step = step, value = get(), fmt = fmt, onChange = function(v) if not loading then set(v) end end })
+    s.label, s.caption, s.get, s.fmt, s.row = r.label, text, get, fmt, r
+    r:SetControl(s)
     return s
   end
+  local function button(pg, text, btnText, style, fn, desc)
+    local r = row(pg, text, desc)
+    local b = UI.KitButton(r, btnText, style, fn)
+    b.row = r
+    r:SetControl(b)
+    return b
+  end
+  local function section(pg, label) return { head = UI.Section(pg.col, label), items = {} } end
 
   -- ── the main page ──
-  header(main, "Gold on screen", X1, -6)
-  pane.cbTips = checkbox(main, "Show gold in tooltips", X1, -28,
-    function() local cfg = Gold.cfg(); return not (cfg and cfg.tips == false) end,
-    function(v) Gold.cfg(true).tips = v end)
-  pane.cbPill = checkbox(main, "Gold pill on screen", X1, -52,
+  local onScreen = section(mainPg, "Gold on screen")
+  pane.cbPill = checkbox(mainPg, "Show your gold on screen",
     function() return (Gold.pillCfg() or {}).on == true end,
     function(v) Gold.pillOn(v) end)
-  label(main, "Pill shows", X1 + 4, -84)
-  pane.pick1 = picker(main, X1 + 116, -80, Gold.GLANCE, function() return Gold.pillMetrics()[1] end, function(k) Gold.pillSet(1, k) end)
-  label(main, "Second value", X1 + 4, -110)
+  pane.cbTips = checkbox(mainPg, "Show gold in tooltips",
+    function() local cfg = Gold.cfg(); return not (cfg and cfg.tips == false) end,
+    function(v) Gold.cfg(true).tips = v end)
+  pane.pick1 = picker(mainPg, "On screen it shows", Gold.GLANCE, function() return Gold.pillMetrics()[1] end, function(k) Gold.pillSet(1, k) end)
   local second = { { "none", "None" } }
   for _, g in ipairs(Gold.GLANCE) do second[#second + 1] = g end
-  pane.pick2 = picker(main, X1 + 116, -106, second, function() return Gold.pillMetrics()[2] or "none" end, function(k) Gold.pillSet(2, k ~= "none" and k or nil) end)
-  label(main, "Per hour shows", X1 + 4, -136)
-  pane.rateBtns = {}
-  local prev
-  for _, m in ipairs(Gold.RATE_MODES) do
-    local b = UI.Button(main, m[2], 44, ROW_H, function() Gold.cfg(true).rateMode = m[1]; Gold.fire(); refresh() end)
-    b.mode = m[1]
-    UI.FitButton(b, 44)
-    if prev then b:SetPoint("LEFT", prev, "RIGHT", SP.XS, 0) else b:SetPoint("TOPLEFT", main, "TOPLEFT", X1 + 116, -132) end
-    pane.rateBtns[#pane.rateBtns + 1] = b; prev = b
-  end
-  pane.rateNote = label(main, "", X1 + 4, -158)
-  pane.rateNote:SetWidth(310)
-  if pane.rateNote.SetWordWrap then pane.rateNote:SetWordWrap(true) end
-  label(main, "Show gold from", X1 + 4, -200)
-  pane.pickFilter = picker(main, X1 + 116, -196, FILTERS, function() local f = (Gold.cfg() or {}).filter; return labelOf(FILTERS, f) and f or "all" end,
+  pane.pick2 = picker(mainPg, "Second value", second, function() return Gold.pillMetrics()[2] or "none" end, function(k) Gold.pillSet(2, k ~= "none" and k or nil) end)
+  local rateRow = row(mainPg, "Per hour", " ")
+  pane.rateSeg = UI.Segmented(rateRow, Gold.RATE_MODES, { onPick = function(k) Gold.cfg(true).rateMode = k; Gold.fire(); refresh() end })
+  rateRow:SetControl(pane.rateSeg)
+  pane.rateBtns = pane.rateSeg.segs
+  for i, b in ipairs(pane.rateBtns) do b.mode = Gold.RATE_MODES[i][1] end
+  pane.rateNote = rateRow.desc
+  pane.pickFilter = picker(mainPg, "Show gold from", FILTERS, function() local f = (Gold.cfg() or {}).filter; return labelOf(FILTERS, f) and f or "all" end,
     function(k) Gold.cfg(true).filter = k; Gold.fire() end)
-  pane.cbIcons = checkbox(main, "Coin icons", X1, -222,
+  pane.cbIcons = checkbox(mainPg, "Coin icons",
     function() return (Gold.cfg() or {}).icons == true end, function(v) Gold.cfg(true).icons = v; Gold.fire() end)
-  pane.cbCompact = checkbox(main, "Compact numbers", X1, -246,
+  pane.cbCompact = checkbox(mainPg, "Compact numbers",
     function() return (Gold.cfg() or {}).compact == true end, function(v) Gold.cfg(true).compact = v; Gold.fire() end)
-  pane.barText = label(main, "", X1 + 4, -278)
-  pane.barText:SetWidth(310)
-  if pane.barText.SetWordWrap then pane.barText:SetWordWrap(true) end
-  pane.moreBtn = UI.Button(main, "More", 44, ROW_H, function() main:Hide(); more:Show(); refresh() end)
-  pane.moreBtn:SetPoint("TOPLEFT", main, "TOPLEFT", X1, -316); UI.FitButton(pane.moreBtn, 44)
+  local barRow = row(mainPg, "")
+  barRow.label:SetFontObject(UI.F.META); barRow.label:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3])
+  pane.barText = barRow.label
+  pane.moreBtn = button(mainPg, "Pill size, tooltip rows and resets", "More \226\128\186", "ghost", function() main:Hide(); more:Show(); refresh() end)
+  onScreen.items = { pane.cbPill.row, pane.cbTips.row, pane.pick1.row, pane.pick2.row, rateRow, pane.pickFilter.row, pane.cbIcons.row, pane.cbCompact.row, barRow, pane.moreBtn.row }
   -- hidden characters, each with "Show again"
-  header(main, "Hidden characters", X2, -6)
-  pane.hiddenNone = label(main, "None. Hide a character in Loot, Gold, Characters.", X2 + 4, -30)
+  local hiddenSec = section(mainPg, "Hidden characters")
+  local noneNote = SV.note(mainPg.col, "None. Hide a character in Loot, Gold, Characters.")
+  pane.hiddenNone = noneNote.text
+  pane.hiddenNoneRow = noneNote
+  hiddenSec.items[1] = noneNote
   pane.hiddenRows = {}
   for i = 1, 6 do
-    local y = -30 - (i - 1) * (ROW_H + SP.XS)
-    local name = UI.FS(main, "GameFontHighlightSmall"); name:SetPoint("TOPLEFT", X2 + 4, y - 3); name:SetWidth(170); name:SetJustifyH("LEFT")
-    if name.SetWordWrap then name:SetWordWrap(false) end
-    local b = UI.Button(main, "Show again", 44, ROW_H, function(bb)
+    local b
+    b = button(mainPg, "", "Show again", "ghost", function(bb)
       local cfg = Gold.cfg(true)
       if type(cfg.hidden) == "table" and bb.guid then
         cfg.hidden[bb.guid] = nil
@@ -3866,76 +3864,80 @@ function ns.BuildGoldSettings(pane)
       end
       Gold.fire(); refresh()
     end)
-    b:SetPoint("TOPLEFT", main, "TOPLEFT", X2 + 184, y); UI.FitButton(b, 44)
-    pane.hiddenRows[i] = { name = name, btn = b }
+    pane.hiddenRows[i] = { name = b.row.label, btn = b, row = b.row }
+    hiddenSec.items[#hiddenSec.items + 1] = b.row
   end
-  pane.hiddenMore = label(main, "", X2 + 4, -30 - 6 * (ROW_H + SP.XS) - 3)
+  local moreNote = SV.note(mainPg.col, "")
+  pane.hiddenMore = moreNote.text
+  pane.hiddenMoreRow = moreNote
+  hiddenSec.items[#hiddenSec.items + 1] = moreNote
+  pane.mainSections = { onScreen, hiddenSec }
 
   -- ── behind "More" ──
-  header(more, "More gold settings", X1, -6)
-  pane.backBtn = UI.Button(more, "Back", 44, ROW_H, function() more:Hide(); main:Show(); refresh() end)
-  pane.backBtn:SetPoint("TOPLEFT", more, "TOPLEFT", X1, -28); UI.FitButton(pane.backBtn, 44)
-  pane.cbLock = checkbox(more, "Lock the pill", X1, -56,
+  local back = { head = UI.Section(morePg.col, "More gold settings"), items = {} }
+  pane.backBtn = UI.KitButton(back.head.right, "\226\128\185 Gold display", "ghost", function() more:Hide(); main:Show(); refresh() end)
+  pane.backBtn:SetPoint("TOPRIGHT", back.head.right, "TOPRIGHT", -K.S3, 0)
+  pane.cbLock = checkbox(morePg, "Lock the pill",
     function() return (Gold.pillCfg() or {}).locked == true end, function(v) Gold.pillOpt("locked", v) end)
   local function pct(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
-  pane.slScale = slider(more, "EverbuffGoldPillScaleSlider", "Pill text size", X1, -88, Gold.PILL_SCALE[1], Gold.PILL_SCALE[2], 0.05,
+  pane.slScale = slider(morePg, "Pill text size", Gold.PILL_SCALE[1], Gold.PILL_SCALE[2], 0.05,
     function() return tonumber((Gold.pillCfg() or {}).scale) or 1 end,
     function(v) if not Gold.inCombat() then Gold.pillOpt("scale", v) end end, pct)
-  pane.slAlpha = slider(more, "EverbuffGoldPillAlphaSlider", "Pill opacity", X1, -136, Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2], 0.05,
+  pane.slAlpha = slider(morePg, "Pill opacity", Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2], 0.05,
     function() return tonumber((Gold.pillCfg() or {}).alpha) or 1 end,
     function(v) if not Gold.inCombat() then Gold.pillOpt("alpha", v) end end, pct)
-  pane.slRows = slider(more, "EverbuffGoldTipRowsSlider", "Characters in tooltips", X1, -184, 5, 30, 1,
+  back.items = { pane.cbLock.row, pane.slScale.row, pane.slAlpha.row }
+  local tipsSec = section(morePg, "Tooltips")
+  pane.slRows = slider(morePg, "Characters in tooltips", 5, 30, 1,
     function() return math.max(5, math.min(30, tonumber((Gold.tipCfg() or {}).limit) or Gold.TIP_ROWS)) end,
     function(v) Gold.tipCfg(true).limit = math.max(5, math.min(30, math.floor((tonumber(v) or Gold.TIP_ROWS) + 0.5))) end,
     function(v) return tostring(v) end)
-  pane.cbWeek = checkbox(more, "This week in tooltips", X1, -232,
+  pane.cbWeek = checkbox(morePg, "This week in tooltips",
     function() return (Gold.tipCfg() or {}).week == true end, function(v) Gold.tipCfg(true).week = v end)
-  pane.cbMonth = checkbox(more, "This month in tooltips", X1, -256,
+  pane.cbMonth = checkbox(morePg, "This month in tooltips",
     function() return (Gold.tipCfg() or {}).month == true end, function(v) Gold.tipCfg(true).month = v end)
-  header(more, "Reset", X2, -6)
-  pane.resetPos = UI.Button(more, "Reset pill position", 44, ROW_H, function() if not (ns.blockedInCombat and ns.blockedInCombat()) then Gold.pillOpt("pos") end end)
-  pane.resetPos:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30); UI.FitButton(pane.resetPos, 44)
-  pane.resetRate = UI.Button(more, "Reset per hour", 44, ROW_H, function() Gold.resetRate(); refresh() end)
-  pane.resetRate:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30 - (ROW_H + SP.S)); UI.FitButton(pane.resetRate, 44)
+  tipsSec.items = { pane.slRows.row, pane.cbWeek.row, pane.cbMonth.row }
+  local resetSec = section(morePg, "Reset")
+  pane.resetPos = button(morePg, "Pill position", "Reset", "ghost", function() if not (ns.blockedInCombat and ns.blockedInCombat()) then Gold.pillOpt("pos") end end)
+  pane.resetRate = button(morePg, "Per hour", "Reset", "ghost", function() Gold.resetRate(); refresh() end)
   -- two clicks: the first names what goes, the second within 3 s deletes it
   local RESET, CONFIRM = "Reset gold history", "Confirm: delete this character's day history"
-  pane.resetHist = UI.Button(more, RESET, 44, ROW_H)
-  pane.resetHist:SetPoint("TOPLEFT", more, "TOPLEFT", X2, -30 - 2 * (ROW_H + SP.S)); UI.FitButton(pane.resetHist, 44)
-  pane.resetHist:SetScript("OnClick", function(bb)
-    local function rest()
-      bb.armed = false
-      bb.text:SetText(RESET); bb.text:SetTextColor(C.ink[1], C.ink[2], C.ink[3]); UI.FitButton(bb, 44)
-    end
+  pane.resetHist = button(morePg, "Gold history", RESET, "danger", nil, "Cannot be undone.")
+  local function rest(bb) bb.armed = false; bb:SetLabel(RESET); bb.row:SetControl(bb) end
+  pane.resetHist.ebOnClick = function(bb)
     if not bb.armed then
       bb.armed = true
-      bb.text:SetText(CONFIRM); bb.text:SetTextColor(C.red[1], C.red[2], C.red[3]); UI.FitButton(bb, 44)
-      if C_Timer and type(C_Timer.After) == "function" then C_Timer.After(3, function() if bb.armed then rest() end end) end
+      bb:SetLabel(CONFIRM); bb.row:SetControl(bb)
+      if C_Timer and type(C_Timer.After) == "function" then C_Timer.After(3, function() if bb.armed then rest(bb) end end) end
     else
-      rest()
+      rest(bb)
       Gold.resetHistory()
       refresh()
     end
-  end)
-  pane.resetNote = label(more, "Reset gold history deletes this character's day rows, its records, its per hour window and its farm timer. The balance, the lifetime totals, the places and the dungeon runs stay, and no other character is touched.",
-    X2 + 4, -30 - 3 * (ROW_H + SP.S) - SP.XS)
-  pane.resetNote:SetWidth(310)
-  if pane.resetNote.SetWordWrap then pane.resetNote:SetWordWrap(true) end
+  end
+  local resetNote = SV.note(morePg.col, "Reset gold history deletes this character's day rows, its records, its per hour window and its farm timer. The balance, the lifetime totals, the places and the dungeon runs stay, and no other character is touched.")
+  pane.resetNote = resetNote.text
+  resetSec.items = { pane.resetPos.row, pane.resetRate.row, pane.resetHist.row, resetNote }
+  pane.moreSections = { back, tipsSec, resetSec }
+  local function place()
+    SV.place(mainPg, pane.mainSections)
+    SV.place(morePg, pane.moreSections)
+  end
+  pane.place = place
 
   function pane.refresh()
     loading = true
     for _, b in ipairs({ pane.pick1, pane.pick2, pane.pickFilter }) do Gold.menuClose(b) end   -- no list left over a page that changed
     for _, cb in ipairs(checks) do cb:SetChecked(cb.get() and true or false) end
     for _, b in ipairs({ pane.pick1, pane.pick2, pane.pickFilter }) do
-      b.text:SetText(labelOf(b.choices, b.get()) or b.choices[1][2]); UI.FitButton(b, 44)
+      b.text:SetText(labelOf(b.choices, b.get()) or b.choices[1][2]); b.fit()
     end
     local mode = Gold.rateMode()
-    for _, b in ipairs(pane.rateBtns) do UI.SetButtonSelected(b, b.mode == mode) end
+    pane.rateSeg:SetValue(mode)
+    for _, b in ipairs(pane.rateBtns) do b.ebSelected = (b.mode == mode) or nil end
     pane.rateNote:SetText(Gold.RATE_NOTE[mode])
     pane.barText:SetText(Gold._broker and "Bar text: detected" or "Bar text needs a bar addon such as Titan Panel or ElvUI")
-    for _, s in ipairs({ pane.slScale, pane.slAlpha, pane.slRows }) do
-      s:SetValue(s.get())
-      s.label:SetText(s.caption .. ": " .. s.fmt(s.get()))
-    end
+    for _, s in ipairs({ pane.slScale, pane.slAlpha, pane.slRows }) do s:SetValue(s.get(), true) end
     -- the hidden characters by name, the first six; the rest as a count
     local cfg = Gold.cfg()
     local hidden = {}
@@ -3946,16 +3948,20 @@ function ns.BuildGoldSettings(pane)
       hidden[#hidden + 1] = { guid = guid, name = nm }
     end
     table.sort(hidden, function(a, b) if a.name ~= b.name then return a.name < b.name end return tostring(a.guid) < tostring(b.guid) end)
-    for i, row in ipairs(pane.hiddenRows) do
+    for i, r in ipairs(pane.hiddenRows) do
       local h = hidden[i]
-      if h then row.name:SetText(h.name); row.name:Show(); row.btn.guid = h.guid; row.btn:Show()
-      else row.name:SetText(""); row.name:Hide(); row.btn:Hide() end
+      if h then r.name:SetText(h.name); r.name:Show(); r.btn.guid = h.guid; r.btn:Show(); r.row:Show(); pcall(r.row.layout)
+      else r.name:SetText(""); r.name:Hide(); r.btn:Hide(); r.row:Hide() end
     end
-    if #hidden == 0 then pane.hiddenNone:Show() else pane.hiddenNone:Hide() end
-    pane.hiddenMore:SetText(#hidden > #pane.hiddenRows and ("and %d more"):format(#hidden - #pane.hiddenRows) or "")
+    if #hidden == 0 then pane.hiddenNone:Show(); pane.hiddenNoneRow:Show() else pane.hiddenNone:Hide(); pane.hiddenNoneRow:Hide() end
+    local extra = #hidden > #pane.hiddenRows and ("and %d more"):format(#hidden - #pane.hiddenRows) or ""
+    pane.hiddenMoreRow:Set(extra)
+    if extra == "" then pane.hiddenMoreRow:Hide() else pane.hiddenMoreRow:Show() end
+    place()
     loading = false
   end
   pane:HookScript("OnShow", function() pcall(pane.refresh) end)
+  pane:HookScript("OnSizeChanged", function() pcall(place) end)
   -- (a hidden parent hides its children without their own OnHide on some clients: the pane and its pages say so too)
   for _, fr in ipairs({ pane, main, more }) do
     fr:HookScript("OnHide", function() for _, b in ipairs({ pane.pick1, pane.pick2, pane.pickFilter }) do Gold.menuClose(b) end end)

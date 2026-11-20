@@ -1,5 +1,5 @@
--- Pane tests: every other list on the layout framework (plan step 8). Home / Overview, Timeline and Sessions; Character /
--- Quests, Reputation and Professions; Combat / Fights (list, replay and a member's view) and
+-- Pane tests: every other list on the layout framework (plan step 8). Home / Overview, Timeline and Sessions (Character
+-- has its own file, tests/panes/character.lua); Combat / Fights (list, replay and a member's view) and
 -- Deaths. At 900x580 and 1600x1000 on normal and long data, for every UI.Table a pane shows: the rows span the list,
 -- the list is as tall as its rows, header x == cell x, numbers right-aligned (headers too) and never shortened, every
 -- column ends inside the list; for every region of the pane: its anchor points agree (a LEFT and a RIGHT point on two
@@ -128,10 +128,9 @@ return function(P)
 
   local PAGES = {
     { "home", "overview" }, { "home", "timeline" }, { "home", "sessions" },
-    { "character", "quests" }, { "character", "reputation" }, { "character", "professions" },
     { "combat", "fights" }, { "combat", "deaths" },               -- (Dungeons: tests/panes/dungeons.lua)
   }
-  local HOST = { home = "Home", character = "Character", combat = "Combat" }
+  local HOST = { home = "Home", combat = "Combat" }
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     for _, data in ipairs({ "normal", "long" }) do
       for _, pg in ipairs(PAGES) do
@@ -334,38 +333,6 @@ return function(P)
     if not r then return end
     r:GetScript("OnClick")(r, "LeftButton")
     check("Deaths: clicking a death opens its fight", host("Home").ctl.active == "fights")
-  end
-
-  -- ── Character / Reputation and Professions: the first list is as tall as its rows, the history right below it
-  for _, pg in ipairs({ { "reputation", "faction" }, { "professions", "prof" } }) do
-    local c = P.open("character", pg[1], 900, 580)
-    local tbls = tablesIn(c)
-    check("Character/" .. pg[1] .. ": two lists", #tbls == 2, #tbls)
-    if #tbls == 2 then
-      local top, hist = tbls[1], tbls[2]
-      if P.box(top.sf).t > P.box(hist.sf).t then top, hist = hist, top end
-      local rows = shownRows(top)
-      local tb = P.box(top.sf)
-      eq("Character/" .. pg[1] .. ": the first list shows its rows without scrolling", math.floor(tb.h + 0.5), math.max(1, #rows) * UI.ROW_H)
-      check("Character/" .. pg[1] .. ": the history starts L below the first list", P.box(hist.header).t >= tb.t + tb.h + UI.SP.L - 0.5 or hist.header.shown == false)
-      local r = rows[1]
-      if r then
-        r:GetScript("OnClick")(r, "LeftButton")
-        local key = r.faction or r.prof
-        local function rowOf() for _, x in ipairs(shownRows(top)) do if (x.faction or x.prof) == key then return x end end end
-        local sel = rowOf()
-        check("Character/" .. pg[1] .. ": a clicked row stays selected and filters the history", sel.sel and sel.sel.shown ~= false and sel.sel._layer == "BACKGROUND")
-        local others = 0
-        for _, x in ipairs(shownRows(top)) do if x ~= sel and x.sel and x.sel.shown ~= false then others = others + 1 end end
-        check("Character/" .. pg[1] .. ": only the clicked row is marked", others == 0, others)
-      end
-      if pg[1] == "professions" and r then
-        local cw = top.cols.bar
-        check("Professions: the skill bar is drawn inside its column", r.bar and r.bar._w and r.bar._w <= cw.w + 0.5 and r.bar._pts[1].rel == r.c.bar)
-        check("Professions: a dim track spans the bar column under the bar", r.barTrack and near(r.barTrack._w, cw.w) and r.barTrack._layer == "BORDER" and r.barTrack._pts[1].rel == r.c.bar)
-        check("Professions: the skill value and its header are right-aligned (a number)", r.c.rank._justify == "RIGHT" and top.head.rank.fs._justify == "RIGHT")
-      end
-    end
   end
 
   -- ── the framework pieces this step added

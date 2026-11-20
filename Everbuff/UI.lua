@@ -1803,7 +1803,8 @@ end
 
 -- ── segmented control (h 24): exclusive choices that share one width (the longest label plus 24, at least 64),
 -- one 1 px lineStrong outline around the group and 1 px dividers. The selected segment has the accentTint fill and
--- its label in accentFg; the others fgMuted, fg on hover. items = { { key, label, tip } }; opts.onPick(key).
+-- its label in accentFg; the others fgMuted, fg on hover. items = { { key, label, tip } }; opts.onPick(key);
+-- opts.segW fixes the segment width (Settings > Position: 4 x 100, every label inside it with S1 each side).
 -- f:SetValue(key) selects (nil: none selected, as when a "More" overflow holds the pick). Anchor it by TOPRIGHT.
 function UI.Segmented(parent, items, opts)
   opts = opts or {}
@@ -1812,6 +1813,10 @@ function UI.Segmented(parent, items, opts)
   f.segs, f.items = {}, items
   local segW = 64
   for _, it in ipairs(items) do segW = math.max(segW, UI.TextWidth("BODY_STRONG", it[2]) + S.S5) end
+  if opts.segW then
+    segW = opts.segW
+    for _, it in ipairs(items) do segW = math.max(segW, math.ceil(UI.TextWidth("BODY_STRONG", it[2])) + S.S2) end
+  end
   f.segW = segW
   f:SetWidth(#items * segW)
   for i, it in ipairs(items) do
@@ -2361,6 +2366,185 @@ function UI.Detail(pane, opts)
   return d
 end
 
+-- ── a page: one scroll (UI.ScrollChild, slim) holding a column at the pane's left edge (BOX_L). pg.place(list, w)
+-- stacks the list top to bottom: each entry is { frame, height, gap = px after it, x = px from the left, w = width }
+-- (a hidden frame takes no room); the column and the scroll take the total height.
+function UI.Page(content)
+  local pg = {}
+  local sf, child = UI.ScrollChild(content, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+  local col = CreateFrame("Frame", nil, child)
+  col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
+  pg.sf, pg.child, pg.col = sf, child, col
+  function pg.place(list, w)
+    w = w or G.mainW(G.winW())
+    col:SetWidth(w)
+    local y, ys = 0, {}
+    for _, e in ipairs(list) do
+      local f = e[1]
+      if f and f:IsShown() then
+        local ex = e.x or 0
+        local top = e.y or y
+        f:ClearAllPoints(); f:SetPoint("TOPLEFT", col, "TOPLEFT", ex, -top); f:SetWidth(e.w or (w - ex))
+        if e[2] then f:SetHeight(e[2]) end
+        ys[f] = top
+        local bottom = top + (e[2] or tonumber(f:GetHeight()) or 0) + (e.gap or 0)
+        if e.y then y = math.max(y, bottom) else y = bottom end
+      end
+    end
+    y = y + S.S4
+    col:SetHeight(y)
+    sf:SetContentHeight(y)
+    pg.height, pg.ys = y, ys
+    return y
+  end
+  return pg
+end
+
+-- ── a progress bar (h 6): a `sunken` track and an `accent` fill, a 4 px sliver once there is any progress.
+-- b:SetFrac(0..1 or nil): nil hides the bar.
+function UI.Bar(parent, w)
+  local b = CreateFrame("Frame", nil, parent)
+  b:SetSize(w or 120, 6)
+  b.track = b:CreateTexture(nil, "BORDER"); b.track:SetAllPoints(b); b.track:SetColorTexture(unpackc(C.sunken))
+  b.fill = b:CreateTexture(nil, "ARTWORK"); b.fill:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.fill:SetHeight(6)
+  b.fill:SetColorTexture(unpackc(C.accent)); b.fill:Hide()
+  function b.SetFrac(_, frac)
+    b.frac = frac
+    if not frac then b:Hide(); return b end
+    b:Show()
+    local bw = tonumber(b:GetWidth()) or (w or 120)
+    local f = math.max(0, math.min(1, frac))
+    local fw = f > 0 and math.max(4, math.floor(bw * f)) or 0
+    if fw > 0 then b.fill:SetWidth(math.min(bw, fw)); b.fill:Show() else b.fill:Hide() end
+    return b
+  end
+  return b
+end
+
+-- ── settings controls (4.12), drawn from WHITE8x8 and text only (no Blizzard templates).
+-- Checkbox: 16 x 16, a 1 px lineControl edge; checked, an accent fill with a check glyph in onAccent.
+-- cb:SetChecked(on), cb:GetChecked(); opts.onChange(on) hears a click. cb.checked mirrors the state (tests).
+function UI.Checkbox(parent, opts)
+  opts = opts or {}
+  local cb = UI.Box(parent, nil, "lineControl", 1, "Button")
+  cb:SetSize(16, 16)
+  cb.glyph = UI.Glyph(cb, "check", 10, "onAccent"); cb.glyph:SetPoint("CENTER", cb, "CENTER", 0, 0); cb.glyph:Hide()
+  cb.ebCheckbox = true
+  function cb.SetChecked(_, on)
+    cb.checked = on and true or false
+    if cb.checked then UI.BoxColors(cb, "accent", "accent"); cb.glyph:Show() else UI.BoxColors(cb, nil, "lineControl"); cb.glyph:Hide() end
+  end
+  function cb.GetChecked() return cb.checked end
+  cb:SetScript("OnClick", function(s)
+    UI.Click()
+    s:SetChecked(not s.checked)
+    if opts.onChange then opts.onChange(s.checked) end
+  end)
+  cb:SetScript("OnEnter", function(s) if not s.checked then UI.BoxColors(s, "hover", "fgMuted") end end)
+  cb:SetScript("OnLeave", function(s) s:SetChecked(s.checked) end)
+  cb:SetChecked(opts.checked)
+  return cb
+end
+-- Slider: a 200 x 4 sunken track with an accent fill, a 12 x 12 fg thumb, the value (BODY_STRONG, 40 wide) right of
+-- the track. opts = { min, max, step, value, fmt(v) -> text, onChange(v) }. s:SetValue(v) moves it and tells
+-- onChange; a click or a drag on the track sets it; the wheel steps it.
+UI.SLIDER_W = 200
+function UI.Slider(parent, opts)
+  opts = opts or {}
+  local lo, hi, step = opts.min or 0, opts.max or 1, opts.step or 0.05
+  local s = CreateFrame("Button", nil, parent)
+  s:SetSize(UI.SLIDER_W + S.S2 + 40, 16)
+  s.track = s:CreateTexture(nil, "BORDER"); s.track:SetPoint("LEFT", s, "LEFT", 0, 0); s.track:SetSize(UI.SLIDER_W, 4)
+  s.track:SetColorTexture(unpackc(C.sunken))
+  s.fill = s:CreateTexture(nil, "ARTWORK"); s.fill:SetPoint("LEFT", s, "LEFT", 0, 0); s.fill:SetHeight(4); s.fill:SetColorTexture(unpackc(C.accent))
+  s.thumb = s:CreateTexture(nil, "OVERLAY"); s.thumb:SetSize(12, 12); s.thumb:SetColorTexture(unpackc(C.fg))
+  s.valueText = UI.Text(s, "BODY_STRONG", "fg", { justify = "RIGHT" }); s.valueText:SetPoint("RIGHT", s, "RIGHT", 0, 0); s.valueText:SetWidth(40)
+  s.ebSlider = true
+  local function snap(v)
+    v = math.max(lo, math.min(hi, tonumber(v) or lo))
+    return math.floor((v - lo) / step + 0.5) * step + lo
+  end
+  local function draw()
+    local f = hi > lo and (s.value - lo) / (hi - lo) or 0
+    local x = math.floor(UI.SLIDER_W * f + 0.5)
+    s.fill:SetWidth(math.max(1, x)); if x > 0 then s.fill:Show() else s.fill:Hide() end
+    s.thumb:ClearAllPoints(); s.thumb:SetPoint("CENTER", s, "LEFT", math.max(6, math.min(UI.SLIDER_W - 6, x)), 0)
+    s.valueText:SetText(opts.fmt and opts.fmt(s.value) or tostring(s.value))
+  end
+  function s.SetValue(_, v, quiet)
+    local nv = snap(v)
+    local changed = nv ~= s.value
+    s.value = nv
+    draw()
+    if changed and not quiet and opts.onChange then opts.onChange(nv) end
+  end
+  function s.GetValue() return s.value end
+  local function fromCursor()
+    local ok, x = pcall(GetCursorPosition)
+    if not ok or type(x) ~= "number" then return end
+    local sc = (s.GetEffectiveScale and s:GetEffectiveScale()) or 1
+    local l = s.GetLeft and s:GetLeft()
+    if type(l) ~= "number" or not sc or sc == 0 then return end
+    s:SetValue(lo + (hi - lo) * math.max(0, math.min(1, (x / sc - l) / UI.SLIDER_W)))
+  end
+  s:SetScript("OnMouseDown", function() s.dragging = true; pcall(fromCursor) end)
+  s:SetScript("OnMouseUp", function() s.dragging = nil end)
+  s:SetScript("OnUpdate", function() if s.dragging then pcall(fromCursor) end end)
+  if s.EnableMouseWheel then s:EnableMouseWheel(true) end
+  s:SetScript("OnMouseWheel", function(_, d) s:SetValue(s.value + (tonumber(d) or 0) * step) end)
+  s:SetScript("OnEnter", function() s.thumb:SetColorTexture(unpackc(C.accentFg)) end)
+  s:SetScript("OnLeave", function() s.thumb:SetColorTexture(unpackc(C.fg)) end)
+  s.value = snap(opts.value or lo)
+  draw()
+  return s
+end
+-- Setting row (h 32, 48 with a description): ROW_TITLE label at x 12 (vertically centred; y 8 when described), a
+-- META description at y 28 (at most 420 wide, under the control), the control right-aligned at w - 12.
+-- r:SetControl(frame).
+function UI.SettingRow(parent, label, desc)
+  local r = CreateFrame("Frame", nil, parent)
+  local h = desc and UI.H.SETTING_DESC or UI.H.SETTING
+  r:SetHeight(h); r.ebH = h
+  r.label = UI.Text(r, "ROW_TITLE", "fg")
+  r.label:SetPoint("TOPLEFT", r, "TOPLEFT", S.S3, desc and -S.S2 or -((h - UI.LINE_H.ROW_TITLE) / 2))
+  r.label:SetText(label or "")
+  if desc then
+    r.desc = UI.Text(r, "META", "fgMuted", { wrap = true })
+    r.desc:SetPoint("TOPLEFT", r, "TOPLEFT", S.S3, -28)
+    r.desc:SetText(desc)
+  end
+  -- a control too wide to share the line with the label (a 500 column at WIDE) goes under it, right-aligned
+  function r.layout()
+    local w = tonumber(r:GetWidth()) or 0
+    local cw = r.control and (tonumber(r.control:GetWidth()) or 0) or 0
+    local need = UI.TextWidth("ROW_TITLE", r.label:GetText()) + 1
+    local room = math.max(1, w - 2 * S.S3 - (cw > 0 and (cw + S.S2) or 0))
+    local stack = r.control ~= nil and not desc and cw > 0 and need > room and w > 0
+    r.stacked = stack
+    if stack then room = math.max(1, w - 2 * S.S3) end
+    r.label:SetWidth(math.min(room, need))
+    if r.desc then r.desc:SetWidth(math.max(1, math.min(420, w - 2 * S.S3))) end
+    -- (anchored again only when the control or its line changes: a secure control is never moved in combat)
+    local key = stack and "stack" or "line"
+    if r.control and (r.anchored ~= r.control or r.anchoredAs ~= key) then
+      r.anchored, r.anchoredAs = r.control, key
+      r.control:ClearAllPoints()
+      if stack then r.control:SetPoint("TOPRIGHT", r, "TOPRIGHT", -S.S3, -UI.H.SETTING)
+      else r.control:SetPoint("RIGHT", r, "RIGHT", -S.S3, desc and (h / 2 - S.S2 - UI.LINE_H.ROW_TITLE / 2) or 0) end
+    end
+    local nh = stack and (UI.H.SETTING + UI.H.CONTROL + S.S2) or h
+    if nh ~= r.ebH then r.ebH = nh; r:SetHeight(nh) end
+  end
+  function r.SetControl(_, f)
+    r.control = f
+    pcall(r.layout)
+    return f
+  end
+  function r.SetDesc(_, t) if r.desc then r.desc:SetText(t or "") end end
+  r:HookScript("OnSizeChanged", function() pcall(r.layout) end)
+  return r
+end
+
 function UI.ClassColor(classFile)
   local c = classFile and (RAID_CLASS_COLORS or {})[classFile]
   if c then return c.r, c.g, c.b end
@@ -2387,6 +2571,12 @@ UI.ALIASES = {
   ["Home/timeline"] = { "Home", "activity" },
   -- the auctions are a breakdown of Gold now (4.9): the old key opens Gold on Auction house
   ["Loot/auctions"] = { "Loot", "gold", function() if ns.Gold and ns.Gold.open then ns.Gold.open("all", "auctions") end end },
+  -- Quests fold into Leveling and Crafting into Professions (4.10, 4.11); Settings > Capture and Data are one page,
+  -- Data and sync, and Gold is named for what it sets (4.12)
+  ["Character/quests"] = { "Character", "leveling" },
+  ["Character/crafting"] = { "Character", "professions" },
+  ["Settings/capture"] = { "Settings", "data" },
+  ["Settings/gold"] = { "Settings", "golddisplay" },
 }
 -- a host and pane key from any name the addon or a saved setting uses (old keys pass through the aliases)
 function UI.Resolve(name, sub)
@@ -2610,7 +2800,7 @@ local function buildFrame()
   chip.text = UI.Text(chip, "META", "fgSubtle"); chip.text:SetPoint("LEFT", chip, "LEFT", S.S2 + 8 + 6, 0)
   chip:SetScript("OnEnter", function(s) chipBg:Show(); UI.ShowTip(s, chipTip, "ANCHOR_BOTTOMLEFT") end)
   chip:SetScript("OnLeave", function(s) chipBg:Hide(); if s.ebTipShown and GameTooltip then GameTooltip:Hide() end; s.ebTipShown = nil end)
-  chip:SetScript("OnClick", function() UI.Click(); UI.Open("Settings", "capture") end)
+  chip:SetScript("OnClick", function() UI.Click(); UI.Open("Settings", "data") end)
   f.chip = chip
 
   -- the sidebar: x 0 to 168, sunken, a 1 px rule at x 167
@@ -2946,6 +3136,14 @@ end
 
 function UI.SetWindowScale(sc)
   if frame and sc then frame:SetScale(sc) end
+end
+-- Settings > General, "Reset window size and position": the smallest size, centred, the saved place forgotten
+function UI.ResetWindow()
+  if ns.blockedInCombat and ns.blockedInCombat() then return false end
+  if ns.DB and ns.DB.settings then ns.DB.settings.winPos = nil end
+  UI.SetWindowSize(UI.WIN_MIN_W, UI.WIN_MIN_H)
+  if frame then frame:ClearAllPoints(); frame:SetPoint("CENTER") end
+  return true
 end
 
 function UI.Toggle()

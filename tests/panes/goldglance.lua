@@ -15,7 +15,7 @@ return function(P)
   local C = UI.C
   local G = P.G
   local function click(b, button) b.scripts.OnClick(b, button or "LeftButton"); M.settle() end
-  local function tick(cb) cb.checked = not cb.checked; cb.scripts.OnClick(cb); M.settle() end
+  local function tick(cb) cb.scripts.OnClick(cb); M.settle() end   -- a kit checkbox flips itself on a click
   local savedCurrent = ns.Recorder.current
   ns.Recorder.current = function() return ns.DB.active and ns.DB.sessions[ns.DB.active] or nil end
   print = function() end
@@ -214,16 +214,20 @@ return function(P)
   check("Gold 0.9.45: with the window closed the next tick stops the repaint", Gold._rateTicker == nil)
   _G.EverbuffFrame:Show()
 
-  -- ── Settings / Gold ─────────────────────────────────────────────────────────────────────────────────────────
+  -- ── Settings / Gold display ─────────────────────────────────────────────────────────────────────────────────────────
   local function settings(w, h)
     local c = P.open("Settings", nil, w, h, "gold")
-    if c and c.subtabs then c.subtabs.select("gold"); M.settle() end
-    local pane = c and c.subtabs and c.subtabs.panes.gold
+    if c and c.subtabs then c.subtabs.select("golddisplay"); M.settle() end
+    local pane = c and c.subtabs and c.subtabs.panes.golddisplay
     if pane and pane.refresh then pane.more:Hide(); pane.main:Show(); pane.refresh(); M.settle() end
     return pane
   end
+  -- every control inside the pane's width and inside the open page's scroll column (the page scrolls)
   local function audit(pane, tag)
     local pb = P.box(pane)
+    local page = P.visible(pane.more) and pane.morePg or pane.mainPg
+    local cb = P.box(page.col)
+    pb = { l = pb.l, w = pb.w, t = pb.t, h = math.max(pb.h, cb.t + cb.h - pb.t) }
     local out, texts = {}, {}
     for _, f in ipairs(P.descendants(pane)) do
       if P.visible(f) and (f._kind == "Button" or f._kind == "CheckButton" or f._kind == "Slider" or (f._isFS and (f.text or "") ~= "")) then
@@ -348,11 +352,11 @@ return function(P)
     check("Settings Gold: Lock the pill", g().pill.locked == true)
     tick(pane.cbLock)
     pane.slScale:SetValue(1.5)
-    check("Settings Gold: Pill text size", g().pill.scale == 1.5 and pane.slScale.label.text == "Pill text size: 150%", pane.slScale.label.text)
+    check("Settings Gold: Pill text size", g().pill.scale == 1.5 and pane.slScale.valueText.text == "150%", pane.slScale.valueText.text)
     pane.slAlpha:SetValue(0.6)
-    check("Settings Gold: Pill opacity", g().pill.alpha == 0.6 and pane.slAlpha.label.text == "Pill opacity: 60%")
+    check("Settings Gold: Pill opacity", g().pill.alpha == 0.6 and pane.slAlpha.valueText.text == "60%")
     pane.slRows:SetValue(12)
-    check("Settings Gold: Characters in tooltips", g().tip.limit == 12 and pane.slRows.label.text == "Characters in tooltips: 12")
+    check("Settings Gold: Characters in tooltips", g().tip.limit == 12 and pane.slRows.valueText.text == "12")
     tick(pane.cbWeek); tick(pane.cbMonth)
     check("Settings Gold: week and month in tooltips", g().tip.week == true and g().tip.month == true)
     tick(pane.cbWeek); tick(pane.cbMonth)

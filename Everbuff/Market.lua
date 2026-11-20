@@ -19,8 +19,6 @@
 -- client could hide goes through the guards; nothing is recorded from a secret.
 
 local ADDON, ns = ...
-local UI = ns.UI
-local C = UI and UI.C or {}
 
 local Market = { tradeSkill = nil }
 ns.Market = Market
@@ -249,68 +247,9 @@ f:SetScript("OnEvent", function(_, event, a1, a2)
   end
 end)
 
--- ── pane: CHARACTER · Crafting (the auctions are a breakdown of Loot > Gold, Economy.lua) ─────────────────────────
--- Each pane is a row of summary chips (a dim uppercase label over its value) and a UI.Table below them. The chips
--- are laid out from their measured widths and wrap onto a second line when the pane is narrow; the table hangs
--- from the bottom of the chips, so it moves down with them and its rows use the rest of the pane.
-local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua); a hidden value reads as 0
-local function fmtWhen(t) t = plainNum(t); if not t then return "" end; return date("%a %H:%M", t) end
-local CHIP_H, CHIP_GAP = 32, 24   -- a chip's label and value; the space between two chips
-local function makeChips(pane)
-  local SP = UI.SP
-  local box = CreateFrame("Frame", nil, pane)
-  -- inset like the table's first and last column, so the chips line up with the cells below them
-  box:SetPoint("TOPLEFT", pane, "TOPLEFT", SP.S, 0)
-  box:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -(UI.SCROLLBAR + SP.S), 0)
-  box:SetHeight(CHIP_H)
-  local chips, n = {}, 0
-  local K = { box = box, chips = chips }
-  local function layout()
-    local w = box:GetWidth()
-    if type(w) ~= "number" or w <= 1 then return end
-    local x, y = 0, 0
-    for i = 1, n do
-      local ch = chips[i]
-      local lw, vw = ch.label:GetStringWidth(), ch.value:GetStringWidth()
-      local cw = math.min(math.floor(w), math.ceil(math.max(type(lw) == "number" and lw or 0, type(vw) == "number" and vw or 0)))
-      if x > 0 and x + cw > w then x = 0; y = y + CHIP_H + SP.S end
-      ch.label:ClearAllPoints(); ch.label:SetPoint("TOPLEFT", box, "TOPLEFT", x, -y); ch.label:SetWidth(cw)
-      ch.value:ClearAllPoints(); ch.value:SetPoint("TOPLEFT", ch.label, "BOTTOMLEFT", 0, -SP.XS); ch.value:SetWidth(cw)
-      x = x + cw + CHIP_GAP
-    end
-    box:SetHeight(y + CHIP_H)
-  end
-  K.layout = function() pcall(layout) end
-  box:HookScript("OnSizeChanged", K.layout)
-  -- list: { { label, value }, ... } in reading order
-  function K.set(list)
-    for i, it in ipairs(list) do
-      local ch = chips[i]
-      if not ch then
-        ch = { label = UI.CellFS(box, "GameFontNormalSmall", C.dim), value = UI.CellFS(box, "GameFontHighlight", C.ink) }
-        ch.label:SetJustifyH("LEFT"); ch.value:SetJustifyH("LEFT")
-        chips[i] = ch
-      end
-      ch.label:SetText(tostring(it[1] or ""):upper()); ch.value:SetText(tostring(it[2] or ""))
-      ch.label:Show(); ch.value:Show()
-    end
-    n = #list
-    for j = n + 1, #chips do chips[j].label:Hide(); chips[j].value:Hide() end
-    K.layout()
-  end
-  return K
-end
-local function makePane(pane, spec, emptyText)
-  local chips = makeChips(pane)
-  local body = CreateFrame("Frame", nil, pane)
-  body:SetPoint("TOPLEFT", chips.box, "BOTTOMLEFT", -UI.SP.S, -UI.SP.M)
-  body:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", 0, 0)
-  local tbl = UI.Table(body, spec, { top = 0, emptyText = emptyText })
-  return { chips = chips, body = body, tbl = tbl }
-end
-local WHEN = { "Wed 23:59", "Thu 00:00", "Sun 20:48" }
-
---- Rows for the Auctions pane, newest first, plus the summary numbers.
+-- ── rows for the panes (the auctions are a breakdown of Loot > Gold, Economy.lua; the crafts and recipes are listed in
+-- Character > Professions, Progress.lua) ──────────────────────────────────────────────────────────────────────────
+-- Rows for the Auctions pane, newest first, plus the summary numbers.
 function Market.buildAuctions()
   if not ns.DB then return {}, {} end
   local all = ah(); local rows = {}
@@ -325,6 +264,8 @@ function Market.buildAuctions()
   table.sort(rows, function(x, y) return (x.t or 0) > (y.t or 0) end)
   return rows, sum
 end
+
+-- Rows for the crafts and recipes (the suite's contract checks; Character > Professions lists them, Progress.lua)
 function Market.buildCrafts()
   if not ns.DB then return {}, {} end
   local c = ch(); local rows = {}
@@ -334,41 +275,4 @@ function Market.buildCrafts()
   local byProf = {}
   for _, r in ipairs(c.crafts) do local p = r.prof or "Unknown"; byProf[p] = (byProf[p] or 0) + (r.count or 1) end
   return rows, { crafts = #c.crafts, recipes = #c.recipes, byProf = byProf }
-end
-
-
-local craftsL
-local function renderCrafts()
-  if not craftsL then return end
-  local rows, sum = Market.buildCrafts()
-  local profs = {}
-  for p in pairs(sum.byProf) do profs[#profs + 1] = p end
-  table.sort(profs)
-  local list = { { "crafts", sum.crafts }, { "recipes learned", sum.recipes } }
-  for _, p in ipairs(profs) do list[#list + 1] = { p, sum.byProf[p] } end
-  craftsL.chips.set(list)
-  craftsL.tbl.setRows(rows, function(row, r)
-    row.c.when:SetText(fmtWhen(r.t))
-    row.c.what:SetText(r.what or "")
-    row.c.item:SetText(r.item or "")
-    row.c.count:SetText(r.count and tostring(r.count) or "")
-    row.c.prof:SetText(r.prof or "")
-    row.c.zone:SetText(r.zone or "")
-    row.c.coords:SetText(UI.fmtCoords(r.x, r.y))
-  end)
-end
-Market._panes = function() return nil, craftsL end   -- for the pane tests (the auctions are in Loot > Gold, Auction house)
-if UI and UI.registerPane then
-  UI.registerPane("Character", 4, "Crafting", function(content)
-    craftsL = makePane(content, {
-      { key = "when", label = "When", kind = "tag", color = "dim", measure = WHEN },
-      { key = "what", label = "What", kind = "tag", measure = { "Recipe learned", "Crafted" } },
-      { key = "item", label = "Item", flex = 1, min = 120 },
-      { key = "count", label = "Qty", kind = "num", color = "dim", measure = { "9999" } },
-      { key = "prof", label = "Profession", flex = 0.5, min = 80, color = "dim" },
-      { key = "zone", label = "Location", flex = 0.6, min = 90, color = "dim" },
-      { key = "coords", label = "Coords", kind = "num", color = "dim", measure = { "100.0, 100.0" } },
-    }, "No crafts yet. Make something and it shows up here with the profession and where you made it.")
-    renderCrafts()
-  end, renderCrafts)
 end
