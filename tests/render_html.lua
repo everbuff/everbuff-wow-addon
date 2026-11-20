@@ -3,7 +3,7 @@
 -- Usage, from the repo root:
 --   luajit tests/render_html.lua [outdir] [page ...]
 --     outdir   where the pages go (default tests/render_out, which git ignores); fonts are copied to outdir/fonts
---     page     host/pane keys to render (default: loot/items loot/gold loot/auctions home/now home/activity);
+--     page     host/pane keys to render (default: loot/items loot/gold home/now home/activity);
 --              settings/general, settings/capture and settings/data open a Settings sub-tab
 --   then, on a machine with Chrome (never next to a running WoW client):
 --   node tests/render_shot.js outdir   (puppeteer-core; screenshots every page and writes <page>.findings.json)
@@ -29,7 +29,7 @@ local Lay = dofile("tests/layout.lua")
 local OUT = arg[1] or "tests/render_out"
 local PAGES = {}
 for i = 2, #arg do PAGES[#PAGES + 1] = arg[i] end
-if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "loot/auctions", "home/now", "home/activity" } end
+if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "home/now", "home/activity" } end
 local SIZES = { { 900, 580 }, { 1600, 1000 } }
 -- EVERBUFF_RENDER_SIZES="900x580,1250x760" renders other window sizes
 if os.getenv("EVERBUFF_RENDER_SIZES") then
@@ -330,8 +330,9 @@ for _, dataTag in ipairs({ "normal", "long" }) do
     _G.UIParent._w, _G.UIParent._h = sz[1], sz[2]
     VIEW.w, VIEW.h = sz[1], sz[2]
     for _, key in ipairs(PAGES) do
-      -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":days", ":chars" or ":<source key>" open the
-      -- Gold pane in that state
+      -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":week", ":days", ":chars", ":zones", ":runs",
+      -- ":auctions", ":empty" or ":<source key>" (that source's page) open the Gold pane in that state; "loot/items:byitem",
+      -- ":all" (every quality) and ":nomatch" (a search with no match) open Items in that state
       local host, pane, state = key:match("^(%w+)/(%w+):?(%w*)$")
       -- Home > Now in a state of docs/UX_OVERHAUL.md 4.0: "home/now:logoff" (combat log off), ":next" (durability
       -- 18%, 2 free bag slots, a limit of 1 used up, 2 quests ready), ":max" (max level), ":empty" (nothing yet),
@@ -371,7 +372,23 @@ for _, dataTag in ipairs({ "normal", "long" }) do
         elseif state == "today" then ns.Gold.open("today")
         elseif state == "days" then ns.Gold.open("all", "days")
         elseif state == "chars" then ns.Gold.open("today", "chars")
-        else ns.Gold.open("session", "journal"); ns.Gold.filter(state) end
+        elseif state == "week" then ns.Gold.open("week")
+        elseif state == "zones" or state == "runs" then ns.Gold.open("all", state)
+        elseif state == "auctions" then ns.UI.Open("Loot", "auctions")
+        elseif state == "empty" then ns.Gold.open("day:" .. ns.Gold.dayKey(GetServerTime() - 400 * 86400, ns.Gold.baseStored()))
+        else ns.Gold.open("session"); ns.Gold.filter(state) end
+      end
+      if host == "loot" and pane == "items" and state ~= "" then
+        local ic = ns._test.lootContent and ns._test.lootContent()
+        if ic then
+          if state == "byitem" then ic.setLootMode("byitem")
+          elseif state == "all" then ic.setLootQuality("all")
+          elseif state == "nomatch" then ic.search:SetText("zzzz"); ic.search.scripts.OnTextChanged(ic.search) end
+          undo = function()
+            ic.search:SetText(""); ic.search.scripts.OnTextChanged(ic.search)
+            ic.setLootMode("newest"); ic.setLootQuality("green")
+          end
+        end
       end
       if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, capture, data)
         for _, t in ipairs(ns._test.tabs or {}) do

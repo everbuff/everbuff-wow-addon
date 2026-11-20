@@ -140,6 +140,34 @@ return function(P)
   check("FilterButton: a click opens its menu", fb.menu:IsShown() and fb.menu.rows[2] and fb.menu.rows[2].text:GetText() == "Green and up")
   fb.menu.rows[2]:GetScript("OnClick")(fb.menu.rows[2])
   check("FilterButton: a menu pick reaches onPick and closes the menu", picked == "green" and not fb.menu:IsShown())
+
+  -- ── segmented control: one width for every segment, the selected one in accentTint, nil selects none ──
+  local seg, segPicked = nil, nil
+  seg = UI.Segmented(host, { { "session", "Session" }, { "today", "Today" }, { "week", "Week" }, { "all", "All time" } }, { value = "session", onPick = function(k) segPicked = k end })
+  seg:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -420)
+  local widest = 0
+  for _, l in ipairs({ "Session", "Today", "Week", "All time" }) do widest = math.max(widest, UI.TextWidth("BODY_STRONG", l)) end
+  check("Segmented: every segment is as wide as the longest label plus 24, at least 64", seg.segW == math.max(64, widest + UI.S.S5) and seg:GetWidth() == 4 * seg.segW and seg:GetHeight() == UI.H.CONTROL)
+  check("Segmented: the value is filled, the others are not", seg.segs[1].fill:IsShown() and not seg.segs[2].fill:IsShown() and seg.segs[1].text._color[1] == UI.C.accentFg[1])
+  seg.segs[3]:GetScript("OnClick")(seg.segs[3])
+  check("Segmented: a click selects its segment and reaches onPick", segPicked == "week" and seg.value == "week" and seg.segs[3].fill:IsShown() and not seg.segs[1].fill:IsShown())
+  seg:SetValue(nil)
+  local none = true
+  for _, b in ipairs(seg.segs) do if b.fill:IsShown() then none = false end end
+  check("Segmented: SetValue(nil) selects none (the pick sits on a More overflow)", none)
+
+  -- ── search: 176 x 24, the placeholder until there is text, a clear button, Esc clears ──
+  local se = UI.Search(host, "Search items")
+  se:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -460)
+  check("Search: 176 x 24 with its placeholder and no clear button", se:GetWidth() == UI.SEARCH_W and se:GetHeight() == UI.H.CONTROL and se.placeholder:IsShown() and not se.clear:IsShown() and se.placeholder:GetText() == "Search items")
+  se:SetText("linen"); se.scripts.OnTextChanged(se)
+  check("Search: with text the placeholder hides and the clear button shows", not se.placeholder:IsShown() and se.clear:IsShown())
+  se.clear:GetScript("OnClick")(se.clear); se.scripts.OnTextChanged(se)
+  check("Search: the clear button empties it", se:GetText() == "" and se.placeholder:IsShown() and not se.clear:IsShown())
+  se:SetText("x"); se.scripts.OnEscapePressed(se); se.scripts.OnTextChanged(se)
+  check("Search: Esc clears it", se:GetText() == "")
+  -- capitals keep their escapes: a money icon in a LABEL text still renders
+  eq("UI.upper keeps the escapes", UI.upper("Earned +3|TGold:12:12:0:0|t |cff112233x|r"), "EARNED +3|TGold:12:12:0:0|t |cff112233X|r")
   host:Hide()
 
   -- ── settings migration (3.1): a 0.9.51 save and a fresh one ──

@@ -157,10 +157,18 @@ function UI.Text(parent, role, color, opts)
   fs:SetJustifyH((opts and opts.justify) or "LEFT")
   return fs
 end
+-- capitals, with the escapes left as they are (a money icon's "|T...|t", a colour's "|c...", "|r", a link's "|H...|h")
+function UI.upper(text)
+  local esc = {}
+  local function keep(m) esc[#esc + 1] = m; return "\001" .. #esc .. "\002" end
+  local t = tostring(text):gsub("|T.-|t", keep):gsub("|H.-|h", keep):gsub("|c%x%x%x%x%x%x%x%x", keep):gsub("|r", keep)
+  t = t:upper():gsub("\001(%d+)\002", function(i) return esc[tonumber(i)] end)
+  return t
+end
 -- set the text of a kit font string, upper-cased when its role is drawn in capitals
 function UI.SetText(fs, text)
   text = text == nil and "" or tostring(text)
-  if fs.ebRole and UI.UPPER[fs.ebRole] then text = text:upper() end
+  if fs.ebRole and UI.UPPER[fs.ebRole] then text = UI.upper(text) end
   fs:SetText(text)
   return fs
 end
@@ -1793,6 +1801,86 @@ function UI.FilterButton(parent, opts)
   return b
 end
 
+-- ── segmented control (h 24): exclusive choices that share one width (the longest label plus 24, at least 64),
+-- one 1 px lineStrong outline around the group and 1 px dividers. The selected segment has the accentTint fill and
+-- its label in accentFg; the others fgMuted, fg on hover. items = { { key, label, tip } }; opts.onPick(key).
+-- f:SetValue(key) selects (nil: none selected, as when a "More" overflow holds the pick). Anchor it by TOPRIGHT.
+function UI.Segmented(parent, items, opts)
+  opts = opts or {}
+  local f = UI.Box(parent, nil, "lineStrong")
+  f:SetHeight(UI.H.CONTROL)
+  f.segs, f.items = {}, items
+  local segW = 64
+  for _, it in ipairs(items) do segW = math.max(segW, UI.TextWidth("BODY_STRONG", it[2]) + S.S5) end
+  f.segW = segW
+  f:SetWidth(#items * segW)
+  for i, it in ipairs(items) do
+    local b = CreateFrame("Button", nil, f)
+    b:SetPoint("TOPLEFT", f, "TOPLEFT", (i - 1) * segW, 0); b:SetSize(segW, UI.H.CONTROL)
+    b.fill = b:CreateTexture(nil, "BACKGROUND"); b.fill:SetPoint("TOPLEFT", b, "TOPLEFT", i == 1 and 1 or 0, -1); b.fill:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", i == #items and -1 or 0, 1)
+    b.fill:SetColorTexture(unpackc(C.accentTint)); b.fill:Hide()
+    if i > 1 then
+      b.div = b:CreateTexture(nil, "ARTWORK"); b.div:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.div:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+      b.div:SetWidth(1); b.div:SetColorTexture(unpackc(C.lineStrong))
+    end
+    b.text = UI.Text(b, "BODY_STRONG", "fgMuted", { justify = "CENTER" }); b.text:SetPoint("CENTER", b, "CENTER", 0, 0); b.text:SetText(it[2])
+    b.key = it[1]
+    b:SetScript("OnClick", function(s) UI.Click(); f:SetValue(s.key); if opts.onPick then opts.onPick(s.key) end end)
+    b:SetScript("OnEnter", function(s) if f.value ~= s.key then s.text:SetTextColor(unpackc(C.fg)) end end)
+    b:SetScript("OnLeave", function() f.paint() end)
+    if it[3] then UI.SetTip(b, { title = it[2], text = it[3] }) end
+    f.segs[i] = b
+  end
+  function f.paint()
+    for _, b in ipairs(f.segs) do
+      local on = b.key == f.value
+      if on then b.fill:Show() else b.fill:Hide() end
+      b.text:SetTextColor(unpackc(on and C.accentFg or C.fgMuted))
+    end
+  end
+  function f.SetValue(_, key) f.value = key; f.paint(); return f end
+  f:SetValue(opts.value)
+  return f
+end
+
+-- ── search input (176 x 24): sunken fill, 1 px lineStrong edge (accent while it has focus), a magnifier at x 8,
+-- the text inset 26, the placeholder in fgFaint, a clear glyph button at w - 20 while there is text. Esc clears the
+-- text and drops focus. Callers listen with HookScript("OnTextChanged", fn). 176 is the only search width.
+UI.SEARCH_W = 176
+function UI.Search(parent, placeholder)
+  local e = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
+  e:SetSize(UI.SEARCH_W, UI.H.CONTROL)
+  e:SetBackdrop(BOX_BD)
+  UI.BoxColors(e, "sunken", "lineStrong")
+  e:SetFontObject(UI.F.BODY)
+  e:SetTextInsets(26, S.S5, 0, 0)
+  e:SetAutoFocus(false)
+  e.ebSearch = true
+  local mag = UI.Glyph(e, "search", 12, "fgFaint"); mag:SetPoint("LEFT", e, "LEFT", S.S2, 0)
+  e.glyph = mag
+  local ph = UI.Text(e, "BODY", "fgFaint")
+  ph:SetPoint("LEFT", e, "LEFT", 26, 0); ph:SetPoint("RIGHT", e, "RIGHT", -S.S5, 0)
+  e.placeholder = ph
+  local clr = CreateFrame("Button", nil, e); clr:SetSize(16, 16); clr:SetPoint("LEFT", e, "RIGHT", -20, 0); clr:Hide()
+  local cg = UI.Glyph(clr, "clear", 8, "fgMuted"); cg:SetPoint("CENTER", clr, "CENTER", 0, 0)
+  clr:SetScript("OnClick", function() UI.Click(); e:SetText(""); if e.ClearFocus then e:ClearFocus() end end)
+  UI.SetTip(clr, { title = "Clear the search" })
+  e.clear = clr
+  local function sync(x)
+    local t = x:GetText()
+    if t == nil or t == "" then ph:Show(); clr:Hide() else ph:Hide(); clr:Show() end
+  end
+  e.sync = sync
+  e:SetScript("OnTextChanged", function(x) pcall(sync, x) end)
+  e:SetScript("OnEditFocusGained", function(x) UI.BoxColors(x, "sunken", "accent") end)
+  e:SetScript("OnEditFocusLost", function(x) UI.BoxColors(x, "sunken", "lineStrong") end)
+  e:SetScript("OnEscapePressed", function(x) x:SetText(""); x:ClearFocus() end)
+  e:SetScript("OnEnterPressed", function(x) x:ClearFocus() end)
+  function e.SetPlaceholder(_, text) ph:SetText(text or ""); sync(e) end
+  e:SetPlaceholder(placeholder)
+  return e
+end
+
 -- ── notice strip (h 40): something the player can fix (tone "warn") or What's new (tone "accent").
 -- opts = { tone, text, button = { label, fn }, primary = bool, onDismiss = fn }
 function UI.Notice(parent, opts)
@@ -2297,13 +2385,15 @@ UI.ALIASES = {
   ["Combat/deaths"] = { "Home", "deaths" },
   ["Home/overview"] = { "Home", "now" },
   ["Home/timeline"] = { "Home", "activity" },
+  -- the auctions are a breakdown of Gold now (4.9): the old key opens Gold on Auction house
+  ["Loot/auctions"] = { "Loot", "gold", function() if ns.Gold and ns.Gold.open then ns.Gold.open("all", "auctions") end end },
 }
 -- a host and pane key from any name the addon or a saved setting uses (old keys pass through the aliases)
 function UI.Resolve(name, sub)
   if type(name) ~= "string" then return nil, nil end
   local key = type(sub) == "string" and paneKey(sub) or nil
   local a = (key and UI.ALIASES[name .. "/" .. key]) or (not key and UI.ALIASES[name])
-  if a then return a[1], a[2] end
+  if a then return a[1], a[2], a[3] end
   if name == "Combat" then return "Dungeons", key end
   return name, key
 end
@@ -2695,7 +2785,8 @@ function UI.Open(name, sub)
       if st then UI.MigrateSettings(st); name, sub = st.lastTab, st.lastSub end
     end
   end
-  name, sub = UI.Resolve(name, sub)
+  local after
+  name, sub, after = UI.Resolve(name, sub)
   local known = false
   for _, t in ipairs(tabs) do if t.name == name then known = true end end
   if not known then name, sub = tabs[1] and tabs[1].name, nil end
@@ -2704,6 +2795,7 @@ function UI.Open(name, sub)
   for _, x in ipairs(tabs) do if x.name == name then t = x end end
   local ctl = t and hostCtl(t)
   if sub and ctl and ctl.select and ctl.panes and ctl.panes[sub] then ctl.select(sub) end
+  if after then pcall(after) end
 end
 
 -- ── UI.Tabs: with no `top` (a host's or Settings' own sub-tabs) it is UI.SubTabs, the control row. With a `top`

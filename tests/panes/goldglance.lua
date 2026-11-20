@@ -1,9 +1,9 @@
 -- Pane tests: gold rate and glance (everbuff-wow-addon #43, 0.9.45), with the layout engine of tests/geometry.lua.
---   the first-run question   one row above the cards of Loot / Gold until it is answered
+--   Loot > Gold              asks nothing: the pill is turned on in Settings > Gold
 --   the pill                 as wide as its text, inside the screen at every scale and after the screen changes
 --                            size, clear of the flag wherever the flag is, saved on creation
---   the PER HOUR card        the rolling rate of the running period, its title naming the definition, dimmed while
---                            it warms up, drawn again by the 10 s repaint without closing an open list
+--   the PER HOUR card        the net over the time played, drawn again by the 10 s repaint without closing an open
+--                            menu
 --   Settings / Gold          every control inside the pane at the smallest and the largest window, no text over
 --                            another, the page behind "More", and what each control writes
 return function(P)
@@ -51,25 +51,11 @@ return function(P)
     return r.l >= fr.l + fr.w + m or r.l + r.w <= fr.l - m or r.b >= fr.b + fr.h + m or r.b + r.h <= fr.b - m
   end
 
-  -- ── the first-run question ──────────────────────────────────────────────────────────────────────────────────
-  for _, size in ipairs({ { 900, 580 }, { 1250, 760 } }) do
-    local tag = ("Gold 0.9.45 %dx%d"):format(size[1], size[2])
-    local c = open(size[1], size[2])
-    check(tag .. ": the question of the pill is asked in a row of its own", c.askOn == true and P.visible(c.askRow) and c.askText.text:find("Show your gold on screen?", 1, true) == 1)
-    local ab, cb, tb = P.box(c.askRow), P.box(c.cBalance), P.box(c.scopeBtns[1])
-    check(tag .. ": the row sits between the toolbar and the cards", ab.t >= tb.t + tb.h and cb.t >= ab.t + ab.h + UI.SP.M - 0.5, ("%s %s %s"):format(tb.t + tb.h, ab.t, cb.t))
-    local yb, nb, xb = P.box(c.askYes), P.box(c.askNo), P.box(c.askText)
-    check(tag .. ": the text in full at the left, Yes and No at the right, nothing overlapping", not c.askText:IsTruncated() and xb.l + G.naturalWidth(c.askText) <= yb.l and yb.l + yb.w <= nb.l and nb.l + nb.w <= ab.l + ab.w + 0.5,
-      ("text %d wide from %d, Yes at %d"):format(G.naturalWidth(c.askText), xb.l, yb.l))
-    local cardsAt = cb.t
-    click(c.askNo)
-    check(tag .. ": No is remembered, the row goes and the cards move up into its place", ns.DB.settings.gold.pill.asked == true and ns.DB.settings.gold.pill.on == false and not P.visible(c.askRow)
-      and math.abs(P.box(c.cBalance).t - (cardsAt - UI.ROW_H - UI.SP.M)) < 0.51 and (Gold.pill == nil or Gold.pill.shown == false), P.box(c.cBalance).t)
-    c = open(size[1], size[2])
-    check(tag .. ": asked again on a save file that never answered", P.visible(c.askRow))
-    click(c.askYes)
-    check(tag .. ": Yes turns the pill on and the row goes", ns.DB.settings.gold.pill.on == true and ns.DB.settings.gold.pill.asked == true and not P.visible(c.askRow) and Gold.pill ~= nil and Gold.pill.shown == true)
-    Gold.pillOn(false)
+  -- ── Loot > Gold asks nothing (docs/UX_OVERHAUL.md 4.9): the pill is turned on in Settings > Gold ──────────────
+  do
+    local c = open(900, 580)
+    check("Gold 0.9.45: the Gold page has no first-run question row (4.9 lists every part of the page)", c.askRow == nil and c.askYes == nil)
+    check("Gold 0.9.45: the pill stays off until it is turned on", Gold.pill == nil or Gold.pill.shown == false)
   end
 
   -- ── the pill on the screen ──────────────────────────────────────────────────────────────────────────────────
@@ -197,44 +183,30 @@ return function(P)
     check("pill: turned off it is hidden", p.shown == false)
   end
 
-  -- ── the PER HOUR card of a running period ───────────────────────────────────────────────────────────────────
+  -- ── the PER HOUR card and the 10 s repaint of the running session ────────────────────────────────────────────
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     local tag = ("Gold 0.9.45 %dx%d"):format(size[1], size[2])
     local c = open(size[1], size[2], "session")
-    local r = Gold.rate()
-    check(tag .. ": the fixture has a few active seconds, so the rate is warming up", r.perHour ~= nil and r.warm == true, tostring(r.active))
-    check(tag .. ": the running session's card is the rolling rate, named, dimmed while it warms up", c.rateLive == true and c.cRate.title.text == "FARMING PER HOUR" and c.cRate.value.text:sub(-2) == "/h"
-      and c.cRate.value._color[1] == C.dim[1] and c.cRate.value._color[2] == C.dim[2], c.cRate.title.text)
-    check(tag .. ": the status line names the definition and the warm-up", c.status.text:find("Farming per hour, warming up %d:%d%d: looted coin, vendor sales and quest rewards over active time") ~= nil, c.status.text)
-    check(tag .. ": title and value in full", not c.cRate.title:IsTruncated() and not c.cRate.value:IsTruncated())
+    local wide = UI.G.isWide(UI.G.winW())
     check(tag .. ": the open pane keeps the 10 s repaint running", Gold._rateTicker ~= nil and Gold.rateOnScreen() == true)
-    -- five more minutes of play, then the repaint: the card leaves the warm-up, an open list stays open
+    local sc = Gold.scope("session")
+    local card = Gold.netCard(sc.ledger, Gold.scopeEntries(sc))
+    if wide then
+      check(tag .. ": PER HOUR is the net over the time played (4.9)", c.shownCards[5].label:GetText() == "PER HOUR" and c.shownCards[5].value:GetText() == Gold.GP.money(card.net * 3600 / sc.elapsed, true), c.shownCards[5].value:GetText())
+    end
+    check(tag .. ": NET names the rate in its meta line", c.shownCards[4].meta:GetText() == Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. " per hour", c.shownCards[4].meta:GetText())
+    -- five more minutes of play, then the repaint: the cards follow, an open menu stays open
     Gold._tickAt = M.now
     for _ = 1, 30 do M.now = M.now + 10; M.epoch = M.epoch + 10; Gold.tick() end
-    click(c.viewBtn)
-    check(tag .. ": a list is open", c.menu.shown == true)
-    local before = c.status.text
+    click(c.breakdown)
+    check(tag .. ": a menu is open", c.breakdown.menu.shown ~= false)
+    local before = c.shownCards[4].meta:GetText()
     Gold._rateTicker.fn(); M.settle()
-    check(tag .. ": the repaint draws the card past its warm-up", c.cRate.value._color[1] == C.ink[1] and c.cRate.value._color[2] == C.ink[2] and c.cRate.value.text:sub(-2) == "/h" and Gold.rate().warm == false)
-    check(tag .. ": and the window in the status line, in place", c.status.text ~= before and c.status.text:find("Farming per hour, last %d+ min: ") ~= nil, c.status.text)
-    check(tag .. ": the repaint does not close the open list", c.menu.shown == true)
-    c.menu:Hide()
-    Gold.open("today"); M.settle()
-    check(tag .. ": Today shows the same rolling rate", c.rateLive == true and c.cRate.title.text == "FARMING PER HOUR")
-    ns.DB.settings.gold = ns.DB.settings.gold or {}
-    ns.DB.settings.gold.rateMode = "net"
-    Gold.open("today"); M.settle()
-    check(tag .. ": the per hour setting changes the card's definition", c.cRate.title.text == "NET PER HOUR" and c.cRate.value.text:find("^[%+%-]") ~= nil and c.status.text:find("Net per hour, last", 1, true) ~= nil, c.cRate.title.text)
-    ns.DB.settings.gold.rateMode = nil
+    check(tag .. ": the repaint draws the rate over the longer play", c.shownCards[4].meta:GetText() ~= before, c.shownCards[4].meta:GetText())
+    check(tag .. ": the repaint does not close the open menu", c.breakdown.menu.shown ~= false)
+    c.breakdown.menu:Hide()
     Gold.open("all"); M.settle()
-    check(tag .. ": All time keeps CHANGED WHILE AWAY", c.rateLive == false and c.cRate.title.text == "CHANGED WHILE AWAY")
-    Gold.open("yesterday"); M.settle()
-    check(tag .. ": a period that is over keeps its net over the time played", c.rateLive == false and c.cRate.title.text == "NET PER HOUR")
-    c.setWho("account")
-    Gold.open("today"); M.settle()
-    c.setWho("account"); M.settle()
-    check(tag .. ": an account has no rolling rate (the window is one character's)", c.rateLive == false and c.cRate.title.text == "NET PER HOUR PLAYED", c.cRate.title.text)
-    c.setWho("char")
+    check(tag .. ": All time has no rate", c.rate == nil and c.shownCards[4].meta:GetText() == "all time")
     M.epoch, M.now = saved.epoch, saved.now
   end
   _G.EverbuffFrame:Hide()

@@ -286,7 +286,6 @@ ns.deps = {
   { "value", "GameTooltip.GetOwner", "guarded" },
   { "value", "GameTooltip.Hide", "guarded" },
   { "value", "GameTooltip.IsOwned", "guarded" },
-  { "value", "GameTooltip.NumLines", "guarded" },
   { "value", "GameTooltip.SetOwner", "guarded" },
   { "value", "GetAddOnMetadata", "guarded" },
   { "value", "GetContainerNumFreeSlots", "guarded" },

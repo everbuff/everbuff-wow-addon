@@ -1244,7 +1244,7 @@ do
   check("Home / Now holds the hero and the four cards in the pane", home.ctl.active == "now" and ov.content.hero and #ov.content.cards.cards == 4 and ov.content.hero:GetParent() == ov.content.col)
   ns.UI.Open("Loot", "gold")
   local gold = host("Loot").paneByKey.gold
-  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.cBalance and gold.content.cBalance.value:GetText() ~= nil)
+  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.shownCards and gold.content.shownCards[1].value:GetText() ~= nil)
   ns.UI.Open("Home")
   ov.content.cards.cards[2]:GetScript("OnClick")(ov.content.cards.cards[2])
   check("clicking the XP PER HOUR card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
@@ -1486,7 +1486,7 @@ do
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
   local minQ = items.content.lootFilter()
-  check("quality filter starts at All", minQ == 0)
+  check("quality filter starts at Green and better (docs/UX_OVERHAUL.md 4.8)", minQ == 2, minQ)
   local rows = {
     { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed" },
     { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe" },
@@ -2144,8 +2144,12 @@ do
   local tlRows = shownRows(tl.timelineRows)
   check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  local lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.nm:GetText()) or r.nm:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.nm:GetText() == "Hart Cloth" end))
+  -- the item rows of Loot > Items (not its day rows), every quality shown
+  local function itemRows(ic) local out = {}; for _, r in ipairs(shownRows(ic.lootRows)) do if r.item and not r.item.ebSection then out[#out + 1] = r end end return out end
+  local itc = host("Loot").paneByKey.items.content
+  itc.setLootQuality("all")
+  local lr = itemRows(itc)
+  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.c.item:GetText()) or r.c.item:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.c.item:GetText() == "Hart Cloth" end))
   local dv = T.fightDetail(); if dv then dv:Hide() end
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
@@ -2160,7 +2164,7 @@ do
   check("#23 Hart: reputation history leaves out Undertaker's gains", not has(T.buildRepHistory(), function(r) return r.faction == "Undercity" end))
   local mineUps = #T.buildSkillups("Mining")
   check("#23 Hart: profession history leaves out Undertaker's skill-ups", not has(T.buildSkillups("Mining"), function(r) return r.rank == 99 end))
-  check("#23 Hart: Loot / Auctions leaves out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
+  check("#23 Hart: the auction rows (Loot > Gold, Auction house) leave out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
   check("#23 Hart: Home / Sessions leaves out Undertaker's session", #T.sessionRows() > 0 and not has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end))
   check("#23 Hart: a fight's loot leaves out another character's pickups", #T.fightLoot(utF) == 0)
   check("#23 isMine reads a fight's `session` (Home counted none of the real fights in 0.9.31)", ns.isMine(hartF) and not ns.isMine(utF) and not ns.isMine({ session = "no-such-session" }))
@@ -2171,8 +2175,9 @@ do
   tlRows = {}; for _, r in ipairs(shownRows(tl.timelineRows)) do if r.ev then tlRows[#tlRows + 1] = r end end   -- the event rows (not the day headers)
   check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].nm:GetText() == "Undertaker Shroud", #lr)
+  lr = itemRows(host("Loot").paneByKey.items.content)
+  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].c.item:GetText() == "Undertaker Shroud", #lr)
+  host("Loot").paneByKey.items.content.setLootQuality("green")
   ns.UI.Open("Combat", "fights"); M.tick()
   fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
@@ -2603,6 +2608,13 @@ do
   end
   table.sort(files)
   check("pane tests: tests/panes holds test files", #files > 0, #files)
+  -- EB_PANES=items,gold runs only those pane files (while iterating; CI runs every one)
+  local only = os.getenv("EB_PANES")
+  if only and only ~= "" then
+    local keep = {}
+    for _, f in ipairs(files) do for name in only:gmatch("[^,]+") do if f == name .. ".lua" then keep[#keep + 1] = f end end end
+    files = keep
+  end
   for _, file in ipairs(files) do
     local chunk, err = loadfile("tests/panes/" .. file)
     check("pane tests: parse " .. file, chunk ~= nil, err)

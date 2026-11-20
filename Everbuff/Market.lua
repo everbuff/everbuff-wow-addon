@@ -249,7 +249,7 @@ f:SetScript("OnEvent", function(_, event, a1, a2)
   end
 end)
 
--- ── panes: LOOT · Auctions and CHARACTER · Crafting ─────────────────────────
+-- ── pane: CHARACTER · Crafting (the auctions are a breakdown of Loot > Gold, Economy.lua) ─────────────────────────
 -- Each pane is a row of summary chips (a dim uppercase label over its value) and a UI.Table below them. The chips
 -- are laid out from their measured widths and wrap onto a second line when the pane is narrow; the table hangs
 -- from the bottom of the chips, so it moves down with them and its rows use the rest of the pane.
@@ -317,10 +317,11 @@ function Market.buildAuctions()
   -- the logged-in character's trades only (#23); loot.ah itself keeps every character's rows
   local a = { posted = ns.mine(all.posted), sold = ns.mine(all.sold), bought = ns.mine(all.bought), returned = ns.mine(all.returned) }
   local sum = { posted = #a.posted, sold = #a.sold, bought = #a.bought, returned = #a.returned, net = 0, spent = 0, cut = 0 }
-  for _, r in ipairs(a.posted) do rows[#rows + 1] = { t = r.t, item = r.item, count = r.count, price = r.buyout or r.bid, what = "Posted", note = r.hours and (r.hours .. " h") or "" } end
-  for _, r in ipairs(a.sold) do sum.net = sum.net + (r.net or 0); sum.cut = sum.cut + (r.cut or 0); rows[#rows + 1] = { t = r.t, item = r.item, count = 1, price = r.net, what = "Sold", note = r.buyer or "", good = true } end
-  for _, r in ipairs(a.bought) do sum.spent = sum.spent + (r.price or 0); rows[#rows + 1] = { t = r.t, item = r.item or "(item arrives by mail)", count = r.count, price = r.price, what = "Bought", note = r.seller or "" } end
-  for _, r in ipairs(a.returned) do rows[#rows + 1] = { t = r.t, item = r.item, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "", bad = true } end
+  -- (a row keeps its session id `s`, so Loot > Gold can list the auctions of a period)
+  for _, r in ipairs(a.posted) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = r.buyout or r.bid, what = "Posted", hours = plainNum(r.hours), note = "" } end
+  for _, r in ipairs(a.sold) do sum.net = sum.net + (r.net or 0); sum.cut = sum.cut + (r.cut or 0); rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = 1, price = r.net, cut = plainNum(r.cut), what = "Sold", note = r.buyer or "" } end
+  for _, r in ipairs(a.bought) do sum.spent = sum.spent + (r.price or 0); rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = r.price, what = "Bought", note = r.seller or "" } end
+  for _, r in ipairs(a.returned) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "" } end
   table.sort(rows, function(x, y) return (x.t or 0) > (y.t or 0) end)
   return rows, sum
 end
@@ -336,27 +337,7 @@ function Market.buildCrafts()
 end
 
 
-local auctionsL, craftsL
-local function renderAuctions()
-  if not auctionsL then return end
-  local rows, sum = Market.buildAuctions()
-  auctionsL.chips.set({
-    { "posted", sum.posted },
-    { "sold", ("%d for %s"):format(sum.sold, fmtMoney(sum.net)) },
-    { "house cut", fmtMoney(sum.cut) },
-    { "bought", ("%d for %s"):format(sum.bought, fmtMoney(sum.spent)) },
-    { "returned", sum.returned },
-  })
-  auctionsL.tbl.setRows(rows, function(row, r)
-    row.c.when:SetText(fmtWhen(r.t))
-    row.c.what:SetText(r.what or "")
-    if r.good then row.c.what:SetTextColor(C.green[1], C.green[2], C.green[3]) elseif r.bad then row.c.what:SetTextColor(C.red[1], C.red[2], C.red[3]) end
-    row.c.item:SetText(r.item or "")
-    row.c.count:SetText(r.count and tostring(r.count) or "")
-    row.c.price:SetText(r.price and fmtMoney(r.price) or "")
-    row.c.note:SetText(r.note or "")
-  end)
-end
+local craftsL
 local function renderCrafts()
   if not craftsL then return end
   local rows, sum = Market.buildCrafts()
@@ -376,19 +357,8 @@ local function renderCrafts()
     row.c.coords:SetText(UI.fmtCoords(r.x, r.y))
   end)
 end
-Market._panes = function() return auctionsL, craftsL end   -- for the pane tests
+Market._panes = function() return nil, craftsL end   -- for the pane tests (the auctions are in Loot > Gold, Auction house)
 if UI and UI.registerPane then
-  UI.registerPane("Loot", 3, "Auctions", function(content)
-    auctionsL = makePane(content, {
-      { key = "when", label = "When", kind = "tag", color = "dim", measure = WHEN },
-      { key = "what", label = "What", kind = "tag", measure = { "Cancelled", "Expired", "Posted", "Bought", "Sold" } },
-      { key = "item", label = "Item", flex = 1, min = 140 },
-      { key = "count", label = "Qty", kind = "num", color = "dim", measure = { "9999" } },
-      { key = "price", label = "Price", kind = "money", color = "gold", measure = { fmtMoney(99999999) } },
-      { key = "note", label = "Who / how long", flex = 0.6, min = 100, color = "dim" },
-    }, "No auction activity yet. Post, buy or sell something and it shows up here with the prices.")
-    renderAuctions()
-  end, renderAuctions)
   UI.registerPane("Character", 4, "Crafting", function(content)
     craftsL = makePane(content, {
       { key = "when", label = "When", kind = "tag", color = "dim", measure = WHEN },

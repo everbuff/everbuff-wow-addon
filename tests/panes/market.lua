@@ -1,5 +1,5 @@
--- Pane tests: Loot / Auctions and Character / Crafting (Everbuff/Market.lua), both a row of summary chips over a
--- UI.Table. At 900x580 and 1600x1000 on normal and long data: the rows span the list and it scrolls over all of them,
+-- Pane tests: Character / Crafting (Everbuff/Market.lua), a row of summary chips over a UI.Table, and the auction
+-- rows Market builds for Loot > Gold, Auction house (tests/panes/gold.lua tests that breakdown's page). At 900x580 and 1600x1000 on normal and long data: the rows span the list and it scrolls over all of them,
 -- header x == cell x, numbers, money, coords and tags right where they belong and never shortened, the last column
 -- inside the list, the chips inside the pane and clear of each other, the table below the chips, the chips carrying
 -- the same labels and numbers the summary line did, hover and tooltips, and the empty state.
@@ -10,16 +10,6 @@ return function(P)
   local NB = UI.NBSP
 
   local PANES = {
-    { host = "loot", pane = "auctions", which = 1, name = "Auctions",
-      fixed = { "when", "what", "count", "price" }, right = { count = true, price = true }, last = "note",
-      build = function() return Market.buildAuctions() end,
-      chips = function(sum)
-        return { { "POSTED", tostring(sum.posted) },
-          { "SOLD", ("%d for %s"):format(sum.sold, ns.fmtMoney(sum.net)) },
-          { "HOUSE CUT", ns.fmtMoney(sum.cut) },
-          { "BOUGHT", ("%d for %s"):format(sum.bought, ns.fmtMoney(sum.spent)) },
-          { "RETURNED", tostring(sum.returned) } }
-      end },
     { host = "character", pane = "crafting", which = 2, name = "Crafting",
       fixed = { "when", "what", "count", "coords" }, right = { count = true, coords = true }, last = "coords",
       build = function() return Market.buildCrafts() end,
@@ -110,36 +100,22 @@ return function(P)
     end
   end
 
-  -- money is the one formatter, kinds keep their colours
+  -- the auction rows: newest first, each with its session id (Loot > Gold lists a period's), Posted with its hours
   do
-    P.open("loot", "auctions", 900, 580, "long")
-    local al = L(1)
-    local rows = Market.buildAuctions()
-    local okMoney, okColour = true, true
+    P.open("loot", "gold", 900, 580, "long")
+    local rows, sum = Market.buildAuctions()
+    local sorted, sess, kinds = true, true, {}
     for i, r in ipairs(rows) do
-      local c = al.tbl.rows[i].c
-      if c.price.text ~= (r.price and ns.fmtMoney(r.price) or "") then okMoney = false end
-      local want = r.good and UI.C.green or r.bad and UI.C.red or UI.C.ink
-      if not (c.what._color and near(c.what._color[1], want[1]) and near(c.what._color[2], want[2])) then okColour = false end
+      if i > 1 and (r.t or 0) > (rows[i - 1].t or 0) then sorted = false end
+      if r.s == nil then sess = false end
+      kinds[r.what] = true
     end
-    check("Auctions: prices go through ns.fmtMoney (grouped, no-break spaces)", okMoney)
-    check("Auctions: sold reads green, returned red, the rest plain", okColour)
-    check("Auctions: no prose summary line is left", rawget(al, "summary") == nil)
-    -- hover: a row highlights, and a shortened item name can be read in full from its tooltip
-    local row
-    for i = 1, #rows do if al.tbl.rows[i].c.item:IsTruncated() then row = al.tbl.rows[i]; break end end
-    check("Auctions long 900: a long item name shortens", row ~= nil)
-    check("Auctions: rows are Buttons with a hover highlight", al.tbl.rows[1]._kind == "Button" and al.tbl.rows[1].highlight and al.tbl.rows[1].highlight._layer == "HIGHLIGHT")
-    if row then
-      local tip = _G.GameTooltip
-      row.scripts.OnEnter(row)
-      local found = false
-      for _, l in ipairs(tip.lines or {}) do if l == row.c.item.text then found = true end end
-      check("Auctions: hovering a row shows the shortened item name in full", tip.shown and found, table.concat(tip.lines or {}, " | "))
-      check("Auctions: the tooltip sits on the item cell", tip._pts and tip._pts[1] and tip._pts[1].rel == row.c.item)
-      row.scripts.OnLeave(row)
-      check("Auctions: leaving the row hides the tooltip", tip.shown == false)
-    end
+    check("Auctions: the rows are newest first and carry their session id", #rows >= 2 and sorted and sess, #rows)
+    check("Auctions: posted, sold and bought rows are built", kinds.Posted and kinds.Sold and kinds.Bought)
+    check("Auctions: the sums add up the sold and bought rows", sum.sold >= 1 and sum.net > 0 and sum.bought >= 1)
+    local loot
+    for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then loot = tab end end
+    check("Auctions: Loot has no Auctions pane of its own any more (it is Gold's Auction house)", loot and loot.paneByKey.auctions == nil and loot.paneByKey.gold ~= nil and select(1, Market._panes()) == nil)
   end
 
   -- coordinates are their own right-aligned column, formatted as everywhere else
@@ -183,15 +159,7 @@ return function(P)
 
   -- the empty state: centred text, no header, the chips still read 0
   do
-    P.open("loot", "auctions", 900, 580, "normal")
-    local ah = ns.DB.loot.ah
-    for _, k in ipairs({ "posted", "sold", "bought", "returned" }) do ah[k] = {} end
-    ns.UI.Open("Loot", "auctions"); M.settle()
-    local al = L(1)
-    check("Auctions empty: the empty text shows, centred, the header hidden",
-      al.tbl.empty.shown and al.tbl.empty.text:find("No auction activity yet", 1, true) and al.tbl.header.shown == false and al.tbl.empty._justify == "CENTER")
-    check("Auctions empty: no row shows", al.tbl.rows[1] == nil or al.tbl.rows[1].shown == false)
-    check("Auctions empty: the chips read zero", al.chips.chips[1].value.text == "0" and al.chips.chips[3].value.text == "0c")
+    P.open("character", "crafting", 900, 580, "normal")
     ns.DB.characters = ns.DB.characters or {}
     local c = ns.char()
     c.crafts, c.recipes = {}, {}
@@ -201,5 +169,5 @@ return function(P)
     check("Crafting empty: only the two count chips show", cl.chips.chips[3] == nil or cl.chips.chips[3].value.shown == false)
   end
   check("Market: no error while sizing or rendering", (function() for _, e in ipairs(M.errors) do if tostring(e):find("Market") then return false, e end end return true end)())
-  P.open("loot", "auctions", 900, 580, "normal")
+  P.open("character", "crafting", 900, 580, "normal")
 end
