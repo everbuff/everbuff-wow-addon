@@ -24,6 +24,9 @@ return function(M, ns)
     M.units.target = { name = foe, hostile = true, guid = ("Creature-0-1-1-1-%d-%04X"):format(400 + i, i), cls = (i % 9 == 0) and "elite" or "normal" }
     M.inCombat = true; M.fire("PLAYER_REGEN_DISABLED"); M.now = M.now + 9 + i % 11
     M.units.target.dead = true; M.inCombat = false; M.fire("PLAYER_REGEN_ENABLED")
+    -- the kill's XP (Home > Now reads the pace from these, ns.Pace), never past the level
+    M.fire("CHAT_MSG_COMBAT_XP_GAIN", foe .. " dies, you gain 8 experience.")
+    M.xp = math.min((M.xp or 0) + 8, (M.xpmax or 1000) - 1); M.fire("PLAYER_XP_UPDATE")
     M.lootSourceGUID = M.units.target.guid
     M.fire("LOOT_OPENED")
     if i % 3 ~= 0 then

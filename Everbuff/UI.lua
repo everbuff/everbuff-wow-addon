@@ -1618,7 +1618,8 @@ function UI.Hero(parent, opts)
   h.meta1r = UI.Text(h, "META", "fgMuted", { justify = "RIGHT" })
   h.meta2 = UI.Text(h, "META", "fgMuted"); h.meta2:Hide()
   -- the bar is drawn on the hero frame itself (ARTWORK), so the labels above it (OVERLAY) always draw over it
-  h.track = h:CreateTexture(nil, "ARTWORK"); h.track:SetColorTexture(unpackc(C.sunken)); h.track:SetHeight(6)
+  -- (the track one layer under the fill and the rested part, which never overlap: the fill always draws over it)
+  h.track = h:CreateTexture(nil, "BORDER"); h.track:SetColorTexture(unpackc(C.sunken)); h.track:SetHeight(6)
   h.rested = h:CreateTexture(nil, "ARTWORK"); h.rested:SetColorTexture(unpackc(C.accentTint)); h.rested:SetHeight(6)
   h.fill = h:CreateTexture(nil, "ARTWORK"); h.fill:SetColorTexture(unpackc(C.accent)); h.fill:SetHeight(6)
   h.track:Hide(); h.rested:Hide(); h.fill:Hide()
@@ -1884,6 +1885,64 @@ function UI.EmptyLine(parent)
     else f.link:Hide() end
   end
   return f
+end
+
+-- ── two-line row (ROW2, h 48): icon 24 at x 12, a ROW_TITLE title and a META line at x 44. r:Set(o) with
+-- o = { icon = texture, title, titleColor, dot = color key (a 6 px state dot before the title), badge, meta,
+-- bar = color key (a 3 px left bar), onClick, tip }. A row that opens something has a "›" and a hover band; a row
+-- that opens nothing has neither.
+function UI.Row2(parent)
+  local r = CreateFrame("Button", nil, parent)
+  r:SetHeight(UI.H.ROW2)
+  r.band = r:CreateTexture(nil, "BACKGROUND"); r.band:SetAllPoints(r); r.band:SetColorTexture(unpackc(C.hover, 0.6)); r.band:Hide()
+  r.bar = r:CreateTexture(nil, "ARTWORK"); r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", 0, 0); r.bar:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 0, 0); r.bar:SetWidth(3); r.bar:Hide()
+  r.iconFrame = UI.Box(r, "raised", "line"); r.iconFrame:SetSize(24, 24); r.iconFrame:SetPoint("TOPLEFT", r, "TOPLEFT", S.S3, -S.S3)
+  r.icon = r.iconFrame:CreateTexture(nil, "ARTWORK"); r.icon:SetPoint("TOPLEFT", r.iconFrame, "TOPLEFT", 1, -1); r.icon:SetPoint("BOTTOMRIGHT", r.iconFrame, "BOTTOMRIGHT", -1, 1)
+  r.dot = UI.Glyph(r, "dot", 6, "warn"); r.dot:Hide()
+  r.title = UI.Text(r, "ROW_TITLE", "fg")
+  r.meta = UI.Text(r, "META", "fgMuted")
+  r.chev = UI.Text(r, "META", "fgFaint"); r.chev:SetPoint("TOPRIGHT", r, "TOPRIGHT", -S.S3, -17); r.chev:SetText("\226\128\186"); r.chev:Hide()
+  r.badge = UI.Badge(r, ""); r.badge:Hide()
+  local TX = S.S3 + 24 + S.S2      -- 44: the text column
+  function r.layout()
+    local w = tonumber(r:GetWidth()) or 0
+    local right = S.S3 + (r.ebClick and (12 + S.S2) or 0)
+    local x = TX
+    if r.dot:IsShown() then r.dot:ClearAllPoints(); r.dot:SetPoint("TOPLEFT", r, "TOPLEFT", x, -(S.S2 + 5)); x = x + 6 + S.S2 end
+    local bw = r.badge:IsShown() and ((tonumber(r.badge:GetWidth()) or 0) + S.S2) or 0
+    local tw = UI.TextWidth("ROW_TITLE", r.title:GetText())
+    local room = math.max(1, w - right - x - bw)
+    r.title:ClearAllPoints(); r.title:SetPoint("TOPLEFT", r, "TOPLEFT", x, -S.S2); r.title:SetWidth(math.min(tw, room))
+    if r.badge:IsShown() then r.badge:ClearAllPoints(); r.badge:SetPoint("TOPLEFT", r, "TOPLEFT", x + math.min(tw, room) + S.S2, -S.S2) end
+    r.meta:ClearAllPoints(); r.meta:SetPoint("TOPLEFT", r, "TOPLEFT", TX, -26); r.meta:SetWidth(math.max(1, w - right - TX))
+  end
+  function r.Set(_, o)
+    o = o or {}
+    if o.icon then r.icon:SetTexture(o.icon); r.icon:Show() else r.icon:Hide() end
+    r.title:SetText(o.title or "")
+    r.title:SetTextColor(unpackc(colorOf(o.titleColor) or C.fg))
+    if o.dot then r.dot:SetColor(o.dot); r.dot:Show() else r.dot:Hide() end
+    if o.badge then r.badge:SetBadge(o.badge); r.badge:Show() else r.badge:Hide() end
+    r.meta:SetText(o.meta or "")
+    if o.bar then r.bar:SetColorTexture(unpackc(colorOf(o.bar))); r.bar:Show() else r.bar:Hide() end
+    r.ebClick = o.onClick
+    if o.onClick then r.chev:Show() else r.chev:Hide(); r.band:Hide() end
+    r.ebTip = o.tip
+    if (o.onClick or o.tip) and r.EnableMouse then r:EnableMouse(true) elseif r.EnableMouse then r:EnableMouse(false) end
+    r.layout()
+    return r
+  end
+  r:SetScript("OnClick", function(s) if s.ebClick then UI.Click(); s.ebClick(s) end end)
+  r:SetScript("OnEnter", function(s)
+    if s.ebClick then s.band:Show(); s.chev:SetTextColor(unpackc(C.fg)) end
+    if s.ebTip then UI.ShowTip(s, s.ebTip) end
+  end)
+  r:SetScript("OnLeave", function(s)
+    s.band:Hide(); s.chev:SetTextColor(unpackc(C.fgFaint))
+    if s.ebTipShown and GameTooltip then GameTooltip:Hide() end; s.ebTipShown = nil
+  end)
+  r:HookScript("OnSizeChanged", function() pcall(r.layout) end)
+  return r
 end
 
 -- ── the kit list (UI.Table with opts.kit): no scroll of its own (the page scrolls as one), rows 32, header 24 in
@@ -2256,6 +2315,11 @@ UI.SETTING_DEFAULTS = {
 }
 function UI.MigrateSettings(s)
   if type(s) ~= "table" then return end
+  -- a save that dismissed the old welcome card has seen Everbuff: the first-run guide (4.13) is done for it
+  if s.onboarded ~= nil then
+    if s.onboarded == true and s.welcomeDone == nil then s.welcomeDone = true end
+    s.onboarded = nil
+  end
   for k, v in pairs(UI.SETTING_DEFAULTS) do if s[k] == nil then s[k] = v end end
   local tab, sub = UI.Resolve(s.lastTab, s.lastSub)
   local known = false

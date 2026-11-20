@@ -160,12 +160,14 @@ return function(P)
         ns.UI.Open("Loot", "gold"); M.settle(); ns.UI.Open("Home", page); M.settle()
         local pt = ("%s Home %s"):format(tag, page)
         if page == "overview" then
-          local p = h.cGold
+          -- the GOLD card is this session's net; the balance and what every character holds are in its tooltip
+          local p = h.cards.cards[3]
           local roAll = Gold.roster("all")
-          check(pt .. ": the Gold card says the balance and what every character holds, in full", p.value.text == fmt(me.gold.balance) and not p.value:IsTruncated() and not p.sub:IsTruncated()
-            and p.sub2On == true and p.sub2.text == "all characters " .. fmt(roAll.total) and not p.sub2:IsTruncated(), tostring(p.value.text) .. " | " .. tostring(p.sub2.text))
-          local pb, vb, s2 = P.box(p), P.box(p.value), P.box(p.sub2)
-          check(pt .. ": both stay inside the card", vb.l + P.G.naturalWidth(p.value) <= pb.l + pb.w + 0.5 and s2.t + s2.h <= pb.t + pb.h + 0.5, ("%s %s"):format(vb.l + P.G.naturalWidth(p.value), pb.l + pb.w))
+          local tip = p.ebTip or {}
+          check(pt .. ": the Gold card's tooltip names the balance and what every character holds, in full", tip.pairs and tip.pairs[1][2] == ns.fmtMoney(me.gold.balance, { icons = true })
+            and (roAll.count < 2 or (tip.pairs[2] and tip.pairs[2][2] == ns.fmtMoney(roAll.total, { icons = true }))) and not p.value:IsTruncated() and not p.meta:IsTruncated(), tostring(p.value.text))
+          local pb, vb = P.box(p), P.box(p.value)
+          check(pt .. ": the value stays inside the card", vb.l + P.G.naturalWidth(p.value) <= pb.l + pb.w + 0.5, ("%s %s"):format(vb.l + P.G.naturalWidth(p.value), pb.l + pb.w))
         end
         tables(pt, h)
         audit(pt)

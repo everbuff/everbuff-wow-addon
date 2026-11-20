@@ -1,15 +1,17 @@
--- Everbuff.GG · Journey.lua (the HOME tab) - the landing dashboard.
+-- Everbuff.GG · Journey.lua - Home: Now (this session at a glance) and Sessions.
 --
--- The glanceable "how is my forever-classic run going?" screen: level + XP pace, /played, gold, kills
--- and deaths, and a recent-milestones ribbon. Everything here is READ from data other modules already
--- capture (Emitter's eventlog / gold / xp / played, Fights' fight list), so this file only presents.
--- A pure per-pull recorder like Warcraft Recorder has no equivalent; this is the journey identity.
+-- Now answers, with no click: am I recorded (the title-bar chip), how is this session going (the hero and the four
+-- cards), when do I ding (the hero), what needs me (NEXT) and what happened worth a look (WORTH A LOOK). Everything
+-- is READ from data other modules capture (the session record, the story events, the loot log, the stored runs, the
+-- gold ledger), plus the leveling pace (ns.Pace below), measured live from UnitXP while the addon runs
+-- (docs/UX_OVERHAUL.md 4.1).
 
 local ADDON, ns = ...
 local UI = ns.UI
 local C = ns.UI.C
+local S, G, H = UI.S, UI.G, UI.H
 
--- ── formatting ──────────────────────────────────────────────────────────────────
+-- ── formatting (the Sessions half below still reads these) ─────────────────────────
 local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
 local function fmtTime(sec)
   sec = math.floor(tonumber(sec) or 0)
@@ -24,273 +26,759 @@ local function commas(n)
   local out = n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
   return out
 end
+local function nowT() return (GetServerTime and GetServerTime()) or time() end
+local function num(v) return (type(v) == "number" and v == v) and v or 0 end
+local function curSession() return (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or nil end
+-- the answers of a client call, nothing when it is missing or blocked
+local function call(fn, ...)
+  if type(fn) ~= "function" then return nil end
+  local ok, a, b, c, d, e, f = pcall(fn, ...)
+  if not ok then return nil end
+  return a, b, c, d, e, f
+end
+local function plain(v) if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then return v end return nil end
 
--- milestone kinds worth surfacing on the ribbon, with a color
-local MILE = {
-  LEVELUP = C.gold, DEATH = C.red, ACHIEV = C.gold, DISCOVERY = C.data,
-  FLIGHT = C.data, REP = C.gold, SPELL = C.data, WIPE = C.red, FIRSTZONE = C.data, BROKEN = C.red, COLLECT = C.gold, PROFTIER = C.gold, RECIPE = C.gold, UPGRADE = C.gold,
+-- ══ ns.Pace: the leveling pace (4.1 Pace definition) ═════════════════════════════════════════════════════════
+-- A minute of the session is active when the player is not away (UnitIsAFK) and an XP, kill or loot event came in
+-- that minute or the 4 before it (the last 5 minutes). The rate is the XP of the last 30 active minutes over those
+-- minutes, times 60 (all active minutes while there are fewer than 30); it shows after 10 active minutes. The time
+-- to the next level is what is left over the rate. XP is the live UnitXP delta since the session started, kept in
+-- memory: nothing is stored (a /reload starts the measure again).
+local Pace = { WINDOW = 30, WARM = 10, IDLE = 5, SCAN = 1440 }
+ns.Pace = Pace
+local P = { xpm = {}, ev = {}, afk = {}, total = 0 }
+function Pace.state() return P end
+local function readXP()
+  local cur, mx, lvl = plain(call(UnitXP, "player")), plain(call(UnitXPMax, "player")), plain(call(UnitLevel, "player"))
+  if not (cur and mx) then return nil end
+  return cur, mx, lvl
+end
+-- the session the measure belongs to: a new session starts it over (the last reading carries over, so the first
+-- gain of the new session counts)
+function Pace.sync()
+  local ses = curSession()
+  local sid = ses and ses.id
+  if sid ~= P.sid then
+    P.sid, P.start = sid, ses and plain(ses.startedEpoch)
+    P.xpm, P.ev, P.afk, P.total, P.kill = {}, {}, {}, 0, nil
+  end
+end
+function Pace.mark(t) P.ev[math.floor(t / 60)] = true end
+function Pace.baseline()
+  if P.last then return end
+  local cur, mx, lvl = readXP()
+  if cur then P.last = { cur, mx, lvl } end
+end
+-- PLAYER_XP_UPDATE: the gain since the last reading. A lower reading is a level up (the client can answer the new
+-- XP before the new level): what was left of the old level plus the new XP.
+function Pace.onXP(t)
+  t = t or nowT()
+  Pace.sync()
+  local cur, mx, lvl = readXP()
+  if not cur then return end
+  local last = P.last
+  P.last = { cur, mx, lvl }
+  if not last then return end
+  local gain
+  if (lvl and last[3] and lvl > last[3]) or cur < last[1] then gain = math.max(0, num(last[2]) - num(last[1])) + cur
+  else gain = cur - last[1] end
+  if gain > 0 then
+    local m = math.floor(t / 60)
+    P.xpm[m] = (P.xpm[m] or 0) + gain
+    P.total = P.total + gain
+    P.ev[m] = true
+  end
+end
+function Pace.onKill(name, xp, t)
+  Pace.sync(); Pace.mark(t or nowT())
+  if type(name) == "string" and name ~= "" and num(xp) > 0 then P.kill = { name = name, xp = xp } end
+end
+function Pace.onAfk(t)
+  local ok, v = pcall(function() return UnitIsAFK and UnitIsAFK("player") end)
+  if ok and not (issecretvalue and issecretvalue(v)) and v == true then Pace.sync(); P.afk[math.floor((t or nowT()) / 60)] = true end
+end
+-- { xp = this session, active = active minutes, used = minutes the rate reads, sum = their XP, rate = XP per hour
+-- (nil before 10 active minutes) }
+function Pace.compute(now)
+  now = now or nowT()
+  Pace.sync()
+  local out = { xp = P.total, active = 0, used = 0, sum = 0 }
+  local nm = math.floor(now / 60)
+  local sm = P.start and math.floor(P.start / 60) or (nm - Pace.SCAN)
+  sm = math.max(sm, nm - Pace.SCAN)
+  for m = nm, sm, -1 do
+    if not P.afk[m] then
+      local act = false
+      for k = m - (Pace.IDLE - 1), m do if P.ev[k] then act = true; break end end
+      if act then
+        out.active = out.active + 1
+        if out.used < Pace.WINDOW then out.used = out.used + 1; out.sum = out.sum + (P.xpm[m] or 0) end
+      end
+    end
+  end
+  if out.used >= Pace.WARM and out.sum > 0 then out.rate = out.sum / out.used * 60 end
+  return out
+end
+-- seconds to the next level at `rate` XP per hour, nil without a rate
+function Pace.remaining(cur, mx, rate)
+  if not (rate and rate > 0 and mx and cur and mx > cur) then return nil end
+  return (mx - cur) / rate * 3600
+end
+-- "Bristleback Quilboar dies, you gain 45 experience." (the client's English line; another locale only marks activity)
+local function xpLine(msg)
+  if type(msg) ~= "string" or (issecretvalue and issecretvalue(msg)) then return nil end
+  local name, xp = msg:match("^(.-) dies, you gain (%d+) experience")
+  return name, tonumber(xp)
+end
+Pace.xpLine = xpLine
+do
+  local ef = CreateFrame("Frame")
+  ns.eventFrames = ns.eventFrames or {}
+  ns.eventFrames[#ns.eventFrames + 1] = ef
+  for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_XP_UPDATE", "CHAT_MSG_COMBAT_XP_GAIN", "CHAT_MSG_LOOT", "PLAYER_FLAGS_CHANGED" }) do
+    pcall(ef.RegisterEvent, ef, e)
+  end
+  ef:SetScript("OnEvent", function(_, ev, a1)
+    pcall(function()
+      local t = nowT()
+      if ev == "PLAYER_XP_UPDATE" then Pace.onXP(t)
+      elseif ev == "PLAYER_ENTERING_WORLD" then Pace.sync(); Pace.baseline()
+      elseif ev == "CHAT_MSG_COMBAT_XP_GAIN" then local n, x = xpLine(a1); Pace.onKill(n, x, t)
+      elseif ev == "CHAT_MSG_LOOT" then Pace.sync(); Pace.mark(t)
+      elseif ev == "PLAYER_FLAGS_CHANGED" then Pace.onAfk(t) end
+    end)
+  end)
+  if C_Timer and C_Timer.NewTicker then C_Timer.NewTicker(60, function() pcall(Pace.onAfk, nowT()) end) end
+end
+
+-- ══ HOME / Now ═══════════════════════════════════════════════════════════════════════════════════════════════
+UI.KIND_ICON = {
+  death = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01", run = "Interface\\Icons\\INV_Misc_Map_01",
+  level = "Interface\\Icons\\Spell_Holy_SurgeOfLight", quest = "Interface\\Icons\\INV_Misc_Note_01",
+  lockout = "Interface\\Icons\\INV_Misc_Key_04", repair = "Interface\\Icons\\Trade_BlackSmithing",
+  bags = "Interface\\Icons\\INV_Misc_Bag_08", instance = "Interface\\Icons\\INV_Misc_PocketWatch_01",
+  loot = "Interface\\Icons\\INV_Misc_Bag_10",     -- (a loot row shows the item's own icon; this one only without it)
+  session = "Interface\\Icons\\INV_Misc_PocketWatch_02",
 }
+local Now = { CAP_COMPACT = 4, CAP_WIDE = 12, NEXT_CAP = 3, REPAIR_WARN = 45, REPAIR_BAD = 20, BAGS_BAD = 2 }
+ns.Now = Now
+local SLOT_NAME = { [1] = "Head", [2] = "Neck", [3] = "Shoulder", [5] = "Chest", [6] = "Waist", [7] = "Legs", [8] = "Feet",
+  [9] = "Wrist", [10] = "Hands", [11] = "Finger", [12] = "Finger", [13] = "Trinket", [14] = "Trinket", [15] = "Back",
+  [16] = "Main hand", [17] = "Off hand", [18] = "Ranged" }
 
-local build, refresh
-local view    -- the content frame the framework builds for us (set in build, used by onShow)
-
--- HOME / Overview: the cards, the XP bar and the feed of this session. `content` is the pane.
-build = function(content)
-  view = content
-  local ov = content
-  local SP = UI.SP
-  -- first-run walkthrough: a card over the dashboard until "Got it". Three things a new player must know.
-  local ob = UI.Panel(content); ob:SetPoint("TOPLEFT", 4, -8); ob:SetPoint("TOPRIGHT", -4, -8); ob:SetHeight(150)
-  ob:SetFrameLevel((content:GetFrameLevel() or 1) + 20)
-  local obT = UI.FS(ob, "GameFontNormal", C.gold); obT:SetPoint("TOPLEFT", 14, -12); obT:SetText("Welcome to everbuff.gg")
-  local obB = UI.FS(ob, "GameFontHighlightSmall"); obB:SetPoint("TOPLEFT", 14, -34); obB:SetPoint("TOPRIGHT", -14, -34); obB:SetJustifyH("LEFT"); obB:SetSpacing(3)
-  obB:SetText("1.  Keep the flag on screen. The desktop app reads it to mark the moments in your recording. Drag it anywhere, right-click to snap it to a corner.\n" ..
-              "2.  Play. Fights, loot, deaths, quests and gold are captured on their own. Nothing to start or stop.\n" ..
-              "3.  Home shows how your run is going. Combat has every fight with a replay. Loot has every pickup. Character has quests, reputation and professions.")
-  local obOk = UI.Button(ob, "Got it", 90, 24, function()
-    if ns.DB and ns.DB.settings then ns.DB.settings.onboarded = true end
-    ob:Hide()
-  end)
-  obOk:SetPoint("BOTTOMRIGHT", -12, 10)
-  local obSet = UI.Button(ob, "Open Settings", 110, 24, function() UI.Open("Settings") end)
-  obSet:SetPoint("RIGHT", obOk, "LEFT", -8, 0)
-  ob.okBtn = obOk
-  content.onboard = ob
-  if ns.DB and ns.DB.settings and ns.DB.settings.onboarded then ob:Hide() end
-  content.welcome = UI.FS(content, "GameFontHighlightSmall", C.dim)
-  content.welcome:SetPoint("BOTTOMLEFT", 4, 4); content.welcome:SetPoint("BOTTOMRIGHT", -4, 4); content.welcome:SetJustifyH("LEFT")
-  content.welcome:SetText("Play, and this page fills in. The flag on screen is what the desktop app reads.")
-
-  -- a stat card: dim title, big value, small sub between the card's edges. Title and value are one line; the sub takes
-  -- a second line when it does not fit, so a number in it is never cut. Returned with .value/.sub to update on refresh. `drill` = { tab, pane } the card drills into on click (the detail behind the number).
-  local PADC = SP.M
-  local function oneLine(fs) if fs.SetWordWrap then fs:SetWordWrap(false) end; if fs.SetMaxLines then fs:SetMaxLines(1) end; fs:SetJustifyH("LEFT"); return fs end
-  local function card(drill)
-    local p = UI.Panel(ov)
-    if drill then
-      p:EnableMouse(true)
-      p:SetScript("OnMouseUp", function() UI.Open(drill[1], drill[2]) end)
-      p:SetScript("OnEnter", function(f) f:SetBackdropColor(C.panel2[1], C.panel2[2], C.panel2[3], 1); f:SetBackdropBorderColor(C.edgeHi[1], C.edgeHi[2], C.edgeHi[3], 1) end)
-      p:SetScript("OnLeave", function(f) f:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.92); f:SetBackdropBorderColor(C.edge[1], C.edge[2], C.edge[3], 1) end)
-      p.more = UI.FS(p, "GameFontDisableSmall", C.dim); p.more:SetPoint("TOPRIGHT", -10, -9); p.more:SetText("›")
-    end
-    p.title = oneLine(UI.FS(p, "GameFontNormalSmall", C.dim)); p.title:SetPoint("TOPLEFT", PADC, -9); p.title:SetPoint("TOPRIGHT", -(PADC + 12), -9)
-    p.value = oneLine(UI.CellFS(p, "GameFontNormalLarge", C.ink)); if UI.VALUE_FONT then p.value:SetFontObject(UI.VALUE_FONT) end
-    p.value:SetPoint("TOPLEFT", PADC, -26); p.value:SetPoint("TOPRIGHT", -PADC, -26)
-    p.sub = UI.CellFS(p, "GameFontHighlightSmall", C.dim); p.sub:SetPoint("TOPLEFT", PADC, -50); p.sub:SetPoint("TOPRIGHT", -PADC, -50)
-    p.sub:SetJustifyH("LEFT"); p.sub:SetJustifyV("TOP")
-    if p.sub.SetWordWrap then p.sub:SetWordWrap(true) end
-    if p.sub.SetMaxLines then p.sub:SetMaxLines(2) end
-    return p
+-- whole names that fit `width` in META, then "+N"
+local function fitNames(names, width)
+  local out, shown = "", 0
+  for i, n in ipairs(names) do
+    local rest = #names - i
+    local cand = (shown > 0 and (out .. ", ") or "") .. n
+    local tail = rest > 0 and (" +" .. rest) or ""
+    if shown > 0 and UI.TextWidth("META", cand .. tail) > width then break end
+    out, shown = cand, shown + 1
   end
-
-  -- three cards over three, filling the pane's width with the same X0 inset on both sides (the feed below keeps its
-  -- own scroll bar gutter; the cards do not scroll, so they leave none)
-  local CH, LINE, GAP, X0, Y0 = 78, 14, SP.M, SP.XS, -8
-  content.cLevel  = card({ "Character", "professions" }); content.cLevel.title:SetText("CHARACTER")
-  content.cXP     = card({ "Character", "quests" });      content.cXP.title:SetText("EXPERIENCE")
-  content.cPlayed = card({ "Home", "sessions" });         content.cPlayed.title:SetText("TIME PLAYED")
-  content.cGold   = card({ "Loot", "gold" });             content.cGold.title:SetText("GOLD")
-  -- the Gold card's own second line under its subtitle: what every character holds together (0.9.44, #43). One
-  -- line of its own, so it is never the part a wrapped subtitle loses; the row grows by a line when it is set.
-  do
-    local p = content.cGold
-    p.sub2 = UI.CellFS(p, "GameFontHighlightSmall", C.dim)
-    p.sub2:SetPoint("TOPLEFT", p.sub, "BOTTOMLEFT", 0, 0); p.sub2:SetPoint("TOPRIGHT", p.sub, "BOTTOMRIGHT", 0, 0)
-    p.sub2:SetJustifyH("LEFT")
-  end
-  content.cKills  = card({ "Home", "fights" });         content.cKills.title:SetText("COMBAT")
-  content.cPace   = card();                               content.cPace.title:SetText("LEVELING PACE")
-  local grid = { { content.cLevel, content.cXP, content.cPlayed }, { content.cGold, content.cKills, content.cPace } }
-
-  -- full-width XP progress bar, under the cards
-  local track = UI.Panel(ov, C.bg[1], C.bg[2], C.bg[3]); track:SetHeight(14)
-  track:SetPoint("TOPLEFT", grid[2][1], "BOTTOMLEFT", 0, -(GAP + 4)); track:SetPoint("TOPRIGHT", grid[2][3], "BOTTOMRIGHT", 0, -(GAP + 4))
-  local fill = track:CreateTexture(nil, "ARTWORK"); fill:SetPoint("TOPLEFT", 1, -1); fill:SetPoint("BOTTOMLEFT", 1, 1)
-  fill:SetColorTexture(ns.UI.C.accentPressed[1], ns.UI.C.accentPressed[2], ns.UI.C.accentPressed[3], 1)   -- progress is the accent, pressed shade so the white label reads on it
-  content.xpFill, content.xpTrack = fill, track
-  content.xpPct = 0
-  content.xpText = UI.FS(ov, "GameFontHighlightSmall", C.ink); content.xpText:SetPoint("LEFT", track, "LEFT", 8, 0)
-  -- the fill follows the track's width
-  content.placeXP = function()
-    local tw = track:GetWidth()
-    if tw and tw > 2 then fill:SetWidth(math.max(1, (tw - 2) * (content.xpPct / 100))) end
-  end
-
-  -- cards sized from the pane's width: three columns with M gaps, the last one takes the rounding. A row is one line
-  -- taller when a subtitle in it needs a second line; every card of a row shares the row's height.
-  local function relayout(w)
-    w = tonumber(w) or 0
-    if w <= 1 then return end
-    local avail = w - 2 * X0
-    local cw = math.floor((avail - 2 * GAP) / 3)
-    local y = Y0
-    for _, rowCards in ipairs(grid) do
-      local extra = 0
-      for c, p in ipairs(rowCards) do
-        local pw = (c == 3) and (avail - 2 * (cw + GAP)) or cw
-        local sw = tonumber(p.sub:GetStringWidth()) or 0
-        local n = (sw > pw - 2 * PADC) and 1 or 0
-        if p.sub2 and p.sub2On then n = n + 1 end
-        if n > extra then extra = n end
-      end
-      local h = CH + extra * LINE
-      for c, p in ipairs(rowCards) do
-        local x = X0 + (c - 1) * (cw + GAP)
-        p:ClearAllPoints(); p:SetPoint("TOPLEFT", ov, "TOPLEFT", x, y)
-        p:SetSize((c == 3) and (avail - 2 * (cw + GAP)) or cw, h)
-      end
-      y = y - h - GAP
-    end
-    content.placeXP()
-  end
-  content.relayout = relayout
-  content:HookScript("OnSizeChanged", function(_, w) pcall(relayout, w) end)
-  pcall(relayout, content:GetWidth())
-
-  -- this session's story: milestones newest first (the full feed with filters is the Timeline pane)
-  local mh = UI.FS(ov, "GameFontNormal", C.gold); mh:SetPoint("TOPLEFT", track, "BOTTOMLEFT", 0, -SP.M); mh:SetText("This session")
-  content.mhSub = oneLine(UI.FS(ov, "GameFontDisableSmall", C.dim))
-  content.mhSub:SetPoint("TOPLEFT", mh, "TOPRIGHT", 10, -2); content.mhSub:SetPoint("TOPRIGHT", track, "BOTTOMRIGHT", 0, -(SP.M + 2)); content.mhSub:SetText("")
-  -- the feed: time and milestone, no header; a shortened milestone reads in full on hover
-  local feed = CreateFrame("Frame", nil, ov)
-  feed:SetPoint("TOPLEFT", mh, "BOTTOMLEFT", -X0, -SP.S); feed:SetPoint("BOTTOMRIGHT", ov, "BOTTOMRIGHT", 0, 0)
-  local mtbl = UI.Table(feed, {
-    { key = "time", label = "", kind = "tag", color = "dim", measure = { "23:59" } },
-    { key = "text", label = "", flex = 1, min = 120 },
-  }, { top = 0, header = false, inset = SP.S,
-    emptyText = "Nothing yet this session. Level up, explore, fight, and it shows up here." })
-  content.mtbl, content.msf, content.mchild = mtbl, mtbl.sf, mtbl.child
-
-  refresh(content)
+  if shown < #names then out = out .. " +" .. (#names - shown) end
+  return out
 end
-refresh = function(content)
-  if not content or not content.cLevel then return end
-  local D = ns.DB or {}
-  local db = (ns.DB and ns.char()) or {}                  -- CHARACTER: xp, played, durability, ...
-  local story = D.story or {}
-  if content.welcome then
-    local fresh = #(story.events or {}) == 0 and #((D.combat or {}).fights or {}) == 0
-    if fresh and not (content.onboard and content.onboard:IsShown()) then content.welcome:Show() else content.welcome:Hide() end
-  end
+Now.fitNames = fitNames
 
-  -- Character
-  local lvl = (UnitLevel and UnitLevel("player")) or 0
-  local pname = (UnitName and UnitName("player")) or "?"
-  local raceN = (UnitRace and UnitRace("player")) or ""
-  local classN, classFile = "", nil
-  if UnitClass then classN, classFile = UnitClass("player") end
-  local r, g, b = UI.ClassColor(classFile)
-  content.cLevel.value:SetText("Level " .. lvl); content.cLevel.value:SetTextColor(r, g, b)
-  local gear = (db.durability and db.durability.pct) and ("  ·  gear " .. db.durability.pct .. "%") or ""
-  content.cLevel.sub:SetText(("%s  ·  %s %s%s"):format(pname, raceN, classN, gear))
-
-  -- Experience
-  local xp = db.xp or {}
-  local cur, max = tonumber(xp.cur) or 0, tonumber(xp.max) or 0
-  local pct = (max > 0) and (cur / max * 100) or 0
-  if lvl >= (GetMaxPlayerLevel and GetMaxPlayerLevel() or 60) then
-    content.cXP.value:SetText("Max"); content.cXP.sub:SetText("Level cap reached")
-    content.xpPct = 0; content.placeXP(); content.xpText:SetText("")
-  else
-    content.cXP.value:SetText(("%.0f%%"):format(pct))
-    local rested = tonumber(xp.rested) or 0
-    local q, k = tonumber(xp.fromQuests) or 0, tonumber(xp.fromKills) or 0
-    local split = (q + k) > 0 and ("  ·  quests %d%% / kills %d%%"):format(math.floor(q / (q + k) * 100 + 0.5), math.floor(k / (q + k) * 100 + 0.5)) or ""
-    content.cXP.sub:SetText(("%s / %s%s%s"):format(commas(cur), commas(max),
-      rested > 0 and ("  ·  rested " .. commas(rested)) or "", split))
-    content.xpPct = math.max(0, math.min(100, pct)); content.placeXP()
-    content.xpText:SetText(("XP  %s / %s  (%.0f%%)"):format(commas(cur), commas(max), pct))
+-- the live readings NEXT acts on, each nil when the client cannot answer
+function Now.freeBagSlots()
+  local f = (C_Container and C_Container.GetContainerNumFreeSlots) or GetContainerNumFreeSlots
+  if type(f) ~= "function" then return nil end
+  local n, any = 0, false
+  for bag = 0, 4 do
+    local free, fam = call(f, bag)
+    free, fam = plain(free), plain(fam)
+    if free then any = true; if not fam or fam == 0 then n = n + free end end
   end
-
-  -- Time played
-  local pl = db.played or {}
-  content.cPlayed.value:SetText(fmtTime(pl.total))
-  content.cPlayed.sub:SetText(pl.level and ("this level: " .. fmtTime(pl.level)) or "play a bit to record")
-
-  -- Gold
-  local gold = db.gold or {}   -- the character's own ledger (#23); loot.gold is retired
-  content.cGold.value:SetText(fmtMoney(gold.balance or 0)); content.cGold.value:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-  -- a label and its amount are joined by a no-break space, so a wrap can only fall at the separator
-  -- the balance, then today's net (the period the Gold pane opens on) and today's pace: the same day's net over the
-  -- time played that day, so the two numbers are of one period (nothing under 5 minutes played). With more than one
-  -- character known, what they hold together on a line of its own (0.9.44, everbuff-wow-addon #43)
-  local sub2 = ""
-  if ns.Gold then
-    local sub = ("today%s%s"):format(UI.NBSP, ns.Gold.signed(ns.Gold.metric("net", "char", "today")))
-    -- the rolling rate by the per hour setting, named ("Farming 44g 20s/h"), once there is active time for it
-    -- (0.9.45); until then today's net over the time played today, as before
-    local roll = ns.Gold.rate and ns.Gold.rate() or nil
-    local rate = ns.Gold.metric("perHour", "char", "today")
-    if roll and roll.perHour and not roll.warm then
-      local name, v = ns.Gold.rateParts(roll)
-      sub = sub .. ("  ·  %s%s%s"):format(name, UI.NBSP, v)
-    elseif rate then sub = sub .. ("  ·  %s%sper%shour"):format(ns.Gold.signed(rate), UI.NBSP, UI.NBSP) end
-    local ro = ns.Gold.roster("all")
-    if ro.count > 1 then sub2 = ("all characters %s"):format(fmtMoney(ro.total)) end
-    content.cGold.sub:SetText(sub)
-  else content.cGold.sub:SetText("") end
-  content.cGold.sub2:SetText(sub2); content.cGold.sub2On = sub2 ~= ""
-
-  -- Combat (from the event timeline: every kill/death lands there)
-  local kills, deaths = 0, 0
-  for _, e in ipairs(story.events or {}) do   -- the logged-in character's only (#23)
-    if ns.isMine(e) then
-      if e.kind == "KILL" then kills = kills + 1 elseif e.kind == "DEATH" then deaths = deaths + 1 end
-    end
-  end
-  local fights = 0
-  for _, fi in ipairs((ns.Fights and ns.Fights.list and ns.Fights.list()) or {}) do if ns.isMine(fi) then fights = fights + 1 end end
-  content.cKills.value:SetText(commas(kills) .. " kills"); content.cKills.value:SetTextColor(C.green[1], C.green[2], C.green[3])
-  content.cKills.sub:SetText(("%d death%s  ·  %d fights recorded"):format(deaths, deaths == 1 and "" or "s", fights))
-
-  -- Leveling pace: time played across the last levels (from the per-level /played stamps)
-  local pace = "-"
-  local pal = db.playedAtLevel
-  if pal and lvl and lvl > 1 and pal[lvl] and pal[lvl - 1] then
-    pace = fmtTime(pal[lvl] - pal[lvl - 1])
-  end
-  -- session rate: XP gained since login over wall-clock time since login
-  local ses = (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or {}
-  local elapsed = (ses.startedEpoch and ((GetServerTime and GetServerTime()) or time()) - ses.startedEpoch) or 0
-  local sxp = tonumber(ses.xp) or 0
-  local rate = (elapsed >= 120 and sxp > 0) and (sxp / (elapsed / 3600)) or 0
-  if rate > 0 then
-    content.cPace.value:SetText(commas(math.floor(rate + 0.5)) .. " XP/hr")
-    local toLevel = (max > cur) and ((max - cur) / rate * 3600) or 0
-    local bits = {}
-    if toLevel > 0 and lvl < (GetMaxPlayerLevel and GetMaxPlayerLevel() or 60) then bits[#bits + 1] = "level in ~" .. fmtTime(toLevel) end
-    if pace ~= "-" then bits[#bits + 1] = "last level took " .. pace end
-    content.cPace.sub:SetText(#bits > 0 and table.concat(bits, "  ·  ") or "this session")
-  else
-    content.cPace.value:SetText(pace)
-    content.cPace.sub:SetText(pace ~= "-" and "played for the last level  ·  XP/hr after a few minutes" or "levels timed as you play")
-  end
-
-  -- This session's milestones (falls back to everything when the session id is unknown)
-  local log = story.events or {}
-  local sid = D.active
-  if content.mhSub then
-    local ses = (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or {}
-    local el = (ses.startedEpoch and ((GetServerTime and GetServerTime()) or time()) - ses.startedEpoch) or 0
-    content.mhSub:SetText(el > 0 and ("started %s ago  ·  %d kills  ·  %d deaths  ·  %d items"):format(fmtTime(el) ~= "-" and fmtTime(el) or "moments", tonumber(ses.kills) or 0, tonumber(ses.deaths) or 0, tonumber(ses.items) or 0) or "")
-  end
-  local miles = {}
-  for i = #log, 1, -1 do
-    local e = log[i]
-    if MILE[e.kind] and (sid == nil or e.s == nil or e.s == sid) and ns.isMine(e) then
-      miles[#miles + 1] = e
-      if #miles >= 40 then break end
-    end
-  end
-  content.mtbl.setRows(miles, function(row, e)
-    row.c.time:SetText(date("%H:%M", e.t or 0))
-    local col = MILE[e.kind] or C.ink
-    row.c.text:SetText(e.text or e.kind or "?"); row.c.text:SetTextColor(col[1], col[2], col[3])
-  end)
-  -- the subtitles just set decide whether a card row needs its second line
-  if content.relayout then pcall(content.relayout, content:GetWidth()) end
+  return any and n or nil
 end
+-- the lowest equipped slot in percent, and every slot at or under the repair line
+function Now.durability()
+  if type(GetInventoryItemDurability) ~= "function" then return nil end
+  local low, worn = nil, {}
+  for slot = 1, 18 do
+    local c, m = call(GetInventoryItemDurability, slot)
+    c, m = plain(c), plain(m)
+    if c and m and m > 0 then
+      local pct = math.floor(c / m * 100)
+      if not low or pct < low then low = pct end
+      if pct <= Now.REPAIR_WARN then worn[#worn + 1] = { slot = slot, pct = pct } end
+    end
+  end
+  table.sort(worn, function(a, b) if a.pct ~= b.pct then return a.pct < b.pct end return a.slot < b.slot end)
+  return low, worn
+end
+-- the quest log entries whose objectives are complete (the 6th answer of GetQuestLogTitle is 1)
+function Now.questsReady()
+  if type(GetQuestLogTitle) ~= "function" or type(GetNumQuestLogEntries) ~= "function" then return nil end
+  local n = plain(call(GetNumQuestLogEntries)) or 0
+  local out = {}
+  for i = 1, n do
+    local title, _, _, isHeader, _, isComplete = call(GetQuestLogTitle, i)
+    if type(title) == "string" and not isHeader and isComplete == 1 then out[#out + 1] = title end
+  end
+  return out
+end
+
+-- NEXT: what needs the player, at most 3, in rank order (4.1)
+function Now.nextItems(width, now)
+  now = now or nowT()
+  local out = {}
+  local free = Now.freeBagSlots()
+  if free and free <= Now.BAGS_BAD then
+    out[#out + 1] = { kind = "bags", icon = UI.KIND_ICON.bags, dot = "bad",
+      title = ("Bags almost full: %s"):format(UI.plural(free, "free slot")), meta = "Sell grey items at a vendor" }
+  end
+  local low, worn = Now.durability()
+  if low and low <= Now.REPAIR_WARN then
+    local rows = {}
+    for _, w in ipairs(worn) do rows[#rows + 1] = { SLOT_NAME[w.slot] or ("Slot " .. w.slot), w.pct .. "%" } end
+    out[#out + 1] = { kind = "repair", icon = UI.KIND_ICON.repair, dot = low <= Now.REPAIR_BAD and "bad" or "warn",
+      title = ("Repair soon: your lowest item is at %d%%"):format(low), meta = "Any repair vendor fixes it",
+      tip = { title = "Repair soon", text = "Your equipped items at 45% or below.", pairs = rows } }
+  end
+  local lim = ns.Runs and ns.Runs.limit and ns.Runs.limit()
+  if lim then
+    local hour, _, rows = ns.Runs.copies(now)
+    local left = lim - hour
+    if left <= 1 then
+      local oldest
+      for _, r in ipairs(rows or {}) do if r.t > now - 3600 and (not oldest or r.t < oldest) then oldest = r.t end end
+      local nextIn = oldest and math.max(0, oldest + 3600 - now) or nil
+      out[#out + 1] = { kind = "instance", icon = UI.KIND_ICON.instance, dot = left <= 0 and "bad" or "warn",
+        title = left <= 0 and "No instances left this hour" or "1 instance left this hour",
+        meta = nextIn and ("Next free in " .. UI.fmtDur(nextIn, { minutes = true })) or ("Your own limit: " .. UI.plural(lim, "instance") .. " an hour"),
+        onClick = function() UI.Open("Dungeons", "runs") end }
+    end
+  end
+  local ready = Now.questsReady()
+  if ready and #ready > 0 then
+    out[#out + 1] = { kind = "quest", icon = UI.KIND_ICON.quest,
+      title = ("%s ready to turn in"):format(UI.plural(#ready, "quest")), meta = fitNames(ready, width or 400) }
+  end
+  while #out > Now.NEXT_CAP do table.remove(out) end
+  return out
+end
+
+-- the story events of the live session that are the logged-in character's, oldest first
+local function sessionEvents(ses)
+  local out = {}
+  local sid = ses and ses.id
+  if not sid then return out end
+  for _, e in ipairs((ns.DB and ns.DB.story and ns.DB.story.events) or {}) do
+    if type(e) == "table" and e.s == sid and ns.isMine(e) then out[#out + 1] = e end
+  end
+  return out
+end
+Now.sessionEvents = sessionEvents
+local function fightAt(t)
+  for _, f in ipairs((ns.Fights and ns.Fights.list and ns.Fights.list()) or {}) do
+    local s0 = num(f.startEpoch)
+    if s0 > 0 and t >= s0 - 1 and t <= s0 + num(f.duration) + 2 then return f end
+  end
+  return nil
+end
+local function qHex(q) q = type(q) == "string" and q:lower() or "ffffffff"; return #q == 8 and q or "ffffffff" end
+local function qColor(q)
+  q = qHex(q)
+  return { (tonumber(q:sub(3, 4), 16) or 255) / 255, (tonumber(q:sub(5, 6), 16) or 255) / 255, (tonumber(q:sub(7, 8), 16) or 255) / 255 }
+end
+local function sellPrice(id)
+  if not id then return 0 end
+  local fn = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  if type(fn) ~= "function" then return 0 end
+  local ok, r = pcall(function() return select(11, fn(id)) end)
+  return (ok and plain(r)) or 0
+end
+-- an item or source name without its link markup and brackets
+local function stripLink(s)
+  s = tostring(s or "")
+  s = s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h", ""):gsub("|h", "")
+  return (s:gsub("^%[", ""):gsub("%]$", ""))
+end
+Now.stripLink = stripLink
+
+-- WORTH A LOOK: what happened this session, in rank order, newest first within a rank (4.1)
+function Now.lookItems(now)
+  now = now or nowT()
+  local ses = curSession()
+  local start = ses and plain(ses.startedEpoch) or now
+  local ev = sessionEvents(ses)
+  local out, extra = {}, {}
+  -- 1 deaths, at most 2, then a link row for the rest
+  local deaths = {}
+  for i = #ev, 1, -1 do if ev[i].kind == "DEATH" then deaths[#deaths + 1] = ev[i] end end
+  for i, e in ipairs(deaths) do
+    if i > 2 then break end
+    local f = fightAt(num(e.t))
+    local parts = { UI.fmtClock(e.t) }
+    if type(e.zone) == "string" and e.zone ~= "" then parts[#parts + 1] = e.zone end
+    if f and num(f.duration) > 0 then parts[#parts + 1] = "in a " .. UI.fmtDur(f.duration) .. " pull" end
+    out[#out + 1] = { kind = "death", rank = 1, t = num(e.t), icon = UI.KIND_ICON.death,
+      title = (type(e.foe) == "string" and e.foe ~= "") and ("Died to " .. e.foe) or "You died",
+      meta = table.concat(parts, " \194\183 "), onClick = function() UI.Open("Home", "deaths") end }
+  end
+  if #deaths > 2 then extra.deaths = #deaths - 2 end
+  -- 2 dungeon runs of this session, one row each, at most 2
+  local runs = {}
+  if ns.Runs and ns.Runs.views then
+    local ok, vs = pcall(ns.Runs.views, false)
+    for _, v in ipairs(ok and vs or {}) do
+      if v.inProgress or num(v.startT) >= start then runs[#runs + 1] = v end
+    end
+  end
+  table.sort(runs, function(a, b) return num(a.startT) > num(b.startT) end)
+  for i, v in ipairs(runs) do
+    if i > 2 then break end
+    local cmp = v.cmp or {}
+    local name = v.name or "Dungeon"
+    local bosses = v.total and ("%d of %d bosses"):format(num(v.bossesDown), v.total)
+      or (num(v.bossesDown) > 0 and (UI.plural(num(v.bossesDown), "boss") .. " killed") or "no boss killed")
+    local title, badge, bar
+    if v.inProgress then title, badge = ("%s: %s so far"):format(name, bosses), "IN PROGRESS"
+    elseif cmp.first then title = ("%s: first run, %s"):format(name, bosses)
+    elseif cmp.isBest then title, badge, bar = ("%s: your best run, %s"):format(name, bosses), "BEST", "good"
+    elseif cmp.mode == "same" and cmp.delta then title = ("%s: %s, %s than your best"):format(name, bosses, (UI.fmtDelta(cmp.delta)))
+    else title = ("%s: %s"):format(name, bosses) end
+    local who = {}
+    for _, d in ipairs(v.deathRows or {}) do if type(d) == "table" and type(d.who) == "string" then who[#who + 1] = d.who end end
+    local parts = { UI.fmtClock(v.startT), UI.fmtDur(v.duration) }
+    if #who > 0 then parts[#parts + 1] = fitNames(who, 160) .. " died"
+    elseif num(v.deaths) + num(v.partyDeaths) > 0 then parts[#parts + 1] = UI.plural(num(v.deaths) + num(v.partyDeaths), "death")
+    else parts[#parts + 1] = "nobody died" end
+    if num(v.xpGain) > 0 then parts[#parts + 1] = "+" .. UI.fmtNum(v.xpGain) .. " XP" end
+    local rec = v.rec
+    out[#out + 1] = { kind = "run", rank = 2, t = num(v.startT), icon = UI.KIND_ICON.run, title = title, badge = badge, bar = bar,
+      meta = table.concat(parts, " \194\183 "),
+      onClick = function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, rec) end end }
+  end
+  -- 3 level-ups
+  local db = (ns.DB and ns.char()) or {}
+  local pal = type(db.playedAtLevel) == "table" and db.playedAtLevel or {}
+  for i = #ev, 1, -1 do
+    local e = ev[i]
+    if e.kind == "LEVELUP" then
+      local lvl = tonumber(tostring(e.text or ""):match("(%d+)%s*$"))
+      local meta = { UI.fmtClock(e.t) }
+      if lvl and pal[lvl - 1] and pal[lvl - 2] then
+        local took = num(pal[lvl - 1]) - num(pal[lvl - 2])
+        if took > 0 then meta[#meta + 1] = UI.fmtDur(took, { minutes = true }) .. " at level " .. (lvl - 1) end
+        if took > 0 and pal[lvl - 3] then
+          local before = num(pal[lvl - 2]) - num(pal[lvl - 3])
+          if before > 0 then
+            local d = UI.fmtDelta(took - before)
+            if d ~= "same as best" then meta[#meta + 1] = d .. " than level " .. (lvl - 2) end
+          end
+        end
+      end
+      out[#out + 1] = { kind = "level", rank = 3, t = num(e.t), icon = UI.KIND_ICON.level,
+        title = lvl and ("Reached level " .. lvl) or "Level up", meta = table.concat(meta, " \194\183 ") }
+    end
+  end
+  -- 4 the best drop of the session, green and better: the highest quality, then the highest vendor price
+  local best, bestRank, bestPrice
+  local sid = ses and ses.id
+  for _, l in ipairs((ns.DB and ns.DB.loot and ns.DB.loot.log) or {}) do
+    if type(l) == "table" and sid and l.s == sid and l.item and not l.money then
+      local rank = ns.Runs and ns.Runs.qRank and ns.Runs.qRank(l.q) or 1
+      if rank >= 2 then
+        local price = sellPrice(l.id)
+        if not best or rank > bestRank or (rank == bestRank and price > bestPrice) then best, bestRank, bestPrice = l, rank, price end
+      end
+    end
+  end
+  if best then
+    local meta = {}
+    if type(best.src) == "string" and best.src ~= "" then meta[#meta + 1] = "From " .. stripLink(best.src) end
+    if bestPrice > 0 then meta[#meta + 1] = "vendor price " .. UI.money(bestPrice) end
+    if #meta == 0 then meta[1] = UI.fmtClock(best.t) end
+    out[#out + 1] = { kind = "loot", rank = 4, t = num(best.t), icon = best.icon or UI.KIND_ICON.loot,
+      title = "Best drop: " .. stripLink(best.item), titleColor = qColor(best.q), meta = table.concat(meta, " \194\183 "),
+      onClick = function() UI.Open("Loot", "items") end }
+  end
+  -- 5 quests turned in, one row
+  local quests, lastQ, lastT = 0, nil, 0
+  for _, e in ipairs(ev) do
+    if e.kind == "QUESTDONE" then
+      quests = quests + 1
+      local n = tostring(e.text or ""):match("^Complete:%s+(.+)$")
+      if n and n ~= "" then lastQ = n end
+      lastT = num(e.t)
+    end
+  end
+  if quests > 0 then
+    local meta = {}
+    local okq, qm = false, nil
+    if ns.Gold and ns.Gold.metric then okq, qm = pcall(ns.Gold.metric, "quests", "char", "session") end
+    if okq and type(qm) == "number" and qm > 0 then meta[#meta + 1] = UI.money(qm) .. " from quests" end
+    if lastQ then meta[#meta + 1] = "last: " .. lastQ end
+    out[#out + 1] = { kind = "quest", rank = 5, t = lastT, icon = UI.KIND_ICON.quest,
+      title = UI.plural(quests, "quest") .. " turned in", meta = table.concat(meta, " \194\183 "),
+      onClick = function() UI.Open("Character", "quests") end }
+  end
+  -- 6 lockouts that still hold; the › opens the run of that dungeon inside the lockout's life
+  for _, l in ipairs(type(db.lockouts) == "table" and db.lockouts or {}) do
+    if type(l) == "table" and num(l.resetAt) > now and type(l.name) == "string" then
+      local title = (l.bosses and l.down) and ("%s: %d of %d bosses down"):format(l.name, l.down, l.bosses) or (l.name .. ": saved")
+      local match
+      for _, rec in ipairs(type(db.dungeonRuns) == "table" and db.dungeonRuns or {}) do
+        if type(rec) == "table" and type(rec.inst) == "string" and rec.inst:lower() == l.name:lower() and num(rec.t) > now - 7 * 86400
+          and (not match or num(rec.t) > num(match.t)) then match = rec end
+      end
+      out[#out + 1] = { kind = "lockout", rank = 6, t = num(l.resetAt), icon = UI.KIND_ICON.lockout, title = title,
+        meta = "Resets in " .. UI.fmtDur(l.resetAt - now, { minutes = true }),
+        tip = (not match) and { title = l.name, text = "Saved before Everbuff recorded this dungeon on this character." } or nil,
+        onClick = match and function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, match) end end or nil }
+    end
+  end
+  table.sort(out, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.t > b.t end)
+  return out, extra, ev
+end
+
+local nowView
+local noticeOff = false   -- the combat-log notice was dismissed (until the next /reload)
+
+-- ══ First run (4.13): three steps in place of Now's content, until Finish or Skip sets settings.welcomeDone. The
+-- window is never opened for it; the sidebar works throughout. A save from before this guide that dismissed the old
+-- welcome card (settings.onboarded) counts as done (UI.MigrateSettings).
+local Welcome = { STEPS = 3 }
+Now.Welcome = Welcome
+function Welcome.due()
+  local st = ns.DB and ns.DB.settings
+  return type(st) == "table" and st.welcomeDone ~= true
+end
+function Welcome.finish()
+  if ns.DB and ns.DB.settings then ns.DB.settings.welcomeDone = true end
+  if nowView then nowView.welcomeStep = 1; Now.refresh(nowView) end
+end
+function Welcome.build(content)
+  local f = CreateFrame("Frame", nil, content); f:SetAllPoints(content); f:Hide()
+  content.welcome = f
+  f.dots = {}
+  for i = 1, Welcome.STEPS do
+    local d = UI.Glyph(f, "dot", 8, "lineControl")
+    d:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3 + (i - 1) * (8 + S.S2), -4)
+    f.dots[i] = d
+  end
+  f.stepText = UI.Text(f, "META", "fgMuted"); f.stepText:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3 + Welcome.STEPS * (8 + S.S2), -1)
+  f.title = UI.Text(f, "TITLE", "fg"); f.title:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -32)
+  f.body = UI.Text(f, "BODY", "fgSubtle", { wrap = true }); f.body:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -56); f.body:SetWidth(520)
+  f.block = CreateFrame("Frame", nil, f)
+  -- step 1: three status rows
+  f.status = {}
+  for i = 1, 3 do
+    local r = CreateFrame("Frame", nil, f.block); r:SetHeight(H.ROW)
+    r:SetPoint("TOPLEFT", f.block, "TOPLEFT", 0, -(i - 1) * H.ROW); r:SetPoint("TOPRIGHT", f.block, "TOPRIGHT", 0, -(i - 1) * H.ROW)
+    r.dot = UI.Glyph(r, "dot", 8, "accent"); r.dot:SetPoint("LEFT", r, "LEFT", S.S3, 0)
+    r.text = UI.Text(r, "BODY", "fg"); r.text:SetPoint("LEFT", r, "LEFT", S.S3 + 8 + S.S2, 0)
+    r.meta = UI.Text(r, "META", "fgMuted")
+    f.status[i] = r
+  end
+  f.turnOn = UI.KitButton(f.status[2], "Turn on", "ghost", function()
+    if ns.Logging and ns.Logging.enforce then pcall(ns.Logging.enforce, true) end
+    if UI.refreshStatus then pcall(UI.refreshStatus) end
+    Welcome.draw(content)
+  end)
+  -- step 2: a preview of the gold line, and the answer
+  f.pill = UI.Box(f.block, "sunken", "line"); f.pill:SetHeight(H.CONTROL)
+  f.pill:SetPoint("TOPLEFT", f.block, "TOPLEFT", S.S3, 0)
+  f.pill.text = UI.Text(f.pill, "BODY_STRONG", "fg"); f.pill.text:SetPoint("LEFT", f.pill, "LEFT", S.S2, 0)
+  local function answer(yes)
+    if ns.Gold and ns.Gold.pillAnswer then pcall(ns.Gold.pillAnswer, yes) end
+    content.welcomeStep = 3; Welcome.draw(content)
+  end
+  f.noThanks = UI.KitButton(f.block, "No thanks", "ghost", function() answer(false) end, { h = UI.H.BIG_BUTTON })
+  f.noThanks:SetPoint("TOPLEFT", f.pill, "BOTTOMLEFT", 0, -S.S5)
+  f.showIt = UI.KitButton(f.block, "Show it", "primary", function() answer(true) end, { h = UI.H.BIG_BUTTON })
+  f.showIt:SetPoint("LEFT", f.noThanks, "RIGHT", S.S2, 0)
+  -- step 3: three things to get started
+  f.rows = {}
+  local THINGS = {
+    { UI.KIND_ICON.run, "Run a dungeon", "Your time, bosses and loot show under Dungeons, against your best." },
+    { UI.KIND_ICON.session, "Play as usual", "Home shows this session at a glance." },
+    { UI.KIND_ICON.quest, "Open this window any time", "Type /eb or click the minimap button." },
+  }
+  for i, t in ipairs(THINGS) do
+    local r = UI.Row2(f.block)
+    r:SetPoint("TOPLEFT", f.block, "TOPLEFT", 0, -(i - 1) * H.ROW2); r:SetPoint("TOPRIGHT", f.block, "TOPRIGHT", 0, -(i - 1) * H.ROW2)
+    r:Set({ icon = t[1], title = t[2], meta = t[3] })
+    f.rows[i] = r
+  end
+  -- the footer, right-aligned to BOX_R at CONTENT_BOTTOM - 28: Back, Skip, Next (Finish on the last step)
+  f.next = UI.KitButton(f, "Next", "primary", function()
+    if content.welcomeStep >= Welcome.STEPS then Welcome.finish() else content.welcomeStep = content.welcomeStep + 1; Welcome.draw(content) end
+  end, { h = UI.H.BIG_BUTTON })
+  f.next:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+  f.skip = UI.KitButton(f, "Skip", "link", function() Welcome.finish() end, { role = "BODY" })
+  f.back = UI.KitButton(f, "Back", "ghost", function() content.welcomeStep = math.max(1, content.welcomeStep - 1); Welcome.draw(content) end, { h = UI.H.BIG_BUTTON })
+  content.welcomeStep = 1
+end
+local STEP_TEXT = {
+  { "Welcome to Everbuff", "Everbuff records your pulls, loot, deaths and leveling while you play, so you can see how you are doing here and watch it back on everbuff.gg. You can change everything later in Settings." },
+  { "Show your gold on screen?", "A small line near the flag shows your gold and how much you made this session. It never covers your game." },
+  { "Three things to get started", "" },
+}
+function Welcome.draw(content)
+  local f = content.welcome
+  local step = math.max(1, math.min(Welcome.STEPS, content.welcomeStep or 1))
+  content.welcomeStep = step
+  for i, d in ipairs(f.dots) do d:SetColor(i == step and "accent" or (i < step and "fgSubtle" or "lineControl")) end
+  f.stepText:SetText(("Step %d of %d"):format(step, Welcome.STEPS))
+  f.title:SetText(STEP_TEXT[step][1]); f.body:SetText(STEP_TEXT[step][2])
+  local bodyH = STEP_TEXT[step][2] ~= "" and (tonumber(f.body:GetStringHeight()) or UI.LINE_H.BODY) or 0
+  f.block:ClearAllPoints()
+  f.block:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -(56 + bodyH + S.S5)); f.block:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, -(56 + bodyH + S.S5)); f.block:SetHeight(3 * H.ROW2)
+  for _, r in ipairs(f.status) do if step == 1 then r:Show() else r:Hide() end end
+  for _, x in ipairs({ f.pill, f.noThanks, f.showIt }) do if step == 2 then x:Show() else x:Hide() end end
+  for _, r in ipairs(f.rows) do if step == 3 then r:Show() else r:Hide() end end
+  if step == 1 then
+    local combatOn = true
+    if ns.Logging and ns.Logging.state then local _, c = ns.Logging.state(); combatOn = c and true or false end
+    local st = UI.StatusState and UI.StatusState() or {}
+    local rows = {
+      { st.sess and "accent" or "warn", st.sess and "Recording is on" or "Recording starts when you enter the world" },
+      { combatOn and "accent" or "warn", combatOn and "Combat log: on" or "Combat log: off" },
+      { st.lastAck and "accent" or "fgFaint", st.lastAck and "Desktop app: seen" or "Desktop app: not seen yet", (not st.lastAck) and "Install it from everbuff.gg to record video" or nil },
+    }
+    for i, r in ipairs(f.status) do
+      r.dot:SetColor(rows[i][1]); r.text:SetText(rows[i][2])
+      local tw = UI.TextWidth("BODY", rows[i][2])
+      r.text:SetWidth(tw)
+      r.meta:ClearAllPoints(); r.meta:SetPoint("LEFT", r, "LEFT", S.S3 + 8 + S.S2 + tw + S.S2, 0); r.meta:SetText(rows[i][3] or "")
+    end
+    f.turnOn:ClearAllPoints(); f.turnOn:SetPoint("LEFT", f.status[2], "LEFT", S.S3 + 8 + S.S2 + UI.TextWidth("BODY", rows[2][2]) + S.S3, 0)
+    if combatOn then f.turnOn:Hide() else f.turnOn:Show() end
+  elseif step == 2 then
+    local cb = ns.DB and ns.char and ns.char() or {}
+    local bal = num(type(cb.gold) == "table" and cb.gold.balance)
+    local okN, net = false, nil
+    if ns.Gold and ns.Gold.metric then okN, net = pcall(ns.Gold.metric, "net", "char", "session") end
+    local txt = UI.money(bal) .. ((okN and type(net) == "number") and ("  \194\183  " .. UI.money(net, true) .. " this session") or "")
+    f.pill.text:SetText(txt)
+    f.pill:SetWidth(UI.TextWidth("BODY_STRONG", txt) + 2 * S.S2)
+  end
+  -- the footer: Next is hidden on step 2 (its own two buttons answer it), Back from step 2 on
+  f.next:SetLabel(step == Welcome.STEPS and "Finish" or "Next")
+  if step ~= 2 then f.next:Show() else f.next:Hide() end
+  f.skip:ClearAllPoints()
+  if step ~= 2 then f.skip:SetPoint("RIGHT", f.next, "LEFT", -S.S3, 0)
+  else f.skip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, (UI.H.BIG_BUTTON - UI.LINE_H.BODY) / 2) end
+  f.back:ClearAllPoints(); f.back:SetPoint("RIGHT", f.skip, "LEFT", -S.S3, 0)
+  if step > 1 then f.back:Show() else f.back:Hide() end
+end
+
+function Now.build(content)
+  nowView = content
+  local sf, child = UI.ScrollChild(content, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+  content.sf, content.child = sf, child
+  local col = CreateFrame("Frame", nil, child)
+  col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
+  content.col = col
+  content.notice = UI.Notice(col, { tone = "warn", text = "Combat log is off, so pulls, deaths and replays are not recorded.",
+    button = { "Turn on", function()
+      if ns.Logging and ns.Logging.enforce then pcall(ns.Logging.enforce, true) end
+      if UI.refreshStatus then pcall(UI.refreshStatus) end
+      if nowView then Now.refresh(nowView) end
+    end }, primary = true, onDismiss = function() noticeOff = true; if nowView then Now.refresh(nowView) end end })
+  content.notice:Hide()
+  local hero = UI.Hero(col, { image = true })
+  content.hero = hero
+  UI.SetTip(hero, function(tip) if content.heroTip then content.heroTip(tip) end end)
+  content.sesHead = UI.Section(col, "This session")
+  content.cards = UI.StatRow(col, 4, {
+    { onClick = function() UI.Open("Home", "sessions") end },
+    { onClick = function() UI.Open("Character", "quests") end },
+    { onClick = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session") else UI.Open("Loot", "gold") end end },
+    { onClick = function() UI.Open("Home", "deaths") end },
+  })
+  content.nextHead = UI.Section(col, "Next")
+  content.nextRows = {}
+  content.allClear = UI.EmptyLine(col)
+  content.lookHead = UI.Section(col, "Worth a look")
+  content.lookHead:SetLink("See all activity \226\128\186", function() UI.Open("Home", "activity") end)
+  content.lookRows = {}
+  content.lookEmpty = UI.EmptyLine(col)
+  local function linkRow(fn)
+    local f = CreateFrame("Frame", nil, col); f:SetHeight(H.DAY_ROW)
+    f.link = UI.KitButton(f, "", "link", fn, { role = "BODY" })
+    f.link:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -4)
+    return f
+  end
+  content.moreDeaths = linkRow(function() UI.Open("Home", "deaths") end)
+  content.more = linkRow(function() UI.Open("Home", "activity") end)
+  Welcome.build(content)
+  content:HookScript("OnSizeChanged", function() if nowView then pcall(Now.place, nowView) end end)
+  Now.refresh(content)
+end
+
+local function row2(content, pool, i)
+  local r = pool[i]
+  if not r then r = UI.Row2(content.col); pool[i] = r end
+  return r
+end
+
+-- lay the blocks out top to bottom in the main column (the pane's top is CONTENT_TOP; the page scrolls as one)
+function Now.place(content)
+  local w = G.mainW(G.winW())
+  local col = content.col
+  col:SetWidth(w)
+  local y = 0
+  local function put(f, h)
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); f:SetWidth(w)
+    if h then f:SetHeight(h) end
+  end
+  if content.notice:IsShown() then put(content.notice, H.NOTICE); y = y + H.NOTICE + S.S3 end
+  put(content.hero, H.HERO); y = y + H.HERO + S.S3
+  put(content.sesHead, H.SECTION); y = y + H.SECTION
+  put(content.cards, H.STAT); pcall(content.cards.layout); y = y + H.STAT + S.S5
+  put(content.nextHead, H.SECTION); y = y + H.SECTION
+  for _, r in ipairs(content.nextRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
+  if content.allClear:IsShown() then put(content.allClear, H.SECTION); y = y + H.SECTION end
+  y = y + S.S5
+  put(content.lookHead, H.SECTION); y = y + H.SECTION
+  for _, r in ipairs(content.lookRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
+  if content.lookEmpty:IsShown() then put(content.lookEmpty, H.SECTION); y = y + H.SECTION end
+  if content.moreDeaths:IsShown() then put(content.moreDeaths, H.DAY_ROW); y = y + H.DAY_ROW end
+  if content.more:IsShown() then put(content.more, H.DAY_ROW); y = y + H.DAY_ROW end
+  y = y + S.S4
+  col:SetHeight(y)
+  pcall(content.hero.layout)
+  content.sf:SetContentHeight(y)
+  content.contentH = y
+end
+
+function Now.refresh(content)
+  if not (content and content.hero) then return end
+  -- the first-run guide stands in for the page until it is finished or skipped
+  if Welcome.due() then
+    content.sf:Hide(); if content.sf.thumb then content.sf.thumb:Hide() end
+    content.welcome:Show(); Welcome.draw(content)
+    return
+  end
+  if content.welcome:IsShown() then content.welcome:Hide(); content.sf:Show(); if content.sf.UpdateThumb then content.sf.UpdateThumb() end end
+  content.sf:Show()
+  local now = nowT()
+  local db = (ns.DB and ns.char()) or {}
+  local ses = curSession()
+  local start = ses and plain(ses.startedEpoch)
+  local w = G.mainW(G.winW())
+
+  -- the combat-log notice (Now has no other primary, so its button is the primary)
+  local combatOn = true
+  if ns.Logging and ns.Logging.state then local _, c = ns.Logging.state(); combatOn = c and true or false end
+  if not combatOn and not noticeOff then content.notice:Show() else content.notice:Hide() end
+
+  -- hero: who, when the next level comes, the XP bar with the rested part
+  local hero = content.hero
+  local lvl = plain(call(UnitLevel, "player")) or 0
+  local name = call(UnitName, "player")
+  local race = call(UnitRace, "player")
+  local classN, classFile = call(UnitClass, "player")
+  local zone = call(GetRealZoneText) or call(GetZoneText)
+  local maxLvl = plain(call(GetMaxPlayerLevel)) or 60
+  hero:SetTitle(type(name) == "string" and name or "", { UI.ClassColor(classFile) })
+  local who = ("Level %d"):format(lvl)
+  if type(race) == "string" and race ~= "" then who = who .. " " .. race end
+  if type(classN) == "string" and classN ~= "" then who = who .. " " .. classN end
+  if type(zone) == "string" and zone ~= "" then who = who .. " \194\183 " .. zone end
+  hero:SetTitleMeta(who)
+  if hero.image and type(SetPortraitTexture) == "function" then pcall(SetPortraitTexture, hero.image, "player") end
+  local cur, mx = readXP()
+  if not cur then local x = type(db.xp) == "table" and db.xp or {}; cur, mx = num(x.cur), num(x.max) end
+  local rested = plain(call(GetXPExhaustion)) or 0
+  local pace = Pace.compute(now)
+  content.pace = pace
+  local atMax = lvl >= maxLvl
+  local remaining = (not atMax) and Pace.remaining(cur, mx, pace.rate) or nil
+  content.remaining = remaining
+  if atMax then
+    hero:SetHero("Level " .. lvl); hero:SetMeta("Max level", nil); hero:SetBar(nil); hero:SetMeta2(nil)
+  else
+    hero:SetHero(remaining and (UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1)) or ("Level " .. lvl))
+    local pct = mx > 0 and math.floor(cur / mx * 100) or 0
+    local left = ("XP %s / %s \194\183 %d%%"):format(UI.fmtNum(cur), UI.fmtNum(mx), pct)
+    if rested > 0 then left = left .. " \194\183 rested " .. UI.fmtNum(rested) end
+    hero:SetMeta(left, pace.rate and ("at " .. UI.fmtNum(pace.rate) .. " XP per hour") or "Pace shows after 10 minutes of play")
+    hero:SetBar(mx > 0 and cur / mx or 0, (mx > 0 and rested > 0) and math.min(1, (cur + rested) / mx) or nil)
+  end
+  pcall(hero.layout)
+  content.heroTip = function(tip)
+    tip:AddLine(type(name) == "string" and name or "Your character", 1, 1, 1)
+    tip:AddLine("At your XP per hour over the last 30 minutes of active play. It already includes the rested bonus you earned in that time.", 0.78, 0.79, 0.80, true)
+    local pl = type(db.played) == "table" and db.played or {}
+    if num(pl.total) > 0 then tip:AddDoubleLine("Played in all", UI.fmtDur(pl.total, { minutes = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+    if num(pl.level) > 0 then tip:AddDoubleLine("At this level", UI.fmtDur(pl.level, { minutes = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+    local k = P.kill
+    if k and not atMax and mx > cur then
+      tip:AddLine(("About %s more %s kills"):format(UI.fmtNum(math.ceil((mx - cur) / k.xp)), k.name), 0.78, 0.79, 0.80, true)
+    end
+  end
+
+  -- THIS SESSION: played, XP per hour, gold, deaths
+  content.sesHead:SetMeta(start and ("since " .. UI.fmtClock(start)) or nil)
+  local cards = content.cards.cards
+  local elapsed = start and math.max(0, now - start) or 0
+  cards[1]:Set("Played", start and UI.fmtDur(elapsed, { minutes = true }) or "-", start and ("since " .. UI.fmtClock(start)) or "no session yet")
+  UI.SetTip(cards[1], { title = "Played", text = "How long this session has run. Opens your sessions." })
+  if atMax then
+    cards[2]:Set("XP per hour", "-", "max level")
+    UI.SetTip(cards[2], { title = "XP per hour", text = "You are at the level cap." })
+  elseif pace.rate then
+    cards[2]:Set("XP per hour", UI.fmtNum(pace.rate), ("last %dm of play"):format(pace.used))
+    UI.SetTip(cards[2], { title = "XP per hour", text = ("+%s XP this session"):format(UI.fmtNum(pace.xp)) })
+  else
+    cards[2]:Set("XP per hour", "-", "after 10m of play")
+    UI.SetTip(cards[2], { title = "XP per hour", text = "Shows after 10 minutes of play" })
+  end
+  local net, perHour
+  if ns.Gold and ns.Gold.metric then
+    local ok1, a = pcall(ns.Gold.metric, "net", "char", "session"); net = ok1 and a or nil
+    local ok2, b = pcall(ns.Gold.metric, "perHour", "char", "session"); perHour = ok2 and b or nil
+  end
+  cards[3]:Set("Gold", type(net) == "number" and UI.money(net, true) or "-",
+    type(perHour) == "number" and (UI.money(math.floor(perHour + 0.5), true) .. " per hour") or "per hour after 5m")
+  local bal = num(type(db.gold) == "table" and db.gold.balance)
+  local goldPairs = { { "Balance", ns.fmtMoney(bal, { icons = true }) } }
+  if ns.Gold and ns.Gold.roster then
+    local ok, ro = pcall(ns.Gold.roster, "all")
+    if ok and type(ro) == "table" and num(ro.count) > 1 then goldPairs[2] = { "All characters", ns.fmtMoney(num(ro.total), { icons = true }) } end
+  end
+  UI.SetTip(cards[3], { title = "Gold this session", text = "What you made this session, and per hour of play.", pairs = goldPairs })
+  local kills, sdeaths, items = num(ses and ses.kills), num(ses and ses.deaths), num(ses and ses.items)
+  cards[4]:Set("Deaths", UI.fmtNum(sdeaths), UI.plural(kills, "kill") .. " \194\183 " .. UI.plural(items, "item"))
+  local lk, ld = 0, 0
+  for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do if type(s) == "table" and ns.isMySession(s) then lk, ld = lk + num(s.kills), ld + num(s.deaths) end end
+  UI.SetTip(cards[4], { title = "Deaths this session", text = "Opens every death.", pairs = { { "Lifetime", UI.plural(lk, "kill") .. " \194\183 " .. UI.plural(ld, "death") } } })
+
+  -- NEXT
+  local nx = Now.nextItems(w - (S.S3 + 24 + S.S2) - S.S3, now)
+  content.nextList = nx
+  for i, it in ipairs(nx) do row2(content, content.nextRows, i):Set(it):Show() end
+  for i = #nx + 1, #content.nextRows do content.nextRows[i]:Hide() end
+  if #nx == 0 then content.allClear:Set("Nothing needs you. Go have fun.", nil, nil, "good"); content.allClear:Show() else content.allClear:Hide() end
+
+  -- WORTH A LOOK
+  local look, extra, ev = Now.lookItems(now)
+  local cap = G.isWide(G.winW()) and Now.CAP_WIDE or Now.CAP_COMPACT
+  if #look == 0 and (#ev > 0 or kills > 0 or items > 0) then
+    look = { { kind = "session", icon = UI.KIND_ICON.session, title = ("%s and %s so far"):format(UI.plural(kills, "kill"), UI.plural(items, "item")),
+      meta = "No deaths and no level yet. Keep going." } }
+  end
+  local shown = math.min(#look, cap)
+  content.lookList = look
+  for i = 1, shown do row2(content, content.lookRows, i):Set(look[i]):Show() end
+  for i = shown + 1, #content.lookRows do content.lookRows[i]:Hide() end
+  if #look == 0 then content.lookEmpty:Set("Nothing yet. Run a dungeon, ding, or loot something green and it shows here."); content.lookEmpty:Show() else content.lookEmpty:Hide() end
+  if extra.deaths and extra.deaths > 0 then
+    content.moreDeaths.link:SetLabel(UI.plural(extra.deaths, "more death") .. " \226\128\186"); content.moreDeaths:Show()
+  else content.moreDeaths:Hide() end
+  if #look > cap then content.more.link:SetLabel(("+%d more \226\128\186"):format(#look - cap)); content.more:Show() else content.more:Hide() end
+
+  Now.place(content)
+end
+local build, refresh = Now.build, Now.refresh
+
 
 -- ── HOME / Sessions: one row per play session (login -> logout), newest first ─────
 local sessionsRebuild, sessionsView
@@ -510,11 +998,11 @@ end
 UI.registerHost(0, "Home", "How this session is going, and every session, pull and death before it.")
 local ticker
 UI.registerPane("Home", 1, "Now", build, function()
-  if view then refresh(view) end
+  if nowView then refresh(nowView) end
   -- light live refresh while the dashboard is the visible pane; cancels itself when it isn't
   if not ticker then
     ticker = C_Timer.NewTicker(3, function()
-      if view and view:IsShown() then refresh(view) end
+      if nowView and nowView:IsShown() then refresh(nowView) end
       if sessionsView and sessionsView:IsShown() and sessionsRebuild then sessionsRebuild() end
     end)
   end
@@ -526,4 +1014,4 @@ UI.registerPane("Home", 2, "Sessions", buildSessions, function() if sessionsRebu
 ns._test = ns._test or {}
 ns._test.sessionRows = sessionRows
 ns._test.fmtTime, ns._test.commas, ns._test.journeyMoney = fmtTime, commas, fmtMoney
-ns._test.journeyRefresh = function() if view then refresh(view) end return view end
+ns._test.journeyRefresh = function() if nowView then refresh(nowView) end return nowView end

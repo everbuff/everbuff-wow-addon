@@ -22,6 +22,10 @@ local T = ns._test or {}
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
 check("ADDON_LOADED creates ns.DB", type(ns.DB) == "table")
+-- the suite plays as a player who went through the first-run guide (Home > Now's own tests, tests/panes/home.lua,
+-- walk the guide itself); without this every open of Home would show the guide instead of Now
+ns.DB.settings = ns.DB.settings or {}
+ns.DB.settings.welcomeDone = true
 check("db.gold/xp/played initialised", ns.DB and ns.char().gold and ns.char().xp and ns.char().played)
 check("#23 the character block lives under the player GUID", ns.DB.characters["Player-1-000001"] == ns.char() and ns.DB.character == nil and ns.DB.loot.gold == nil)
 M.money = 5000; M.xp = 100
@@ -1237,13 +1241,13 @@ do
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))
   ns.UI.Open("Home", "now"); M.tick()
   local ov = home.paneByKey.now
-  check("Home / Now holds the cards in the pane", home.ctl.active == "now" and ov.content.cLevel and ov.content.cLevel:GetParent() == ov.content)
+  check("Home / Now holds the hero and the four cards in the pane", home.ctl.active == "now" and ov.content.hero and #ov.content.cards.cards == 4 and ov.content.hero:GetParent() == ov.content.col)
   ns.UI.Open("Loot", "gold")
   local gold = host("Loot").paneByKey.gold
   check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.cBalance and gold.content.cBalance.value:GetText() ~= nil)
   ns.UI.Open("Home")
-  ov.content.cXP:GetScript("OnMouseUp")(ov.content.cXP)
-  check("clicking the XP card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
+  ov.content.cards.cards[2]:GetScript("OnClick")(ov.content.cards.cards[2])
+  check("clicking the XP PER HOUR card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
   ns.UI.Open("Home", "sessions")
   local srows = T.sessionRows()
   check("Sessions pane lists the current session first", #srows >= 1 and srows[1].id == ns.DB.active, srows[1] and srows[1].id)
@@ -1496,13 +1500,11 @@ do
   local byQ = ns._test.lootSort({ unpack(rows) }, "quality", false)
   check("sort by quality puts the rare first", byQ[1].item == "Blue Sword", byQ[1].item)
 end
--- ── onboarding card ──
+-- ── Home > Now: the old onboarding card is gone (docs/UX_OVERHAUL.md 4.1) ──
 do
   ns.UI.Open("Home", "overview"); M.tick()
   local ov = host("Home").paneByKey.now.content
-  check("onboarding card shows on a fresh install", ov.onboard and ov.onboard:IsShown() and not ns.DB.settings.onboarded)
-  ov.onboard.okBtn:GetScript("OnClick")(ov.onboard.okBtn)
-  check("Got it dismisses the card for good", ns.DB.settings.onboarded == true and not ov.onboard:IsShown())
+  check("Home > Now carries no onboarding card", ov.onboard == nil and ov.hero ~= nil)
 end
 -- ── flag free-drag position ──
 do
@@ -2067,8 +2069,10 @@ do
   -- Home: the GOLD card is the character's own ledger, and kills, deaths and fights count the character's sessions only
   a.gold.balance = 123456
   local ovc = T.journeyRefresh()
-  check("#23 Home GOLD shows the logged-in character's balance", ovc and ovc.cGold.value:GetText() == T.journeyMoney(123456), ovc and ovc.cGold.value:GetText())
-  local before = ovc.cKills.value:GetText()
+  local function goldTip() local t = ovc.cards.cards[3].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
+  check("#23 Home GOLD names the logged-in character's balance", ovc and goldTip() == ns.fmtMoney(123456, { icons = true }), ovc and goldTip())
+  local function lifetime() local t = ovc.cards.cards[4].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
+  local before = lifetime()
   ns.DB.sessions["other-23"] = { guid = "Player-1-000002", startedEpoch = 1 }
   local ev = ns.DB.story.events
   ev[#ev + 1] = { kind = "KILL", text = "Kill: Wolf", s = "other-23", t = 1 }
@@ -2076,16 +2080,17 @@ do
   local fl = ns.DB.combat.fights
   fl[#fl + 1] = { uid = "other-23-f1", s = "other-23", startedEpoch = 1, duration = 1 }
   T.journeyRefresh()
-  check("#23 Home kills, deaths and fights leave out another character's sessions", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() ~= nil, ovc.cKills.value:GetText())
+  ns.DB.sessions["other-23"].kills, ns.DB.sessions["other-23"].deaths = 1, 1
+  T.journeyRefresh()
+  check("#23 Home's lifetime kills and deaths leave out another character's sessions", lifetime() == before, lifetime())
   check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
-  local subBefore = ovc.cKills.sub:GetText()
   _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
   T.journeyRefresh()
-  check("#23 on the other character Home counts its kill, death and fight", ovc.cKills.value:GetText() == "1 kills" and ovc.cKills.sub:GetText():find("^1 death ") ~= nil and ovc.cKills.sub:GetText():find("1 fights") ~= nil, tostring(ovc.cKills.value:GetText()) .. " | " .. tostring(ovc.cKills.sub:GetText()))
+  check("#23 on the other character Home's lifetime counts its own kill and death", lifetime() == "1 kill \194\183 1 death", lifetime())
   _G.UnitGUID = realGUID
   table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
   T.journeyRefresh()
-  check("#23 Home is back to the first character's counts", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() == subBefore)
+  check("#23 Home is back to the first character's counts", lifetime() == before, lifetime())
 end
 -- ── #23 every pane shows the logged-in character only: a two-character save (Hart and Undertaker) ──
 do

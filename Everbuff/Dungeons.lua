@@ -915,3 +915,5 @@ ns._test.renderRun = function(run) if detailView then detailView.render(run); de
 ns._test.dungeonDetail = function() return detailView end
 ns._test.dungeonList = function() if listRebuild then listRebuild() end; return listView end
 ns._test.openRun = function(run) openRun(run) end
+ns.Dungeons = ns.Dungeons or {}
+ns.Dungeons.openRun = function(run) openRun(run) end   -- Home > Now opens a run page from WORTH A LOOK

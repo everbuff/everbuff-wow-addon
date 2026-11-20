@@ -286,6 +286,41 @@ os.execute((sep == "\\" and 'mkdir "%s\\fonts" 2>nul' or 'mkdir -p "%s/fonts"'):
 for face in pairs(FACES) do copy(FONT_DIR .. face .. ".ttf", OUT .. "/fonts/" .. face .. ".ttf") end
 
 local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
+-- the Home > Now states: set the readings, return the function that puts them back
+function NOW_STATE(state)
+  local keep = { log = ns.Logging.state, dur = M.dur, cont = _G.C_Container.GetContainerNumFreeSlots, q = _G.GetQuestLogTitle,
+    qn = _G.GetNumQuestLogEntries, lim = ns.DB.settings.instanceLimit, maxl = _G.GetMaxPlayerLevel, ses = ns.Recorder.current() }
+  local sesKeep = keep.ses and { id = keep.ses.id, kills = keep.ses.kills, items = keep.ses.items }
+  local pst = ns.Pace.state()
+  local paceKeep = {}
+  for k, v in pairs(pst) do paceKeep[k] = v end
+  if state == "logoff" then ns.Logging.state = function() return true, false end
+  elseif state == "next" then
+    M.dur = { [1] = { 18, 100 }, [7] = { 40, 100 } }
+    _G.C_Container.GetContainerNumFreeSlots = function(bag) return bag == 0 and 2 or 0, 0 end
+    _G.GetNumQuestLogEntries = function() return 2 end
+    _G.GetQuestLogTitle = function(i) return ({ "Wanted: Kolkar Leaders", "Plainstrider Menace" })[i], 18, nil, false, false, 1 end
+    ns.DB.settings.instanceLimit = 1
+  elseif state == "max" then _G.GetMaxPlayerLevel = function() return UnitLevel("player") end
+  elseif state == "empty" and keep.ses then keep.ses.id, keep.ses.kills, keep.ses.items = "render-empty", 0, 0
+  elseif state:match("^welcome%d?$") then
+    -- the first-run guide (4.13) on step 1, 2 or 3, with the combat log off so step 1 shows its Turn on
+    ns.DB.settings.welcomeDone = false
+    ns.Logging.state = function() return true, false end
+    local v = ns._test.journeyRefresh()
+    if v then v.welcomeStep = tonumber(state:match("%d")) or 1 end
+  end
+  return function()
+    ns.DB.settings.welcomeDone = true
+    local v = ns._test.journeyRefresh()
+    if v then v.welcomeStep = 1 end
+    ns.Logging.state, M.dur, _G.C_Container.GetContainerNumFreeSlots = keep.log, keep.dur, keep.cont
+    _G.GetQuestLogTitle, _G.GetNumQuestLogEntries, ns.DB.settings.instanceLimit, _G.GetMaxPlayerLevel = keep.q, keep.qn, keep.lim, keep.maxl
+    if sesKeep then keep.ses.id, keep.ses.kills, keep.ses.items = sesKeep.id, sesKeep.kills, sesKeep.items end
+    for k in pairs(pst) do pst[k] = nil end
+    for k, v in pairs(paceKeep) do pst[k] = v end   -- (the empty state's session id started the pace over)
+  end
+end
 local manifest = {}
 for _, dataTag in ipairs({ "normal", "long" }) do
   if dataTag == "long" then Lay.stretch(ns.DB) end
@@ -297,6 +332,11 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":days", ":chars" or ":<source key>" open the
       -- Gold pane in that state
       local host, pane, state = key:match("^(%w+)/(%w+):?(%w*)$")
+      -- Home > Now in a state of docs/UX_OVERHAUL.md 4.0: "home/now:logoff" (combat log off), ":next" (durability
+      -- 18%, 2 free bag slots, a limit of 1 used up, 2 quests ready), ":max" (max level), ":empty" (nothing yet),
+      -- ":welcome", ":welcome2", ":welcome3" (the first-run guide on that step)
+      local undo
+      if host == "home" and pane == "now" and state ~= "" then undo = NOW_STATE(state) end
       ns.UI.Open(HOSTS[host] or host, pane); M.tick()
       ns.UI.Open(HOSTS[host] or host, pane)       -- a second open: the panes read sizes their first build set
       if host == "loot" and pane == "gold" then
@@ -317,6 +357,7 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       end
       M.settle()                                  -- OnSizeChanged to every list whose size the open changed
       local html, info = renderPage(key, sz[1], sz[2], dataTag)
+      if undo then undo(); ns.UI.Open(HOSTS[host] or host, pane); M.settle() end
       local name = ("%s-%s%s-%dx%d-%s"):format(host, pane, state ~= "" and ("-" .. state) or "", sz[1], sz[2], dataTag)
       write(OUT .. "/" .. name .. ".html", html)
       write(OUT .. "/" .. name .. ".layout.json", json(info))
