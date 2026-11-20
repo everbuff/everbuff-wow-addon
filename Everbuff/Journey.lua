@@ -99,7 +99,7 @@ build = function(content)
     p.sub2:SetPoint("TOPLEFT", p.sub, "BOTTOMLEFT", 0, 0); p.sub2:SetPoint("TOPRIGHT", p.sub, "BOTTOMRIGHT", 0, 0)
     p.sub2:SetJustifyH("LEFT")
   end
-  content.cKills  = card({ "Combat", "fights" });         content.cKills.title:SetText("COMBAT")
+  content.cKills  = card({ "Home", "fights" });         content.cKills.title:SetText("COMBAT")
   content.cPace   = card();                               content.cPace.title:SetText("LEVELING PACE")
   local grid = { { content.cLevel, content.cXP, content.cPlayed }, { content.cGold, content.cKills, content.cPace } }
 
@@ -505,11 +505,11 @@ local function buildSessions(content)
   end
   sessionsRebuild()
 end
--- HOME is the landing tab (order 0). Overview and Sessions live here; the Timeline pane is registered
--- into Home by Emitter.lua.
-UI.registerHost(0, "Home", "How your run is going, the story of this session, and every session before it.")
+-- HOME is the landing tab (order 0). Now and Sessions live here; Activity (the 0.9.51 Timeline) is registered
+-- into Home by Emitter.lua, Fights by Recording.lua and Deaths by Deaths.lua (docs/UX_OVERHAUL.md 0.3).
+UI.registerHost(0, "Home", "How this session is going, and every session, pull and death before it.")
 local ticker
-UI.registerPane("Home", 1, "Overview", build, function()
+UI.registerPane("Home", 1, "Now", build, function()
   if view then refresh(view) end
   -- light live refresh while the dashboard is the visible pane; cancels itself when it isn't
   if not ticker then
@@ -518,8 +518,9 @@ UI.registerPane("Home", 1, "Overview", build, function()
       if sessionsView and sessionsView:IsShown() and sessionsRebuild then sessionsRebuild() end
     end)
   end
-end)
-UI.registerPane("Home", 3, "Sessions", buildSessions, function() if sessionsRebuild then sessionsRebuild() end end)
+end, "How this session is going, and what needs you.")
+UI.registerPane("Home", 2, "Sessions", buildSessions, function() if sessionsRebuild then sessionsRebuild() end end,
+  "Every play session: how long, what you earned, and how far you got.")
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

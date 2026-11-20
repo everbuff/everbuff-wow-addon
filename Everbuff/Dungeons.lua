@@ -884,8 +884,8 @@ local function buildList(content)
   return v
 end
 local ticker
-UI.registerHost(1, "Combat", "Every dungeon run, every fight and every death, each with a replay you can scrub.")
-UI.registerPane("Combat", 1, "Dungeons", function(content)
+UI.registerHost(1, "Dungeons", "Every dungeon run against your best, and which dungeon is worth your time.")
+UI.registerPane("Dungeons", 1, "Runs", function(content)
   listView = buildList(content)
   detailView = buildDetail(content)
 end, function()
@@ -901,7 +901,7 @@ end, function()
       if onScreen(detailView) and detailView.refresh then pcall(detailView.refresh) end
     end)
   end
-end)
+end, "Your dungeon runs against your best: time, bosses, deaths, loot and XP.")
 
 -- the runs of the logged-in character as the Fights list groups by them, oldest first: the light read (name, start,
 -- bosses down, deaths and the record), nothing from the statistics (its list is drawn again every 2 s)

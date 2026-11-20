@@ -734,7 +734,7 @@ end
 -- let other tabs (e.g. Dungeons) jump straight into a fight's detail view
 ns.OpenFightDetail = function(f)
   if not f then return end
-  UI.Open("Combat", "fights")   -- ensures the Fights tab is built + shown
+  UI.Open("Home", "fights")   -- ensures the Fights pane is built + shown
   openDetail(f)
 end
 
@@ -868,7 +868,7 @@ local function build(content)
   memberView = buildMemberView(content)
 end
 
-UI.registerPane("Combat", 2, "Fights", build, function()
+UI.registerPane("Home", 4, "Fights", build, function()
   -- don't yank the user out of a detail / member view
   if (detailView and detailView:IsShown()) or (memberView and memberView:IsShown()) then return end
   if listRebuild then listRebuild() end
@@ -876,7 +876,7 @@ UI.registerPane("Combat", 2, "Fights", build, function()
     -- (on screen: IsShown is the frame's own flag, and a pane hides its parent, never this list)
     if listView and (listView.IsVisible and listView:IsVisible() or (not listView.IsVisible and listView:IsShown())) and listRebuild then listRebuild() end
   end) end
-end)
+end, "Every pull: bosses, wipes and deaths first, with a replay of each.")
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

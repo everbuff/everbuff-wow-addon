@@ -44,7 +44,7 @@ local function fmtDowntime(dn)
   if not dn then return "" end
   return dn >= 60 and ("%dm %02ds"):format(math.floor(dn / 60), dn % 60) or (dn .. "s")
 end
-UI.registerPane("Combat", 3, "Deaths", function(content)
+UI.registerPane("Home", 5, "Deaths", function(content)
   view = content
   local summary = UI.SummaryLine(content, C.red, nil, true)
   view.summary = summary
@@ -98,7 +98,7 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
 end, function()
   if listRebuild then listRebuild() end
   if not ticker then ticker = C_Timer.NewTicker(3, function() if view and view:IsShown() and listRebuild then listRebuild() end end) end
-end)
+end, "Every death: what killed you, and the moments before it.")
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

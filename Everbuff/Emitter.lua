@@ -2792,11 +2792,7 @@ end
 if ns.UI and ns.UI.registerTab then
   ns.UI.registerTab(20, "Settings", function(content)
     local C = ns.UI.C
-    local title = ns.UI.FS(content, "GameFontNormalLarge"); title:SetPoint("TOPLEFT", 14, -14); title:SetText("Settings")
-    local sub = ns.UI.FS(content, "GameFontHighlightSmall", C.dim); sub:SetPoint("TOPLEFT", 14, -38)
-    sub:SetText("Look and notifications, capture health, stored data.")
-
-    -- ── sub-tabs: a real tab control on a bordered pane (UI.Tabs); panes built eagerly so tests cover them
+    -- sub-tabs on the control row (UI.Tabs with no top is UI.SubTabs); panes built eagerly so tests cover them
     local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "gold", label = "Gold" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
     content.subtabs = subtabs
     local general, capture, data = subtabs.panes.general, subtabs.panes.capture, subtabs.panes.data
@@ -2850,10 +2846,10 @@ if ns.UI and ns.UI.registerTab then
     local scHdr = ns.UI.FS(general, "GameFontNormal", C.gold); scHdr:SetPoint("TOPLEFT", 14, y - 140); scHdr:SetText("Window size")
     local sc = CreateFrame("Slider", "EverbuffScaleSlider", general, "OptionsSliderTemplate")
     sc:SetOrientation("HORIZONTAL"); sc:SetWidth(240); sc:SetHeight(16); sc:SetPoint("TOPLEFT", 18, y - 168)
-    sc:SetMinMaxValues(0.7, 1.3); sc:SetValueStep(0.05); sc:SetObeyStepOnDrag(true)
-    if _G.EverbuffScaleSliderLow then _G.EverbuffScaleSliderLow:SetText("70%") end
+    sc:SetMinMaxValues(ns.UI.SCALE_MIN or 0.9, 1.3); sc:SetValueStep(0.05); sc:SetObeyStepOnDrag(true)
+    if _G.EverbuffScaleSliderLow then _G.EverbuffScaleSliderLow:SetText("90%") end
     if _G.EverbuffScaleSliderHigh then _G.EverbuffScaleSliderHigh:SetText("130%") end
-    local curSc = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.winScale)) or 1
+    local curSc = math.max(ns.UI.SCALE_MIN or 0.9, (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.winScale)) or 1)
     sc:SetValue(curSc)
     if _G.EverbuffScaleSliderText then _G.EverbuffScaleSliderText:SetText(math.floor(curSc * 100 + 0.5) .. "%") end
     sc:SetScript("OnValueChanged", function(_, val)
@@ -3001,7 +2997,7 @@ if ns.UI and ns.UI.registerTab then
     refreshData()
     content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end; if content.goldRefresh then content.goldRefresh() end end
     subtabs.select("general"); refresh()
-  end, function() end, nil, "bottom")
+  end, function() end, nil, "bottom", "How the window and notifications behave, and whether your data reaches everbuff.gg.")
 
   -- ── Events tab: a filterable timeline of everything Everbuff.GG detected, newest first ──
   -- Journey / Combat / Travel / Loot chips cut the firehose; a Where column surfaces the coordinates
@@ -3036,7 +3032,7 @@ if ns.UI and ns.UI.registerTab then
       if t >= st - 1 and t <= st + (f.duration or 0) + 2 and ns.isMine(f) then return f end
     end
   end
-  ns.UI.registerPane("Home", 2, "Timeline", function(content)
+  ns.UI.registerPane("Home", 3, "Activity", function(content)
     local C, UI = ns.UI.C, ns.UI
     local SP = UI.SP
     eventsView = content
@@ -3068,7 +3064,7 @@ if ns.UI and ns.UI.registerTab then
     content.timelineBanner = banner
     ns.OpenTimelineWindow = function(t0, t1, label)
       window = { t0 = t0, t1 = t1, label = label or "this window" }
-      if UI.Open then UI.Open("Home", "timeline") end
+      if UI.Open then UI.Open("Home", "activity") end
       if eventsRebuild then eventsRebuild() end
     end
     ns._test.timelineWindow = function() return window end
@@ -3152,7 +3148,7 @@ if ns.UI and ns.UI.registerTab then
         if eventsView and eventsView:IsShown() and eventsRebuild then eventsRebuild() end
       end)
     end
-  end)
+  end, "Everything you did, newest first: quests, kills, loot, travel and town visits.")
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
   ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 
@@ -3165,7 +3161,7 @@ if ns.UI and ns.UI.registerTab then
   local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
   ns._test = ns._test or {}; ns._test.fmtMoney = fmtMoney
   local lootRebuild
-  ns.UI.registerHost(2, "Loot", "Every item you picked up, and every copper that came in or went out.")
+  ns.UI.registerHost(3, "Loot", "What you picked up, and where every copper came from and went.")
   ns.UI.registerPane("Loot", 1, "Items", function(content)
     local C, UI = ns.UI.C, ns.UI
     local SP = UI.SP
@@ -3389,7 +3385,7 @@ if ns.UI and ns.UI.registerTab then
       content.lootRows = tbl.rows
     end
     lootRebuild()
-  end, function() if lootRebuild then lootRebuild() end end)
+  end, function() if lootRebuild then lootRebuild() end end, "Everything you picked up: drops, quest rewards, mail and auctions won.")
 end
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──

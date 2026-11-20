@@ -171,7 +171,7 @@ local COORDS = { key = "coords", label = "Coords", kind = "tag", justify = "RIGH
 local STANDINGS = { "Hated", "Hostile", "Unfriendly", "Neutral", "Friendly", "Honored", "Revered", "Exalted" }
 
 -- CHARACTER host: Quests · Reputation · Professions, each a pane built on first select.
-UI.registerHost(3, "Character", "How your character is growing: quests done, standing with every faction, and your professions.")
+UI.registerHost(2, "Character", "Pace to the next level, your standing, and your skills.")
 local quests, rep, prof
 local function renderQuests()
   if not quests then return end

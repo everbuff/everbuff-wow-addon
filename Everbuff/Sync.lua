@@ -10,6 +10,15 @@ local C = ns.UI.C
 
 local view, refresh, ticker
 
+-- the one read of the desktop sync state (docs/UX_OVERHAUL.md 5 step 3a): the last ack and the fights the desktop app
+-- has not saved yet. The title-bar chip and this pane both read it, on show.
+function ns.SyncState()
+  local combat = ns.DB and ns.DB.combat
+  local waiting = 0
+  for _, f in ipairs((combat and combat.fights) or {}) do if f.uploaded ~= true then waiting = waiting + 1 end end
+  return { lastAck = combat and combat.lastAck or nil, waiting = waiting }
+end
+
 local GREEN, GRAY, YELLOW = "Interface\\COMMON\\Indicator-Green", "Interface\\COMMON\\Indicator-Gray", "Interface\\COMMON\\Indicator-Yellow"
 local function dot(tex) return ("|T%s:12:12:0:-1|t"):format(tex) end
 
@@ -32,9 +41,8 @@ refresh = function()
   local hidden, blind = (ns.Fights and ns.Fights.hiddenAuras) or 0, (ns.Fights and ns.Fights.blindScans) or 0
   R.auras:SetText((hidden == 0 and blind == 0) and (dot(GREEN) .. " readable")
     or (dot(YELLOW) .. (" hidden by the client in combat: %d unreadable names, %d fully blind scans skipped; names resolve from spell ids or after combat"):format(hidden, blind)))
-  local la = ns.DB and ns.DB.combat and ns.DB.combat.lastAck
-  local pending = 0
-  for _, f in ipairs((ns.DB and ns.DB.combat and ns.DB.combat.fights) or {}) do if f.uploaded ~= true then pending = pending + 1 end end
+  local sync = ns.SyncState()
+  local la, pending = sync.lastAck, sync.waiting
   R.sync:SetText(la
     and (dot(GREEN) .. (" last synced %s (%s)  ·  %d fight%s waiting"):format(date("%b %d, %H:%M", la.at or 0), la.source == "paste" and "code" or "desktop file", pending, pending == 1 and "" or "s"))
     or (dot(YELLOW) .. (" never  ·  %d fight%s waiting for the desktop app"):format(pending, pending == 1 and "" or "s")))

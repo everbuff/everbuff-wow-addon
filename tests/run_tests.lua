@@ -578,11 +578,20 @@ end
 local names = {}
 for _, tab in ipairs(T.tabs) do names[tab.name] = true end
 check("Sync is no longer a top-level tab", names.Sync == nil)
-check("five top-level tabs: Home · Combat · Loot · Character · Settings", #T.tabs == 5 and names.Home and names.Combat and names.Loot and names.Character and names.Settings, #T.tabs)
-check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Dungeons == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
+check("five top-level tabs: Home · Dungeons · Character · Loot · Settings", #T.tabs == 5 and names.Home and names.Dungeons and names.Loot and names.Character and names.Settings, #T.tabs)
+check("the sidebar order is Home, Dungeons, Character, Loot, then Settings pinned", (function()
+  local o = {}; for _, tab in ipairs(T.tabs) do o[#o + 1] = tab.name end
+  return table.concat(o, ",") == "Home,Dungeons,Character,Loot,Settings" end)())
+check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Combat == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
 local function host(n) for _, tab in ipairs(T.tabs) do if tab.name == n then return tab end end end
-check("Combat hosts Dungeons · Fights · Deaths in that order", (function() local h = host("Combat"); return h and h.panes[1].key == "dungeons" and h.panes[2].key == "fights" and h.panes[3].key == "deaths" end)())
-check("Home hosts Overview · Timeline · Sessions", (function() local h = host("Home"); return h and h.panes[1].key == "overview" and h.panes[2].key == "timeline" and h.panes[3].key == "sessions" end)())
+check("Dungeons hosts Runs", (function() local h = host("Dungeons"); return h and h.panes[1].key == "runs" end)())
+check("Home hosts Now · Sessions · Activity · Fights · Deaths", (function() local h = host("Home"); local k = {}; for _, pn in ipairs(h and h.panes or {}) do k[#k + 1] = pn.key end; return table.concat(k, ",") == "now,sessions,activity,fights,deaths" end)())
+check("old window keys resolve to their new place", (function()
+  local R = ns.UI.Resolve
+  local a1, b1 = R("Combat", "dungeons"); local a2, b2 = R("Combat", "fights"); local a3, b3 = R("Combat", "deaths")
+  local a4, b4 = R("Home", "overview"); local a5, b5 = R("Home", "timeline"); local a6 = R("Combat")
+  return a1 == "Dungeons" and b1 == "runs" and a2 == "Home" and b2 == "fights" and a3 == "Home" and b3 == "deaths"
+    and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "activity" and a6 == "Dungeons" end)())
 check("Loot hosts Items · Gold; Character hosts Quests · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and c.panes[1].key == "quests" and c.panes[3].key == "professions" end)())
 check("capture pane builder exposed", type(ns.BuildCapturePane) == "function")
 -- ── Settings sub-tab control ──
@@ -609,7 +618,7 @@ if fl and fl.tabs then
   local okF, errF = pcall(function() fl.tabs.select("death"); fl.tabs.select("notable"); fl.tabs.select("all") end)
   check("Fights filter tabs switch cleanly", okF, errF)
 end
-local tlTab = host("Home") and host("Home").paneByKey.timeline
+local tlTab = host("Home") and host("Home").paneByKey.activity
 check("Timeline pane has a filter tab control", tlTab and tlTab.content and tlTab.content.tabs ~= nil)
 if tlTab and tlTab.content and tlTab.content.tabs then
   local okT, errT = pcall(function() tlTab.content.tabs.select("combat"); tlTab.content.tabs.select("all") end)
@@ -994,9 +1003,10 @@ end
 -- ── day labels ──
 do
   local nowT = M.epoch
-  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "Today")
-  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "Yesterday")
-  check("fmtDay older shows weekday and date", ns.UI.fmtDay(nowT - 5 * 86400, nowT) == date("%A, %b %d", nowT - 5 * 86400))
+  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "TODAY")
+  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "YESTERDAY")
+  local old = nowT - 5 * 86400
+  check("fmtDay older shows weekday, day and month in capitals", ns.UI.fmtDay(old, nowT) == (date("%A ", old) .. tonumber(date("%d", old)) .. date(" %b", old)):upper(), ns.UI.fmtDay(old, nowT))
 end
 -- ── delete a single fight from its detail (two clicks) ──
 do
@@ -1225,8 +1235,9 @@ do
   ns.UI.Open("Home"); M.tick()
   local home = host("Home")
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))
-  local ov = home.paneByKey.overview
-  check("Home opens on Overview with the cards in the pane", home.ctl.active == "overview" and ov.content.cLevel and ov.content.cLevel:GetParent() == ov.content)
+  ns.UI.Open("Home", "now"); M.tick()
+  local ov = home.paneByKey.now
+  check("Home / Now holds the cards in the pane", home.ctl.active == "now" and ov.content.cLevel and ov.content.cLevel:GetParent() == ov.content)
   ns.UI.Open("Loot", "gold")
   local gold = host("Loot").paneByKey.gold
   check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.cBalance and gold.content.cBalance.value:GetText() ~= nil)
@@ -1384,8 +1395,8 @@ do
   local dv = T.fightDetail()
   dv.tlBtn:GetScript("OnClick")(dv.tlBtn)
   local w = ns._test.timelineWindow()
-  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "timeline" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
-  local tl = host("Home").paneByKey.timeline
+  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "activity" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
+  local tl = host("Home").paneByKey.activity
   check("window banner shown", tl.content.timelineBanner.shown == true)
   check("events outside the window are filtered out", ns._test.eventMatches(L[#L], "all", "") == false and ns._test.eventMatches(L[#L - 1], "all", "") == true)
   tl.content.timelineBanner:GetScript("OnClick")(tl.content.timelineBanner)
@@ -1412,7 +1423,7 @@ do
   local L = ns.char().lockouts
   check("locked instances captured with reset time and boss progress", L and #L == 1 and L[1].name == "Blackfathom Deeps" and L[1].down == 4 and L[1].bosses == 6 and L[1].resetAt == M.epoch + 90000, L and #L)
   ns.UI.Open("Combat", "dungeons"); M.tick()
-  local dg = host("Combat").paneByKey.dungeons
+  local dg = host("Dungeons").paneByKey.runs
   local txt = T.dungeonsLockText and T.dungeonsLockText() or ""
   check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps 4/6") ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
   M.saved = {}
@@ -1488,7 +1499,7 @@ end
 -- ── onboarding card ──
 do
   ns.UI.Open("Home", "overview"); M.tick()
-  local ov = host("Home").paneByKey.overview.content
+  local ov = host("Home").paneByKey.now.content
   check("onboarding card shows on a fresh install", ov.onboard and ov.onboard:IsShown() and not ns.DB.settings.onboarded)
   ov.onboard.okBtn:GetScript("OnClick")(ov.onboard.okBtn)
   check("Got it dismisses the card for good", ns.DB.settings.onboarded == true and not ov.onboard:IsShown())
@@ -2124,7 +2135,7 @@ do
 
   -- logged in as Hart: none of Undertaker's rows in any pane
   ns.UI.Open("Home", "timeline"); M.tick()
-  local tl = host("Home").paneByKey.timeline.content
+  local tl = host("Home").paneByKey.activity.content
   local tlRows = shownRows(tl.timelineRows)
   check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
@@ -2354,6 +2365,13 @@ for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", 
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end
+-- UX overhaul step 1 (docs/UX_OVERHAUL.md 5): the shared formatters and the cmap scan of the text characters
+do
+  local ok, err = pcall(dofile("tests/formatters.lua"), { check = check, ns = ns })
+  check("UX tests/formatters.lua runs to its end", ok, err)
+  local okG, errG = pcall(loadfile("tests/glyphs.lua"), { check = check })
+  check("UX tests/glyphs.lua runs to its end", okG, errG)
+end
 -- 0.9.49 (#42, plan in #51): the chat guards, the group member not named yet, the friendly target that is no foe,
 -- the sticky dungeon check records and the client's restricted events (on a save file of its own)
 do
@@ -2543,11 +2561,13 @@ do
     end
     return out
   end
-  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", character = "Character" }
+  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
+  -- old page keys (combat/dungeons, home/overview) resolve through the window's aliases (docs/UX_OVERHAUL.md 3.1)
   function P.open(host, pane, w, h, data)
     useData(data or "normal")
     ns.UI.SetWindowSize(w or 900, h or 580)
-    local name = HOSTS[host] or host
+    local name
+    name, pane = ns.UI.Resolve(HOSTS[host] or host, pane)
     ns.UI.Open(name, pane); M.settle()
     for _, tab in ipairs(T.tabs) do
       if tab.name == name then

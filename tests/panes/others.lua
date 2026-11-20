@@ -427,7 +427,7 @@ return function(P)
       if mb then
         mb:GetScript("OnClick")(mb); M.settle()
         local mv = dv.parentFrame and nil
-        for _, f2 in ipairs(P.descendants(P.box and host("Combat").paneByKey.fights.content or {})) do
+        for _, f2 in ipairs(P.descendants(P.box and host("Home").paneByKey.fights.content or {})) do
           if rawget(f2, "titleFS") and f2 ~= dv and f2.shown ~= false and rawget(f2, "render") then mv = f2 end
         end
         check("Replay " .. data .. ": the member's view is up", mv ~= nil and dv.shown == false)
@@ -653,7 +653,7 @@ return function(P)
     local row = rowOf(me.dungeonRuns[1].id)
     T.openRun(row.run); M.settle()
     for _, b in ipairs(dv.child.bbtn) do if b.shown ~= false then b:GetScript("OnClick")(b, "LeftButton") end end
-    check(tag .. ": clicking the boss row opens its fight", host("Combat").ctl.active == "fights" and T.fightDetail().fight and T.fightDetail().fight.uid == "uid-brd-boss")
+    check(tag .. ": clicking the boss row opens its fight", host("Home").ctl.active == "fights" and T.fightDetail().fight and T.fightDetail().fight.uid == "uid-brd-boss")
     T.fightDetail():Hide(); fl:Show()
     -- a run none of whose fights is stored has no Encounters section
     while #fights > nFights do table.remove(fights) end
@@ -772,7 +772,7 @@ return function(P)
       r and ("%s|%s|%s"):format(tostring(r.c.gear.text), tostring(r.c.open.text), tostring(r.c.down.text)))
     if not r then return end
     r:GetScript("OnClick")(r, "LeftButton")
-    check("Deaths: clicking a death opens its fight", host("Combat").ctl.active == "fights")
+    check("Deaths: clicking a death opens its fight", host("Home").ctl.active == "fights")
   end
 
   -- ── Character / Reputation and Professions: the first list is as tall as its rows, the history right below it

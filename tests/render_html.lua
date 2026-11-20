@@ -3,7 +3,7 @@
 -- Usage, from the repo root:
 --   luajit tests/render_html.lua [outdir] [page ...]
 --     outdir   where the pages go (default tests/render_out, which git ignores); fonts are copied to outdir/fonts
---     page     host/pane keys to render (default: loot/items loot/gold loot/auctions home/overview home/timeline);
+--     page     host/pane keys to render (default: loot/items loot/gold loot/auctions home/now home/activity);
 --              settings/general, settings/capture and settings/data open a Settings sub-tab
 --   then, on a machine with Chrome (never next to a running WoW client):
 --   node tests/render_shot.js outdir   (puppeteer-core; screenshots every page and writes <page>.findings.json)
@@ -29,7 +29,7 @@ local Lay = dofile("tests/layout.lua")
 local OUT = arg[1] or "tests/render_out"
 local PAGES = {}
 for i = 2, #arg do PAGES[#PAGES + 1] = arg[i] end
-if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "loot/auctions", "home/overview", "home/timeline" } end
+if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "loot/auctions", "home/now", "home/activity" } end
 local SIZES = { { 900, 580 }, { 1600, 1000 } }
 -- EVERBUFF_RENDER_SIZES="900x580,1250x760" renders other window sizes
 if os.getenv("EVERBUFF_RENDER_SIZES") then
@@ -285,7 +285,7 @@ local sep = package.config:sub(1, 1)
 os.execute((sep == "\\" and 'mkdir "%s\\fonts" 2>nul' or 'mkdir -p "%s/fonts"'):format(sep == "\\" and OUT:gsub("/", "\\") or OUT))
 for face in pairs(FACES) do copy(FONT_DIR .. face .. ".ttf", OUT .. "/fonts/" .. face .. ".ttf") end
 
-local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", character = "Character", settings = "Settings" }
+local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
 local manifest = {}
 for _, dataTag in ipairs({ "normal", "long" }) do
   if dataTag == "long" then Lay.stretch(ns.DB) end
