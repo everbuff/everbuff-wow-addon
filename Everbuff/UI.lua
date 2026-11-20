@@ -153,6 +153,9 @@ function UI.Text(parent, role, color, opts)
   if not (opts and opts.wrap) then
     if fs.SetWordWrap then fs:SetWordWrap(false) end
     if fs.SetMaxLines then fs:SetMaxLines(1) end
+  elseif fs.SetSpacing and fo and fo.ebSize and UI.LINE_H[role] then
+    -- wrapped lines sit at the role's line height (BODY 15, META 14), the pitch every layout reserves per line
+    fs:SetSpacing(math.max(0, UI.LINE_H[role] - fo.ebSize))
   end
   fs:SetJustifyH((opts and opts.justify) or "LEFT")
   return fs
@@ -329,6 +332,8 @@ function UI.Glyph(parent, name, size, color)
   g:SetColor(color or "fg")
   return g
 end
+-- the dot scales with the text it leads: 6 px for BODY and META, 8 for DISPLAY, 10 for HERO (2.5 accent rule 3)
+UI.DOT_SIZE = { HERO = 10, DISPLAY = 8, BODY = 6, META = 6 }
 -- the 6 px state dot as an inline texture, for a text that carries a warn or bad state ("|T...|t " before it)
 function UI.dot(color, size)
   local c = type(color) == "string" and C[color] or color or C.fg
@@ -834,7 +839,10 @@ UI.COL_FLOOR = 48
 function UI.LayoutColumns(spec, w, widthOf, gap, inset)
   local cols, fixed, n = {}, 0, #spec
   local flexCols = {}
-  for _, col in ipairs(spec) do if col.flex then flexCols[#flexCols + 1] = col else fixed = fixed + widthOf(col) end end
+  for _, col in ipairs(spec) do
+    if col.flex then flexCols[#flexCols + 1] = col else fixed = fixed + widthOf(col) end
+    fixed = fixed + (col.ebExtra or 0)          -- (a wider gap before this column, UI.KitTable's right-then-left rule)
+  end
   local free = w - 2 * inset - gap * math.max(0, n - 1) - fixed
   local function minOf(col) return math.max(col.min or 40, col.headMin or 0) end
   -- hold at their minimum the columns whose share is under it, until the shares of the rest all clear theirs
@@ -890,6 +898,7 @@ function UI.LayoutColumns(spec, w, widthOf, gap, inset)
   local x = inset
   for _, col in ipairs(spec) do
     local cw
+    x = x + (col.ebExtra or 0)
     if col.flex then cw = widths[col] or minOf(col) else cw = widthOf(col) end
     cols[col.key] = { x = x, w = cw }
     x = x + cw + gap
@@ -1328,6 +1337,7 @@ end
 UI.BADGE = {
   BEST = { "goodTint", "good", tip = "Fastest run with these bosses, first pull to last kill" },
   ["IN PROGRESS"] = { "accentTint", "accentFg", dot = true },
+  LIVE = { "accentTint", "accentFg", dot = true, tip = "In progress: you are in this dungeon now" },   -- (the short marker in table rows)
   WIPE = { "warnTint", "warn" }, DIED = { "badTint", "bad" },
 }
 function UI.Badge(parent, text)
@@ -1363,9 +1373,25 @@ function UI.SubTabs(parent, items, opts)
   local ctl = { panes = {}, tabs = {}, controls = {}, items = items, kit = true }
   local x = G.TEXT_L
   local rule = parent:CreateTexture(nil, "ARTWORK")
-  rule:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -(G.CTRL_Y + G.CTRL_H)); rule:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -G.BOX_R_INSET, -(G.CTRL_Y + G.CTRL_H))
   rule:SetHeight(1); rule:SetColorTexture(unpackc(C.line))
   ctl.rule = rule
+  -- The control row ends where the page's content does (2.2, 2.7): at BOX_L + MAIN_W, the right edge of the hero,
+  -- the cards and the tables. With no rail that is BOX_R at 900 and window x 1216 at 1600, so a filter sits over the
+  -- list it filters. ctl.rightInset() is the distance of that edge from the window's right side.
+  function ctl.rightInset()
+    local w = tonumber(parent:GetWidth()) or 0
+    if w <= 1 then w = G.winW() end
+    return math.max(G.BOX_R_INSET, w - (G.BOX_L + G.mainW(w)))
+  end
+  local edged = {}
+  function ctl.edge()
+    local r = ctl.rightInset()
+    rule:ClearAllPoints()
+    rule:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -(G.CTRL_Y + G.CTRL_H)); rule:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -r, -(G.CTRL_Y + G.CTRL_H))
+    for _, e in ipairs(edged) do e.f:ClearAllPoints(); e.f:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -r, e.y) end
+  end
+  ctl.edge()
+  parent:HookScript("OnSizeChanged", function() pcall(ctl.edge) end)
   local function paneFrame()
     local p = CreateFrame("Frame", nil, parent)
     p:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -G.CONTENT_TOP)
@@ -1394,7 +1420,8 @@ function UI.SubTabs(parent, items, opts)
       ctl.panes[it.key] = p
     end
     local cr = CreateFrame("Frame", nil, ctl.panes[it.key])
-    cr:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -G.BOX_R_INSET, -(G.CTRL_Y + 2)); cr:SetSize(1, UI.H.CONTROL)
+    cr:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -ctl.rightInset(), -(G.CTRL_Y + 2)); cr:SetSize(1, UI.H.CONTROL)
+    edged[#edged + 1] = { f = cr, y = -(G.CTRL_Y + 2) }
     ctl.controls[it.key] = cr
     x = x + w + S.S5
   end
@@ -1419,11 +1446,12 @@ function UI.SubTabs(parent, items, opts)
       ctl.backBtn = UI.KitButton(parent, label, "ghost", function() if ctl.onBack then ctl.onBack() end end)
       ctl.backBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -(G.CTRL_Y + 2))
       ctl.newerBtn = UI.KitButton(parent, "Newer \226\128\186", "ghost", function() if ctl.nav and ctl.nav.newer then ctl.nav.newer() end end)
-      ctl.newerBtn:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -G.BOX_R_INSET, -(G.CTRL_Y + 2))
+      edged[#edged + 1] = { f = ctl.newerBtn, y = -(G.CTRL_Y + 2) }
       ctl.olderBtn = UI.KitButton(parent, "\226\128\185 Older", "ghost", function() if ctl.nav and ctl.nav.older then ctl.nav.older() end end)
       ctl.olderBtn:SetPoint("TOPRIGHT", ctl.newerBtn, "TOPLEFT", -S.S2, 0)
     end
     ctl.back, ctl.onBack, ctl.nav = true, onBack, nav
+    ctl.edge()
     ctl.backBtn:SetLabel(label); ctl.backBtn:Show()
     for _, b in ipairs(ctl.tabs) do b:Hide() end
     for _, cr in pairs(ctl.controls) do cr:Hide() end
@@ -1666,8 +1694,10 @@ function UI.Hero(parent, opts)
       h.titleMeta:ClearAllPoints(); h.titleMeta:SetPoint("TOPLEFT", h, "TOPLEFT", x + S.S2, -16)
       h.titleMeta:SetWidth(math.max(1, mw - S.S2)); x = x + mw
     end
+    -- (badges sit on the title line's vertical centre: anchored to the title's right edge, y offset 0)
+    local bx = h.titleMeta:IsShown() and mw or 0
     for _, b in ipairs(h.badges) do
-      if b:IsShown() then b:ClearAllPoints(); b:SetPoint("TOPLEFT", h, "TOPLEFT", x + S.S2, -14); x = x + S.S2 + (tonumber(b:GetWidth()) or 0) end
+      if b:IsShown() then b:ClearAllPoints(); b:SetPoint("LEFT", h.title, "RIGHT", bx + S.S2, 0); bx = bx + S.S2 + (tonumber(b:GetWidth()) or 0) end
     end
     -- the bar
     local bwid = math.max(1, w - x0 - rInset)
@@ -1974,7 +2004,7 @@ function UI.EmptyLine(parent)
     f.text:SetWidth(math.max(1, w > 0 and math.min(tw, w - 2 * S.S3) or tw))
     if linkText then
       f.link:SetLabel(linkText); f.link.ebOnClick = fn
-      f.link:ClearAllPoints(); f.link:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3 + tw + S.S1, -4); f.link:Show()
+      f.link:ClearAllPoints(); f.link:SetPoint("LEFT", f.text, "RIGHT", S.S1, 0); f.link:Show()
     else f.link:Hide() end
   end
   return f
@@ -2054,6 +2084,7 @@ function UI.KitTable(parent, spec, opts)
   local iconSize = opts.iconSize or 20
   local f = CreateFrame("Frame", nil, parent)
   local tbl = { spec = spec, cols = {}, rows = {}, head = {}, kit = true, frame = f, sortKey = opts.sortKey, sortAsc = opts.sortAsc, shownN = 0, gen = 0 }
+  f.ebKitTable = tbl   -- (the tests find a page's tables through their frames)
   local clickable = opts.onClick ~= nil
   local full = {}
   local firstText
@@ -2104,7 +2135,13 @@ function UI.KitTable(parent, spec, opts)
     end
   end
   measureBase()
-  local function widthOf(col) return math.max(base[col.key] or 0, shown[col.key] or 0) end
+  -- (a text column with `max` stops growing with its values there, so the first text column keeps the flex space:
+  -- a long source shortens before the item name does)
+  local function widthOf(col)
+    local w = math.max(base[col.key] or 0, shown[col.key] or 0)
+    if col.max and not col.flex and not isNumeric(col.kind) then w = math.min(w, math.max(col.max, base[col.key] or 0)) end
+    return w
+  end
   local function active()
     local wide, out = G.isWide(G.winW()), {}
     for _, col in ipairs(full) do if not col.wide or wide then out[#out + 1] = col end end
@@ -2128,7 +2165,14 @@ function UI.KitTable(parent, spec, opts)
     w = math.min(w, G.TABLE_MAX)
     tbl.width = w
     tbl.gen = tbl.gen + 1
-    local cols, used = UI.LayoutColumns(active(), w, widthOf, gap, inset)
+    -- a left-aligned column right after a right-aligned one is S5 from it, not S3: at S3 two headers read as one
+    -- label and two values as one ("4m 47s -")
+    local act = active()
+    for i, col in ipairs(act) do
+      local prev = act[i - 1]
+      col.ebExtra = (prev and prev.justify == "RIGHT" and col.justify ~= "RIGHT" and col.kind ~= "icon") and (S.S5 - gap) or nil
+    end
+    local cols, used = UI.LayoutColumns(act, w, widthOf, gap, inset)
     tbl.cols, tbl.usedW = cols, math.min(w, used or w)
     header:SetWidth(tbl.usedW)
     for _, col in ipairs(full) do
@@ -2228,7 +2272,8 @@ function UI.KitTable(parent, spec, opts)
     if linkText then
       tbl.stateLink:SetLabel(linkText); tbl.stateLink.ebOnClick = linkFn
       tbl.stateLink:ClearAllPoints()
-      if tw + S.S1 + UI.TextWidth("BODY", linkText) <= maxW then tbl.stateLink:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3 + tw + S.S1, -(headH + S.S3))
+      -- (on the sentence's line: the link's label shares the sentence's vertical centre and font height)
+      if tw + S.S1 + UI.TextWidth("BODY", linkText) <= maxW then tbl.stateLink:SetPoint("LEFT", tbl.stateFS, "RIGHT", S.S1, 0)
       else
         th = math.ceil(tw / math.max(1, maxW)) * UI.LINE_H.BODY
         tbl.stateLink:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(headH + S.S3 + th + S.S1)); th = th + S.S1 + UI.LINE_H.BODY
@@ -2499,7 +2544,7 @@ function UI.Slider(parent, opts)
   return s
 end
 -- Setting row (h 32, 48 with a description): ROW_TITLE label at x 12 (vertically centred; y 8 when described), a
--- META description at y 28 (at most 420 wide, under the control), the control right-aligned at w - 12.
+-- META description at y 28 (wrapping at min(w - 24, 520), under the control), the control right-aligned at w - 12.
 -- r:SetControl(frame).
 function UI.SettingRow(parent, label, desc)
   local r = CreateFrame("Frame", nil, parent)
@@ -2523,7 +2568,7 @@ function UI.SettingRow(parent, label, desc)
     r.stacked = stack
     if stack then room = math.max(1, w - 2 * S.S3) end
     r.label:SetWidth(math.min(room, need))
-    if r.desc then r.desc:SetWidth(math.max(1, math.min(420, w - 2 * S.S3))) end
+    if r.desc then r.desc:SetWidth(math.max(1, math.min(520, w - 2 * S.S3))) end
     -- (anchored again only when the control or its line changes: a secure control is never moved in combat)
     local key = stack and "stack" or "line"
     if r.control and (r.anchored ~= r.control or r.anchoredAs ~= key) then

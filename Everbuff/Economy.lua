@@ -3012,12 +3012,17 @@ function GP.paintTop(c)
     if bal == nil and sc.days then bal = Gold.metric("balance") end
     local okR, ro = pcall(Gold.roster, "all")
     balMeta = (okR and ro and ro.count > 1) and ("all characters " .. GP.gold(ro.total)) or "this character"
+    c.balAll = (okR and ro and ro.count > 1) and ro.total or nil
   else
     local ro = Gold.roster(sc.who == "realm" and "realm" or "all", st.withStale, nowT())
     balLabel, bal = sc.who == "realm" and "Realm gold" or "Account gold", ro.total
     balMeta = UI.plural(ro.count, "character")
   end
   cards[1]:Set(balLabel, money(bal or 0), balMeta)
+  -- (a money meta never shortens inside its number: it steps down to 10 px, then drops its words, the full value
+  -- in the BALANCE tooltip)
+  pcall(UI.Fit, cards[1].meta, 10)
+  if c.balAll and cards[1].meta:IsTruncated() then cards[1].meta:SetText("all " .. GP.gold(c.balAll)); pcall(UI.Fit, cards[1].meta, 10) end
   c.cards4.cards[1].ebBal, c.cards5.cards[1].ebBal = bal, bal
   cards[2]:Set("Earned", money(g.gained, g.gained > 0), mine and UI.plural(ins, "entry", "entries") or words)
   cards[3]:Set("Spent", g.spent > 0 and money(-g.spent, true) or money(0), mine and UI.plural(outs, "entry", "entries") or words)
@@ -3073,8 +3078,9 @@ function GP.paintList(c)
       cc.src:SetText(GP.srcLabel(r.key))
       if GP.UNTRACED[r.key] then UI.SetColor(cc.src, "fgSubtle") end
       local t = r.top[1]
-      cc.what:SetText(t and (t.name .. " " .. money(t.amount)) or "-")
+      cc.what:SetText(t and t.name or "-")
       if not t then UI.SetColor(cc.what, "fgMuted") end
+      cc.whatAmt:SetText(t and money(t.amount) or "")
       cc.n:SetText(r.n > 0 and UI.fmtNum(r.n) or "-")
       cc.share:SetText(r.dir ~= 0 and ("%d%%"):format(math.floor(r.share * 100 + 0.5)) or "-")
       cc.amount:SetText(r.dir == 0 and money(r.amount, true) or money(r.dir * r.amount, true))
@@ -3603,7 +3609,10 @@ function ns.BuildEconomyPane(pane)
   c.tbl = {}
   c.tbl.sources = UI.KitTable(col, {
     { key = "src", label = "Source", flex = 1, min = 140 },
-    { key = "what", label = "Biggest single", min = 200 },
+    -- (the biggest single entry as a name that may shorten and its amount in a money cell of its own, measured from
+    -- its widest two-unit value: a number is never cut, 2.4)
+    { key = "what", label = "Biggest single", flex = 1, min = 96, max = 200 },
+    { key = "whatAmt", label = "", kind = "money", min = 40 },
     { key = "n", label = "Times", kind = "num", min = 48 },
     { key = "share", label = "Share", kind = "num", min = 48, tip = "Share of everything earned, or of everything spent" },
     { key = "amount", label = "Amount", kind = "money", min = 88, strong = true },

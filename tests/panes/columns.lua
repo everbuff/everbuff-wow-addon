@@ -71,5 +71,52 @@ return function(P)
       end
     end
   end
+  -- A left-aligned column right after a right-aligned one needs S5 (24) between them: at S3 two headers read as one
+  -- label ("TIME VS BEST") and two values as one ("4m 47s -"). Every kit table on the kit pages, at both sizes.
+  do
+    local FX = dofile("tests/dungeon_fixture.lua")
+    local function pairsOf(root)
+      local bad, n = {}, 0
+      for _, f in ipairs(P.descendants(root)) do
+        local t = rawget(f, "ebKitTable")
+        if t and P.visible(f) and t.cols then
+          n = n + 1
+          local shownCols = {}
+          for _, col in ipairs(t.full or t.spec) do
+            local cw = t.cols[col.key]
+            if cw and not col.chevron and col.kind ~= "icon" then shownCols[#shownCols + 1] = { col = col, x = cw.x, w = cw.w } end
+          end
+          table.sort(shownCols, function(a, b) return a.x < b.x end)
+          for i = 1, #shownCols - 1 do
+            local a, b = shownCols[i], shownCols[i + 1]
+            if a.col.justify == "RIGHT" and b.col.justify ~= "RIGHT" and b.x - (a.x + a.w) < UI.S.S5 then
+              bad[#bad + 1] = ("%s|%s %d"):format(a.col.key, b.col.key, b.x - (a.x + a.w))
+            end
+          end
+        end
+      end
+      return bad, n
+    end
+    for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+      local tag = ("%dx%d"):format(size[1], size[2])
+      local undo, fx = FX.install(ns, P.M, "")
+      local c = P.open("dungeons", "runs", size[1], size[2], "normal")
+      local bad, n = pairsOf(c)
+      check("Runs " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", n > 0 and #bad == 0, table.concat(bad, ", "))
+      for _, rec in ipairs({ fx.wc2, fx.rfc }) do
+        ns.Dungeons.openRun(rec); P.M.settle()
+        bad, n = pairsOf(c)
+        check("Run page " .. rec.inst .. " " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", n > 0 and #bad == 0, table.concat(bad, ", "))
+      end
+      local dv = P.T.dungeonDetail and P.T.dungeonDetail()
+      if dv and dv:IsShown() then dv.d.Close() end
+      undo()
+      for _, pane in ipairs({ "leveling", "reputation", "professions" }) do
+        local cc = P.open("character", pane, size[1], size[2], "normal")
+        bad, n = pairsOf(cc)
+        check("Character " .. pane .. " " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", #bad == 0, table.concat(bad, ", "))
+      end
+    end
+  end
   UI.SetWindowSize(900, 580)
 end

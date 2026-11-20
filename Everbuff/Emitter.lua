@@ -2907,7 +2907,7 @@ if ns.UI and ns.UI.registerTab then
       row.ev = e
       row.clickable = (EVENT_GROUP.combat[e.kind] and fightAt(e.t or 0) ~= nil) or e.kind == "LOOT"
       local c = row.c
-      c.time:SetText(date("%H:%M:%S", e.t or 0))
+      c.time:SetText(UI.fmtClock(e.t or 0))
       c.type:SetText(LABELS[e.kind] or e.kind or "?")
       local col = COLORS[e.kind] or C.dim
       c.type:SetTextColor(col[1], col[2], col[3])
@@ -3056,9 +3056,11 @@ if ns.UI and ns.UI.registerTab then
     local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
     IT.summary = UI.Summary(col)
     content.lootSummary = IT.summary
+    -- one list-page structure on Runs, By dungeon and Items: the section header with the list's count
+    IT.section = UI.Section(col, "All items")
     -- the control row, right to left: search, quality filter, Newest · By item
     local controls = content.ebControls or v
-    local search = UI.Search(controls, "Search items, sources, places")
+    local search = UI.Search(controls, "Search loot")   -- (fits the one search width, 176 - 26)
     search:SetPoint("TOPRIGHT", controls, "TOPRIGHT", 0, 0)
     search:HookScript("OnTextChanged", function() if lootRebuild then lootRebuild() end end)
     content.search = search
@@ -3100,7 +3102,7 @@ if ns.UI and ns.UI.registerTab then
       newest = {
         { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" }, sort = true },
         { key = "icon", label = "", kind = "icon" },
-        { key = "item", label = "Item", flex = 1, min = 120, max = 360, sort = true },
+        { key = "item", label = "Item", flex = 1, min = 120, sort = true },
         { key = "from", label = "From", min = 160, sort = true },
         { key = "loc", label = "Place", min = 120, sort = true },
         { key = "price", label = "Vendor price", kind = "money", min = 80, sort = true, tip = PRICE_TIP },
@@ -3108,7 +3110,7 @@ if ns.UI and ns.UI.registerTab then
       },
       byitem = {
         { key = "icon", label = "", kind = "icon" },
-        { key = "item", label = "Item", flex = 1, min = 120, max = 360, sort = true },
+        { key = "item", label = "Item", flex = 1, min = 120, sort = true },
         { key = "times", label = "Times", kind = "num", min = 48, sort = true, tip = "How many times you picked it up" },
         { key = "qty", label = "Total", kind = "num", min = 56, sort = true, tip = "How many you picked up in all" },
         { key = "first", label = "First seen", kind = "tag", min = 96, sort = true },
@@ -3189,6 +3191,7 @@ if ns.UI and ns.UI.registerTab then
       col:SetWidth(w)
       IT.summary:ClearAllPoints(); IT.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); IT.summary:SetWidth(w); pcall(IT.summary.layout)
       local y = H.SUMMARY + S.S3
+      IT.section:ClearAllPoints(); IT.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); IT.section:SetWidth(w); y = y + H.SECTION
       local t = IT.tbls[st.mode]
       t.frame:ClearAllPoints(); t.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); t.frame:SetWidth(w)
       if t.width ~= math.min(w, G.TABLE_MAX) then t.relayout(w) end
@@ -3266,6 +3269,9 @@ if ns.UI and ns.UI.registerTab then
       tbl.setSort(st.sortKey, st.sortAsc)
       tbl.setRows(rows, IT.fill)
       for i = 1, tbl.shownN do pcall(IT.placeBadge, tbl, tbl.rows[i]) end
+      IT.nShown = 0
+      for _, r in ipairs(rows) do if not r.ebSection then IT.nShown = IT.nShown + 1 end end
+      IT.section:SetMeta(IT.nShown > 0 and UI.plural(IT.nShown, "item") or nil)
       if #rows == 0 then
         if q ~= "" then tbl.setState(('No item matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
         elseif st.minQ >= 2 then tbl.setState("Loot anything green or better and it shows here. Lower the quality filter to see grey and white items.")

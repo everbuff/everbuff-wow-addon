@@ -101,7 +101,7 @@ Every issue and PR text ends with `<!-- claude -->`, uses no em dashes, and carr
    - Text starts at x 204 (`TEXT_L`) and ends at `TEXT_R` (`W-36`). That covers sub-tab labels, section headers, summary lines, table cells, card text and empty text.
    - One vertical rhythm: control row at y 52, content at y 92.
    - All numbers are named constants in `UI.G`. No pane uses literal offsets.
-   - The only exception is the Settings column (§4.12).
+   - The Settings column (§4.12) follows the same edges at 900.
 4. **One level of sub-tabs, then a detail page with Back.**
    - The levels are: sidebar, one sub-tab row, then in-page controls or a detail page with "‹ Back". Tabs never nest.
    - A view has at most one segmented control (with an optional "More ▾" overflow that belongs to it), one filter button and one search.
@@ -174,6 +174,8 @@ Rule: every offset is a sum of tokens. `UI.SP` stays as an alias until phase 2.
 | `TABLE_MAX` | 1024 | tables are capped and left-aligned |
 
 **No-rail behaviour (tonight, and any page without a rail).** The main column is `min(CW, MAIN_MAX)`, left-aligned at `BOX_L`. The spare width to the right stays empty `canvas`. Coords columns and WIDE-only columns key off the same `WIDE` constant.
+
+**Control row edge (UX polish round 1).** The control row ends where the page's content ends: at `BOX_L + MAIN_W`. The right-aligned page controls (filter, segmented control, search, More, Older and Newer) and the control-row rule end on that edge, the same edge as the hero, the cards and the tables. At 900 it is `BOX_R` (876); at 1600 it is window x 1216. So a filter sits over the list it filters, never 360 px to its right.
 
 **Scroll model.** Each page is one `UI.ScrollChild`. The hero, the summary and the table scroll together, so a page never stacks two scroll regions. The thumb is a custom slim one:
 - 4 px wide, `lineControl` (hover `fgFaint`);
@@ -358,7 +360,7 @@ All measurements are in window units. "y" is relative to the component's own top
   - inactive `fgMuted`; hover `fg`;
   - each tab's tooltip is its description sentence (§4);
   - no boxes, no fixed slots, no inner pane: the `UI.Tabs` bordered pane is deleted for converted hosts.
-- **Page controls, right:** right-aligned so the last control's box edge is at `BOX_R`; h 24 at y 54; S2 apart.
+- **Page controls, right:** right-aligned so the last control's box edge is at `BOX_L + MAIN_W` (`BOX_R` at 900, x 1216 at 1600, §2.2); h 24 at y 54; S2 apart. The control-row rule ends on the same edge.
 - **Detail pages** replace the sub-tabs with the Back button. There is no breadcrumb line.
 
 **Summary line** (`UI.Summary`, h 24, at `CONTENT_TOP`, then S3 to the next block)
@@ -398,7 +400,9 @@ All measurements are in window units. "y" is relative to the component's own top
 
 **List / table** (`UI.Table`, restyled)
 - Header band h 24, no fill, LABEL `fgMuted`, 1 px `line` rule under it. Numeric headers are right-aligned at their column's right edge.
-- Rows h 32. Inset S3 left and right, column gap S3. Width budget: `insets 24 + sum(widths) + 12*(columns-1) = table width`.
+- Rows h 32. Inset S3 left and right, column gap S3. Width budget: `insets 24 + sum(widths) + 12*(columns-1) + 12*(right-then-left boundaries) = table width`.
+- A left-aligned column right after a right-aligned one is S5 (24) from it, not S3: at S3 two headers read as one label ("TIME VS BEST") and two values as one ("4m 47s -"). Status-word columns that follow numbers ("Vs best", "Vs previous", "Last gain") are right-aligned. `tests/panes/columns.lua` flags any right-then-left pair under 24.
+- A text column other than the first may carry `max` (for example From and Place at 160): it stops growing there and shortens, so the first text column always gets the flex space.
 - Cells:
   - first text column BODY `fg`;
   - other columns BODY `fgSubtle`;
@@ -1377,14 +1381,14 @@ XP sources are two: quests and kills (dungeon XP is split into both). Dungeons i
 ### 4.12 Settings (phase 2)
 
 **Layout.**
-- One settings column, `min(CW, 600)` wide, box at x 192.
-- Labels at 204. Controls are right-aligned to the column's text edge (192 + 600 - 12 = 780 at 900). This is the one exception to the two-edge rule.
+- One settings column, `min(CW, 684)` wide (the whole content width at 900), box at x 192.
+- Labels at 204. Controls are right-aligned to the column's text edge, `TEXT_R` (864) at 900, like every other page. A text input stretches so its button ends on that edge.
 - At WIDE: two columns of 500, S5 apart (1024 total).
 
 **Setting row:**
 - h 32, or 48 with a description;
 - ROW_TITLE label at x 12, vertically centred (y 8 when described);
-- META description at y 28, max width 420;
+- META description at y 28, wrapping at `min(w - 24, 520)` (the Table inline-text rule);
 - the control right-aligned.
 
 **Checkbox:**
@@ -1589,7 +1593,7 @@ Rules for every step:
 
 - **Gold controls:** a period segmented control plus "More" in the control row, and one filter plus search on the list's section header (Principle 4 allows this).
 - **Settings segmented controls** inside setting rows do not count toward Principle 4.
-- **Settings column:** its right text edge is the one exception to the two-edge rule.
+- **Settings column:** since UX polish round 1 it spans the content width at 900, so its controls end on `TEXT_R` like every other page; at WIDE its two 500 px columns stay.
 - **One primary per view:** this counts notices and rails. A notice button turns ghost when the view already has a primary.
 - **Runs table time vs best:** TIME is the clock inside; VS BEST is first pull to last kill. Both header tooltips say so, matching `paceLines`.
 

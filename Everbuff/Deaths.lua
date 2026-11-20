@@ -49,7 +49,8 @@ UI.registerPane("Home", 5, "Deaths", function(content)
   local summary = UI.SummaryLine(content, C.red, nil, true)
   view.summary = summary
   -- When · Level · Location · Coords · Slain by · (opens the fight) · Downtime · Gear lost
-  local tbl = UI.Table(UI.Below(content, summary), {
+  local holder = UI.Below(content, summary)
+  local tbl = UI.Table(holder, {
     { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
     { key = "lvl", label = "Level", kind = "num", measure = { "60" } },
     { key = "zone", label = "Location", flex = 1, min = 90 },
@@ -58,9 +59,13 @@ UI.registerPane("Home", 5, "Deaths", function(content)
     { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
     { key = "down", label = "Downtime", kind = "num", color = "dim", measure = { "59m 59s" } },
     { key = "gear", label = "", kind = "tag", color = "red", measure = { "-100% gear" } },
-  }, { top = 0, emptyText = "No deaths recorded. Stay alive out there.",
+  }, { top = 0,
     onClick = function(row) if row.fight and ns.OpenFightDetail then ns.OpenFightDetail(row.fight) end end })
   view.tbl = tbl
+  -- no death at all: the kit's big empty state (2.7), its top at CONTENT_TOP + 48 as on Dungeons > Runs (4.4)
+  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "No deaths yet",
+    text = "When you die, this page shows what killed you and the pull to replay." })
+  view.empty:Hide()
 
   listRebuild = function()
     local list = collectDeaths()
@@ -81,6 +86,7 @@ UI.registerPane("Home", 5, "Deaths", function(content)
     end
     local rows = {}
     for i = #list, 1, -1 do rows[#rows + 1] = list[i] end
+    if #rows == 0 then summary:Hide(); holder:Hide(); view.empty:Show() else view.empty:Hide(); summary:Show(); holder:Show() end
     tbl.setRows(rows, function(row, d)
       row.fight = d.fight
       row.c.time:SetText(date("%m/%d %H:%M", d.t or 0))

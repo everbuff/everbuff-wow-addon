@@ -46,7 +46,8 @@ return function(P)
                 local cell = row.c[col.key]
                 if not near(P.box(cell).l, fb.l + cw.x) then bad[#bad + 1] = col.key .. i end
                 if numeric and cell._justify ~= "RIGHT" then bad[#bad + 1] = col.key .. i .. " not right-aligned" end
-                if col.kind and col.kind ~= "text" and cell:IsTruncated() then bad[#bad + 1] = col.key .. i .. " cut" end
+                -- (a text column held at its `max` may shorten, so the first text column keeps the flex space)
+                if col.kind and col.kind ~= "text" and not (col.max and not numeric) and cell:IsTruncated() then bad[#bad + 1] = col.key .. i .. " cut" end
               end
             end
           end
@@ -116,14 +117,16 @@ return function(P)
         for i, row in ipairs(p.profRows) do
           if P.visible(row) then
             local rb = P.box(row)
-            if not near(P.box(row.bar).l - rb.l, V.BAR_X) or P.box(row.bar).w ~= V.BAR_W then bad[#bad + 1] = "bar " .. i end
-            local cbx = P.box(row.count)
+            local cbx, bb = P.box(row.count), P.box(row.bar)
+            -- (the bar ends S3 left of the value, at most V.BAR_W wide and never left of V.BAR_X)
+            if not near(bb.l + bb.w, cbx.l - S.S3) or bb.w > V.BAR_W + 0.5 or bb.l - rb.l < V.BAR_X - 0.5 then bad[#bad + 1] = "bar " .. i end
             if not near(cbx.l + cbx.w, rb.l + rb.w - S.S3) or row.count._justify ~= "RIGHT" then bad[#bad + 1] = "count " .. i end
-            if row.train.text ~= "" and not near(P.box(row.train).l - rb.l, V.BAR_X) then bad[#bad + 1] = "training " .. i end
+            if row.train.text ~= "" and not near(P.box(row.train).l, bb.l) then bad[#bad + 1] = "training " .. i end
+            if P.box(row.title).l + P.box(row.title).w > bb.l - S.S3 + 0.5 then bad[#bad + 1] = "title runs into the bar " .. i end
             if P.box(row.meta).l + P.G.naturalWidth(row.meta) > P.box(row.bar).l + 0.5 and not row.meta:IsTruncated() then bad[#bad + 1] = "meta runs into the bar " .. i end
           end
         end
-        check("Professions " .. sz .. ": each row has its bar at x 320 (160 wide), the count at w-12, the training line under the bar", #bad == 0, table.concat(bad, ","))
+        check("Professions " .. sz .. ": each row has its bar S3 left of its count at w-12, the title up to the bar, the training line under the bar", #bad == 0, table.concat(bad, ","))
       end
     end
   end

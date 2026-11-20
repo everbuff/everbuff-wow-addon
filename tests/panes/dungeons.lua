@@ -193,9 +193,26 @@ return function(P)
     eq(tag .. ": no primary while a run is in progress", UI.CountPrimaries(content), 0)
     local liveRow
     for _, r in ipairs(shown(lv.tbl)) do if r.run.inProgress then liveRow = r end end
-    check(tag .. ": its row carries IN PROGRESS", liveRow and liveRow.ebBadge and liveRow.ebBadge.ebText == "IN PROGRESS" and liveRow.c.boss.text:find("/", 1, true) ~= nil)
+    check(tag .. ": its row carries the short LIVE marker", liveRow and liveRow.ebBadge and liveRow.ebBadge.ebText == "LIVE" and liveRow.c.boss.text:find("/", 1, true) ~= nil)
+    check(tag .. ": the live row keeps its whole dungeon name next to the marker", liveRow and liveRow.c.name.IsTruncated and liveRow.c.name:IsTruncated() == false, liveRow and liveRow.c.name.text)
+    eq(tag .. ": the live row counts against the dungeon's 4 bosses, not its kills so far", liveRow and liveRow.c.boss.text, "1/4")
+    check(tag .. ": the live hero says 1 of 4 bosses", lv.hero and tostring(lv.hero.meta1.text or ""):find("1 of 4 bosses", 1, true) ~= nil, lv.hero.meta1.text)
     T.openRun(liveRow.run); M.settle()
     check(tag .. ": its page shows End run now", (function() for _, b in ipairs(dv.actBtns()) do if b.key == "end" and b.shown ~= false then return true end end end)())
+    -- one item list on the page: the LOOT section counts the rows it lists (drops only: no quest reward, no mail), and
+    -- the LOOT card (WIDE) says the same; the BOSSES card counts against the dungeon's 4 bosses
+    local lootMeta = dv.sections.loot.meta.shown ~= false and dv.sections.loot.meta.text or ""
+    local nLoot = #(dv.lootItems or {})
+    check(tag .. ": the live run's LOOT section lists no quest reward or mail and counts what it lists", (function()
+      for _, it in ipairs(dv.lootItems or {}) do local src = tostring(it.row.src or ""); if src:find("^Quest") or src:find("^Mail") then return false end end
+      return nLoot == 0 and lootMeta == "" or lootMeta == UI.plural(nLoot, "item")
+    end)(), lootMeta)
+    if dv.cards[6] then eq(tag .. ": the LOOT card counts the same items", dv.cards[6].meta.text, UI.plural(nLoot, "item")) end
+    eq(tag .. ": the live BOSSES card reads 1 / 4", dv.cards[3].value.text, "1 / 4")
+    if dv.empties.deaths then
+      local c = dv.empties.deaths._color or {}
+      check(tag .. ": an inline empty sentence is fgMuted, never good", math.abs((c[1] or 0) - UI.C.fgMuted[1]) < 0.01 and math.abs((c[2] or 0) - UI.C.fgMuted[2]) < 0.01)
+    end
     M.tick()
     local renders = dv.renders
     M.epoch = M.epoch + 5
@@ -214,7 +231,7 @@ return function(P)
     R.close(ns.char(), rec, "left", GetServerTime())
     M.tick()
     check(tag .. ": a run that closed while its page was open reads as ended", dv:IsShown() and dv.run.inProgress == false and dv.run.id == rec.id
-      and dv.metaText:find("left the dungeon", 1, true) ~= nil, dv.metaText)
+      and dv.metaText:find(" to %d%d:%d%d") ~= nil and dv.metaText:find("so far", 1, true) == nil, dv.metaText)
     dv.d.Close()
     unwind()
 

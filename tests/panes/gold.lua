@@ -215,7 +215,7 @@ return function(P)
       local secs = {}
       for i, s in ipairs(tbl.sections()) do secs[i] = s:GetText() end
       eq(tag .. ": the groups: EARNED, SPENT, MOVED", table.concat(secs, " | "), UI.upper("Earned " .. money(ses.gained, true) .. " | Spent " .. money(-ses.spent, true) .. " | Moved between characters and bank " .. money(0)))
-      eq(tag .. ": Sources columns", keys(tbl), "src,what,n,share,amount")
+      eq(tag .. ": Sources columns", keys(tbl), "src,what,whatAmt,n,share,amount")
       local rows = dataRows(tbl)
       local sbad = {}
       for _, r in ipairs(rows) do
@@ -226,6 +226,9 @@ return function(P)
         if colorIs(r.c.amount, "red") or colorIs(r.c.amount, "green") then sbad[#sbad + 1] = it.key .. " coloured" end
       end
       check(tag .. ": source rows: the label, the signed amount, untraced ones in fgSubtle, nothing red or green", #sbad == 0 and #rows >= 14, table.concat(sbad, "; "))
+      local mcut = {}
+      for _, r in ipairs(rows) do if r.c.whatAmt:IsTruncated() then mcut[#mcut + 1] = r.item.key end end
+      check(tag .. ": the biggest single's amount has a cell of its own and is never cut", #mcut == 0, table.concat(mcut, ","))
       tableChecks(tag .. " Sources", tbl, c)
       check(tag .. ": the page scrolls as one: the column holds the table", c.contentH >= P.box(tbl.frame).t - colB.t + tbl.height, c.contentH)
       -- a source row opens its page
@@ -414,8 +417,8 @@ return function(P)
     for _, r in ipairs(shown(c.tbl.rows)) do if r.item.endedEpoch and r.item.gold and (r.item.gold.training or 0) == 1200 then prevRow = r end end
     check("Sessions gold: the first evening's row was found", prevRow ~= nil)
     click(prevRow)
-    check("Sessions gold: a click on a row shows that session's gold", band.title.text:find(Gold.sessionLabel(prevRow.item), 1, true) ~= nil and band.blocks[2].lines[1].text:find("^Quest: The Jasperlode Mine") ~= nil and band.blocks[3].lines[1].text:find("^Training  12s") ~= nil, band.blocks[2].lines[1].text)
-    check("Sessions gold: the shown row's date is marked", prevRow.c.date._color and near(prevRow.c.date._color[1], UI.C.cyan[1]))
+    check("Sessions gold: a click on a row shows that session's gold", band.title.text:find(Gold.sessionLabel(prevRow.item), 1, true) ~= nil and band.blocks[2].lines[1].text:find("^Quest: The Jasperlode Mine") ~= nil and band.blocks[3].lines[1].text:find("^Training  12" .. UI.NBSP .. "|T[^|]*SilverIcon") ~= nil, band.blocks[3].lines[1].text)
+    check("Sessions gold: the shown row's date is marked in fgSubtle, never mint", prevRow.c.date._color and near(prevRow.c.date._color[1], UI.C.fgSubtle[1]))
     click(band.open)
     local gold
     for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then gold = tab.paneByKey.gold.content end end

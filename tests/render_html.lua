@@ -86,6 +86,7 @@ local function runsHTML(runs, size)
     if r.text then out[#out + 1] = esc(r.text)
     elseif r.color then if open then out[#out + 1] = "</span>" end; out[#out + 1] = ('<span style="color:%s">'):format(rgba(r.color)); open = true
     elseif r.reset then if open then out[#out + 1] = "</span>"; open = false end
+    elseif r.icon and r.tint then out[#out + 1] = ('<i class="ic" style="width:%s;height:%s;background:%s;box-shadow:none"></i>'):format(px(r.icon), px(r.icon), rgba(r.tint))
     elseif r.icon then out[#out + 1] = ('<i class="ic" style="width:%s;height:%s"></i>'):format(px(r.icon), px(r.icon))
     elseif r.br then out[#out + 1] = "<br>" end
   end
@@ -219,7 +220,8 @@ local function renderPage(pageKey, W, H, dataTag)
       -- the template's scroll bar sits 16 px wide to the right of the frame when the child is taller
       local child = f._scrollChild
       local cb = child and resolve(child, C)
-      if cb and cb.h > b.h + 1 then
+      -- (a slim kit scroll has no bar: its 4 px thumb is a texture of its own, drawn with the other regions)
+      if cb and cb.h > b.h + 1 and not f.ebSlim then
         out[#out + 1] = ('<div class="sb" style="left:%s;top:%s;width:16px;height:%s;z-index:%d"><div style="height:%s"></div></div>'):format(
           px(b.l + b.w + 4 - ox), px(b.t + 16 - oy), px(math.max(0, b.h - 32)), lv * 10 + 1, px(math.max(12, (b.h - 32) * b.h / cb.h)))
       end
@@ -339,6 +341,12 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       -- ":welcome", ":welcome2", ":welcome3" (the first-run guide on that step)
       local undo
       if host == "home" and pane == "now" and state ~= "" then undo = NOW_STATE(state) end
+      -- Home > Now on the same runs as the Dungeons screens (tests/dungeon_fixture.lua), so WORTH A LOOK and
+      -- Dungeons > Runs tell one story
+      if host == "home" and pane == "now" then
+        local undoState, undoFx = undo, DUNGEON_FIXTURE.install(ns, M, "")
+        undo = function() if undoState then undoState() end; undoFx() end
+      end
       -- the Dungeons screens on the runs of docs/UX_OVERHAUL.md 4.0 (tests/dungeon_fixture.lua): "dungeons/runs" with
       -- ":empty", ":nomatch" (filter Shadowfang Keep), ":limit4", ":limit5" (a limit of 5) or ":live" (Ragefire Chasm in
       -- progress); "dungeons/bydungeon"; "dungeons/run" (the Wailing Caverns BEST run), ":live", ":death" (Tessa's)

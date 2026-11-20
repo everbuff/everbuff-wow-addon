@@ -58,7 +58,15 @@ function G.parse(s, size)
         local e = s:find(close, i + 2, true) or n
         local spec = s:sub(i + 2, e - 1)
         local h = tonumber(spec:match("^[^:]*:(%-?%d+)") or "") or 0
-        flush(); runs[#runs + 1] = { icon = (h and h > 0) and h or size }; i = e + 2
+        -- "path:h:w:x:y:tw:th:l:r:t:b:r:g:b": the last three are the vertex colour (0 to 255) the client tints with
+        local f = {}
+        for v in (spec .. ":"):gmatch("([^:]*):") do f[#f + 1] = v end
+        local tint
+        if nx == "T" and #f >= 14 then
+          local r, g, b = tonumber(f[12]), tonumber(f[13]), tonumber(f[14])
+          if r and g and b then tint = { r / 255, g / 255, b / 255 } end
+        end
+        flush(); runs[#runs + 1] = { icon = (h and h > 0) and h or size, tint = tint }; i = e + 2
       elseif nx == "n" then flush(); runs[#runs + 1] = { br = true }; i = i + 2
       elseif nx == "|" then buf[#buf + 1] = "|"; i = i + 2
       else buf[#buf + 1] = c; i = i + 1 end

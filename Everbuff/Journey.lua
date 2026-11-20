@@ -13,6 +13,8 @@ local S, G, H = UI.S, UI.G, UI.H
 
 -- ── formatting (the Sessions half below still reads these) ─────────────────────────
 local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
+-- (the not-yet-redesigned Sessions tab speaks the kit's money dialect: coin icons, the two largest units, 2.5)
+local function coin2(c) return ns.fmtMoney(c, { icons = true, units = 2 }) end
 local function fmtTime(sec)
   sec = math.floor(tonumber(sec) or 0)
   if sec <= 0 then return "-" end
@@ -335,21 +337,28 @@ function Now.lookItems(now)
     end
   end
   table.sort(runs, function(a, b) return num(a.startT) > num(b.startT) end)
+  -- (the run rows speak the Runs page's words: its boss total, its TIME clock and its first run / best / delta word,
+  -- through the Dungeons helpers, so the two screens never tell one run two ways)
+  local DD = ns.Dungeons and ns.Dungeons.D
+  local today = date("%Y-%m-%d", now)
   for i, v in ipairs(runs) do
     if i > 2 then break end
-    local cmp = v.cmp or {}
     local name = v.name or "Dungeon"
-    local bosses = v.total and ("%d of %d bosses"):format(num(v.bossesDown), v.total)
-      or (num(v.bossesDown) > 0 and (UI.plural(num(v.bossesDown), "boss") .. " killed") or "no boss killed")
+    local total = (DD and DD.totalOf) and DD.totalOf(v) or num(v.total)
+    local down = num(v.bossesDown)
+    local bosses = total > 0 and ("%d of %s"):format(down, UI.plural(total, "boss")) or "no boss killed"
+    local word, wkey, kind = "", nil, "none"
+    if DD and DD.vsBest then word, wkey, kind = DD.vsBest(v) end
     local title, badge, bar
     if v.inProgress then title, badge = ("%s: %s so far"):format(name, bosses), "IN PROGRESS"
-    elseif cmp.first then title = ("%s: first run, %s"):format(name, bosses)
-    elseif cmp.isBest then title, badge, bar = ("%s: your best run, %s"):format(name, bosses), "BEST", "good"
-    elseif cmp.mode == "same" and cmp.delta then title = ("%s: %s, %s than your best"):format(name, bosses, (UI.fmtDelta(cmp.delta)))
+    elseif kind == "first" then title = ("%s: first run, %s"):format(name, bosses)
+    elseif kind == "best" then title, badge, bar = ("%s: your best run, %s"):format(name, bosses), "BEST", "good"
+    elseif kind == "slower" and word ~= "" then title = ("%s: %s, %s than your best"):format(name, bosses, word)
     else title = ("%s: %s"):format(name, bosses) end
     local who = {}
     for _, d in ipairs(v.deathRows or {}) do if type(d) == "table" and type(d.who) == "string" then who[#who + 1] = d.who end end
-    local parts = { UI.fmtClock(v.startT), UI.fmtDur(v.duration) }
+    -- (a run from another day carries its date; the time is the Runs page's TIME, inside the dungeon)
+    local parts = { date("%Y-%m-%d", num(v.startT)) == today and UI.fmtClock(v.startT) or UI.fmtWhen(v.startT), UI.fmtDur(v.inside) }
     if #who > 0 then parts[#parts + 1] = fitNames(who, 160) .. " died"
     elseif num(v.deaths) + num(v.partyDeaths) > 0 then parts[#parts + 1] = UI.plural(num(v.deaths) + num(v.partyDeaths), "death")
     else parts[#parts + 1] = "nobody died" end
@@ -386,7 +395,9 @@ function Now.lookItems(now)
   local best, bestRank, bestPrice
   local sid = ses and ses.id
   for _, l in ipairs((ns.DB and ns.DB.loot and ns.DB.loot.log) or {}) do
-    if type(l) == "table" and sid and l.s == sid and l.item and not l.money then
+    -- (of the live session, and a drop: a kill or a container, never a quest reward or a mail)
+    local drop = type(l) == "table" and (not (DD and DD.isDrop) or DD.isDrop(l))
+    if type(l) == "table" and sid and l.s == sid and l.item and not l.money and drop then
       local rank = ns.Runs and ns.Runs.qRank and ns.Runs.qRank(l.q) or 1
       if rank >= 2 then
         local price = sellPrice(l.id)
@@ -896,7 +907,7 @@ local function buildSessions(content)
     { key = "len", label = "Length", kind = "num", color = "dim", measure = { "23h 59m" } },
     { key = "lvl", label = "Level", kind = "num", measure = { "59 > 60" } },
     { key = "xp", label = "XP", kind = "num", measure = { "9,999,999" } },
-    { key = "gold", label = "Gold", kind = "money", color = "gold", measure = { "+" .. fmtMoney(9999999) } },
+    { key = "gold", label = "Gold", kind = "money", color = "gold", measure = { "+" .. coin2(9999999) } },
     { key = "kills", label = "Kills", kind = "num", measure = { "9999" } },
     { key = "deaths", label = "Deaths", kind = "num", color = "dim", measure = { "999" } },
     { key = "dung", label = "Dungeons", kind = "num", measure = { "99" } },
@@ -950,13 +961,14 @@ local function buildSessions(content)
     if sum.perHour then title = title .. ("  ·  %s per hour"):format(ns.Gold.signed(sum.perHour)) end
     band.title:SetText(title)
     local L = { {}, {}, {}, {} }
-    for i, r in ipairs(sum.topIn) do L[1][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
-    local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, fmtMoney(t.amount)) } end end
+    for i, r in ipairs(sum.topIn) do L[1][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
+    local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, coin2(t.amount)) } end end
     best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
-    for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, fmtMoney(r.amount)) } end
-    if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.red } end
-    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. fmtMoney(sum.unexplained), C.red } end
-    if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.red } end
+    for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
+    -- (bookkeeping notes in a neutral colour: red never means unusual bookkeeping, principle 5)
+    if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.fgSubtle } end
+    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. coin2(sum.unexplained), C.fgSubtle } end
+    if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.fgSubtle } end
     if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. ns.Gold.signed(sum.away) } end
     if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%d rows past the cap not kept"):format(sum.dropped) } end
     local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing flagged" }
@@ -979,22 +991,23 @@ local function buildSessions(content)
       local c = row.c
       local live = (sess.endedEpoch == nil)
       local endT = sess.endedEpoch or nowT
-      c.date:SetText(date("%b %d, %H:%M", sess.startedEpoch or 0))
-      if sess.id == sel.shown then c.date:SetTextColor(C.cyan[1], C.cyan[2], C.cyan[3]) end   -- the row the gold band shows
+      c.date:SetText(UI.fmtWhen(sess.startedEpoch or 0))
+      if sess.id == sel.shown then c.date:SetTextColor(C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3]) end   -- the row the gold band shows (never mint on a value)
       c.live:SetText(live and "•" or "")
+      if live then c.live:SetTextColor(C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3]) end
       c.len:SetText(fmtTime(math.max(0, endT - (sess.startedEpoch or endT))))
       local l0, l1 = tonumber(sess.level0) or tonumber(sess.level) or 0, tonumber(sess.level) or 0
       c.lvl:SetText(l1 > l0 and (l0 .. " > " .. l1) or tostring(l1))
       if l1 > l0 then c.lvl:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end
-      c.xp:SetText(commas(sess.xp or 0))
+      c.xp:SetText(UI.fmtNum(sess.xp or 0))
       local net = (tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)
-      c.gold:SetText((net < 0 and "-" or "+") .. fmtMoney(math.abs(net)))
+      c.gold:SetText((net < 0 and "-" or "+") .. coin2(math.abs(net)))
       if net < 0 then c.gold:SetTextColor(C.red[1], C.red[2], C.red[3]) end
-      c.kills:SetText(tostring(sess.kills or 0))
+      c.kills:SetText(UI.fmtNum(sess.kills or 0))
       c.deaths:SetText(tostring(sess.deaths or 0))
       if (tonumber(sess.deaths) or 0) > 0 then c.deaths:SetTextColor(C.red[1], C.red[2], C.red[3]) end
       c.dung:SetText(tostring(sess.dungeons or 0))
-      c.items:SetText(tostring(sess.items or 0))
+      c.items:SetText(UI.fmtNum(sess.items or 0))
     end)
   end
   sessionsRebuild()

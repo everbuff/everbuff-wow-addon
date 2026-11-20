@@ -753,7 +753,7 @@ local function buildList(content)
     return f.outcome == filter
   end
   local tabs = UI.Tabs(v, {
-    { key = "all", label = "All" }, { key = "notable", label = "Notable" }, { key = "kill", label = "Kills" },
+    { key = "all", label = "All" }, { key = "notable", label = "Important" }, { key = "kill", label = "Kills" },
     { key = "wipe", label = "Wipes" }, { key = "death", label = "Deaths" },
   }, -30, 2, { shared = true, onSelect = function(key) filter = key; if listRebuild then listRebuild() end end })
   v.tabs = tabs
@@ -804,7 +804,7 @@ local function buildList(content)
   local function fill(row, f)
     row.fight = f
     local c = row.c
-    c.time:SetText(date("%m/%d %H:%M", f.startEpoch or 0))
+    c.time:SetText(UI.fmtClock(f.startEpoch or 0))   -- (under its day row: TODAY, YESTERDAY, MONDAY 16 NOV)
     local gn = (f.group and #f.group) or 0
     c.foe:SetText(foesText(f))
     c.grp:SetText(gn > 1 and ("%d-player"):format(gn) or "")

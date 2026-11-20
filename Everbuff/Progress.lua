@@ -318,10 +318,10 @@ local function buildLeveling(content)
   v.cards = UI.StatRow(col, 4)
   v.levels = block(col, "Levels", {
     { key = "level", label = "Level", kind = "num", min = 48 },
-    { key = "reached", label = "Reached", flex = 1, max = 360, min = 120 },
+    { key = "reached", label = "Reached", flex = 1, min = 120 },
     { key = "at", label = "Time at level", kind = "num", min = 104, measure = { "10h 59m so far" } },
     { key = "played", label = "Played by then", kind = "num", min = 112 },
-    { key = "vs", label = "Vs previous", kind = "tag", min = 104 },
+    { key = "vs", label = "Vs previous", kind = "tag", min = 104, justify = "RIGHT" },
   }, { tooltip = function(row, item, tip)
       tip:AddLine(("Level %d"):format(item.level), 1, 1, 1)
       tip:AddLine(item.t and ("Reached " .. UI.fmtWhen(item.t)) or "Reached before Everbuff recorded this character.", 0.78, 0.79, 0.80, true)
@@ -329,7 +329,7 @@ local function buildLeveling(content)
   v.quests = block(col, "Quests turned in", {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
     { key = "name", label = "Quest", flex = 1, min = 120 },
-    { key = "place", label = "Place", kind = "tag", min = 140 },
+    { key = "place", label = "Place", kind = "tag", min = 140, max = 160 },
     { key = "gold", label = "Gold", kind = "money", min = 72 },
     COORDS,
   }, { tooltip = function(row, item, tip)
@@ -384,7 +384,7 @@ function V.renderLeveling()
       else
         verdict = ("On pace to be %s than level %d"):format(word, lvl - 1)
         color = d < 0 and "good" or "warn"
-        if d > 0 then verdict = UI.dot("warn") .. verdict end
+        if d > 0 then verdict = UI.dot("warn", UI.DOT_SIZE.HERO) .. verdict end
       end
     elseif atLevel then verdict = ("%s at level %d so far"):format(UI.fmtDur(atLevel, { minutes = true }), lvl)
     else verdict = "Level " .. lvl end
@@ -487,7 +487,7 @@ local function buildRep(content)
     -- (the bar, S2, then the numbers: 200 wide, or wider when the longest numbers need it)
     { key = "prog", label = "Progress", kind = "num", min = math.max(200, 120 + S.S2 + UI.TextWidth("BODY", "21,000 / 21,000")) },
     { key = "ses", label = "This session", kind = "num", min = 88 },
-    { key = "last", label = "Last gain", kind = "tag", min = 96, wide = true, measure = { "Mon 16 Nov" } },
+    { key = "last", label = "Last gain", kind = "tag", min = 96, wide = true, justify = "RIGHT", measure = { "Mon 16 Nov" } },
   }, { onClick = function(row) if row.item then V.openFaction(row.item) end end,
     onLayout = function(t) for i = 1, t.shownN do pcall(V.placeRepBar, t.rows[i]) end end,
     tooltip = function(row, item, tip)
@@ -616,14 +616,21 @@ local function profRow(v, i)
   v.profRows[i] = r
   return r
 end
+-- the value "5 / 75" right-aligned at w - 12; the bar's right edge S3 left of the value; the title and the meta run
+-- to S3 left of the bar (the bar at most V.BAR_W wide, never left of V.BAR_X)
 local function placeProfRow(r)
   local w = tonumber(r:GetWidth()) or 0
-  r.meta:SetWidth(math.max(1, V.BAR_X - (S.S3 + 24 + S.S2) - S.S3))
-  r.title:SetWidth(math.max(1, math.min(UI.TextWidth("ROW_TITLE", r.title:GetText()), V.BAR_X - (S.S3 + 24 + S.S2) - S.S3)))
-  r.bar:ClearAllPoints(); r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", V.BAR_X, -(S.S2 + 5))
-  r.bar:SetSize(V.BAR_W, 6); r.bar:SetFrac(r.frac)
-  r.count:ClearAllPoints(); r.count:SetPoint("TOPRIGHT", r, "TOPRIGHT", -S.S3, -S.S2); r.count:SetWidth(math.max(1, w - V.BAR_X - V.BAR_W - S.S3 - S.S3))
-  r.train:ClearAllPoints(); r.train:SetPoint("TOPLEFT", r, "TOPLEFT", V.BAR_X, -26); r.train:SetWidth(math.max(1, w - V.BAR_X - S.S3))
+  local cw = math.max(UI.TextWidth("BODY_STRONG", "300 / 300"), UI.TextWidth("BODY_STRONG", r.count:GetText() or ""))
+  r.count:ClearAllPoints(); r.count:SetPoint("TOPRIGHT", r, "TOPRIGHT", -S.S3, -S.S2); r.count:SetWidth(math.max(1, cw))
+  local barR = w - S.S3 - cw - S.S3
+  local barL = math.max(V.BAR_X, barR - V.BAR_W)
+  r.bar:ClearAllPoints(); r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", barL, -(S.S2 + 5))
+  r.bar:SetSize(math.max(1, barR - barL), 6); r.bar:SetFrac(r.frac)
+  local textX = S.S3 + 24 + S.S2
+  local room = math.max(1, barL - S.S3 - textX)
+  r.meta:SetWidth(room)
+  r.title:SetWidth(math.max(1, math.min(UI.TextWidth("ROW_TITLE", r.title:GetText()), room)))
+  r.train:ClearAllPoints(); r.train:SetPoint("TOPLEFT", r, "TOPLEFT", barL, -26); r.train:SetWidth(math.max(1, w - barL - S.S3))
 end
 local function buildProf(content)
   local v = { content = content, profRows = {} }
@@ -635,7 +642,7 @@ local function buildProf(content)
   v.empty = UI.EmptyLine(col)
   v.crafted = block(col, "Crafted", {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
-    { key = "item", label = "Item", flex = 1, max = 360, min = 120 },
+    { key = "item", label = "Item", flex = 1, min = 120 },
     { key = "prof", label = "Profession", kind = "tag", min = 104 },
     { key = "qty", label = "Qty", kind = "num", min = 40 },
   }, { tooltip = function(row, item, tip)
@@ -645,7 +652,7 @@ local function buildProf(content)
     end })
   v.recipes = block(col, "Recipes learned", {
     { key = "when", label = "When", kind = "tag", min = 96, measure = { "Mon 16 Nov, 23:59" } },
-    { key = "name", label = "Recipe", flex = 1, max = 360, min = 120 },
+    { key = "name", label = "Recipe", flex = 1, min = 120 },
     { key = "prof", label = "Profession", kind = "tag", min = 104 },
   }, {})
   content:HookScript("OnSizeChanged", function() pcall(V.placeProf) end)

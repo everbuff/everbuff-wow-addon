@@ -31,9 +31,10 @@ local function ago(t)
   return UI.fmtDur(d, { minutes = true }) .. " ago"
 end
 
--- the settings column(s): one of min(CW, 600), or at WIDE two of 500, S5 apart. sections = { { head, items } }
--- where an item is a frame with its height (ebH, else its own), placed one under the other.
-UI.SETTINGS_W, UI.SETTINGS_WIDE_W = 600, 500
+-- the settings column(s): one of min(CW, 684) (the whole content width at 900, so right-aligned controls end on
+-- TEXT_R like every other page), or at WIDE two of 500, S5 apart. sections = { { head, items } } where an item is a
+-- frame with its height (ebH, else its own), placed one under the other.
+UI.SETTINGS_W, UI.SETTINGS_WIDE_W = 684, 500
 local function columnsOf(w)
   if G.isWide(G.winW()) then return { { x = 0, w = UI.SETTINGS_WIDE_W }, { x = UI.SETTINGS_WIDE_W + S.S5, w = UI.SETTINGS_WIDE_W } } end
   return { { x = 0, w = math.min(w, UI.SETTINGS_W) } }
@@ -81,12 +82,13 @@ function SET.place(pg, sections, footer)
   pg.place(list, (#cols == 2) and (2 * UI.SETTINGS_WIDE_W + S.S5) or cols[1].w)
   for _, sec in ipairs(sections) do for _, it in ipairs(sec.items) do if it.layout then pcall(it.layout) end end end
 end
--- a META note under a section header (wraps, at most 420 wide); its height follows its lines
+-- a META note under a section header (wraps at min(w - 24, 520), the Table inline-text rule); its height follows
+-- its lines
 local function note(col, text, color)
   local f = CreateFrame("Frame", nil, col)
   f.text = UI.Text(f, "META", color or "fgMuted", { wrap = true }); f.text:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -S.S1)
   function f.layout()
-    local w = math.max(1, math.min(420, (tonumber(f:GetWidth()) or 0) - 2 * S.S3))
+    local w = math.max(1, math.min(520, (tonumber(f:GetWidth()) or 0) - 2 * S.S3))
     f.text:SetWidth(w)
     local lines = math.max(1, math.ceil(UI.TextWidth("META", f.text:GetText()) / w))
     f.ebH = lines * UI.LINE_H.META + S.S3
@@ -279,11 +281,11 @@ local function buildData(pane)
   d.syncStatus = note(col, "", "fgSubtle")
   d.pasteRow = CreateFrame("Frame", nil, col); d.pasteRow.ebH = UI.H.CONTROL + S.S2; d.pasteRow:SetHeight(d.pasteRow.ebH)
   local box = CreateFrame("EditBox", nil, d.pasteRow, "BackdropTemplate")
-  box:SetSize(400, UI.H.CONTROL)
+  box:SetHeight(UI.H.CONTROL)
   box:SetBackdrop({ bgFile = UI.WHITE, edgeFile = UI.WHITE, edgeSize = 1 })
   UI.BoxColors(box, "sunken", "lineStrong")
   box:SetFontObject(UI.F.BODY); box:SetTextInsets(S.S2, S.S2, 0, 0); box:SetAutoFocus(false)
-  box:SetPoint("TOPLEFT", d.pasteRow, "TOPLEFT", S.S3, 0)
+  box:SetPoint("TOPLEFT", d.pasteRow, "TOPLEFT", S.S3, 0)   -- (it stretches: Apply ends on the column's text edge)
   local ph = UI.Text(box, "BODY", "fgFaint"); ph:SetPoint("LEFT", box, "LEFT", S.S2, 0); ph:SetText("Paste the code from the desktop app")
   local function placeholder() local t = box:GetText(); if t == nil or t == "" then ph:Show() else ph:Hide() end end
   box:SetScript("OnTextChanged", placeholder)
@@ -293,7 +295,8 @@ local function buildData(pane)
   box:SetScript("OnEscapePressed", function(x) x:SetText(""); x:ClearFocus() end)
   d.ackBox, d.placeholder = box, ph
   d.ackBtn = UI.KitButton(d.pasteRow, "Apply", "ghost", function() SET.applyCode() end)
-  d.ackBtn:SetPoint("LEFT", box, "RIGHT", S.S2, 0)
+  d.ackBtn:SetPoint("TOPRIGHT", d.pasteRow, "TOPRIGHT", -S.S3, 0)
+  box:SetPoint("RIGHT", d.ackBtn, "LEFT", -S.S2, 0)
   box:SetScript("OnEnterPressed", function(x) x:ClearFocus(); SET.applyCode() end)
   d.ackError = note(col, "", "bad"); d.ackError:Hide()   -- only after a paste attempt; gone when the page opens again
   pane:HookScript("OnShow", function() d.ackError:Hide() end)

@@ -35,6 +35,7 @@ function F.install(ns, M, state)
     while #log > keep.nLoot do table.remove(log) end
     ns.Runs._read = keep.read
     if ns.Runs.statsRebuild then ns.Runs.statsRebuild(c) end
+    ns.DB.sessions["fx-wc2-session"] = nil
   end
   if state == "empty" then
     c.dungeonRuns, c.dungeonRun, c.dungeonStats, c.lockouts, c.dungeonCopies = {}, nil, nil, {}, {}
@@ -67,8 +68,10 @@ function F.install(ns, M, state)
   fights[#fights + 1] = { uid = "fx-rfc-2", session = s, startEpoch = rfcT + 500, duration = 30, outcome = "wipe", bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm", group = party }
   fights[#fights + 1] = { uid = "fx-rfc-3", session = s, startEpoch = rfcT + 655, duration = 70, outcome = "kill", bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm", group = party }
   rfc.bosses[1].fight, rfc.bosses[2].fight = "fx-rfc-1", "fx-rfc-3"
-  log[#log + 1] = { s = s, t = wc2.t + 420, item = "Serpent's Shoulders", count = 1, q = "ff0070dd", src = "Lord Serpentis", icon = "Interface\\Icons\\INV_Shoulder_09" }
-  log[#log + 1] = { s = s, t = wc2.t + 1500, item = "Glowing Lizardscale Cloak", count = 1, q = "ff1eff00", src = "Lady Anacondra" }
+  -- (the Wailing Caverns run was 4 days ago, in a session of its own: its loot is not this session's)
+  ns.DB.sessions["fx-wc2-session"] = { id = "fx-wc2-session", guid = ns.charGuid(), startedEpoch = wc2.t - 600, endedEpoch = wc2.t + 2400 }
+  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 420, item = "Serpent's Shoulders", count = 1, q = "ff0070dd", src = "Lord Serpentis", icon = "Interface\\Icons\\INV_Shoulder_09" }
+  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 1500, item = "Glowing Lizardscale Cloak", count = 1, q = "ff1eff00", src = "Lady Anacondra" }
   fights[#fights + 1] = { uid = "fx-wc-1", session = s, startEpoch = wc2.t + 300, duration = 50, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" }, zone = "Wailing Caverns", group = party }
   c.dungeonRuns, c.dungeonRun, c.dungeonStats = { wc1, wc2, rfc }, nil, nil
   c.lockouts = { { name = "Ragefire Chasm", resetAt = now + 7140, bosses = 4, down = 2 } }
