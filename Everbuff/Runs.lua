@@ -2417,7 +2417,14 @@ function Runs.xpLine(v)
   local SEP = "  ·  "
   local parts = { Runs.commas(v.xpGain) .. " XP" }
   if v.xpPerHour then parts[#parts + 1] = Runs.commas(v.xpPerHour) .. " per hour" end
-  if x.l0 and x.p0 and x.l1 and x.p1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + floor(x.p0 * 10) / 10, x.l1 + floor(x.p1 * 10) / 10) end
+  if x.l0 and x.p0 and x.l1 and x.p1 then
+    -- (one decimal, two when the run moved the level less than a tenth: "level 18.71 to 18.77", never "18.7 to 18.7";
+    -- left out when even two decimals show no change)
+    local a1, b1 = floor(x.p0 * 10), floor(x.p1 * 10)
+    local a2, b2 = floor(x.p0 * 100), floor(x.p1 * 100)
+    if x.l0 ~= x.l1 or a1 ~= b1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + a1 / 10, x.l1 + b1 / 10)
+    elseif a2 ~= b2 then parts[#parts + 1] = ("level %.2f to %.2f"):format(x.l0 + a2 / 100, x.l1 + b2 / 100) end
+  end
   local more, lvl = Runs.runsToLevel(v)
   if more then parts[#parts + 1] = ("about %d more run%s to level %d"):format(more, more == 1 and "" or "s", lvl) end
   local second = {}

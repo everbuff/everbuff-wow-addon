@@ -1005,19 +1005,19 @@ The page scrolls as one.
 ```
     52 |  Runs   By dungeon                                                [All dungeons      v] |
     78 |  ====--------------------------------------------------------------------------------- |
-    92 |  1 instance this hour (about) · Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m   |
+    92 |  1 instance this hour · Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m          |
    128 | +-----------------------------------------------------------------------------------+ |
-   140 | |  LAST RUN  Ragefire Chasm  [FIRST RUN]                                            | |
-   162 | |  First run of Ragefire Chasm                                         [ Open run ] | |
-   196 | |  Today 21:41 · 10m 5s · 2 of 4 bosses, missed Jergosh the Invoker, Bazzalan        | |
+   140 | |  LAST RUN  Ragefire Chasm                                                         | |
+   162 | |  2 bosses in 10m 5s                                                  [ Open run ] | |
+   196 | |  Today 21:41 · first run · missed Jergosh the Invoker, Bazzalan                    | |
    214 | |  Best drop: [ic] Cavedweller Bracers · 3 items · Tessa died                        | |
    232 | +-----------------------------------------------------------------------------------+ |
    256 |  ALL RUNS                                                                    3 runs  |
    280 |  WHEN DUNGEON              TIME   VS BEST        BOSSES DEATHS    XP  LOOT           |
    304 |  TODAY · 1 RUN                                                                       |
-   328 |  21:41 Ragefire Chasm     12m 30s first run         2/4      1 1,840 [ic]+2        > |
+   328 |  21:41 Ragefire Chasm     12m 30s first run         2/4      1 1,840 [ic] 3 items  > |
    360 |  MONDAY 16 NOV · 1 RUN                                                               |
-   384 |  20:10 Wailing Caverns    31m 12s 42s faster [BEST] 6/8      0 4,210 [ic]+4        > |
+   384 |  20:10 Wailing Caverns    31m 12s 42s faster [BEST] 6/8      0 4,210 [ic] 5 items  > |
 ```
 
 The BEST badge belongs in the first column only. The wireframe's placement is indicative, and the badge sits after the dungeon name.
@@ -1028,7 +1028,7 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 
 **Summary line segments**
 
-1. **Instances.** No limit set: "1 instance this hour". "(about)" is appended when any copy in the hour has `why == "estimate"`. With a limit:
+1. **Instances.** No limit set: "1 instance this hour". No "(about)" on the line: a copy counted by estimate is said in the tooltip, and the line's count is the same one the run rows and the live hero show. With a limit:
 
    | Used | Copy | Colour |
    |---|---|---|
@@ -1041,9 +1041,9 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 2. **Lockouts.** One lockout: "Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m". It is a link to the matching run, or plain text with the "Saved before Everbuff recorded..." tooltip. Several lockouts: "2 lockouts, next reset in 1h 59m". None: "No lockouts". The tooltip lists every lockout plus the other characters' lockouts (existing `otherLockouts`).
 
 **Last run hero (text variant, no image)**
-- TITLE: LABEL "LAST RUN", then TITLE dungeon name, then badges (FIRST RUN, BEST, IN PROGRESS).
+- TITLE: LABEL "LAST RUN", then TITLE dungeon name, then badges (BEST, IN PROGRESS). A first run has no badge: META says "first run".
 - HERO, the verdict that the row cannot hold:
-  - "First run of Ragefire Chasm" (`fg`);
+  - a first run: "2 bosses in 10m 5s" (`fg`), or "No boss killed in 10m 5s"; its META line 1 is "Today 21:41 · first run · missed Jergosh the Invoker, Bazzalan" (or "· full clear"), so the time is never said twice;
   - "42s faster than your best" (`good`);
   - "1m 20s slower than your best" (`warn` with dot);
   - "Same as your best";
@@ -1068,7 +1068,7 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 | Bosses | 40 | "2/4", always with the total |
 | Deaths | 48 | the party's deaths; cell tooltip names them |
 | XP | 56 | tooltip "1,840 XP · 11,040 XP per hour" |
-| Loot | 48 | best drop icon 20 plus "+2" (the other items); "-" when nothing; tooltip lists every item plus "Coin looted 15s" |
+| Loot | 72 | best drop icon 20, S1, then "3 items" (every item of the run, the same count as the run page's LOOT card and section); "-" when nothing; tooltip lists every item plus "Coin looted 15s" |
 | › | 12 | |
 
 **WIDE columns** (`wide = true`; at 1024: 24 + 524 fixed + 10 gaps (120) = 668, Dungeon 356): Coin looted 72 and XP per hour 64, inserted before Loot.

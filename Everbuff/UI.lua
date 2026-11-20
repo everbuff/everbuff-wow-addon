@@ -930,14 +930,14 @@ function UI.Columns(spec, w, opts)
   return UI.LayoutColumns(spec, tonumber(w) or 0, widthOf, opts.gap or UI.SP.M, opts.inset or 0)
 end
 
-local ARROW = "Interface\\Buttons\\UI-SortArrow"
 local function isNumeric(kind) return kind == "num" or kind == "money" end
 function UI.Table(parent, spec, opts)
   if opts and opts.kit then return UI.KitTable(parent, spec, opts) end
   opts = opts or {}
   local SP = UI.SP
   local rowH = opts.rowHeight or UI.ROW_H
-  local gap, inset = opts.gap or SP.M, opts.inset or SP.S
+  -- (the text inset is S3, as on the kit tables: a legacy list's first column starts on the TEXT_L line too)
+  local gap, inset = opts.gap or SP.M, opts.inset or S.S3
   local iconSize = opts.iconSize or 16
   local top, bottom = opts.top or 0, opts.bottom or 0
   local left, right = opts.left or 0, opts.right or 0
@@ -979,7 +979,10 @@ function UI.Table(parent, spec, opts)
       fs:SetJustifyH(col.justify); fs:SetText((col.label or ""):upper())
       hb.fs, hb.key = fs, col.key
       if col.sort then
-        local ar = header:CreateTexture(nil, "OVERLAY"); ar:SetSize(9, 8); ar:SetTexture(ARROW); ar:Hide()
+        -- (the sort mark is the kit's drawn chevron, as on every kit table: one style in the window)
+        local ar = CreateFrame("Frame", nil, header); ar:SetSize(8, 8); ar:Hide()
+        hb.gDown = UI.Glyph(ar, "chevronDown", 8, "fg"); hb.gDown:SetPoint("TOPLEFT", ar, "TOPLEFT", 0, 0)
+        hb.gUp = UI.Glyph(ar, "chevronUp", 8, "fg"); hb.gUp:SetPoint("TOPLEFT", ar, "TOPLEFT", 0, 0)
         hb.arrow = ar
         hb:SetScript("OnClick", function(b)
           local asc
@@ -1054,12 +1057,12 @@ function UI.Table(parent, spec, opts)
         if hb.arrow then
           if on and cw then
             local lw = math.min(cw.w - 13, math.ceil(hb.fs:GetStringWidth() or 0))
-            hb.arrow:ClearAllPoints()
-            if col.justify == "RIGHT" then hb.arrow:SetPoint("RIGHT", header, "LEFT", cw.x + cw.w - lw - SP.XS, 0)
-            else hb.arrow:SetPoint("LEFT", header, "LEFT", cw.x + lw + SP.XS, 0) end
-            -- the texture points down; flipped for ascending
-            if asc then hb.arrow:SetTexCoord(0, 0.5625, 1, 0) else hb.arrow:SetTexCoord(0, 0.5625, 0, 1) end
-            hb.arrow:SetVertexColor(unpackc(C.ink)); hb.arrow:Show()
+            local g = hb.arrow
+            g:ClearAllPoints()
+            if col.justify == "RIGHT" then g:SetPoint("RIGHT", header, "LEFT", cw.x + cw.w - lw - SP.XS, 0)
+            else g:SetPoint("LEFT", header, "LEFT", cw.x + lw + SP.XS, 0) end
+            if asc then hb.gDown:Hide(); hb.gUp:Show() else hb.gUp:Hide(); hb.gDown:Show() end
+            g:Show()
           else hb.arrow:Hide() end
         end
       end
@@ -1384,8 +1387,13 @@ function UI.SubTabs(parent, items, opts)
     return math.max(G.BOX_R_INSET, w - (G.BOX_L + G.mainW(w)))
   end
   local edged = {}
+  ctl.clamped = {}
   function ctl.edge()
     local r = ctl.rightInset()
+    for p in pairs(ctl.clamped) do
+      p:ClearAllPoints()
+      p:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -G.CONTENT_TOP); p:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -r, G.BOTTOM)
+    end
     rule:ClearAllPoints()
     rule:SetPoint("TOPLEFT", parent, "TOPLEFT", G.BOX_L, -(G.CTRL_Y + G.CTRL_H)); rule:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -r, -(G.CTRL_Y + G.CTRL_H))
     for _, e in ipairs(edged) do e.f:ClearAllPoints(); e.f:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -r, e.y) end
@@ -1426,6 +1434,14 @@ function UI.SubTabs(parent, items, opts)
     x = x + w + S.S5
   end
   ctl.tabsRight = x - S.S5
+  -- a pane not yet rebuilt on the kit (Sessions, Activity, Fights) ends where its host's converted pages end, at
+  -- BOX_L + MAIN_W, so every page of the host shares one right edge
+  function ctl.clamp(key)
+    local p = ctl.panes[key]
+    if not p or ctl.clamped[p] then return end
+    ctl.clamped[p] = true
+    ctl.edge()
+  end
   function ctl.style()
     for _, b in ipairs(ctl.tabs) do
       local on = b.key == ctl.active
@@ -1507,9 +1523,18 @@ function UI.Summary(parent)
     local avail = (tonumber(f:GetWidth()) or 0) - 2 * S.S3
     local x, shownN = S.S3, 0
     local sepW = UI.TextWidth("BODY", " \194\183 ")
+    local function widthOf(runs)
+      local w = 0
+      for _, r in ipairs(runs) do w = w + UI.TextWidth(r[2] and "BODY_STRONG" or "BODY", r[1]) end
+      return w
+    end
     for i, sg in ipairs(f.segs) do
       local b = segButton(i)
       local runs = runsOf((sg.dot and UI.dot(sg.dot) or "") .. tostring(sg.text or sg[1] or ""))
+      -- (a segment with a short form takes it when its full text does not fit, before the line drops it)
+      if sg.short and x + (i > 1 and sepW or 0) + widthOf(runs) > S.S3 + avail then
+        runs = runsOf((sg.dot and UI.dot(sg.dot) or "") .. tostring(sg.short))
+      end
       local w = 0
       for j, r in ipairs(runs) do
         local fs = b.runs[j]
@@ -1945,11 +1970,30 @@ end
 -- ── empty states. Big: a whole page with nothing in it, centred, 48 px under the top of `parent`: an icon 32
 -- (fgFaint), a ROW_TITLE title at 44, a BODY sentence at 64 (420 wide), up to two buttons S5 under it.
 -- opts = { icon = texture path or glyph name, title, text, buttons = { { label, fn, style } }, top }
+-- The x, in `parent`, of the main column's centre (BOX_L + MAIN_W / 2 of the window): every big empty state sits on
+-- it, whatever its parent's own left edge and width (a pane's frame, a column, a list host).
+function UI.MainCentreX(parent)
+  local win = _G.EverbuffFrame
+  local wl = win and win.GetLeft and tonumber(win:GetLeft()) or nil
+  local pl = parent and parent.GetLeft and tonumber(parent:GetLeft()) or nil
+  local off = (wl and pl) and (pl - wl) or G.BOX_L
+  return G.BOX_L + math.floor(G.mainW(G.winW()) / 2) - off
+end
+-- place a big empty state: its top `top` px under its parent's, centred on the main column
+function UI.PlaceEmpty(f)
+  local parent = f:GetParent()
+  f:ClearAllPoints()
+  f:SetPoint("TOP", parent, "TOPLEFT", UI.MainCentreX(parent), -(f.ebTop or S.S7))
+end
 function UI.Empty(parent, opts)
   opts = opts or {}
   local f = CreateFrame("Frame", nil, parent)
   f:SetSize(420, 140)
-  f:SetPoint("TOP", parent, "TOP", 0, -(opts.top or S.S7))
+  f.ebTop = opts.top or S.S7
+  f.ebEmpty = true
+  UI.PlaceEmpty(f)
+  f:HookScript("OnShow", function() pcall(UI.PlaceEmpty, f) end)
+  if parent.HookScript then parent:HookScript("OnSizeChanged", function() pcall(UI.PlaceEmpty, f) end) end
   if opts.icon and UI.GLYPHS[opts.icon] then
     f.icon = UI.Glyph(f, opts.icon, 32, "fgFaint")
   else
@@ -2077,6 +2121,9 @@ end
 -- The stripe is `panel` at full alpha: at 0.5 over the canvas (#111111) it is 1.7 L* away and does not show; the
 -- spec's own check asks for 3 L* or more (docs/UX_OVERHAUL.md 5 step 2), which full alpha meets (3.4 L*).
 UI.STRIPE_ALPHA = 1
+-- the lead column of every table on a detail page ("#", the 20 px icon or the time): the name column after it starts
+-- at table x 60 (inset 12 + 36 + gap 12) on every table of the page
+UI.LEAD_W = 36
 function UI.KitTable(parent, spec, opts)
   opts = opts or {}
   local rowH, headH, dayH = opts.rowHeight or UI.H.ROW, UI.H.TABLE_HEAD, UI.H.DAY_ROW
@@ -2093,7 +2140,9 @@ function UI.KitTable(parent, spec, opts)
     col.justify = col.justify or (isNumeric(col.kind) and "RIGHT" or "LEFT")
     if not firstText and (col.kind == nil or col.kind == "text") then firstText = col.key end
   end
-  if clickable and opts.chevron ~= false then full[#full + 1] = { key = "_chev", label = "", min = 12, chevron = true, justify = "RIGHT" } end
+  -- (opts.chevron = "reserve": a table that opens nothing keeps the 12 px slot, so the tables of one page share their
+  -- right edge; its rows show no chevron)
+  if (clickable and opts.chevron ~= false) or opts.chevron == "reserve" then full[#full + 1] = { key = "_chev", label = "", min = 12, chevron = true, justify = "RIGHT" } end
   tbl.full = full
   local header = CreateFrame("Frame", nil, f)
   header:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0); header:SetHeight(headH)
@@ -2138,13 +2187,15 @@ function UI.KitTable(parent, spec, opts)
   -- (a text column with `max` stops growing with its values there, so the first text column keeps the flex space:
   -- a long source shortens before the item name does)
   local function widthOf(col)
+    if col.fixed then return col.fixed end   -- (a lead column: "#", the 20 px icon or the time, UI.LEAD_W on every table of a page)
     local w = math.max(base[col.key] or 0, shown[col.key] or 0)
     if col.max and not col.flex and not isNumeric(col.kind) then w = math.min(w, math.max(col.max, base[col.key] or 0)) end
     return w
   end
   local function active()
     local wide, out = G.isWide(G.winW()), {}
-    for _, col in ipairs(full) do if not col.wide or wide then out[#out + 1] = col end end
+    -- (col.hide: a column the page leaves out for now, such as a comparison with nothing to compare)
+    for _, col in ipairs(full) do if (not col.wide or wide) and not col.hide then out[#out + 1] = col end end
     return out
   end
   local function placeRow(row)
@@ -2184,7 +2235,8 @@ function UI.KitTable(parent, spec, opts)
     end
     tbl.setSort(tbl.sortKey, tbl.sortAsc)
     for i = 1, tbl.shownN do placeRow(tbl.rows[i]); tbl.rows[i]:SetWidth(tbl.usedW) end
-    if tbl.stateFS then tbl.stateFS:SetWidth(math.max(1, math.min(tbl.usedW - 2 * S.S3, 520))) end
+    -- (the inline sentence is as wide as its text, so a link after it stays on its line, right after its last word)
+    if tbl.state and tbl.stateArgs then tbl.setState(tbl.stateArgs[1], tbl.stateArgs[2], tbl.stateArgs[3]) end
     if opts.onLayout then pcall(opts.onLayout, tbl) end
   end
   function tbl.setSort(key, asc)
@@ -2261,8 +2313,8 @@ function UI.KitTable(parent, spec, opts)
       tbl.stateFS:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -(headH + S.S3))
       tbl.stateLink = UI.KitButton(f, "", "link", nil, { role = "BODY" }); tbl.stateLink:Hide()
     end
-    if not text then tbl.stateFS:Hide(); tbl.stateLink:Hide(); tbl.state = nil; return end
-    tbl.state = text
+    if not text then tbl.stateFS:Hide(); tbl.stateLink:Hide(); tbl.state, tbl.stateArgs = nil, nil; return end
+    tbl.state, tbl.stateArgs = text, { text, linkText, linkFn }
     tbl.shownN = 0
     for _, row in ipairs(tbl.rows) do row:Hide() end
     local maxW = math.min((tbl.usedW or 520) - 2 * S.S3, 520)
@@ -2336,7 +2388,7 @@ function UI.KitTable(parent, spec, opts)
         row:SetHeight(rowH)
         if row.EnableMouse then row:EnableMouse(clickable or opts.tooltip ~= nil) end
         if fillFn then fillFn(row, item, i) end
-        if row.c._chev then row.c._chev:SetText(item.ebNoOpen and "" or "\226\128\186") end
+        if row.c._chev then row.c._chev:SetText((item.ebNoOpen or not clickable) and "" or "\226\128\186") end
         if item == tbl.selected then row.sel:Show(); row.mark:Show() end
         y = y + rowH
       end
@@ -2452,7 +2504,7 @@ function UI.Bar(parent, w)
   b:SetSize(w or 120, 6)
   b.track = b:CreateTexture(nil, "BORDER"); b.track:SetAllPoints(b); b.track:SetColorTexture(unpackc(C.sunken))
   b.fill = b:CreateTexture(nil, "ARTWORK"); b.fill:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.fill:SetHeight(6)
-  b.fill:SetColorTexture(unpackc(C.accent)); b.fill:Hide()
+  b.fill:SetColorTexture(unpackc(C.fgSubtle)); b.fill:Hide()   -- (fgSubtle on the sunken track, as every bar)
   function b.SetFrac(_, frac)
     b.frac = frac
     if not frac then b:Hide(); return b end
@@ -2494,14 +2546,26 @@ end
 -- the track. opts = { min, max, step, value, fmt(v) -> text, onChange(v) }. s:SetValue(v) moves it and tells
 -- onChange; a click or a drag on the track sets it; the wheel steps it.
 UI.SLIDER_W = 200
+-- Every slider maps the same way: the low end of its range at the left of the track, the high end at the right,
+-- both named in fgFaint META at the track's ends (the min left of it, the max right of it); the fill is fgSubtle on
+-- the sunken track, as every bar of the window.
+UI.SLIDER_END_W = 32
 function UI.Slider(parent, opts)
   opts = opts or {}
   local lo, hi, step = opts.min or 0, opts.max or 1, opts.step or 0.05
   local s = CreateFrame("Button", nil, parent)
-  s:SetSize(UI.SLIDER_W + S.S2 + 40, 16)
-  s.track = s:CreateTexture(nil, "BORDER"); s.track:SetPoint("LEFT", s, "LEFT", 0, 0); s.track:SetSize(UI.SLIDER_W, 4)
+  local EW = UI.SLIDER_END_W
+  s:SetSize(EW + S.S1 + UI.SLIDER_W + S.S1 + EW + S.S2 + 40, 16)
+  local fmtEnd = opts.fmt or tostring
+  s.minText = UI.Text(s, "META", "fgFaint", { justify = "RIGHT" }); s.minText:SetPoint("LEFT", s, "LEFT", 0, 0); s.minText:SetWidth(EW)
+  s.minText:SetText(fmtEnd(lo))
+  s.maxText = UI.Text(s, "META", "fgFaint", { justify = "LEFT" }); s.maxText:SetPoint("LEFT", s, "LEFT", EW + S.S1 + UI.SLIDER_W + S.S1, 0); s.maxText:SetWidth(EW)
+  s.maxText:SetText(fmtEnd(hi))
+  local X0 = EW + S.S1
+  s.trackX = X0
+  s.track = s:CreateTexture(nil, "BORDER"); s.track:SetPoint("LEFT", s, "LEFT", X0, 0); s.track:SetSize(UI.SLIDER_W, 4)
   s.track:SetColorTexture(unpackc(C.sunken))
-  s.fill = s:CreateTexture(nil, "ARTWORK"); s.fill:SetPoint("LEFT", s, "LEFT", 0, 0); s.fill:SetHeight(4); s.fill:SetColorTexture(unpackc(C.accent))
+  s.fill = s:CreateTexture(nil, "ARTWORK"); s.fill:SetPoint("LEFT", s, "LEFT", X0, 0); s.fill:SetHeight(4); s.fill:SetColorTexture(unpackc(C.fgSubtle))
   s.thumb = s:CreateTexture(nil, "OVERLAY"); s.thumb:SetSize(12, 12); s.thumb:SetColorTexture(unpackc(C.fg))
   s.valueText = UI.Text(s, "BODY_STRONG", "fg", { justify = "RIGHT" }); s.valueText:SetPoint("RIGHT", s, "RIGHT", 0, 0); s.valueText:SetWidth(40)
   s.ebSlider = true
@@ -2513,7 +2577,7 @@ function UI.Slider(parent, opts)
     local f = hi > lo and (s.value - lo) / (hi - lo) or 0
     local x = math.floor(UI.SLIDER_W * f + 0.5)
     s.fill:SetWidth(math.max(1, x)); if x > 0 then s.fill:Show() else s.fill:Hide() end
-    s.thumb:ClearAllPoints(); s.thumb:SetPoint("CENTER", s, "LEFT", math.max(6, math.min(UI.SLIDER_W - 6, x)), 0)
+    s.thumb:ClearAllPoints(); s.thumb:SetPoint("CENTER", s, "LEFT", s.trackX + math.max(6, math.min(UI.SLIDER_W - 6, x)), 0)
     s.valueText:SetText(opts.fmt and opts.fmt(s.value) or tostring(s.value))
   end
   function s.SetValue(_, v, quiet)
@@ -2530,7 +2594,7 @@ function UI.Slider(parent, opts)
     local sc = (s.GetEffectiveScale and s:GetEffectiveScale()) or 1
     local l = s.GetLeft and s:GetLeft()
     if type(l) ~= "number" or not sc or sc == 0 then return end
-    s:SetValue(lo + (hi - lo) * math.max(0, math.min(1, (x / sc - l) / UI.SLIDER_W)))
+    s:SetValue(lo + (hi - lo) * math.max(0, math.min(1, (x / sc - l - s.trackX) / UI.SLIDER_W)))
   end
   s:SetScript("OnMouseDown", function() s.dragging = true; pcall(fromCursor) end)
   s:SetScript("OnMouseUp", function() s.dragging = nil end)
@@ -2758,7 +2822,7 @@ local function chipTip(tip)
   if st.lastAck and st.lastAck.at then
     tip:AddLine("Desktop app picked up your data " .. UI.fmtDur(math.max(0, st.now - st.lastAck.at), { minutes = true }) .. " ago", 0.78, 0.79, 0.80, true)
   else tip:AddLine("Desktop app: not seen yet", 0.78, 0.79, 0.80, true) end
-  tip:AddLine(UI.plural(st.waiting, "fight") .. " not yet saved by the desktop app", 0.78, 0.79, 0.80, true)
+  tip:AddLine(UI.plural(st.waiting, "pull") .. " not saved yet by the desktop app", 0.78, 0.79, 0.80, true)
   if st.sess and st.combat and not st.acl then tip:AddLine("Advanced combat logging is off", 0.78, 0.79, 0.80, true) end
 end
 
@@ -2933,6 +2997,8 @@ end
 --    and refreshed (onShow) every time it is selected. The host draws no title: the sidebar row and the sub-tab
 --    name the page. Pane key = label lowercased without spaces ("By dungeon" -> "bydungeon").
 local hosts = {}
+-- the panes that are not rebuilt on the kit yet (docs/UX_OVERHAUL.md 0.3): clamped to the main column
+UI.LEGACY_PANES = { ["Home/sessions"] = true, ["Home/activity"] = true, ["Home/fights"] = true }
 local function buildHost(t, content)
   table.sort(t.panes, function(a, b) return a.order < b.order end)
   local items = {}
@@ -2942,6 +3008,7 @@ local function buildHost(t, content)
     local pn = t.paneByKey[key]; if not pn then return end
     if ns.DB and ns.DB.settings and activeName == t.name then ns.DB.settings.lastSub = key end
     if not pn.built then
+      if UI.LEGACY_PANES[t.name .. "/" .. key] then t.ctl.clamp(key) end
       pn.content = CreateFrame("Frame", nil, t.ctl.panes[key]); pn.content:SetAllPoints(t.ctl.panes[key])
       pn.content.ebHostCtl, pn.content.ebControls = t.ctl, t.ctl.controls[key]
       local ok, err = pcall(pn.build, pn.content)
@@ -3040,6 +3107,37 @@ end
 function UI.Tabs(parent, items, top, sidePad, opts)
   if top == nil then return UI.SubTabs(parent, items, opts) end
   sidePad = sidePad or 14; opts = opts or {}
+  -- On a converted host (a pane with a control row) a second tab row under the sub-tabs would make two rows with a
+  -- mint underline: the choice becomes a filter button ("All" and a chevron) at the right of the control row, and the pane is
+  -- the pane's own frame, with no border, so its list starts at BOX_L with its text on TEXT_L.
+  local holder = parent
+  while holder and not rawget(holder, "ebControls") do holder = holder.GetParent and holder:GetParent() or nil end
+  if holder and opts.shared then
+    local ctl = { panes = {}, tabs = {}, kit = true }
+    local pane = CreateFrame("Frame", nil, parent); pane:SetAllPoints(parent)
+    ctl.host, ctl.content = pane, pane
+    for _, it in ipairs(items) do ctl.panes[it.key] = pane end
+    local labels = {}
+    for _, it in ipairs(items) do labels[it.key] = it.label end
+    local first = items[1] and items[1].key
+    local fb = UI.FilterButton(holder.ebControls, { default = first, label = labels[first] or "",
+      items = function()
+        local out = {}
+        for _, it in ipairs(items) do out[#out + 1] = { it.key, it.label, it.key == ctl.active } end
+        return out
+      end,
+      onPick = function(key) ctl.select(key) end })
+    fb:SetPoint("TOPRIGHT", holder.ebControls, "TOPRIGHT", 0, 0)
+    ctl.filter = fb
+    function ctl.style() fb:SetValue(ctl.active, labels[ctl.active] or "") end
+    function ctl.select(key)
+      if not labels[key] then key = first end
+      ctl.active = key
+      ctl.style()
+      if opts.onSelect then opts.onSelect(key) end
+    end
+    return ctl
+  end
   local TAB_H, PAD, GAP = 26, 14, 6
   local ctl = { panes = {}, tabs = {} }
   local pane = UI.Panel(parent)

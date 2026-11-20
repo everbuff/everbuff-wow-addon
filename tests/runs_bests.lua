@@ -193,7 +193,7 @@ return function(P)
     -- (the line names the measure and gives this run's own value on it: 640 s, not the 1000-odd s of its TIME tile)
     local function dm(t) return tostring(tonumber(date("%d", t))) .. date(" %b", t) end
     check("3: Pace reads the best, its date, the measure and this run's value and delta in words", dv.paceLine == ("Your best for these 3 bosses: 8m 20s on %s, first pull to last kill. This run: 10m 40s, 2m 20s slower."):format(dm(r2.t))
-      and dv.paceLine2 == "If you matched your best on every boss: 8m 20s", dv.paceLine)
+      and dv.paceLine2 == nil, dv.paceLine)   -- (the sum of the best segments is the best itself here: no second line)
     check("3: the VS YOUR BEST card carries the delta in words", dv.deltaText == "2m 20s slower", dv.deltaText)
     local vsCells, allWords = {}, true
     for i = 1, dv.tables.bosses.shownN do
@@ -908,7 +908,7 @@ return function(P)
     fresh()
     for _ = 1, 3 do enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire() end
     local n = 0
-    for _, v in ipairs(R.views()) do T.renderRun(v); if T.dungeonDetail().deltaText ~= "-" then n = n + 1 end end
+    for _, v in ipairs(R.views()) do T.renderRun(v); if T.dungeonDetail().deltaText ~= "No best yet" then n = n + 1 end end
     check("first: runs that cannot set a best do not read first run", n == 0, n)
     fresh()
     enter("Uldaman", { map = 70 }); play(70); loot(10); leave(); expire()
@@ -1158,7 +1158,7 @@ return function(P)
     local cells, rowOf = {}, {}
     for _, r in ipairs(by.dtbl.rows) do if r.shown ~= false and r.drow then cells[r.drow.name] = r.c; rowOf[r.drow.name] = r end end
     local k, w = cells["Razorfen Kraul"], cells["Wailing Caverns"]
-    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "1.5" and k.coin.text ~= "-" and k.best.text == ns.UI.fmtDur(40) and k.avg.text == ns.UI.fmtDur(50), k and k.xp.text)
+    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "2.0" and k.coin.text ~= "-" and k.best.text == ns.UI.fmtDur(40) and k.avg.text == ns.UI.fmtDur(50), k and k.xp.text)
     check("bydungeon: a dungeon under 5 active minutes reads - for coin and XP, its deaths per run as a number", w and w.coin.text == "-" and w.xp.text == "-" and w.dpr.text == "1.0", w and w.coin.text)
     local tl = {}
     local tr = rowOf["Razorfen Kraul"]
@@ -1239,7 +1239,7 @@ return function(P)
     check("cache: the full read keeps the comparison while nothing changed", v1[1].cmp ~= nil and v1[1].cmp == v2[1].cmp and v1[2].cmp == v2[2].cmp and v1[1].total == 3)
     local hov = table.concat(T.dungeonList().tipLines(v1[1]), "|")
     -- (run 1: 290 s from its first pull to its last kill, the best 270 s)
-    check("length: the hover of LENGTH says the delta is first pull to last kill, with this run's value", hov:find("Against your best: first pull to last kill, 4m 50s here, best 4m 30s", 1, true) ~= nil, hov)
+    check("length: the hover of LENGTH says the delta is first pull to last kill, with this run's value", hov:find("4m 50s first pull to last kill, 20s slower than 4m 30s", 1, true) ~= nil, hov)
     clear("Deadmines", DMAP, 10, K3(80, 150, 200))
     local v3 = R.views()
     check("cache: and reads it again once the statistics change", v3[1].cmp ~= v1[1].cmp and v3[1].cmp.delta == R.measure(closed()[1]) - 190, v3[1].cmp.delta)
@@ -1411,7 +1411,7 @@ return function(P)
     for _, r in ipairs(T.dungeonList().tbl.rows) do if r.shown ~= false and r.run then rows[r.run.id] = r end end
     local hov = table.concat(T.dungeonList().tipLines(v), "|")
     check("route: LENGTH and the hover say which best, never a bare one", rows[part.id] and rows[part.id].c.vs.text == "best"
-      and hov:find("Against your best for these 2 bosses: first pull to last kill, " .. m .. " here, best " .. m, 1, true) ~= nil, (rows[part.id] and rows[part.id].c.vs.text or "") .. " " .. hov)
+      and hov:find(m .. " first pull to last kill, your best for these 2 bosses", 1, true) ~= nil, (rows[part.id] and rows[part.id].c.vs.text or "") .. " " .. hov)
     -- (a full clear still reads a bare best)
     local full
     for _, x in ipairs(R.views()) do if x.cmp and x.cmp.isBest and x.id ~= part.id then full = x end end

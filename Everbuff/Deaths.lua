@@ -63,7 +63,7 @@ UI.registerPane("Home", 5, "Deaths", function(content)
     onClick = function(row) if row.fight and ns.OpenFightDetail then ns.OpenFightDetail(row.fight) end end })
   view.tbl = tbl
   -- no death at all: the kit's big empty state (2.7), its top at CONTENT_TOP + 48 as on Dungeons > Runs (4.4)
-  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "No deaths yet",
+  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "You have not died yet.",
     text = "When you die, this page shows what killed you and the pull to replay." })
   view.empty:Hide()
 

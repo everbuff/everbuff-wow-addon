@@ -345,8 +345,8 @@ return function(P)
     local _, a = GP.auctions(c.scopeData)
     local ans = c.summary.Text()
     check("Gold Auction house: the answer line counts posted, sold, the house cut, the profit and the expired", ans:find("^Posted " .. a.posted) and ans:find("Sold " .. a.sold .. " for ", 1, true) and ans:find("House cut ", 1, true)
-      and ans:find("Profit ", 1, true) and ans:find("Expired " .. a.expired, 1, true), ans)
-    eq("Gold Auction house: columns", keys(c.tbl.auctions), "when,item,result,buyer,dur,price")
+      and ans:find("Profit ", 1, true) and (a.expired == 0 or ans:find("^Posted " .. a.posted .. ", expired " .. a.expired) ~= nil), ans)
+    eq("Gold Auction house: columns", keys(c.tbl.auctions), "when,icon,item,result,buyer,dur,price")
     local results, mailItem = {}, nil
     for _, r in ipairs(dataRows(c.tbl.auctions)) do results[r.c.result:GetText()] = true; if r.c.item:GetText() == "Item from auction mail" then mailItem = r end end
     check("Gold Auction house: sold, posted and bought rows show", results.Sold and results.Posted and results.Bought)
@@ -391,6 +391,7 @@ return function(P)
       local bad = {}
       local lastR
       for i, b in ipairs(band.blocks) do
+       if b.shown ~= false then
         local x = P.box(b)
         if x.l < bb.l or x.l + x.w > bb.l + bb.w or x.t + x.h > bb.t + bb.h + 0.5 then bad[#bad + 1] = "block " .. i .. " outside the band" end
         if lastR and x.l < lastR + UI.SP.L - 0.5 then bad[#bad + 1] = "block " .. i .. " too close" end
@@ -398,15 +399,19 @@ return function(P)
         for _, fs in ipairs(b.lines) do
           local fb = P.box(fs)
           if (fs.text or "") ~= "" and (fb.t + fb.h > bb.t + bb.h - 4) then bad[#bad + 1] = "line past the band: " .. fs.text end
+          if (fs.text or "") ~= "" and fs:IsTruncated() then bad[#bad + 1] = "cut: " .. fs.text end
         end
+       end
       end
+      -- under WIDE the BEST EARNERS block gives its room to the other three (no line cut at 900)
+      check(tag .. ": BEST EARNERS shows at WIDE only", (band.blocks[2].shown ~= false) == UI.G.isWide(UI.G.winW()))
       local tb, ob = P.box(band.title), P.box(band.open)
       if tb.l + tb.w > ob.l then bad[#bad + 1] = "title under the button" end
       check(tag .. ": four blocks side by side inside the band, the title ends before the button", #bad == 0, table.concat(bad, "; "))
-      eq(tag .. ": block heads", band.blocks[1].head.text .. "|" .. band.blocks[2].head.text .. "|" .. band.blocks[3].head.text .. "|" .. band.blocks[4].head.text, "TOP SOURCES|BEST EARNERS|BIGGEST SINKS|FLAGS")
+      eq(tag .. ": block heads", band.blocks[1].head.text .. "|" .. band.blocks[2].head.text .. "|" .. band.blocks[3].head.text .. "|" .. band.blocks[4].head.text, "TOP SOURCES|BEST EARNERS|BIGGEST SINKS|NOTES")
       check(tag .. ": top source, best quest, biggest sink and the strangers are named",
         band.blocks[1].lines[1].text:find("^Trades received  ") and band.blocks[2].lines[1].text:find("^Quest: The Defias Brotherhood") and band.blocks[3].lines[1].text:find("^Auction house  ")
-        and band.blocks[4].lines[1].text:find("^Strangers: Xzqtgold") and band.blocks[4].lines[2].text:find("^Unexplained: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
+        and band.blocks[4].lines[1].text:find("^Players you traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^Unexplained: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
     end
   end
   do

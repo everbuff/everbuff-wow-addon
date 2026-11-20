@@ -377,6 +377,7 @@ function Emitter.event(kind, d, quiet)
       -- profession skill-ups carry what was crafted + how many times, in which profession (= name)
       prof = (kind == "SKILLUP" and d.craft) and name or nil, craft = d.craft, crafted = d.crafted,
       standing = d.standing,  -- reputation tier reached (REP)
+      xp = (kind == "QUESTDONE" and type(d.xp) == "number" and d.xp > 0) and d.xp or nil,   -- the quest's XP reward
       money = (kind == "GOLDAWAY" or kind == "TRADE") and type(d.money) == "number" and d.money or nil,   -- copper, signed (#31)
       -- seconds on the taxi (FLIGHTTRIP, #11): the catalog's T-2 and T-5 read it per trip, not from the text
       duration = (kind == "FLIGHTTRIP" and type(d.duration) == "number") and math.floor(d.duration * 10 + 0.5) / 10 or nil,
@@ -2479,9 +2480,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if a1 == "player" and pushed.OPEN[a4] then pushed.obj = { name = safeStr(a2), at = GetTime() } end
   elseif event == "QUEST_TURNED_IN" then
     pushed.turnIn = GetTime()
-    Emitter.event("QUESTDONE", { name = questTitle(a1, nil) })
-    Emitter.questMoney(plainNum(a3), plainNum(a1))
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
+    Emitter.event("QUESTDONE", { name = questTitle(a1, nil), xp = qxp })
+    Emitter.questMoney(plainNum(a3), plainNum(a1))
     if qxp and qxp > 0 and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromQuests = (ns.char().xp.fromQuests or 0) + qxp end
   elseif event == "ENCOUNTER_START" then
     Emitter.event("BOSS", { name = a2 or "boss" })
@@ -2878,7 +2879,7 @@ if ns.UI and ns.UI.registerTab then
       -- what the ellipsis takes. Past that minimum it has no more weight than the names beside it: the place and the
       -- foe share what is left equally (as Faced and Location do on Fights), so neither name is starved for it
       { key = "ev", label = "Event", flex = 1, min = 120, measure = { "Auction house: 2 posts, 1 bid, 1 buy" } },
-      { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
+      { key = "open", label = "", kind = "tag", color = "fgFaint", measure = { "\226\128\186" } },
       { key = "where", label = "Location", flex = 1, min = 80, color = "dim" },
       { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } },
       { key = "foe", label = "While fighting", flex = 1, min = 80 },
@@ -2912,7 +2913,7 @@ if ns.UI and ns.UI.registerTab then
       local col = COLORS[e.kind] or C.dim
       c.type:SetTextColor(col[1], col[2], col[3])
       c.ev:SetText(e.text or e.kind or "?")
-      c.open:SetText(row.clickable and ">" or "")
+      c.open:SetText(row.clickable and "\226\128\186" or "")
       c.where:SetText(UI.fmtPlace(e.zone, e.sub))
       c.coords:SetText(UI.fmtCoords(e.x, e.y))
       if e.combat then c.foe:SetText(e.foe or "in combat"); c.foe:SetTextColor(EMBER[1], EMBER[2], EMBER[3]) end
@@ -3037,7 +3038,8 @@ if ns.UI and ns.UI.registerTab then
     }
     function IT.sortRows(rows, key, asc)
       key, asc = key or st.sortKey, (asc == nil) and st.sortAsc or asc
-      if key == "time" and not asc then return rows end   -- already newest first
+      -- (newest first is sorted too, stable on the log's order: a row written late with an earlier time, as a
+      -- merged or imported one, still lands under its own day)
       local f = SORT[key] or SORT.time
       local order = {}
       for i, e in ipairs(rows) do order[e] = i end
@@ -3118,18 +3120,19 @@ if ns.UI and ns.UI.registerTab then
       },
     }
     IT.tbls = {}
+    -- the name, then its stack count ("x4", fgMuted, a text of its own) S1 after it, then the QUEST badge: the name
+    -- shortens inside what is left of the column, the count and the badge never do
     local function placeBadge(tbl, row)
-      local cw, fs, b = tbl.cols and tbl.cols.item, row.c and row.c.item, row.ebBadge
+      local cw, fs, b, ct = tbl.cols and tbl.cols.item, row.c and row.c.item, row.ebBadge, row.ebCount
       if not (cw and fs) then return end
-      if b and b:IsShown() and row.item and not row.item.ebSection then
-        local bw = tonumber(b:GetWidth()) or 0
-        local tw = math.max(1, math.min(UI.TextWidth("BODY", fs:GetText()), cw.w - bw - S.S2))
-        fs:SetWidth(tw)
-        b:ClearAllPoints(); b:SetPoint("LEFT", row, "LEFT", cw.x + tw + S.S2, 0)
-      else
-        if b then b:Hide() end
-        fs:SetWidth(cw.w)
-      end
+      local live = row.item and not row.item.ebSection
+      local cntW = (ct and ct:IsShown() and live) and (UI.TextWidth("BODY", ct:GetText()) + S.S1) or 0
+      local bw = (b and b:IsShown() and live) and ((tonumber(b:GetWidth()) or 0) + S.S2) or 0
+      if not live and b then b:Hide() end
+      local tw = math.max(1, math.min(UI.TextWidth("BODY", fs:GetText()), cw.w - cntW - bw))
+      fs:SetWidth((cntW > 0 or bw > 0) and tw or cw.w)
+      if cntW > 0 then ct:ClearAllPoints(); ct:SetPoint("LEFT", row, "LEFT", cw.x + tw + S.S1, 0); ct:SetWidth(cntW - S.S1) end
+      if bw > 0 then b:ClearAllPoints(); b:SetPoint("LEFT", row, "LEFT", cw.x + tw + cntW + S.S2, 0) end
     end
     IT.placeBadge = placeBadge
     for mode, sp in pairs(spec) do
@@ -3161,8 +3164,10 @@ if ns.UI and ns.UI.registerTab then
       c.icon:SetTexture(e.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
       local name = IT.name(e)
       local n = tonumber(e.count) or 1
+      if not row.ebCount then row.ebCount = UI.Text(row, "BODY", "fgMuted") end
+      if name and not e.agg and n > 1 then row.ebCount:SetText("x" .. n); row.ebCount:Show() else row.ebCount:Hide() end
       if name then
-        c.item:SetText(name .. ((not e.agg and n > 1) and ("|cff8c9197 x" .. n .. "|r") or ""))
+        c.item:SetText(name)
         c.item:SetTextColor(IT.rgb(e.q))
       else
         c.item:SetText("Item " .. tostring(e.id or "")); UI.SetColor(c.item, "fgMuted")

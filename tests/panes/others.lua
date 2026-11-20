@@ -186,7 +186,7 @@ return function(P)
     for _, r in ipairs(shownRows(tbl)) do if r.ev and r.ev.kind == "LOOT" then row = r; break end end
     check("Timeline: a loot event is listed", row ~= nil)
     if row then
-      check("Timeline: the open marker is its own cell, not in the event text", row.c.open.text == ">" and not tostring(row.c.ev.text):find(">", 1, true))
+      check("Timeline: the open marker is its own cell, not in the event text", row.c.open.text == "\226\128\186" and not tostring(row.c.ev.text):find(">", 1, true))
       row:GetScript("OnEnter")(row)
       local tip = _G.GameTooltip
       check("Timeline: the tooltip is anchored to the event cell", tip.owner == row and tip._pts and tip._pts[1].rel == row.c.ev, tip._pts and tostring(tip._pts[1].rel))
@@ -347,7 +347,7 @@ return function(P)
     check("Table header=false: no header, the list starts at top", feed.header.shown == false and near(P.box(feed.sf).t, P.box(hostF).t + 8))
     check("Table sections: the section row shows its text, takes no mouse, fill skips it",
       feed.rows[2].section.text == "TODAY" and feed.rows[2]._mouse == false and feed.rows[2].c.b.text == "" and feed.rows[1]._mouse == true)
-    check("Table sections: indented by ebIndent", near(P.box(feed.rows[2].section).l, P.box(feed.rows[2]).l + 8 + 12))
+    check("Table sections: indented by ebIndent", near(P.box(feed.rows[2].section).l, P.box(feed.rows[2]).l + UI.S.S3 + 12))
     eq("Table sections: tbl.sections() lists them", #feed.sections(), 1)
     feed.setRows({ { "z" } }, function(row, it) row.c.b:SetText(it[1]) end)
     check("Table sections: a pooled section row becomes a normal row again", feed.rows[1].section == nil or feed.rows[1].section.shown == false)

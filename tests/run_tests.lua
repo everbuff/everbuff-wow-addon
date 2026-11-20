@@ -1585,6 +1585,7 @@ do
   check("Settings > Data has the sync box", settingsTab.content.ackBox ~= nil and settingsTab.content.ackBtn ~= nil)
   settingsTab.content.ackBox:SetText("not a code"); settingsTab.content.ackBtn:GetScript("OnClick")(settingsTab.content.ackBtn)
   check("a bad code does not crash and leaves data alone", #M.errors == 0 and ns.DB.combat.lastAck.source == "paste")
+  settingsTab.content.ackBox:SetText("")   -- (the field empty again, as a player finds it: the shots show its placeholder)
   ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
 end
 -- ── ack by session (everbuff-business #46): exactly the sessions the backend stored are pruned, nothing older ──

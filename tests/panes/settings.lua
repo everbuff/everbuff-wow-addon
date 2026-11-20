@@ -31,17 +31,19 @@ return function(P)
 
   -- every setting row of a page: its label at x 12 of its column, its control's right edge at the column's text
   -- edge, inside the pane; no two texts over each other
-  local function audit(tag, pane, pg, sections)
+  local function audit(tag, pane, pg, sections, single)
     local pb = P.box(pane)
     local cb = P.box(pg.col)
     local bad = {}
-    local wide = G.isWide(G.winW())
+    -- (Data and sync is one column at every width)
+    local wide = G.isWide(G.winW()) and not single
     local colW = wide and UI.SETTINGS_WIDE_W or math.min(G.cw(G.winW()), UI.SETTINGS_W)
     local cols = {}
     for _, sec in ipairs(sections) do
       local hb = P.box(sec.head)
       cols[hb.l] = true
-      if not near(hb.w, colW) then bad[#bad + 1] = ("section %s is %d wide, want %d"):format(tostring(sec.head.label.text), hb.w, colW) end
+      local want = colW
+      if not near(hb.w, want) then bad[#bad + 1] = ("section %s is %d wide, want %d"):format(tostring(sec.head.label.text), hb.w, want) end
       for _, it in ipairs(sec.items) do
         if P.visible(it) then
           local rb = P.box(it)
@@ -101,9 +103,9 @@ return function(P)
     check(tag .. ": Data and sync opened", d ~= nil and P.visible(d.pane))
     if d then
       ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
-      audit(tag .. " Data and sync (Advanced open)", d.pane, d.pg, d.sections)
+      audit(tag .. " Data and sync (Advanced open)", d.pane, d.pg, d.sections, true)
       ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
-      audit(tag .. " Data and sync", d.pane, d.pg, d.sections)
+      audit(tag .. " Data and sync", d.pane, d.pg, d.sections, true)
       local pb, ab, rb = P.box(d.ackBox), P.box(d.ackBtn), P.box(d.pasteRow)
       check(tag .. ": the paste box is 24 high and stretches: Apply S2 after it ends on the column's text edge", d.ackBox._h == 24 and pb and ab and rb
         and math.abs(pb.l + pb.w + UI.S.S2 - ab.l) < 0.5 and math.abs(ab.l + ab.w - (rb.l + rb.w - UI.S.S3)) < 0.5, pb and ab and rb and ("%s %s %s"):format(pb.l + pb.w, ab.l, rb.l + rb.w))
@@ -178,7 +180,7 @@ return function(P)
     ns.DB.combat.lastAck = { at = (GetServerTime and GetServerTime() or time()) - 120, fights = 2, source = "file" }
     SET.refreshData()
     local sync = ns.SyncState()
-    check("Data: the status names the last pickup and the fights waiting, from the one Sync function", d.syncStatus.text.text == ("Last picked up by the desktop app: 2m ago \194\183 %s not yet saved by the desktop app"):format(UI.plural(sync.waiting, "fight")), d.syncStatus.text.text)
+    check("Data: the status names the last pickup and the fights waiting, from the one Sync function", d.syncStatus.text.text == ("Last picked up by the desktop app 2m ago \194\183 %s not saved yet"):format(UI.plural(sync.waiting, "pull")), d.syncStatus.text.text)
     check("Data: the error shows only after a paste attempt", not P.visible(d.ackError))
     d.ackBox:SetText("not a code"); click(d.ackBtn)
     check("Data: a bad code shows the error and changes nothing", P.visible(d.ackError) and d.ackError.text.text:find("EB-ACK-", 1, true) ~= nil and #M.errors == 0)

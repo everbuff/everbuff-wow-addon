@@ -1,12 +1,17 @@
 -- The dungeon runs of docs/UX_OVERHAUL.md 4.0, put on the logged-in character for the Dungeons screens:
 -- tests/render_html.lua renders its states ("dungeons/runs:empty", ...) and tests/panes/dungeons.lua tests them.
---   F.install(ns, M, state) -> undo()
+--   F.install(ns, M, state [, long]) -> undo()
 -- state is one of "" (normal), "empty", "nomatch", "limit4", "limit5", "live" (Runs), "best", "death" (run pages).
+-- long: the same runs with long boss, item, source and party names (the "long" shots), so the run pages are tested
+-- with names that do not fit (F.LONG is the suffix).
+-- The Ragefire Chasm run is part of this session's story: its pulls, kills, loot and XP are in the session's events
+-- and sums (the Now page, Activity and Items read them), and each run's party has its own levels.
 -- The runs are built back from the clock the suite is on, so "today" is the suite's today:
 --   Ragefire Chasm   today, 34 minutes ago: first run, 2 of 4 bosses, Tessa died, 3 items, lockout 2 of 4
 --   Wailing Caverns  4 days ago, party of 5: BEST on its 6-boss route, 28m 41s first pull to last kill
 --   Wailing Caverns  12 days ago: the same route, 29m 23s
 local F = {}
+F.LONG = " of the Scarlet Monastery Cathedral"
 
 local WC = { { 585, "Lady Anacondra" }, { 586, "Lord Cobrahn" }, { 587, "Lord Pythas" }, { 588, "Lord Serpentis" }, { 589, "Skum" },
   { 590, "Verdan the Everliving" } }
@@ -20,19 +25,31 @@ local function wcBosses(span)
   return b
 end
 
-function F.install(ns, M, state)
+function F.install(ns, M, state, long)
   state = state or ""
+  local function L(s) return long and (s .. F.LONG) or s end
+  -- (WoW names are at most 12 letters: the long party is the longest names the game allows)
+  local function P(s, l) return long and l or s end
   local T = ns._test
   local c = ns.char()
   local now = GetServerTime()
+  ns.DB.story = ns.DB.story or {}
+  ns.DB.story.events = ns.DB.story.events or {}
+  local evs = ns.DB.story.events
+  local ses = ns.Recorder and ns.Recorder.current and ns.Recorder.current() or nil
   local keep = { runs = c.dungeonRuns, open = c.dungeonRun, stats = c.dungeonStats, locks = c.lockouts, copies = c.dungeonCopies,
-    limit = ns.DB.settings.instanceLimit, nFights = #ns.DB.combat.fights, nLoot = #ns.DB.loot.log, read = ns.Runs._read }
+    limit = ns.DB.settings.instanceLimit, nFights = #ns.DB.combat.fights, nLoot = #ns.DB.loot.log, read = ns.Runs._read, nEv = #evs, evOrder = { unpack(evs) },
+    ses = ses and { xp = ses.xp, kills = ses.kills, items = ses.items, dungeons = ses.dungeons } or nil, price = {} }
   local fights, log = ns.DB.combat.fights, ns.DB.loot.log
   local function undo()
     c.dungeonRuns, c.dungeonRun, c.dungeonStats, c.lockouts, c.dungeonCopies = keep.runs, keep.open, keep.stats, keep.locks, keep.copies
     ns.DB.settings.instanceLimit = keep.limit
     while #fights > keep.nFights do table.remove(fights) end
     while #log > keep.nLoot do table.remove(log) end
+    while #evs > keep.nEv do table.remove(evs) end
+    for i = 1, keep.nEv do evs[i] = keep.evOrder[i] end
+    if ses and keep.ses then ses.xp, ses.kills, ses.items, ses.dungeons = keep.ses.xp, keep.ses.kills, keep.ses.items, keep.ses.dungeons end
+    for id, p in pairs(keep.price) do M.sellPrice[id] = p ~= false and p or nil end
     ns.Runs._read = keep.read
     if ns.Runs.statsRebuild then ns.Runs.statsRebuild(c) end
     ns.DB.sessions["fx-wc2-session"] = nil
@@ -41,8 +58,15 @@ function F.install(ns, M, state)
     c.dungeonRuns, c.dungeonRun, c.dungeonStats, c.lockouts, c.dungeonCopies = {}, nil, nil, {}, {}
     return undo, {}
   end
-  local party = { { name = "Hart", class = "WARRIOR", me = true, level = 17 }, { name = "Tessa", class = "PRIEST", level = 17 },
-    { name = "Brakk", class = "ROGUE", level = 18 }, { name = "Ilsa", class = "MAGE", level = 17 }, { name = "Doran", class = "HUNTER", level = 16 } }
+  -- a party of five at a run's level `lv`: yours is the run's own, the others around it
+  local function party(lv)
+    return { { name = "Hart", class = "WARRIOR", me = true, level = lv }, { name = P("Tessa", "Tessamarinda"), class = "PRIEST", level = lv },
+      { name = P("Brakk", "Brakkenhowle"), class = "ROGUE", level = lv + 1 }, { name = P("Ilsa", "Ilsabethwyne"), class = "MAGE", level = lv },
+      { name = P("Doran", "Doranthielle"), class = "HUNTER", level = lv - 1 } }
+  end
+  -- every item of the runs with its id and its vendor price, so a row's price and the footer add up
+  local function price(id, p) if keep.price[id] == nil then keep.price[id] = M.sellPrice[id] or false end; M.sellPrice[id] = p end
+  price(6077, 102); price(2589, 13); price(6078, 0); price(5404, 245); price(6087, 310); price(6449, 188)
   -- the two Wailing Caverns clears on one route
   local wc1 = T.runRecord("Wailing Caverns", now - 12 * 86400 - 9000, 1950, { firstPull = 60, size = 5, diff = 1, map = 43, bosses = wcBosses(1763),
     xp = { gain = 3900, kill = 3900, quest = 0, n = 120, l0 = 16, p0 = 0.5, l1 = 16, p1 = 0.9, need = 9000 },
@@ -52,27 +76,59 @@ function F.install(ns, M, state)
     gold = { looted = 10200, quests = 0, lootValue = 8400, items = 9, purse = 10200 } })
   -- Ragefire Chasm today: Oggleflint and Taragaman down, Jergosh and Bazzalan pulled and left up, Tessa died
   local rfcT = now - 34 * 60
+  local OGG, TARA, JER, BAZ = L("Oggleflint"), L("Taragaman the Hungerer"), L("Jergosh the Invoker"), L("Bazzalan")
+  local TESSA = P("Tessa", "Tessamarinda")
   local rfc = T.runRecord("Ragefire Chasm", rfcT, 750, { firstPull = 120, size = 5, diff = 1, map = 389,
-    bosses = { { enc = 1443, name = "Oggleflint", pulls = 1, combat = 45, kill = 300, dur = 45 },
-      { enc = 1444, name = "Taragaman the Hungerer", pulls = 2, wipes = 1, combat = 120, kill = 725, dur = 70 },
-      { enc = 1445, name = "Jergosh the Invoker", pulls = 1, wipes = 0, combat = 10 },
-      { enc = 1446, name = "Bazzalan", pulls = 1, wipes = 0, combat = 8 } },
-    nDeaths = { me = 0, party = 1 }, deaths = { { o = 610, enc = 1444, foe = "Taragaman the Hungerer", who = "Tessa", back = 45 } },
+    bosses = { { enc = 1443, name = OGG, pulls = 1, combat = 45, kill = 300, dur = 45 },
+      { enc = 1444, name = TARA, pulls = 2, wipes = 1, combat = 120, kill = 725, dur = 70 },
+      { enc = 1445, name = JER, pulls = 1, wipes = 0, combat = 10 },
+      { enc = 1446, name = BAZ, pulls = 1, wipes = 0, combat = 8 } },
+    nDeaths = { me = 0, party = 1 }, deaths = { { o = 610, enc = 1444, foe = TARA, who = TESSA, back = 45 } },
     xp = { gain = 1840, kill = 1840, quest = 0, n = 41, l0 = 18, p0 = 0.6, l1 = 18, p1 = 0.77, need = 11800 },
     gold = { looted = 1500, quests = 0, lootValue = 2300, items = 3, purse = 1500 } })
   local s = ns.DB.active
-  log[#log + 1] = { s = s, t = rfcT + 302, item = "Cavedweller Bracers", count = 1, q = "ff1eff00", src = "Oggleflint", icon = "Interface\\Icons\\INV_Bracer_07" }
-  log[#log + 1] = { s = s, t = rfcT + 410, item = "Linen Cloth", count = 4, q = "ffffffff", src = "Ragefire Trogg" }
-  log[#log + 1] = { s = s, t = rfcT + 728, item = "Searing Collar", count = 1, q = "ff1eff00", src = "Taragaman the Hungerer", icon = "Interface\\Icons\\INV_Jewelry_Necklace_04" }
-  fights[#fights + 1] = { uid = "fx-rfc-1", session = s, startEpoch = rfcT + 255, duration = 45, outcome = "kill", bossName = "Oggleflint", foes = { "Oggleflint" }, zone = "Ragefire Chasm", group = party }
-  fights[#fights + 1] = { uid = "fx-rfc-2", session = s, startEpoch = rfcT + 500, duration = 30, outcome = "wipe", bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm", group = party }
-  fights[#fights + 1] = { uid = "fx-rfc-3", session = s, startEpoch = rfcT + 655, duration = 70, outcome = "kill", bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm", group = party }
+  local RFC = "Ragefire Chasm"
+  local rfcParty, wcParty = party(18), party(17)
+  -- (the run's loot is in the loot log Loot > Items reads, with ids, so Now's best drop, the run's LOOT and Items agree)
+  log[#log + 1] = { s = s, t = rfcT + 302, id = 6077, item = L("Cavedweller Bracers"), count = 1, q = "ff1eff00", src = OGG, zone = RFC, icon = "Interface\\Icons\\INV_Bracer_07" }
+  log[#log + 1] = { s = s, t = rfcT + 410, id = 2589, item = "Linen Cloth", count = 4, q = "ffffffff", src = L("Ragefire Trogg"), zone = RFC, icon = "Interface\\Icons\\INV_Fabric_Linen_01" }
+  log[#log + 1] = { s = s, t = rfcT + 728, id = 5404, item = L("Searing Collar"), count = 1, q = "ff1eff00", src = TARA, zone = RFC, icon = "Interface\\Icons\\INV_Jewelry_Necklace_04" }
+  fights[#fights + 1] = { uid = "fx-rfc-1", session = s, startEpoch = rfcT + 255, duration = 45, outcome = "kill", bossName = OGG, foes = { OGG }, zone = RFC, group = rfcParty }
+  fights[#fights + 1] = { uid = "fx-rfc-2", session = s, startEpoch = rfcT + 500, duration = 30, outcome = "wipe", bossName = TARA, foes = { TARA }, zone = RFC, group = rfcParty }
+  fights[#fights + 1] = { uid = "fx-rfc-3", session = s, startEpoch = rfcT + 655, duration = 70, outcome = "kill", bossName = TARA, foes = { TARA }, zone = RFC, group = rfcParty }
   rfc.bosses[1].fight, rfc.bosses[2].fight = "fx-rfc-1", "fx-rfc-3"
+  -- the run in the session's events and sums: its boss pulls, its kills (bosses and trash), its loot, its XP
+  local function ev(t, kind, text, extra)
+    local e = { t = t, kind = kind, text = text, s = s, zone = RFC }
+    for k, v in pairs(extra or {}) do e[k] = v end
+    evs[#evs + 1] = e
+  end
+  ev(rfcT, "DUNGEON", RFC)
+  local kills = 0
+  for i, tr in ipairs({ { 140, "Ragefire Trogg" }, { 170, "Ragefire Shaman" }, { 210, "Searing Blade Cultist" }, { 380, "Earthborer" }, { 440, "Molten Elemental" } }) do
+    ev(rfcT + tr[1], "KILL", L(tr[2]) .. " down!", { foe = L(tr[2]) }); kills = kills + 1
+    if i == 3 then ev(rfcT + tr[1] + 4, "LOOT", "Linen Cloth x4") end
+  end
+  ev(rfcT + 255, "BOSS", "Pull:  " .. OGG); ev(rfcT + 300, "KILL", OGG .. " down!", { foe = OGG }); kills = kills + 1
+  ev(rfcT + 302, "LOOT", L("Cavedweller Bracers"))
+  ev(rfcT + 500, "BOSS", "Pull:  " .. TARA); ev(rfcT + 530, "WIPE", "Wiped:  " .. TARA)
+  -- (Tessa's death is the run's, in rec.deaths: a DEATH event is only ever the player's own, as the addon writes it)
+  ev(rfcT + 655, "BOSS", "Pull:  " .. TARA); ev(rfcT + 725, "KILL", TARA .. " down!", { foe = TARA }); kills = kills + 1
+  ev(rfcT + 728, "LOOT", L("Searing Collar"))
+  ev(rfcT + 740, "BOSS", "Pull:  " .. JER); ev(rfcT + 745, "BOSS", "Pull:  " .. BAZ)
+  ev(rfcT + 750, "DUNGEONLEAVE", "Left  " .. RFC)
+  if ses then
+    ses.xp = math.max(tonumber(ses.xp) or 0, 0) + 1840
+    ses.kills = (tonumber(ses.kills) or 0) + kills
+    ses.items = (tonumber(ses.items) or 0) + 3
+    ses.dungeons = 1
+  end
   -- (the Wailing Caverns run was 4 days ago, in a session of its own: its loot is not this session's)
   ns.DB.sessions["fx-wc2-session"] = { id = "fx-wc2-session", guid = ns.charGuid(), startedEpoch = wc2.t - 600, endedEpoch = wc2.t + 2400 }
-  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 420, item = "Serpent's Shoulders", count = 1, q = "ff0070dd", src = "Lord Serpentis", icon = "Interface\\Icons\\INV_Shoulder_09" }
-  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 1500, item = "Glowing Lizardscale Cloak", count = 1, q = "ff1eff00", src = "Lady Anacondra" }
-  fights[#fights + 1] = { uid = "fx-wc-1", session = s, startEpoch = wc2.t + 300, duration = 50, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" }, zone = "Wailing Caverns", group = party }
+  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 420, id = 6087, item = L("Serpent's Shoulders"), count = 1, q = "ff0070dd", src = L("Lord Serpentis"), zone = "Wailing Caverns", icon = "Interface\\Icons\\INV_Shoulder_09" }
+  log[#log + 1] = { s = "fx-wc2-session", t = wc2.t + 1500, id = 6449, item = L("Glowing Lizardscale Cloak"), count = 1, q = "ff1eff00", src = L("Lady Anacondra"), zone = "Wailing Caverns", icon = "Interface\\Icons\\INV_Misc_Cape_18" }
+  fights[#fights + 1] = { uid = "fx-wc-1", session = s, startEpoch = wc2.t + 300, duration = 50, outcome = "kill", bossName = L("Lady Anacondra"), foes = { L("Lady Anacondra") }, zone = "Wailing Caverns", group = wcParty }
+  if long then for _, r in ipairs({ wc1, wc2 }) do for _, b in ipairs(r.bosses or {}) do b.name = L(b.name) end end end
   c.dungeonRuns, c.dungeonRun, c.dungeonStats = { wc1, wc2, rfc }, nil, nil
   c.lockouts = { { name = "Ragefire Chasm", resetAt = now + 7140, bosses = 4, down = 2 } }
   -- the instances: Ragefire Chasm this hour, three earlier today (one an estimate)
@@ -90,7 +146,7 @@ function F.install(ns, M, state)
     table.remove(c.dungeonRuns)
     local t = now - 760
     local rec = T.runRecord("Ragefire Chasm", t, 760, { firstPull = 120, size = 5, diff = 1, map = 389,
-      bosses = { { enc = 1443, name = "Oggleflint", pulls = 1, combat = 45, kill = 300, dur = 45 } },
+      bosses = { { enc = 1443, name = OGG, pulls = 1, combat = 45, kill = 300, dur = 45 } },
       xp = { gain = 700, kill = 700, quest = 0, n = 15, l0 = 18, p0 = 0.71, l1 = 18, p1 = 0.77, need = 11800 } })
     rec.why, rec.gold = nil, nil
     rec.visits[1].o, rec.visits[1].out = nil, nil
@@ -103,6 +159,11 @@ function F.install(ns, M, state)
     c.dungeonRun = rec
     c.dungeonCopies[#c.dungeonCopies].t, c.dungeonCopies[#c.dungeonCopies].run = t, rec.id
   end
+  -- (the event log in time order, as the addon writes it: the runs' events go in among the session's own, so
+  -- Activity reads them in the order they happened)
+  local pos = {}
+  for i, e in ipairs(evs) do pos[e] = i end
+  table.sort(evs, function(a, b) local ta, tb = tonumber(a.t) or 0, tonumber(b.t) or 0; if ta ~= tb then return ta < tb end return pos[a] < pos[b] end)
   ns.Runs.statsRebuild(c)
   return undo, { wc1 = wc1, wc2 = wc2, rfc = rfc, open = c.dungeonRun }
 end

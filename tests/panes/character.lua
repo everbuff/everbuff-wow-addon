@@ -44,7 +44,8 @@ return function(P)
               local row = tbl.rows[i]
               if not row.item.ebSection then
                 local cell = row.c[col.key]
-                if not near(P.box(cell).l, fb.l + cw.x) then bad[#bad + 1] = col.key .. i end
+                -- (a cell led by a bar, as Reputation's PROGRESS, starts `lead` px into its column)
+                if not near(P.box(cell).l, fb.l + cw.x + (col.lead or 0)) then bad[#bad + 1] = col.key .. i end
                 if numeric and cell._justify ~= "RIGHT" then bad[#bad + 1] = col.key .. i .. " not right-aligned" end
                 -- (a text column held at its `max` may shorten, so the first text column keeps the flex space)
                 if col.kind and col.kind ~= "text" and not (col.max and not numeric) and cell:IsTruncated() then bad[#bad + 1] = col.key .. i .. " cut" end
@@ -80,7 +81,12 @@ return function(P)
         check("Leveling " .. sz .. ": the column starts at BOX_L, as wide as the main column", near(P.box(v.pg.col).l - P.box(_G.EverbuffFrame).l, G.BOX_L) and near(P.box(v.pg.col).w, G.mainW(G.winW())))
         check("Leveling " .. sz .. ": hero, four cards, LEVELS and QUESTS TURNED IN, top to bottom", P.box(v.hero).t < P.box(v.cards).t and P.box(v.cards).t < P.box(v.levels.head).t and P.box(v.levels.head).t < P.box(v.quests.head).t)
         check("Leveling " .. sz .. ": the hero title is the level", (v.hero.title and v.hero.title.text or ""):find("^Level %d+") ~= nil, v.hero.title and v.hero.title.text)
-        check("Leveling " .. sz .. ": LEVELS columns", colsOf(v.levels.tbl) == "level,reached,at,played,vs", colsOf(v.levels.tbl))
+        -- (a column with no value in any row is left out: REACHED without a level-up row, VS PREVIOUS before a level
+        -- finished after another)
+        local anyT, anyVs, anyPl = false, false, false
+        for _, r in ipairs(ns._test.buildLevels(UnitLevel("player"))) do anyT = anyT or r.t ~= nil; anyVs = anyVs or r.vs ~= nil; anyPl = anyPl or r.playedBy ~= nil end
+        local want = "level" .. (anyT and ",reached" or "") .. ",at" .. (anyPl and ",played" or "") .. (anyVs and ",vs" or "")
+        check("Leveling " .. sz .. ": LEVELS columns, none with no value in any row", colsOf(v.levels.tbl) == want, colsOf(v.levels.tbl) .. " want " .. want)
         check("Leveling " .. sz .. ": QUESTS columns, Coords only at WIDE", colsOf(v.quests.tbl) == (wide and "when,name,place,gold,coords" or "when,name,place,gold"), colsOf(v.quests.tbl))
         tables("Leveling " .. sz, c, { v.levels.tbl, v.quests.tbl })
         spill("Leveling " .. sz, c)
@@ -246,7 +252,9 @@ return function(P)
     local other
     for i = 1, p.crafted.tbl.shownN do local row = p.crafted.tbl.rows[i]; if row.item.item == "Rough Arrow" then other = row end end
     check("Professions: a craft with no profession window reads Other, muted", other and other.c.prof.text == "Other" and near(other.c.prof._color[1], UI.C.fgMuted[1], 0.01))
-    check("Professions: RECIPES LEARNED lists the recipe by its plain name (no link, no brackets)", p.recipes.tbl.shownN == 1 and p.recipes.tbl.rows[1].c.name.text == "Brown Linen Vest")
+    -- (under its day row, as Crafted)
+    check("Professions: RECIPES LEARNED lists the recipe by its plain name (no link, no brackets), under a day row", p.recipes.tbl.shownN == 2 and p.recipes.tbl.rows[1].item.ebSection ~= nil
+      and p.recipes.tbl.rows[2].c.name.text == "Brown Linen Vest" and p.recipes.tbl.rows[2].c.when.text:find("^%d%d:%d%d$") ~= nil)
   end
   check("Character: no error while building or rendering", (function() for _, e in ipairs(M.errors) do if tostring(e):find("Progress") then return false end end return #UI.paneErrors() == 0 end)(), table.concat(UI.paneErrors(), " | "))
 end

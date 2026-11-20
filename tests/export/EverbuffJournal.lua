@@ -940,6 +940,7 @@ EverbuffDB = {
 				["t"] = 1793000097,
 				["text"] = "Complete:  Wanted: Hogger",
 				["x"] = 0.421,
+				["xp"] = 600,
 				["y"] = 0.637,
 				["zone"] = "Elwynn Forest",
 			}, -- [3]

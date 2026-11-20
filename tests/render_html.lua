@@ -87,6 +87,11 @@ local function runsHTML(runs, size)
     elseif r.color then if open then out[#out + 1] = "</span>" end; out[#out + 1] = ('<span style="color:%s">'):format(rgba(r.color)); open = true
     elseif r.reset then if open then out[#out + 1] = "</span>"; open = false end
     elseif r.icon and r.tint then out[#out + 1] = ('<i class="ic" style="width:%s;height:%s;background:%s;box-shadow:none"></i>'):format(px(r.icon), px(r.icon), rgba(r.tint))
+    elseif r.icon and COIN_DISC(r.file) then
+      -- (a coin icon is a disc of its metal, so "1g 2s 3c" reads as three coins, not three grey squares)
+      out[#out + 1] = ('<i class="ic" style="width:%s;height:%s;background:%s;border-radius:50%%;box-shadow:none"></i>'):format(px(r.icon * 0.8), px(r.icon * 0.8), COIN_DISC(r.file))
+    elseif r.icon and ICON_FILL(r.file) then
+      out[#out + 1] = ('<i class="ic" style="width:%s;height:%s;background:%s;box-shadow:none"></i>'):format(px(r.icon), px(r.icon), ICON_FILL(r.file))
     elseif r.icon then out[#out + 1] = ('<i class="ic" style="width:%s;height:%s"></i>'):format(px(r.icon), px(r.icon))
     elseif r.br then out[#out + 1] = "<br>" end
   end
@@ -94,10 +99,32 @@ local function runsHTML(runs, size)
   return table.concat(out)
 end
 
+-- coin textures as discs of their metal; an item icon in the colour of its quality (the loot rows that carry that
+-- icon name it), so a shot tells a green drop from a grey one
+function COIN_DISC(file)
+  file = tostring(file or "")
+  if file:find("GoldIcon") then return "#d8b437" end
+  if file:find("SilverIcon") then return "#b9bec7" end
+  if file:find("CopperIcon") then return "#b8693a" end
+  return nil
+end
+local ICON_Q = {}
+local function iconQualities()
+  for k in pairs(ICON_Q) do ICON_Q[k] = nil end
+  for _, l in ipairs((ns.DB and ns.DB.loot and ns.DB.loot.log) or {}) do
+    if type(l) == "table" and type(l.icon) == "string" and type(l.q) == "string" and #l.q == 8 then ICON_Q[l.icon:lower()] = l.q:sub(3) end
+  end
+end
+function ICON_FILL(file)
+  local q = file and ICON_Q[tostring(file):lower()]
+  return q and ("#" .. q .. "99") or nil
+end
 local function placeholderTex(file)
   file = tostring(file)
   if file:find("mark") then return "#0cd29d" end
+  if COIN_DISC(file) then return COIN_DISC(file) end
   if file:find("Coin") then return "#c9a227" end
+  if ICON_FILL(file) then return ICON_FILL(file) end
   return nil
 end
 
@@ -288,6 +315,8 @@ os.execute((sep == "\\" and 'mkdir "%s\\fonts" 2>nul' or 'mkdir -p "%s/fonts"'):
 for face in pairs(FACES) do copy(FONT_DIR .. face .. ".ttf", OUT .. "/fonts/" .. face .. ".ttf") end
 
 DUNGEON_FIXTURE = dofile("tests/dungeon_fixture.lua")
+-- one character's story in every shot: an Orc at level 18 in Orgrimmar and The Barrens (tests/story_fixture.lua)
+dofile("tests/story_fixture.lua").apply(ns, M)
 local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
 -- the Home > Now states: set the readings, return the function that puts them back
 function NOW_STATE(state)
@@ -325,6 +354,9 @@ function NOW_STATE(state)
   end
 end
 local manifest = {}
+-- the long shots must differ from the normal ones: a long variant that renders the same page means the long data
+-- never reached it (every page with data; Settings and the empty and first-run states have none to stretch)
+local normalHTML, sameAsNormal = {}, {}
 for _, dataTag in ipairs({ "normal", "long" }) do
   if dataTag == "long" then Lay.stretch(ns.DB) end
   for _, sz in ipairs(SIZES) do
@@ -341,10 +373,10 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       -- ":welcome", ":welcome2", ":welcome3" (the first-run guide on that step)
       local undo
       if host == "home" and pane == "now" and state ~= "" then undo = NOW_STATE(state) end
-      -- Home > Now on the same runs as the Dungeons screens (tests/dungeon_fixture.lua), so WORTH A LOOK and
-      -- Dungeons > Runs tell one story
-      if host == "home" and pane == "now" then
-        local undoState, undoFx = undo, DUNGEON_FIXTURE.install(ns, M, "")
+      -- Home, Loot and Character on the same runs as the Dungeons screens (tests/dungeon_fixture.lua), so WORTH A
+      -- LOOK, Activity, Items and Dungeons > Runs tell one story
+      if host == "home" or host == "loot" or host == "character" then
+        local undoState, undoFx = undo, DUNGEON_FIXTURE.install(ns, M, "", dataTag == "long")
         undo = function() if undoState then undoState() end; undoFx() end
       end
       -- the Dungeons screens on the runs of docs/UX_OVERHAUL.md 4.0 (tests/dungeon_fixture.lua): "dungeons/runs" with
@@ -353,7 +385,7 @@ for _, dataTag in ipairs({ "normal", "long" }) do
       local openPane, fx = pane, nil
       if host == "dungeons" then
         local undoFx
-        undoFx, fx = DUNGEON_FIXTURE.install(ns, M, pane == "run" and (state == "live" and "live" or "") or state)
+        undoFx, fx = DUNGEON_FIXTURE.install(ns, M, pane == "run" and (state == "live" and "live" or "") or state, dataTag == "long")
         if pane == "run" then openPane = "runs" end
         undo = function()
           local lv = ns._test.dungeonList and ns._test.dungeonList()
@@ -404,9 +436,13 @@ for _, dataTag in ipairs({ "normal", "long" }) do
         end
       end
       M.settle()                                  -- OnSizeChanged to every list whose size the open changed
+      iconQualities()
       local html, info = renderPage(key, sz[1], sz[2], dataTag)
       if undo then undo(); ns.UI.Open(HOSTS[host] or host, openPane); M.settle() end
       local name = ("%s-%s%s-%dx%d-%s"):format(host, pane, state ~= "" and ("-" .. state) or "", sz[1], sz[2], dataTag)
+      local base = ("%s-%s%s-%dx%d"):format(host, pane, state ~= "" and ("-" .. state) or "", sz[1], sz[2])
+      if dataTag == "normal" then normalHTML[base] = html
+      elseif host ~= "settings" and state ~= "empty" and not state:match("^welcome") and normalHTML[base] == html then sameAsNormal[#sameAsNormal + 1] = base end
       write(OUT .. "/" .. name .. ".html", html)
       write(OUT .. "/" .. name .. ".layout.json", json(info))
       manifest[#manifest + 1] = { name = name, w = sz[1] + 2 * MARGIN, h = sz[2] + 2 * MARGIN }
@@ -415,4 +451,8 @@ for _, dataTag in ipairs({ "normal", "long" }) do
   end
 end
 write(OUT .. "/manifest.json", json(manifest))
+if #sameAsNormal > 0 then
+  realPrint("long shots identical to the normal ones: " .. table.concat(sameAsNormal, ", "))
+  os.exit(1)
+end
 if #M.errors > 0 then realPrint("addon errors while rendering: " .. #M.errors .. "  first: " .. tostring(M.errors[1])) end

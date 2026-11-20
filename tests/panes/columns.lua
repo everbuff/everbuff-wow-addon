@@ -107,6 +107,38 @@ return function(P)
         ns.Dungeons.openRun(rec); P.M.settle()
         bad, n = pairsOf(c)
         check("Run page " .. rec.inst .. " " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", n > 0 and #bad == 0, table.concat(bad, ", "))
+        -- the tables of a run page share their edges: every table's first text column starts at the same x (inset
+        -- 12, the 36 px lead, gap 12: x 60), its last numeric column ends at the same right edge, and every header
+        -- is justified as its cells are
+        local dv = P.T.dungeonDetail()
+        local firsts, lasts, just = {}, {}, {}
+        for key, tb in pairs(dv.tables) do
+          if P.visible(tb.frame) and tb.cols then
+            local fx0, lr
+            for _, col in ipairs(tb.full or tb.spec) do
+              local cw = tb.cols[col.key]
+              if cw and cw.w > 0 and not col.chevron and col.kind ~= "icon" then
+                if (col.kind == nil or col.kind == "text") and not fx0 then fx0 = cw.x end
+                if col.justify == "RIGHT" then lr = math.max(lr or 0, cw.x + cw.w) end
+                local hb = tb.head and tb.head[col.key]
+                local hj = hb and hb.fs and hb.fs._justify
+                if hj and hj ~= (col.justify or "LEFT") then just[#just + 1] = key .. "." .. col.key end
+                for i = 1, tb.shownN or 0 do
+                  local r = tb.rows[i]
+                  local cell = r and r.c and r.c[col.key]
+                  if cell and not (r.item and r.item.ebSection) and cell._justify and cell._justify ~= (col.justify or "LEFT") then just[#just + 1] = key .. "." .. col.key .. i; break end
+                end
+              end
+            end
+            if fx0 then firsts[#firsts + 1] = key .. "=" .. fx0 end
+            if lr then lasts[#lasts + 1] = key .. "=" .. lr end
+          end
+        end
+        local function same(list) local v; for _, s in ipairs(list) do local x = tonumber(s:match("=(%-?[%d.]+)$")); if v and math.abs(v - x) > 0.5 then return false end; v = v or x end return #list > 1 end
+        table.sort(firsts); table.sort(lasts)
+        check("Run page " .. rec.inst .. " " .. tag .. ": every table's first text column starts at x 60", same(firsts) and tonumber(firsts[1]:match("=(%-?[%d.]+)$")) == 60, table.concat(firsts, " "))
+        check("Run page " .. rec.inst .. " " .. tag .. ": every table's last numeric column ends on one right edge", same(lasts), table.concat(lasts, " "))
+        check("Run page " .. rec.inst .. " " .. tag .. ": every header is justified as its cells", #just == 0, table.concat(just, " "))
       end
       local dv = P.T.dungeonDetail and P.T.dungeonDetail()
       if dv and dv:IsShown() then dv.d.Close() end

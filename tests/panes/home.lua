@@ -77,8 +77,11 @@ return function(P)
         eq(tag .. ": the NEXT header at 336", wy(c.nextHead), 336)
         check(tag .. ": the cards' last box edge is the main column's", near(P.box(c.cards.cards[4]).l + P.box(c.cards.cards[4]).w, P.box(c.hero).l + mainW))
         -- every card's period is on the card or its group header
-        local hdr = tostring(c.sesHead.meta.text or "")
-        check(tag .. ": the group header names the period", hdr:find("^since %d%d:%d%d$") ~= nil, hdr)
+        -- (the PLAYED card names the period, "21:35 to now"; the group header has no META)
+        local p1 = tostring(c.cards.cards[1].meta.text or "")
+        check(tag .. ": the PLAYED card names the period, the header no second one", p1:find("^%d%d:%d%d to now$") ~= nil and c.sesHead.meta.shown == false, p1)
+        local d4 = tostring(c.cards.cards[4].meta.text or "")
+        check(tag .. ": the DEATHS card's META is about deaths", d4:find("kill", 1, true) == nil and d4:find("item", 1, true) == nil, d4)
         for i, card in ipairs(c.cards.cards) do
           check(tag .. ": card " .. i .. " label fits", not card.label:IsTruncated(), card.label.text)
           check(tag .. ": card " .. i .. " value is never cut", not card.value:IsTruncated(), card.value.text)
@@ -135,19 +138,20 @@ return function(P)
       grey.item, grey.q, grey.s, grey.t, grey.id, grey.src = "|cff9d9d9d|Hitem:2589::::::::12:::::|h[Linen Cloth]|h|r", "ff9d9d9d", ses.id, now - 30, 2589, "Defias Trapper"
       base.item, base.q, base.s, base.t, base.id, base.src = "|cff1eff00|Hitem:6078::::::::12:::::|h[Pikeman Shield]|h|r", "ff1eff00", ses.id, now - 20, 6078, "Defias Pillager"
       base.mail, grey.mail = nil, nil   -- (the copied row may be a mail's)
+      base.zone = "Westfall"            -- (the best drop's META says where it dropped: the zone outside a run)
       -- (a rarer quest reward in the same session is not a drop: it never becomes the best drop)
       local reward = {}; for k, v in pairs(base) do reward[k] = v end
       reward.item, reward.q, reward.t, reward.id, reward.src = "|cff0070dd|Hitem:2041::::::::12:::::|h[Tunic of Westfall]|h|r", "ff0070dd", now - 15, 2041, "Quest reward"
       log[#log + 1] = grey; log[#log + 1] = base; log[#log + 1] = reward
       for i = 1, 2 do
         local q = {}; for k, v in pairs(qd) do q[k] = v end
-        q.s, q.t, q.text = ses.id, now - 10 + i, "Complete: The Defias Brotherhood " .. i
+        q.s, q.t, q.text, q.xp = ses.id, now - 10 + i, "Complete: The Defias Brotherhood " .. i, 450
         evs[#evs + 1] = q
       end
       local got = {}
       for _, it in ipairs(Now.lookItems()) do got[it.kind] = it end
-      check("Now: the session's best drop is the green one", got.loot and got.loot.title == "Best drop: Pikeman Shield" and got.loot.meta:find("^From Defias Pillager") ~= nil, got.loot and (got.loot.title .. " | " .. got.loot.meta) or "none")
-      check("Now: the quests turned in are one row", got.quest and got.quest.title == "2 quests turned in" and got.quest.meta:find("last: The Defias Brotherhood 2", 1, true) ~= nil, got.quest and got.quest.meta)
+      check("Now: the session's best drop is the green one", got.loot and got.loot.title == "Best drop: Pikeman Shield" and got.loot.meta:find("^From Westfall") ~= nil, got.loot and (got.loot.title .. " | " .. got.loot.meta) or "none")
+      check("Now: the quests turned in are one row", got.quest and got.quest.title == "2 quests turned in" and got.quest.meta:find("^%+900 XP \194\183 ") ~= nil and got.quest.meta:find("last: The Defias Brotherhood 2", 1, true) ~= nil, got.quest and got.quest.meta)
       for i = #log, lootN + 1, -1 do log[i] = nil end
       for i = #evs, evN + 1, -1 do evs[i] = nil end
     end

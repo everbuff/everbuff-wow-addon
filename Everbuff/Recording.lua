@@ -767,7 +767,7 @@ local function buildList(content)
   if summary.SetWordWrap then summary:SetWordWrap(false) end
   if summary.SetMaxLines then summary:SetMaxLines(1) end
   summary:SetJustifyH("LEFT")
-  summary:SetPoint("LEFT", pane, "TOPLEFT", SP.S, -(SP.XS + UI.ROW_H / 2)); summary:SetPoint("RIGHT", search, "LEFT", -SP.M, 0)
+  summary:SetPoint("LEFT", pane, "TOPLEFT", SP.M, -(SP.XS + UI.ROW_H / 2)); summary:SetPoint("RIGHT", search, "LEFT", -SP.M, 0)
   v.summary, v.search = summary, search
 
   -- columns: When · Faced (source) · group size · Location (name) · Coords · Length · Result. Click a header to sort;
@@ -825,7 +825,7 @@ local function buildList(content)
       elseif f.outcome == "death" then deaths = deaths + 1 end
       secs = secs + (f.duration or 0)
     end
-    summary:SetText(("%d fights  ·  %d kills  ·  %d wipes  ·  %d deaths  ·  %s in combat"):format(#fights, kills, wipes, deaths, fmtDur(secs)))
+    summary:SetText(("%s  ·  %s  ·  %s  ·  %s  ·  %s in combat"):format(UI.plural(#fights, "fight"), UI.plural(kills, "kill"), UI.plural(wipes, "wipe"), UI.plural(deaths, "death"), fmtDur(secs)))
     -- dungeon runs (from the Combat / Dungeons pane) so fights inside one get a run header. A fight is of a run when
     -- it began in one of the run's visits, the test the run's own page uses (Runs.inRun): a fight in the open world
     -- between two visits, or after the character left a run that is still open, gets no header.

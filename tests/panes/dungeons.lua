@@ -48,6 +48,20 @@ return function(P)
 
     -- ── Runs: the summary line, the hero, the table ──
     local lv, fx = open("")
+    -- the story: the session holds the runs it played, their XP and their kills (Now, Activity and Runs agree)
+    do
+      local ses = ns.Recorder.current()
+      local st = tonumber(ses and ses.startedEpoch) or 0
+      local runXP, nRuns = 0, 0
+      for _, r in ipairs(ns.char().dungeonRuns or {}) do
+        if (tonumber(r.t) or 0) >= st then nRuns = nRuns + 1; runXP = runXP + (tonumber(type(r.xp) == "table" and r.xp.gain) or 0) end
+      end
+      local kills = 0
+      for _, e in ipairs(ns.DB.story.events) do if e.kind == "KILL" and e.zone == "Ragefire Chasm" and e.s == ns.DB.active then kills = kills + 1 end end
+      check(tag .. ": story: the session's XP is at least its runs' XP, its run count is theirs, the run's kills are its events",
+        ses and (tonumber(ses.xp) or 0) >= runXP and tonumber(ses.dungeons) == nRuns and nRuns == 1 and kills >= 2,
+        ses and ("%s/%s %s/%s %d"):format(tostring(ses.xp), runXP, tostring(ses.dungeons), nRuns, kills))
+    end
     local rows = shown(lv.tbl)
     check(tag .. ": the three runs are rows under day sections", #rows == 3 and lv.section.shown ~= false, #rows)
     local slash = true
@@ -66,9 +80,11 @@ return function(P)
       and sum:find("Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m", 1, true) ~= nil, sum)
     check(tag .. ": no \"of N\" without a limit", sum:find(" of 5", 1, true) == nil, sum)
     eq(tag .. ": the hero is the newest run", lv.heroRun and lv.heroRun.id, fx.rfc.id)
-    eq(tag .. ": its verdict", lv.heroVerdict, "First run of Ragefire Chasm")
+    eq(tag .. ": its verdict: the result of a first run", lv.heroVerdict, "2 of 4 bosses in 12m 30s")
+    check(tag .. ": a first run's META says first run, with no FIRST RUN badge", lv.hero.meta1 and tostring(lv.hero.meta1.text or ""):find("first run", 1, true) ~= nil, lv.hero.meta1 and lv.hero.meta1.text)
     eq(tag .. ": one primary on the list (the hero's Open run)", UI.CountPrimaries(content), 1)
     local cut, past = audit(lv, wb.l + wb.w)
+    if os.getenv("EB_DEBUG") then for k, c in pairs(lv.tbl.cols) do print("COL", tag, k, c.x, c.w) end end
     check(tag .. ": nothing on the list is cut or past the window", #cut == 0 and #past == 0, table.concat(cut, " | ") .. " || " .. table.concat(past, " | "))
     local cols = lv.tbl.cols
     check(tag .. ": Coin looted and XP per hour only at WIDE", (size[1] >= 1250) == (cols.coin ~= nil and (cols.coin.w or 0) > 0), cols.coin and cols.coin.w)
@@ -123,13 +139,15 @@ return function(P)
     fights[#fights + 1] = { uid = "fx-rfc-trash", session = ns.DB.active, startEpoch = fx.rfc.t + 200, duration = 20, outcome = "fled", foes = {}, zone = "Ragefire Chasm" }
     T.openRun(fx.rfc); M.settle()
     local d1 = dv.tables.deaths.rows[1]
-    check(tag .. ": the death of a party member names her", d1 and d1.c.who.text == "Tessa" and d1.c.foe.text == "Taragaman the Hungerer" and d1.c.where.text == "Taragaman the Hungerer", d1 and d1.c.who.text)
+    -- (Where is a place, never the killer again: the subzone, "at boss N" or "-")
+    check(tag .. ": the death of a party member names her", d1 and d1.c.who.text == "Tessa" and d1.c.foe.text == "Taragaman the Hungerer"
+      and d1.c.where.text ~= d1.c.foe.text and (d1.c.where.text == "-" or d1.c.where.text:find("^at boss %d") ~= nil), d1 and (d1.c.who.text .. " / " .. d1.c.where.text))
     local trash, fled = 0, 0
     for _, r in ipairs(shown(dv.tables.pulls)) do if r.c.re.text == "Trash" then trash = trash + 1 elseif r.c.re.text == "Fled" then fled = fled + 1 end end
     check(tag .. ": a pull with no foe inside the run reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
     local label, _, key = ns.FightResult(fights[#fights])
     check(tag .. ": the shared reading says the same", key == "trash" and label[1] == "Trash")
-    eq(tag .. ": the boss card reads 2 of 4 with the misses", dv.cards[3].value.text, "2 / 4")
+    eq(tag .. ": the boss card reads 2 of 4 with the misses", dv.cards[3].value.text, "2 of 4")
     local bossRow
     for _, r in ipairs(shown(dv.tables.bosses)) do if r.item.fight and r.item.fight.uid == "fx-rfc-1" then bossRow = r end end
     check(tag .. ": a boss whose fight is stored is a row that opens", bossRow ~= nil and not bossRow.item.ebNoOpen)
@@ -197,6 +215,9 @@ return function(P)
     check(tag .. ": the live row keeps its whole dungeon name next to the marker", liveRow and liveRow.c.name.IsTruncated and liveRow.c.name:IsTruncated() == false, liveRow and liveRow.c.name.text)
     eq(tag .. ": the live row counts against the dungeon's 4 bosses, not its kills so far", liveRow and liveRow.c.boss.text, "1/4")
     check(tag .. ": the live hero says 1 of 4 bosses", lv.hero and tostring(lv.hero.meta1.text or ""):find("1 of 4 bosses", 1, true) ~= nil, lv.hero.meta1.text)
+    -- one kill count on every surface of the live run: the summary's lockout counts the run's kills too
+    local lsum = lv.summary.Text()
+    check(tag .. ": the live summary's lockout reads the run's 1 of 4, with no \"(about)\"", lsum:find("Ragefire Chasm: 1 of 4", 1, true) ~= nil and lsum:find("(about)", 1, true) == nil, lsum)
     T.openRun(liveRow.run); M.settle()
     check(tag .. ": its page shows End run now", (function() for _, b in ipairs(dv.actBtns()) do if b.key == "end" and b.shown ~= false then return true end end end)())
     -- one item list on the page: the LOOT section counts the rows it lists (drops only: no quest reward, no mail), and
@@ -207,8 +228,8 @@ return function(P)
       for _, it in ipairs(dv.lootItems or {}) do local src = tostring(it.row.src or ""); if src:find("^Quest") or src:find("^Mail") then return false end end
       return nLoot == 0 and lootMeta == "" or lootMeta == UI.plural(nLoot, "item")
     end)(), lootMeta)
-    if dv.cards[6] then eq(tag .. ": the LOOT card counts the same items", dv.cards[6].meta.text, UI.plural(nLoot, "item")) end
-    eq(tag .. ": the live BOSSES card reads 1 / 4", dv.cards[3].value.text, "1 / 4")
+    if dv.cards[6] then eq(tag .. ": the COIN LOOTED card counts the same items", dv.cards[6].meta.text, nLoot > 0 and UI.plural(nLoot, "item") or "nothing yet") end
+    eq(tag .. ": the live BOSSES card reads 1 of 4", dv.cards[3].value.text, "1 of 4")
     if dv.empties.deaths then
       local c = dv.empties.deaths._color or {}
       check(tag .. ": an inline empty sentence is fgMuted, never good", math.abs((c[1] or 0) - UI.C.fgMuted[1]) < 0.01 and math.abs((c[2] or 0) - UI.C.fgMuted[2]) < 0.01)

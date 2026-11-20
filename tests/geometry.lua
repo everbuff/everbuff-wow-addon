@@ -66,7 +66,7 @@ function G.parse(s, size)
           local r, g, b = tonumber(f[12]), tonumber(f[13]), tonumber(f[14])
           if r and g and b then tint = { r / 255, g / 255, b / 255 } end
         end
-        flush(); runs[#runs + 1] = { icon = (h and h > 0) and h or size, tint = tint }; i = e + 2
+        flush(); runs[#runs + 1] = { icon = (h and h > 0) and h or size, tint = tint, file = f[1] }; i = e + 2
       elseif nx == "n" then flush(); runs[#runs + 1] = { br = true }; i = i + 2
       elseif nx == "|" then buf[#buf + 1] = "|"; i = i + 2
       else buf[#buf + 1] = c; i = i + 1 end
@@ -216,6 +216,9 @@ function G.install(M, opts)
   mt.__index = function(t, k)
     if k == "GetWidth" then return function(self) local b = resolve(self); return b and b.w or 0 end end
     if k == "GetHeight" then return function(self) local b = resolve(self); return b and b.h or 0 end end
+    -- (x runs the same way as in the game; GetTop/GetBottom stay the stub's, the game's y runs up)
+    if k == "GetLeft" then return function(self) local b = resolve(self); return b and b.l or nil end end
+    if k == "GetRight" then return function(self) local b = resolve(self); return b and (b.l + b.w) or nil end end
     if k == "GetSize" then return function(self) local b = resolve(self); return b and b.w or 0, b and b.h or 0 end end
     if k == "GetStringWidth" or k == "GetUnboundedStringWidth" then return function(self) return self.text and G.naturalWidth(self) or 0 end end
     if k == "GetStringHeight" then return function(self) local b = resolve(self); local _, h = G.textSize(self, b and b.w); return h end end

@@ -81,7 +81,7 @@ local function buildQuests()
       if nm == "" or nm == "quest" then
         local byId = questName(r.questId)
         if byId then r.name = byId
-        else r.unnamed = true; r.name = r.questId and ("Quest " .. r.questId) or "Quest name not given" end
+        else r.unnamed = true; r.name = r.questId and ("Quest " .. r.questId) or "Unnamed quest" end
       else r.name = nm end
       rows[#rows + 1] = r
     end
@@ -126,10 +126,20 @@ local function buildLevels(cur, now)
   for L in pairs(seen) do
     if not cur or L <= cur then
       local at, live = timeAtLevel(L, cur, now)
+      -- (played by then: the /played total stamped when the level was reached; for the level you are on without a
+      -- stamp, the total less the time at this level)
       local playedBy
-      if L == cur and num(pl.total) > 0 and num(pl.level) > 0 then playedBy = num(pl.total) - num(pl.level)
-      elseif num(pal[L]) > 0 then playedBy = num(pal[L]) end
-      rows[#rows + 1] = { level = L, t = reached[L], at = at, live = live, playedBy = playedBy }
+      if num(pal[L]) > 0 then playedBy = num(pal[L])
+      elseif L == cur and num(pl.total) > 0 and num(pl.level) > 0 then playedBy = math.max(0, num(pl.total) - num(pl.level)) end
+      -- (reached: the LEVELUP row; for the level you are on with none, the moment this session's played time at the
+      -- level began, when all of it was played in this session)
+      local t = reached[L]
+      if not t and live and at then
+        local ses = curSession()
+        local st = ses and tonumber(ses.startedEpoch)
+        if st and (now - at) >= st then t = now - at end
+      end
+      rows[#rows + 1] = { level = L, t = t, at = at, live = live, playedBy = playedBy }
     end
   end
   table.sort(rows, function(a, b) return a.level > b.level end)
@@ -384,16 +394,25 @@ function V.renderLeveling()
       else
         verdict = ("On pace to be %s than level %d"):format(word, lvl - 1)
         color = d < 0 and "good" or "warn"
-        if d > 0 then verdict = UI.dot("warn", UI.DOT_SIZE.HERO) .. verdict end
+        if d > 0 then verdict = UI.dot("warn", UI.DOT_SIZE.META) .. verdict end
       end
     elseif atLevel then verdict = ("%s at level %d so far"):format(UI.fmtDur(atLevel, { minutes = true }), lvl)
     else verdict = "Level " .. lvl end
     v.verdict = verdict
-    hero:SetHero(verdict, color)
+    -- (the HERO is the answer in fg, "15m to level 13"; the comparison with the level before is the META at the
+    -- right, a 6 px warn dot when it is slower)
     local pct = mx > 0 and math.floor(cur / mx * 100) or 0
     local left = ("XP %s / %s \194\183 %d%%"):format(UI.fmtNum(cur), UI.fmtNum(mx), pct)
     if rested > 0 then left = left .. " \194\183 rested " .. UI.fmtNum(rested) end
-    hero:SetMeta(left, remaining and (UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1)) or "Pace shows after 10 minutes of play")
+    if remaining then
+      hero:SetHero(UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1), "fg")
+      local note = verdict
+      if color then note = note:gsub("On pace to be ", "on pace to be ", 1) end
+      hero:SetMeta(left, (remaining and atLevel and prevAt) and note or nil)
+    else
+      hero:SetHero(verdict, color)
+      hero:SetMeta(left, "Pace shows after 10 minutes of play")
+    end
     hero:SetBar(mx > 0 and cur / mx or 0, (mx > 0 and rested > 0) and math.min(1, (cur + rested) / mx) or nil)
   end
   v.heroTip = function(tip)
@@ -441,7 +460,12 @@ function V.renderLeveling()
       pairs = { { "In dungeons", UI.fmtNum(runXP) .. " XP" }, { "Runs", UI.fmtNum(nRuns) } } })
   end
 
-  -- LEVELS
+  -- LEVELS (a column with no value in any row is left out)
+  local anyT, anyVs, anyPl = false, false, false
+  for _, r in ipairs(levels) do anyT = anyT or r.t ~= nil; anyVs = anyVs or r.vs ~= nil; anyPl = anyPl or r.playedBy ~= nil end
+  for _, c in ipairs(v.levels.tbl.spec or {}) do
+    if c.key == "reached" then c.hide = not anyT elseif c.key == "vs" then c.hide = not anyVs elseif c.key == "played" then c.hide = not anyPl end
+  end
   setTable(v.levels, levels, function(row, r)
     row.c.level:SetText(tostring(r.level))
     row.c.reached:SetText(r.t and UI.fmtWhen(r.t, now) or "-")
@@ -485,7 +509,8 @@ local function buildRep(content)
     { key = "name", label = "Faction", flex = 1, min = 140 },
     { key = "standing", label = "Standing", kind = "tag", min = 88, measure = STANDINGS },
     -- (the bar, S2, then the numbers: 200 wide, or wider when the longest numbers need it)
-    { key = "prog", label = "Progress", kind = "num", min = math.max(200, 120 + S.S2 + UI.TextWidth("BODY", "21,000 / 21,000")) },
+    -- (PROGRESS heads both: the bar at the column's left, S2, then the number, left-aligned under the header)
+    { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = 120 + S.S2, min = math.max(200, 120 + S.S2 + UI.TextWidth("BODY", "21,000 / 21,000")) },
     { key = "ses", label = "This session", kind = "num", min = 88 },
     { key = "last", label = "Last gain", kind = "tag", min = 96, wide = true, justify = "RIGHT", measure = { "Mon 16 Nov" } },
   }, { onClick = function(row) if row.item then V.openFaction(row.item) end end,
@@ -528,7 +553,8 @@ function V.renderRep()
     if r.need then
       row.bar:SetFrac(r.progress / r.need)
       row.c.prog:SetText(("%s / %s"):format(UI.fmtNum(r.progress), UI.fmtNum(r.need)))
-    else row.bar:SetFrac(nil); row.c.prog:SetText("") end
+    -- (a standing with no numbers read yet keeps its empty track and a muted "-": every row has its bar)
+    else row.bar:SetFrac(0); row.c.prog:SetText("-"); UI.SetColor(row.c.prog, "fgMuted") end
     row.c.ses:SetText(num(r.session) > 0 and ("+" .. UI.fmtNum(r.session)) or "-")
     row.c.last:SetText(r.lastGain and UI.fmtDate(r.lastGain) or "-")
   end)
@@ -540,6 +566,11 @@ function V.placeRepBar(row)
   local cw = V.rep and V.rep.tbl.cols.prog
   if not (row and row.bar and cw) then return end
   row.bar:ClearAllPoints(); row.bar:SetPoint("LEFT", row, "LEFT", cw.x, 0)
+  local fs = row.c and row.c.prog
+  if fs then
+    fs:ClearAllPoints(); fs:SetPoint("LEFT", row, "LEFT", cw.x + 120 + S.S2, 0)
+    fs:SetWidth(math.max(1, cw.w - 120 - S.S2)); fs:SetJustifyH("LEFT")
+  end
 end
 function V.openFaction(item)
   local v = V.rep; if not v then return end
@@ -606,6 +637,7 @@ function V.unbracket(s)
   return (s:gsub("^%[(.*)%]$", "%1"))
 end
 V.BAR_X, V.BAR_W = 320, 160
+V.GATHERING = { Herbalism = true, Mining = true, Skinning = true, Fishing = true }
 local function profRow(v, i)
   local r = v.profRows[i]
   if r then return r end
@@ -621,10 +653,14 @@ end
 local function placeProfRow(r)
   local w = tonumber(r:GetWidth()) or 0
   local cw = math.max(UI.TextWidth("BODY_STRONG", "300 / 300"), UI.TextWidth("BODY_STRONG", r.count:GetText() or ""))
-  r.count:ClearAllPoints(); r.count:SetPoint("TOPRIGHT", r, "TOPRIGHT", -S.S3, -S.S2); r.count:SetWidth(math.max(1, cw))
+  -- (the bar and its value are centred in the 48 px row; with a training line under them they sit on the title's line)
+  local train = (r.train:GetText() or "") ~= ""
+  local rowH = tonumber(r:GetHeight()) or H.ROW2
+  local cy = train and (S.S2 + UI.LINE_H.BODY_STRONG / 2) or (rowH / 2)
+  r.count:ClearAllPoints(); r.count:SetPoint("RIGHT", r, "TOPRIGHT", -S.S3, -cy); r.count:SetWidth(math.max(1, cw))
   local barR = w - S.S3 - cw - S.S3
   local barL = math.max(V.BAR_X, barR - V.BAR_W)
-  r.bar:ClearAllPoints(); r.bar:SetPoint("TOPLEFT", r, "TOPLEFT", barL, -(S.S2 + 5))
+  r.bar:ClearAllPoints(); r.bar:SetPoint("LEFT", r, "TOPLEFT", barL, -cy)
   r.bar:SetSize(math.max(1, barR - barL), 6); r.bar:SetFrac(r.frac)
   local textX = S.S3 + 24 + S.S2
   local room = math.max(1, barL - S.S3 - textX)
@@ -643,17 +679,18 @@ local function buildProf(content)
   v.crafted = block(col, "Crafted", {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
     { key = "item", label = "Item", flex = 1, min = 120 },
-    { key = "prof", label = "Profession", kind = "tag", min = 104 },
+    { key = "prof", label = "Profession", kind = "tag", min = 104, max = 160 },
     { key = "qty", label = "Qty", kind = "num", min = 40 },
   }, { tooltip = function(row, item, tip)
       tip:AddLine(item.item or "Crafted item", 1, 1, 1)
       if not item.prof then tip:AddLine("No profession window was open when you made it.", 0.78, 0.79, 0.80, true) end
       tip:AddLine(UI.fmtWhen(item.t), 0.78, 0.79, 0.80)
     end })
+  -- (grouped by day like Crafted: a day row, then each recipe at its clock time)
   v.recipes = block(col, "Recipes learned", {
-    { key = "when", label = "When", kind = "tag", min = 96, measure = { "Mon 16 Nov, 23:59" } },
+    { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
     { key = "name", label = "Recipe", flex = 1, min = 120 },
-    { key = "prof", label = "Profession", kind = "tag", min = 104 },
+    { key = "prof", label = "Profession", kind = "tag", min = 104, max = 160 },
   }, {})
   content:HookScript("OnSizeChanged", function() pcall(V.placeProf) end)
   V.renderProf()
@@ -676,7 +713,13 @@ function V.renderProf()
   local crafts, recs, csum = buildCrafts()
   local ups = 0
   for _, r in ipairs(rows) do ups = ups + r.session end
+  -- (one recipe count: the recipes the profession rows count, plus the ones no profession of yours names)
+  local mapped = 0
+  for _, r in ipairs(rows) do mapped = mapped + r.recipes end
+  local other = math.max(0, sum.recipes - mapped)
   local segs = { { text = ("**%s**"):format(UI.plural(sum.professions, "profession")) }, { text = ("**%s** learned"):format(UI.plural(sum.recipes, "recipe")) } }
+  if other > 0 then segs[#segs + 1] = { text = ("%d from other professions"):format(other) } end
+  v.otherRecipes = other
   if ups > 0 then segs[#segs + 1] = { text = ("**+%d** skill this session"):format(ups) } end
   v.summary:SetSegments(segs)
   v.rows = rows
@@ -685,12 +728,14 @@ function V.renderProf()
     local known = p.max > 0   -- (a profession only a craft or a recipe names has no rank read yet)
     local meta = {}
     if known then meta[1] = p.rankName end
-    meta[#meta + 1] = UI.plural(p.recipes, "recipe") .. " learned"
+    -- (a gathering profession learns no recipes: no "0 recipes learned" under it)
+    if not (V.GATHERING[p.name] and p.recipes == 0) then meta[#meta + 1] = UI.plural(p.recipes, "recipe") .. " learned" end
     if p.session > 0 then meta[#meta + 1] = ("+%d this session"):format(p.session) end
     r:Set({ icon = PROF_ICON[p.name] or "Interface\\Icons\\INV_Misc_Note_01", title = p.name, meta = table.concat(meta, " \194\183 "),
       tip = { title = p.name, text = known and ("%s, skill %d of %d."):format(p.rankName, p.rank, p.max)
         or "Its skill shows once the game lists it: open the profession window." } })
-    r.frac = known and p.rank / p.max or nil
+    -- (a profession whose rank is not read yet keeps its empty track: every row has its bar)
+    r.frac = known and p.rank / p.max or 0
     r.count:SetText(known and ("%d / %d"):format(p.rank, p.max) or "-")
     r.train:SetText(p.training or "")
     r:Show()
@@ -707,8 +752,8 @@ function V.renderProf()
     if not r.prof then row.c.prof:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
     row.c.qty:SetText(UI.fmtNum(r.count))
   end, "Craft something and it is listed here.")
-  setTable(v.recipes, recs, function(row, r)
-    row.c.when:SetText(UI.fmtWhen(r.t))
+  setTable(v.recipes, withDays(recs, "recipe"), function(row, r)
+    row.c.when:SetText(UI.fmtClock(r.t))
     row.c.name:SetText(V.unbracket(r.name) or "")
     row.c.prof:SetText(r.prof or "Other")
     if not r.prof then row.c.prof:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end

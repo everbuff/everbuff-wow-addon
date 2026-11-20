@@ -365,7 +365,7 @@ function Now.lookItems(now)
     if num(v.xpGain) > 0 then parts[#parts + 1] = "+" .. UI.fmtNum(v.xpGain) .. " XP" end
     local rec = v.rec
     out[#out + 1] = { kind = "run", rank = 2, t = num(v.startT), icon = UI.KIND_ICON.run, title = title, badge = badge, bar = bar,
-      meta = table.concat(parts, " \194\183 "),
+      meta = table.concat(parts, " \194\183 "), inst = name, metaParts = parts,
       onClick = function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, rec) end end }
   end
   -- 3 level-ups
@@ -407,7 +407,14 @@ function Now.lookItems(now)
   end
   if best then
     local meta = {}
-    if type(best.src) == "string" and best.src ~= "" then meta[#meta + 1] = "From " .. stripLink(best.src) end
+    -- (where it dropped: the dungeon of a run of this session that holds its moment, else the zone, else the source)
+    local from
+    for _, v in ipairs(runs) do
+      local t0, t1 = num(v.startT), num(v.endT) > 0 and num(v.endT) or now
+      if num(best.t) >= t0 and num(best.t) <= t1 then from = v.name end
+    end
+    from = from or (type(best.zone) == "string" and best.zone ~= "" and best.zone) or (type(best.src) == "string" and best.src ~= "" and stripLink(best.src)) or nil
+    if from then meta[#meta + 1] = "From " .. from end
     if bestPrice > 0 then meta[#meta + 1] = "vendor price " .. UI.money(bestPrice) end
     if #meta == 0 then meta[1] = UI.fmtClock(best.t) end
     out[#out + 1] = { kind = "loot", rank = 4, t = num(best.t), icon = best.icon or UI.KIND_ICON.loot,
@@ -415,10 +422,11 @@ function Now.lookItems(now)
       onClick = function() UI.Open("Loot", "items") end }
   end
   -- 5 quests turned in, one row
-  local quests, lastQ, lastT = 0, nil, 0
+  local quests, lastQ, lastT, qxp = 0, nil, 0, 0
   for _, e in ipairs(ev) do
     if e.kind == "QUESTDONE" then
       quests = quests + 1
+      qxp = qxp + num(e.xp)
       local n = tostring(e.text or ""):match("^Complete:%s+(.+)$")
       if n and n ~= "" then lastQ = n end
       lastT = num(e.t)
@@ -428,7 +436,9 @@ function Now.lookItems(now)
     local meta = {}
     local okq, qm = false, nil
     if ns.Gold and ns.Gold.metric then okq, qm = pcall(ns.Gold.metric, "quests", "char", "session") end
-    if okq and type(qm) == "number" and qm > 0 then meta[#meta + 1] = UI.money(qm) .. " from quests" end
+    -- ("+N XP · coin · last: name": the XP of the turn-ins, their coin, the last one)
+    if qxp > 0 then meta[#meta + 1] = "+" .. UI.fmtNum(qxp) .. " XP" end
+    if okq and type(qm) == "number" and qm > 0 then meta[#meta + 1] = UI.money(qm) end
     if lastQ then meta[#meta + 1] = "last: " .. lastQ end
     out[#out + 1] = { kind = "quest", rank = 5, t = lastT, icon = UI.KIND_ICON.quest,
       title = UI.plural(quests, "quest") .. " turned in", meta = table.concat(meta, " \194\183 "),
@@ -443,10 +453,17 @@ function Now.lookItems(now)
         if type(rec) == "table" and type(rec.inst) == "string" and rec.inst:lower() == l.name:lower() and num(rec.t) > now - 7 * 86400
           and (not match or num(rec.t) > num(match.t)) then match = rec end
       end
+      local runRow
+      for _, o in ipairs(out) do if o.kind == "run" and type(o.inst) == "string" and o.inst:lower() == l.name:lower() then runRow = o end end
+      if runRow then
+        -- (the run row already names the dungeon and its bosses: the lockout adds only when it resets)
+        runRow.meta = runRow.meta .. " \194\183 resets in " .. UI.fmtDur(l.resetAt - now, { minutes = true })
+      else
       out[#out + 1] = { kind = "lockout", rank = 6, t = num(l.resetAt), icon = UI.KIND_ICON.lockout, title = title,
         meta = "Resets in " .. UI.fmtDur(l.resetAt - now, { minutes = true }),
         tip = (not match) and { title = l.name, text = "Saved before Everbuff recorded this dungeon on this character." } or nil,
         onClick = match and function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, match) end end or nil }
+      end
     end
   end
   table.sort(out, function(a, b) if a.rank ~= b.rank then return a.rank < b.rank end return a.t > b.t end)
@@ -733,10 +750,10 @@ function Now.refresh(content)
   end
 
   -- THIS SESSION: played, XP per hour, gold, deaths
-  content.sesHead:SetMeta(start and ("since " .. UI.fmtClock(start)) or nil)
+  content.sesHead:SetMeta(nil)   -- (the PLAYED card says when the session started: no second "since")
   local cards = content.cards.cards
   local elapsed = start and math.max(0, now - start) or 0
-  cards[1]:Set("Played", start and UI.fmtDur(elapsed, { minutes = true }) or "-", start and ("since " .. UI.fmtClock(start)) or "no session yet")
+  cards[1]:Set("Played", start and UI.fmtDur(elapsed, { minutes = true }) or "-", start and (UI.fmtClock(start) .. " to now") or "no session yet")
   UI.SetTip(cards[1], { title = "Played", text = "How long this session has run. Opens your sessions." })
   if atMax then
     cards[2]:Set("XP per hour", "-", "max level")
@@ -763,9 +780,10 @@ function Now.refresh(content)
   end
   UI.SetTip(cards[3], { title = "Gold this session", text = "What you made this session, and per hour of play.", pairs = goldPairs })
   local kills, sdeaths, items = num(ses and ses.kills), num(ses and ses.deaths), num(ses and ses.items)
-  cards[4]:Set("Deaths", UI.fmtNum(sdeaths), UI.plural(kills, "kill") .. " \194\183 " .. UI.plural(items, "item"))
   local lk, ld = 0, 0
   for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do if type(s) == "table" and ns.isMySession(s) then lk, ld = lk + num(s.kills), ld + num(s.deaths) end end
+  -- (the META is about deaths: how many in all, never kills and items)
+  cards[4]:Set("Deaths", UI.fmtNum(sdeaths), ld > 0 and (UI.plural(ld, "death") .. " in all") or "none in all")
   UI.SetTip(cards[4], { title = "Deaths this session", text = "Opens every death.", pairs = { { "Lifetime", UI.plural(lk, "kill") .. " \194\183 " .. UI.plural(ld, "death") } } })
 
   -- NEXT
@@ -886,7 +904,7 @@ local function buildSessions(content)
     w = tonumber(w) or 0
     if w <= 1 then return end
     local SP = UI.SP
-    local left, right = SP.S, w - UI.SCROLLBAR - SP.S
+    local left, right = S.S3, w - UI.SCROLLBAR - S.S3
     local half = math.floor((right - left - SP.L) / 2)
     for i, st in ipairs({ xpStrip, goldStrip }) do
       st:ClearAllPoints(); st:SetPoint("TOPLEFT", content, "TOPLEFT", left + (i - 1) * (half + SP.L), -4)
@@ -925,7 +943,8 @@ local function buildSessions(content)
   band.title = UI.CellFS(band, "GameFontNormalSmall", C.gold); band.title:SetJustifyH("LEFT")
   band.title:SetPoint("LEFT", band, "TOPLEFT", SP.M, -(SP.S + UI.ROW_H / 2)); band.title:SetPoint("RIGHT", band.open, "LEFT", -SP.M, 0)
   band.blocks = {}
-  for i, label in ipairs({ "TOP SOURCES", "BEST EARNERS", "BIGGEST SINKS", "FLAGS" }) do
+  -- (NOTES, not "flags": a banned word, principle 8)
+  for i, label in ipairs({ "TOP SOURCES", "BEST EARNERS", "BIGGEST SINKS", "NOTES" }) do
     local b = CreateFrame("Frame", nil, band); b:SetHeight(BAND_H - UI.ROW_H - 2 * SP.S - SP.XS)
     b.head = UI.CellFS(b, "GameFontNormalSmall", C.dim); b.head:SetJustifyH("LEFT"); b.head:SetText(label)
     b.head:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.head:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
@@ -937,11 +956,18 @@ local function buildSessions(content)
     end
     band.blocks[i] = b
   end
+  -- four blocks where they fit whole; under WIDE the BEST EARNERS block goes, so no line of the other three is cut
   local function placeBand(w)
     w = tonumber(w) or 0
     if w <= 1 then return end
-    local bw = math.floor((w - 2 * SP.M - 3 * SP.L) / 4)
+    local shown = {}
     for i, b in ipairs(band.blocks) do
+      if i == 2 and not UI.G.isWide(UI.G.winW()) then b:Hide() else b:Show(); shown[#shown + 1] = b end
+    end
+    local n = #shown
+    local bw = math.floor((w - 2 * SP.M - (n - 1) * SP.L) / n)
+    band.blockW = bw
+    for i, b in ipairs(shown) do
       b:ClearAllPoints(); b:SetPoint("TOPLEFT", band, "TOPLEFT", SP.M + (i - 1) * (bw + SP.L), -(SP.S + UI.ROW_H + SP.XS)); b:SetWidth(bw)
     end
   end
@@ -962,20 +988,42 @@ local function buildSessions(content)
     band.title:SetText(title)
     local L = { {}, {}, {}, {} }
     for i, r in ipairs(sum.topIn) do L[1][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
-    local function best(word, t) if t then L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, t.name, coin2(t.amount)) } end end
+    -- (a long name is shortened, never the amount: the line is cut at the name with "...")
+    local function best(word, t)
+      if not t then return end
+      local name, amt = tostring(t.name or ""), coin2(t.amount)
+      L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, name, amt), nil, function(n) return ("%s: %s...  %s"):format(word, name:sub(1, n), amt) end, #name }
+    end
     best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
     for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
     -- (bookkeeping notes in a neutral colour: red never means unusual bookkeeping, principle 5)
-    if #sum.strangers > 0 then L[4][#L[4] + 1] = { "Strangers: " .. table.concat(sum.strangers, ", "), C.fgSubtle } end
+    if #sum.strangers > 0 then
+      -- (whole names plus "+N" in the block's width)
+      local pre, names = "Players you traded with: ", sum.strangers
+      local room = (band.blockW or 200) - UI.TextWidth("BODY", pre)
+      local out, shownN = "", 0
+      for i, n in ipairs(names) do
+        local cand = (shownN > 0 and (out .. ", ") or "") .. n
+        local tail = (#names - i) > 0 and (" +" .. (#names - i)) or ""
+        if shownN > 0 and UI.TextWidth("BODY", cand .. tail) > room then break end
+        out, shownN = cand, shownN + 1
+      end
+      if shownN < #names then out = out .. " +" .. (#names - shownN) end
+      L[4][#L[4] + 1] = { pre .. out, C.fgSubtle }
+    end
     if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Unexplained: " .. coin2(sum.unexplained), C.fgSubtle } end
     if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %d sale%s"):format(sum.above, sum.above == 1 and "" or "s"), C.fgSubtle } end
     if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. ns.Gold.signed(sum.away) } end
     if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%d rows past the cap not kept"):format(sum.dropped) } end
-    local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing flagged" }
+    local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing to note" }
     for i, b in ipairs(band.blocks) do
       for j, fs in ipairs(b.lines) do
         local l = L[i][j] or (j == 1 and #L[i] == 0 and { EMPTY[i], C.dim }) or nil
         fs:SetText(l and l[1] or "")
+        if l and l[3] and fs.IsTruncated then
+          local n = l[4]
+          while n > 4 and fs:IsTruncated() do n = n - 1; fs:SetText(l[3](n)) end
+        end
         local col = (l and l[2]) or C.ink
         fs:SetTextColor(col[1], col[2], col[3])
       end

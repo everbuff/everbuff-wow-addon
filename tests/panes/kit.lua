@@ -99,6 +99,18 @@ return function(P)
   -- ── empty states ──
   local em = UI.Empty(host, { icon = "info", title = "No fights yet", text = "Pull something and it shows up here.", buttons = { { "Open Settings", function() end } } })
   check("Empty: title and text and one button", em.title:GetText() == "No fights yet" and em.buttons[1] and em.buttons[1]:IsShown())
+  -- every big empty state is centred on the main column (BOX_L + MAIN_W / 2 of the window), whatever its parent
+  do
+    local wl = P.box(_G.EverbuffFrame).l
+    local want = wl + G.BOX_L + math.floor(G.mainW(G.winW()) / 2)
+    local off = CreateFrame("Frame", nil, host); off:SetPoint("TOPLEFT", host, "TOPLEFT", 37, 0); off:SetSize(300, 200)
+    local em2 = UI.Empty(off, { icon = "info", title = "Nothing here" })
+    em2:Show(); M.settle()
+    local b1, b2 = P.box(em), P.box(em2)
+    check("Empty: centred on BOX_L + MAIN_W / 2 in any parent", math.abs(b1.l + b1.w / 2 - want) <= 1 and math.abs(b2.l + b2.w / 2 - want) <= 1,
+      ("%s %s want %s"):format(b1.l + b1.w / 2, b2.l + b2.w / 2, want))
+    em2:Hide(); off:Hide()
+  end
   em:Hide()
   local el = UI.EmptyLine(host)
   el:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -220); el:SetWidth(600)

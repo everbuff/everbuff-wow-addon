@@ -2993,9 +2993,10 @@ function GP.paintTop(c)
   end
   if c.st.view == "auctions" then
     local _, a = GP.auctions(sc)
-    segs = { { text = ("Posted **%d**"):format(a.posted) }, { text = ("Sold **%d** for **%s**"):format(a.sold, money(a.gross)) },
-      { text = ("House cut **%s**"):format(money(a.cut)) }, { text = ("Profit **%s**"):format(money(a.net)) },
-      { text = ("Expired **%d**"):format(a.expired) } }
+    -- (Expired rides on Posted, the first segment, so a narrow line never drops it)
+    segs = { { text = ("Posted **%d**"):format(a.posted) .. (a.expired > 0 and (", expired **%d**"):format(a.expired) or "") },
+      { text = ("Sold **%d** for **%s**"):format(a.sold, money(a.gross)) },
+      { text = ("House cut **%s**"):format(money(a.cut)) }, { text = ("Profit **%s**"):format(money(a.net)) } }
     if a.bought > 0 then table.insert(segs, 2, { text = ("Bought **%d** for **%s**"):format(a.bought, money(a.spent)) }) end
   end
   c.summary:SetSegments(segs)
@@ -3040,9 +3041,21 @@ function GP.paintTop(c)
   local text
   if #parts > 0 then text = "While you were away " .. table.concat(parts, ", ") .. ". Hover for details." end
   if card.crash ~= 0 then text = (text and (text .. " ") or "") .. ("%s: %s, counted in the net."):format(Gold.CRASH_LABEL, money(card.crash, true)) end
-  if c.audit and c.audit.state == "broken" then text = (text and (text .. " ") or "") .. "Some records do not add up. Hover for where." end
+  if c.audit and c.audit.state == "broken" then text = (text and (text .. " ") or "") .. "Some records do not add up. Hover for details." end
   c.untracedText = text
   if text then c.untraced:SetText(text); c.untraced:Show() else c.untraced:SetText(""); c.untraced:Hide() end
+end
+
+-- an item's icon and quality by its name, from the newest loot row that names it (the auction rows carry only the name)
+function GP.itemLook(name)
+  local log = ns.DB and ns.DB.loot and ns.DB.loot.log or {}
+  for i = #log, math.max(1, #log - 2000), -1 do
+    local l = log[i]
+    if type(l) == "table" and l.item and (l.item == name or tostring(l.item):find("[" .. name .. "]", 1, true)) then
+      return { icon = l.icon, q = type(l.q) == "string" and #l.q == 8 and l.q or nil }
+    end
+  end
+  return nil
 end
 
 -- ── the list ──
@@ -3267,7 +3280,12 @@ function GP.paintList(c)
     tbl.setRows(rows, function(row, r)
       local cc = row.c
       cc.when:SetText(UI.fmtClock(r.t or 0))
-      if r.item and r.item ~= "(item arrives by mail)" then cc.item:SetText(r.item .. (num(r.count) > 1 and ("|cff8c9197 x" .. r.count .. "|r") or ""))
+      local known = r.item and r.item ~= "(item arrives by mail)"
+      local look = known and GP.itemLook(r.item) or nil
+      if cc.icon then cc.icon:SetTexture((look and look.icon) or "Interface\\Icons\\INV_Misc_QuestionMark") end
+      if known then
+        cc.item:SetText(r.item .. (num(r.count) > 1 and ("|cff8c9197 x" .. r.count .. "|r") or ""))
+        if look and look.q then local q = look.q; cc.item:SetTextColor(tonumber(q:sub(3, 4), 16) / 255, tonumber(q:sub(5, 6), 16) / 255, tonumber(q:sub(7, 8), 16) / 255) end
       else cc.item:SetText("Item from auction mail"); UI.SetColor(cc.item, "fgMuted"); r.item = nil end
       cc.result:SetText(r.what or "")
       cc.buyer:SetText((r.what ~= "Posted" and r.note ~= "" and r.note) or "-")
@@ -3612,7 +3630,7 @@ function ns.BuildEconomyPane(pane)
     -- (the biggest single entry as a name that may shorten and its amount in a money cell of its own, measured from
     -- its widest two-unit value: a number is never cut, 2.4)
     { key = "what", label = "Biggest single", flex = 1, min = 96, max = 200 },
-    { key = "whatAmt", label = "", kind = "money", min = 40 },
+    { key = "whatAmt", label = "Value", kind = "money", min = 40, tip = "The amount of the biggest single entry" },
     { key = "n", label = "Times", kind = "num", min = 48 },
     { key = "share", label = "Share", kind = "num", min = 48, tip = "Share of everything earned, or of everything spent" },
     { key = "amount", label = "Amount", kind = "money", min = 88, strong = true },
@@ -3677,8 +3695,10 @@ function ns.BuildEconomyPane(pane)
     { key = "value", label = "Vendor price", kind = "money", min = 88, sort = true, measure = { "99g 99s so far" }, tip = "What a vendor pays for the items looted, \"so far\" while an item has no price yet. Never added to coin." },
   }, { sortKey = "time", sortAsc = false, tooltip = GP.runTip, onHeight = function() pcall(GP.place, c) end,
     onSort = function(key, asc) st.runSort, st.runAsc = key, asc; again() end })
+  -- (the item cell is the Items one: its icon, the name in its quality's colour)
   c.tbl.auctions = UI.KitTable(col, {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "00:00" } },
+    { key = "icon", label = "", kind = "icon" },
     { key = "item", label = "Item", flex = 1, min = 140 },
     { key = "result", label = "Result", kind = "tag", min = 72 },
     { key = "buyer", label = "Buyer", min = 104, tip = "Who bought it, or who sold it to you" },
@@ -3829,9 +3849,10 @@ function ns.BuildGoldSettings(pane)
 
   -- ── the main page ──
   local onScreen = section(mainPg, "Gold on screen")
+  -- (what bar text needs is the description of this row: a 48 px row, not a loose note under the list)
   pane.cbPill = checkbox(mainPg, "Show your gold on screen",
     function() return (Gold.pillCfg() or {}).on == true end,
-    function(v) Gold.pillOn(v) end)
+    function(v) Gold.pillOn(v) end, "Bar text needs a bar addon such as Titan Panel or ElvUI")
   pane.cbTips = checkbox(mainPg, "Show gold in tooltips",
     function() local cfg = Gold.cfg(); return not (cfg and cfg.tips == false) end,
     function(v) Gold.cfg(true).tips = v end)
@@ -3851,11 +3872,9 @@ function ns.BuildGoldSettings(pane)
     function() return (Gold.cfg() or {}).icons == true end, function(v) Gold.cfg(true).icons = v; Gold.fire() end)
   pane.cbCompact = checkbox(mainPg, "Compact numbers",
     function() return (Gold.cfg() or {}).compact == true end, function(v) Gold.cfg(true).compact = v; Gold.fire() end)
-  local barRow = row(mainPg, "")
-  barRow.label:SetFontObject(UI.F.META); barRow.label:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3])
-  pane.barText = barRow.label
+  pane.barText = pane.cbPill.row.desc
   pane.moreBtn = button(mainPg, "Pill size, tooltip rows and resets", "More \226\128\186", "ghost", function() main:Hide(); more:Show(); refresh() end)
-  onScreen.items = { pane.cbPill.row, pane.cbTips.row, pane.pick1.row, pane.pick2.row, rateRow, pane.pickFilter.row, pane.cbIcons.row, pane.cbCompact.row, barRow, pane.moreBtn.row }
+  onScreen.items = { pane.cbPill.row, pane.cbTips.row, pane.pick1.row, pane.pick2.row, rateRow, pane.pickFilter.row, pane.cbIcons.row, pane.cbCompact.row, pane.moreBtn.row }
   -- hidden characters, each with "Show again"
   local hiddenSec = section(mainPg, "Hidden characters")
   local noneNote = SV.note(mainPg.col, "None. Hide a character in Loot, Gold, Characters.")
