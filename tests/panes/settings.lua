@@ -253,13 +253,21 @@ return function(P)
     SET.refreshData()
     local keepSeq = ns.DB.combat.fightSeq
     ns.DB.combat.fightSeq = 6879
-    check("Data: the stored rows read Pulls waiting, 2 and Loot, 1 pickup; the events have no row",
-      d.stored.fights.plain == "Pulls waiting: 2" and d.stored.fights.value.text == "2" and d.stored.loot.plain == "Loot: 1 pickup" and d.stored.loot.value.text == "1 pickup" and d.stored.events == nil,
+    check("Data: the stored rows read Pulls waiting, 2 and Loot, 1 row stored; the events have no row",
+      d.stored.fights.plain == "Pulls waiting: 2" and d.stored.fights.value.text == "2" and d.stored.loot.plain == "Loot: 1 row stored" and d.stored.loot.value.text == "1 row stored" and d.stored.events == nil,
       d.stored.fights.plain .. " | " .. d.stored.loot.plain)
     check("Data: the rows carry no sentence and no Clear of their own", d.stored.fights.desc == nil and d.stored.loot.desc == nil and d.stored.fights.btn == nil and not P.visible(d.clear.fights))
     ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
     check("Data: the Clears are under Advanced, each saying it cannot be undone", P.visible(d.clear.fights) and P.visible(d.clear.loot) and d.clear.fights.label.text == "Clear the pulls waiting"
       and d.clear.loot.label.text == "Clear the loot list" and d.clear.fights.desc.text == "Cannot be undone." and d.clear.loot.desc.text == "Cannot be undone.")
+    do
+      -- the loot Clear names what it empties, rows of the store, never pickups; it disarms without clearing
+      local lb = d.stored.loot.clear
+      click(lb)
+      check("Data: the loot Clear asks in rows, not pickups", lb.armed == true and lb.text.text == "Click again to clear 1 row" and #ns.DB.loot.log == 1, lb.text.text)
+      M.runTimers(); M.settle()
+      check("Data: the loot Clear disarms after 4 s, the list untouched", lb.armed == false and lb.text.text == "Clear" and #ns.DB.loot.log == 1)
+    end
     local btn = d.stored.fights.clear
     click(btn)
     check("Data: the first click only asks", #ns.DB.combat.fights == 2 and btn.armed == true and btn.text.text == "Click again to clear 2 pulls", btn.text.text)

@@ -325,8 +325,10 @@ local STORED = {
   { "fights", "Pulls waiting", function(db) return #(db.combat.fights or {}) end, function(n) return UI.fmtNum(n) end,
     function() if ns.DB then ns.DB.combat.fights = {} end end, "pull", "Clear the pulls waiting" },
   -- (the gold ledger is not the loot list: clearing it would break looted + ... = gained, 0.9.44)
-  { "loot", "Loot", function(db) return #(db.loot.log or {}) end, function(n) return UI.plural(n, "pickup") end,
-    function() if ns.DB then ns.DB.loot.log = {} end end, "pickup", "Clear the loot list" },
+  -- (the number is the size of the store Clear empties, every character's rows: coin, auction and mail rows
+  -- included. It is not the pickups Loot > Items counts, so it is never worded as pickups.)
+  { "loot", "Loot", function(db) return #(db.loot.log or {}) end, function(n) return UI.plural(n, "row") .. " stored" end,
+    function() if ns.DB then ns.DB.loot.log = {} end end, "row", "Clear the loot list" },
 }
 local SAMPLES = { { 1, "Fine" }, { 3, "Normal" }, { 10, "Coarse" } }
 local function buildData(pane)

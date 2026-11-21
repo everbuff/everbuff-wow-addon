@@ -292,7 +292,11 @@ if d then
   check("Data: row 3 is the pulls waiting", items[3] == d.stored.fights)
   eq("Data: pulls waiting", d.stored.fights.plain, "Pulls waiting: 0")
   check("Data: row 4 is the loot", items[4] == d.stored.loot)
-  eq("Data: loot", d.stored.loot.plain, "Loot: 1,539 pickups")
+  -- (the size of the store Clear empties, not a count of pickups: of the 1,539 rows 18 are another character's,
+  -- 453 are coin, 139 are auction or mail rows, and 929 are the item pickups Loot > Items counts)
+  eq("Data: loot", d.stored.loot.plain, "Loot: 1,539 rows stored")
+  check("Data: the loot row never says pickups", not tostring(d.stored.loot.plain):find("pickup", 1, true), d.stored.loot.plain)
+  eq("Data: the loot row is the raw size of loot.log", d.stored.loot.count, #ns.DB.loot.log)
   do
     -- one format for the six rows: label left, every value on one shared x, no separator mixed with another
     local rowsD = { d.rec, d.syncStatus, d.stored.fights, d.stored.loot, d.combat, d.acl }

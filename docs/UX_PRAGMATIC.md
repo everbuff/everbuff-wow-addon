@@ -492,7 +492,7 @@ General and Gold display: unchanged from `UX_OVERHAUL.md` 4.12.
 | Status | "CAPTURING in Orgrimmar" | live |
 | Saved to everbuff.gg | "142 pulls, confirmed Sat 21 Nov 11:45" (the same fact and the same hover as the card on Now, 1.1: the time is the confirmation's, never the save's) | `combat.lastAck` |
 | Pulls waiting | "0" | `combat.fights` not yet picked up |
-| Loot | "1,539 pickups" | `loot.log` |
+| Loot | "1,539 rows stored" (the size of the store that Clear empties: every character, coin, auction and mail rows included. Never "pickups": Loot > Items counts 929 pickups for this character, and that word belongs to it alone) | `#loot.log` |
 
 The rows are a two column list: the label at the left, every value on one shared x. No row carries a separator of its own. Combat log and Advanced combat logging follow in the same form ("on", "off").
 

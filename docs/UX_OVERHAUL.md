@@ -1382,7 +1382,7 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
 > Revised by `docs/UX_PRAGMATIC.md` 5 (built on the draft branch); the copy below replaces the 0.9.51 one.
 
 - `CAPTURE HEALTH`, one block, the four facts first:
-  - Dot rows in this order: "CAPTURING in Orgrimmar" ("Standing by" with no session); "Saved to everbuff.gg: 142 pulls, confirmed Sat 21 Nov 11:45" (how many pulls the desktop app saved and when the addon saw its confirmation, which is not when they were saved; never seen: "Saved to everbuff.gg: not seen yet", and what to do about it is the row's tooltip); "Pulls waiting · 0"; "Loot · 1,539 pickups". No sentence under a row.
+  - Dot rows in this order: "CAPTURING in Orgrimmar" ("Standing by" with no session); "Saved to everbuff.gg: 142 pulls, confirmed Sat 21 Nov 11:45" (how many pulls the desktop app saved and when the addon saw its confirmation, which is not when they were saved; never seen: "Saved to everbuff.gg: not seen yet", and what to do about it is the row's tooltip); "Pulls waiting · 0"; "Loot · 1,539 rows stored" (the size of the store, not the pickups of Loot > Items). No sentence under a row.
   - Then "Combat log: on" and "Advanced combat logging: on", each with a [Turn on] ghost button only when off.
   - Setting row "Remind me to /reload before I log out", with "Saves your data even if the game disconnects you.", and "Save now".
 - `ADVANCED` (collapsed by default via `advancedOpen`; header "ADVANCED ›")
