@@ -929,7 +929,9 @@ check("event search rejects non-matching", not ns._test.eventMatches({ kind = "K
 check("event search still respects the filter tab", not ns._test.eventMatches({ kind = "LOOT", text = "Kobold" }, "combat", "kobold"))
 M.tick()
 check("loot search matches item", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "linen"))
-check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner" }, "miner"))
+check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner", guid = "Creature-0-1-1-1-40-00AA" }, "miner"))
+-- (a name with no loot window behind it is not shown, so it is not found either: docs/UX_PRAGMATIC.md 0.2.1)
+check("loot search does not match a source the row does not show", not ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner" }, "miner"))
 -- (docs/UX_PRAGMATIC.md 4.1: auction and mail rows are purchases and deliveries, Gold > Auction house owns them)
 check("the Items pane never lists an auction or a mail row", not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction won", mail = { bid = 5 } }, "")
   and not ns._test.lootMatches({ item = "Linen Cloth", src = "Mail from Thrall" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction returned" }, ""))
@@ -1567,9 +1569,9 @@ do
   local minQ = items.content.lootFilter()
   check("quality filter starts at Green and better (docs/UX_OVERHAUL.md 4.8)", minQ == 2, minQ)
   local rows = {
-    { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed" },
-    { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe" },
-    { t = 3, item = "Green Belt", count = 2, q = "ff1eff00", src = "Moe" },
+    { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed", guid = "Creature-0-1-1-1-1-00AA" },
+    { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe", guid = "Creature-0-1-1-1-2-00AA" },
+    { t = 3, item = "Green Belt", count = 2, q = "ff1eff00", src = "Moe", guid = "Creature-0-1-1-1-3-00AA" },
     { t = 4, money = 500, src = "Abe" },
   }
   local byQty = ns._test.lootSort({ unpack(rows) }, "qty", false)
@@ -2449,7 +2451,7 @@ end
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
 -- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show", "gold_auctions" }) do
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show", "gold_auctions", "gold_mailrows" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end

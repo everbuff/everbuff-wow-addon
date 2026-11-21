@@ -357,8 +357,10 @@ return function(P)
     ns.UI.Open("Loot", "auctions"); M.settle()
     ns.char().goldShareSince = 1; c.refresh(); M.settle()
     local at = c.tbl.auctions
-    check("Gold Auction house: the old Loot / Auctions key opens Gold on Auction house, all time", c.st.view == "auctions" and c.st.scope == "all" and c.viewSeg.value == "auctions" and c.section.label:GetText() == "ALL TIME" and P.visible(at.frame))
-    check("Gold Auction house: all time says where its rows start, once", (c.section.meta:GetText() or ""):find("^rows since ") ~= nil and P.visible(c.section.meta), c.section.meta:GetText())
+    check("Gold Auction house: the old Loot / Auctions key opens Gold on Auction house, all time", c.st.view == "auctions" and c.st.scope == "all" and c.viewSeg.value == "auctions" and P.visible(at.frame))
+    -- (All time is the cards' word; the list says where its own rows start, in its header, once)
+    check("Gold Auction house: all time says where its rows start, once, in the header", c.section.label:GetText():find("^AUCTIONS SINCE ") ~= nil
+      and (not P.visible(c.section.meta) or c.section.meta:GetText() == "not every row is kept"), c.section.label:GetText() .. " / " .. tostring(c.section.meta:GetText()))
     local g = c.scopeData.ledger
     local ans = strip(c.answer.Text())
     check("Gold Auction house: the answer is Spent, received, net, from the ledger, and adds up", P.visible(c.answer) and c.answerData.spent == (g.auctions or 0) and c.answerData.received == (g.auctionSales or 0)
@@ -395,9 +397,9 @@ return function(P)
       local rows = dataRows(at)
       local texts = {}
       for i, r in ipairs(rows) do texts[i] = strip(r.c.item:GetText()) .. "|" .. r.c.result:GetText() .. "|" .. r.c.price:GetText() end
-      eq("Gold Auction house: one purchase is one row, a lone delivery is Won with a blank price, a guessed name is blank",
-        table.concat(texts, " ; "), ("|Bought|%s ; Wool Cloth x20|Won| ; Mageweave Cloth x120|Bought|%s"):format(money(16046), money(53300)))
-      check("Gold Auction house: the blank item says Not recorded on hover, the Won row that its price is not", tipOf(rows[1]):find("Item: Not recorded", 1, true) ~= nil and tipOf(rows[2]):find("Price: Not recorded", 1, true) ~= nil)
+      eq("Gold Auction house: one purchase is one row, a lone delivery is Collected with a blank price, a guessed name is blank",
+        table.concat(texts, " ; "), ("|Bought|%s ; Wool Cloth x20|Collected| ; Mageweave Cloth x120|Bought|%s"):format(money(16046), money(53300)))
+      check("Gold Auction house: the blank item says Not recorded on hover, the Collected row that its price is not", tipOf(rows[1]):find("Item: Not recorded", 1, true) ~= nil and tipOf(rows[2]):find("Price: Not recorded", 1, true) ~= nil)
       eq("Gold Auction house: 2 purchases with a price, 1 delivery with none", c.auctionSum.bought .. "/" .. c.auctionSum.won, "2/1")
       ns.DB.loot.ah = keep
     end
@@ -419,6 +421,58 @@ return function(P)
       table.insert(ses.goldLog, 3, row)
       Gold.open("session", "journal"); M.settle()
       check("Gold whole journal: no remark", c.journalPartial == false and not P.visible(c.section.meta))
+    end
+    -- a journal that lost rows AND is cut at its newest rows: the header says both, the cut never takes the place of
+    -- the coverage; and the remark is never drawn under the search box (the founder's Week at 900 px read "newes")
+    do
+      local keep = Gold.MAX_ROWS
+      Gold.MAX_ROWS = 20
+      local row = table.remove(ses.goldLog, 3)
+      Gold.open("session", "journal"); M.settle()
+      eq("Gold partial long journal: the header says the cut and the coverage", c.section.meta:GetText(), ("newest 20 of %d, not every entry is kept"):format(c.journalCount))
+      check("Gold partial long journal: the reason is on the remark's hover", c.section.metaHit and P.visible(c.section.metaHit) and tipOf(c.section.metaHit):find("desktop app", 1, true) ~= nil)
+      local win0 = ns.DB.settings.winSize and { ns.DB.settings.winSize.w, ns.DB.settings.winSize.h } or { 900, 580 }
+      local function clash(a, b) return a.l < b.l + b.w - 0.5 and b.l < a.l + a.w - 0.5 and a.t < b.t + b.h - 0.5 and b.t < a.t + a.h - 0.5 end
+      for _, size in ipairs({ { 900, 580 }, { 1104, 697 }, { 1600, 1000 } }) do
+        ns.UI.SetWindowSize(size[1], size[2]); M.settle()
+        local mb, sb, vb, lb, tb = P.box(c.section.meta), P.box(c.search), P.box(c.viewSeg), P.box(c.section.label), P.box(c.tbl.journal.frame)
+        local tag = ("Gold partial long journal %dx%d"):format(size[1], size[2])
+        check(tag .. ": the remark is whole, clear of the search box, the view control and the label", P.visible(c.section.meta) and not c.section.meta:IsTruncated() and not clash(mb, sb) and not clash(mb, vb) and not clash(mb, lb),
+          ("meta %d..%d at %d, search from %d"):format(mb.l, mb.l + mb.w, mb.t, sb.l))
+        check(tag .. ": and above the table", mb.t + mb.h <= tb.t + 0.5, ("%s %s"):format(mb.t + mb.h, tb.t))
+        if size[1] == 900 then check(tag .. ": with no room beside the controls it has a line of its own", c.metaBelow == true and mb.t >= lb.t + lb.h - 0.5) end
+        if size[1] == 1600 then check(tag .. ": with room it follows the label on the header's line", c.metaBelow == nil and math.abs((mb.t + mb.h / 2) - (lb.t + lb.h / 2)) < 2) end
+      end
+      ns.UI.SetWindowSize(win0[1], win0[2]); M.settle()
+      table.insert(ses.goldLog, 3, row)
+      Gold.MAX_ROWS = keep
+      Gold.open("session", "journal"); M.settle()
+      check("Gold whole journal: the line under the header is gone with its remark", c.metaBelow == nil and not P.visible(c.section.meta))
+    end
+    -- All time, Journal: ALL TIME is the cards' word; the list's header says where its own entries start
+    do
+      Gold.open("all", "journal"); M.settle()
+      local first = c.entries[1]
+      check("Gold all journal: the header says where the kept entries start", first ~= nil and c.section.label:GetText() == ns.UI.upper("Entries since " .. ns.UI.fmtSince(first.t)), c.section.label:GetText())
+      Gold.open("session", "journal"); M.settle()
+    end
+    -- the Auction house answer: each dot is a glyph of its own, centred in the gap between two figures and on their
+    -- middle line (it sat at the top of the line, glued to the next word)
+    do
+      Gold.open("all", "auctions"); M.settle()
+      if P.visible(c.answer) and (c.answer.shownN or 0) >= 2 then
+        local bad = {}
+        for i = 2, c.answer.shownN do
+          local sep, a, b = c.answer.seps[i], P.box(c.answer.pool[i - 1]), P.box(c.answer.pool[i])
+          local sbx = P.box(sep)
+          if sep:GetText() ~= "\194\183" then bad[#bad + 1] = i .. " text" end
+          if math.abs(sbx.l - (a.l + a.w)) > 0.5 or math.abs((sbx.l + sbx.w) - b.l) > 0.5 then bad[#bad + 1] = i .. " not between the two figures" end
+          if math.abs((sbx.t + sbx.h / 2) - (a.t + a.h / 2)) > 1 then bad[#bad + 1] = i .. " off the middle line" end
+          if sep._justify ~= "CENTER" then bad[#bad + 1] = i .. " not centred" end
+        end
+        check("Gold Auction house: the dots of the answer line are centred between the figures", #bad == 0, table.concat(bad, "; "))
+      else check("Gold Auction house: the answer line shows for the dot check", false) end
+      Gold.open("session"); M.settle()
     end
     -- an empty period
     ses.goldLog, ses.gold, ses.gained, ses.spent, ses.trades = {}, {}, 0, 0, {}

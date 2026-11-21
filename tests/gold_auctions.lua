@@ -3,9 +3,11 @@
 -- The fixtures mirror the shapes of a real save (the founder's of 21 Nov 2026): a commodity purchase with its price
 -- and the delivery mails that follow it, deliveries with no purchase stored, commodity sale invoices whose `buyout`
 -- slot is the quantity, C_AuctionHouse.PlaceBid rows that have no item at bid time, and postings a few seconds apart.
---   rows      one purchase is one row: its delivery mails are taken up by it; a delivery with no purchase is "Won"
---             with no price; a sale's price is what the buyer paid and its count the posting's; a bid named by the
---             old "newest row without a name" rule shows no item
+--   rows      one purchase is one row: its delivery mails are taken up by it (same item, same session or within the
+--             hour, units still to come); deliveries with no purchase are "Collected" with no price, the mails of
+--             one item taken together folded into one row; a sale's price is what the buyer paid and its count the
+--             posting's only when that posting is one lot; a stored net that is not the invoice's sum is dropped; a
+--             bid named by the old "newest row without a name" rule shows no item
 --   capture   Market.mailItem names a bid by the invoice's amount only, counts commodity deliveries on the priced
 --             row, and never renames a row
 --   journal   an auction row of the journal is joined to its purchase by the exact price, and to a posting only
@@ -24,6 +26,9 @@ return function(P)
   local SID = "t-auctions-1"
   local sess = { id = SID, guid = guid, startedEpoch = T, startedMono = 1000, endedEpoch = T + 3600, gained = 0, spent = 0, gold = {}, goldLog = {} }
   ns.DB.sessions[SID] = sess
+  -- a later session of the same character (a mail taken there, more than an hour after a purchase of the first)
+  local SID2 = "t-auctions-2"
+  ns.DB.sessions[SID2] = { id = SID2, guid = guid, startedEpoch = T + 3700, startedMono = 5000, endedEpoch = T + 7300, gained = 0, spent = 0, gold = {}, goldLog = {} }
   local function ahRows(t) ns.DB.loot.ah = { posted = t.posted or {}, bought = t.bought or {}, sold = t.sold or {}, returned = t.returned or {} } end
   local function find(rows, what, item) local out = {}; for _, r in ipairs(rows) do if r.what == what and (item == nil or r.item == item) then out[#out + 1] = r end end return out end
 
@@ -49,9 +54,9 @@ return function(P)
       { s = SID, t = T + 136, item = "Golden Sansam", id = 13464, count = 20, kind = "mail" },
       -- deliveries with no purchase stored at all
       { s = SID, t = T + 200, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
-      -- a purchase delivered more than an hour later is not this mail's
+      -- a mail taken in another session, more than an hour after the purchase, is not this purchase's
       { s = SID, t = T + 300, item = "Black Lotus", id = 13468, count = 3, price = 281985, unit = 93995, kind = "commodity" },
-      { s = SID, t = T + 300 + 3601, item = "Black Lotus", id = 13468, count = 3, kind = "mail", seller = "Acornelius Thost" },
+      { s = SID2, t = T + 300 + 3601, item = "Black Lotus", id = 13468, count = 3, kind = "mail", seller = "Acornelius Thost" },
       -- PlaceBid rows: one named by the old rule (a guess), one named by its invoice, one never named
       { s = SID, t = T + 400, auctionId = 71, price = 16046, count = 1, kind = "item", item = "Silk Cloth", id = 4306 },
       { s = SID, t = T + 401, auctionId = 72, price = 16499, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051, named = "invoice", seller = "Bagmaker" },
@@ -75,23 +80,23 @@ return function(P)
   do
     local rows, sum = Market.buildAuctions()
     local mine = {}
-    for _, r in ipairs(rows) do if r.s == SID then mine[#mine + 1] = r end end
+    for _, r in ipairs(rows) do if r.s == SID or r.s == SID2 then mine[#mine + 1] = r end end
     local mage = find(mine, "Bought", "Mageweave Cloth")
     check("auctions: a purchase of 120 and its six delivery mails are one Bought row with the price", #mage == 1 and mage[1].price == 53300 and mage[1].count == 120, #mage)
     eq("auctions: the delivery mail gives the seller to its purchase", mage[1].note, "Neti One")
-    check("auctions: no delivery of it is listed", #find(mine, "Won", "Mageweave Cloth") == 0)
+    check("auctions: no delivery of it is listed", #find(mine, "Collected", "Mageweave Cloth") == 0 and #find(mine, "Won") == 0)
     local gs = find(mine, "Bought", "Golden Sansam")
     check("auctions: three purchases of one item stay three rows, each with its own price", #gs == 3 and gs[1].price + gs[2].price + gs[3].price == 22780 + 22780 + 22763, #gs)
-    local won = find(mine, "Won")
+    local won = find(mine, "Collected")
     local names = {}
     for _, r in ipairs(won) do names[#names + 1] = r.item end
     table.sort(names)
-    eq("auctions: a delivery with no purchase to take it up is Won: the fourth Sansam, the Wool Cloth, the late Black Lotus", table.concat(names, ","), "Black Lotus,Golden Sansam,Wool Cloth")
+    eq("auctions: a delivery with no purchase to take it up is Collected: the fourth Sansam, the Wool Cloth, the late Black Lotus", table.concat(names, ","), "Black Lotus,Golden Sansam,Wool Cloth")
     local priced = true
     for _, r in ipairs(won) do if r.price ~= nil then priced = false end end
-    check("auctions: a Won row has no price", priced)
+    check("auctions: a Collected row has no price", priced)
     local lotus = find(mine, "Bought", "Black Lotus")
-    check("auctions: a mail more than an hour after the purchase is not taken up by it", #lotus == 1 and lotus[1].price == 281985 and lotus[1].note == "")
+    check("auctions: a mail of another session more than an hour after the purchase is not taken up by it", #lotus == 1 and lotus[1].price == 281985 and lotus[1].note == "")
     -- the bids
     local unnamed, bag = {}, nil
     for _, r in ipairs(find(mine, "Bought")) do
@@ -126,7 +131,7 @@ return function(P)
     check("auctions of a session: sold 4, what the buyers paid, the cut, the deposits, the mail money", sum.sold == 4 and sum.sales == 1043 + 1211 + 29000 + 759 and sum.cut == 52 + 60 + 1450 + 37
       and sum.deposit == 156 + 20 + 600 + 52 and sum.mail == 1147 + 1171 + 28150 + 774, sum.sales)
     eq("auctions of a session: the mail money is sales minus cut plus deposits", sum.mail, sum.sales - sum.cut + sum.deposit)
-    check("auctions of a session: bought 8, won 3, posted 3, expired 1", sum.bought == 8 and sum.won == 3 and sum.posted == 3 and sum.expired == 1, ("%d %d %d %d"):format(sum.bought, sum.won, sum.posted, sum.expired))
+    check("auctions of a session: bought 8, 2 deliveries with no purchase (the third is another session's), posted 3, expired 1", sum.bought == 8 and sum.won == 2 and sum.posted == 3 and sum.expired == 1, ("%d %d %d %d"):format(sum.bought, sum.won, sum.posted, sum.expired))
     local a = GP.auctionAnswer(sc.ledger)
     check("answer: Spent and Received are the ledger's, Net is Received minus Spent", a.spent == 453000 and a.received == 31242 and a.net == 31242 - 453000)
     local plain = table.concat(a.segs, " | "):gsub("|T.-|t", ""):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " ")
@@ -178,12 +183,113 @@ return function(P)
     Market.mailItem("Auction won", "Iron Bar", 3575, 20, {})
     check("capture: a purchase of another character takes no mail of this one", list[9].delivered == nil and list[10].kind == "mail" and list[10].item == "Iron Bar")
     ns.DB.sessions["t-auctions-other"] = nil
+    -- A bid named at bid time (C_AuctionHouse.PlaceBid with the item asked from the client): count 1 until the mail.
+    -- Its won mail, whose invoice names its price, is taken up by it whatever the stack and however late.
+    do
+      local n0 = #list
+      Market.bought({ auctionId = 601, price = 4000, count = 1, kind = "item", item = "Runecloth", id = 14047, named = "bid" })
+      M.epoch = M.epoch + 30
+      local b = Market.mailItem("Auction won", "Runecloth", 14047, 20, { seller = "Clothier", bid = 4000 })
+      check("capture: a bid named at the bid takes up its won mail of a stack: one row, the mail's count, the seller", #list == n0 + 1 and b == list[n0 + 1] and b.count == 20 and b.delivered == 20 and b.seller == "Clothier"
+        and b.named == "bid" and b.price == 4000, #list - n0)
+      Market.bought({ auctionId = 602, price = 9000, count = 1, kind = "item", item = "Lichbane", id = 20083, named = "bid" })
+      M.epoch = M.epoch + 2 * 3600
+      b = Market.mailItem("Auction won", "Lichbane", 20083, 1, { bid = 9000 })
+      check("capture: and its mail two hours later", #list == n0 + 2 and b == list[n0 + 2] and b.delivered == 1 and b.count == 1, #list - n0)
+      -- a second mail of the same item at the same price is not the same auction
+      b = Market.mailItem("Auction won", "Lichbane", 20083, 1, { bid = 9000 })
+      check("capture: a bid takes one mail, a second one of the same item and price is a row of its own", #list == n0 + 3 and b.kind == "mail", #list - n0)
+      -- an invoice of another amount is not this bid's
+      Market.bought({ auctionId = 603, price = 5000, count = 1, kind = "item", item = "Felcloth", id = 14256, named = "bid" })
+      M.epoch = M.epoch + 2 * 3600
+      b = Market.mailItem("Auction won", "Felcloth", 14256, 4, { bid = 5001 })
+      check("capture: a mail whose invoice names another amount is not the bid's", #list == n0 + 5 and b.kind == "mail" and list[n0 + 4].delivered == nil and list[n0 + 4].count == 1)
+      -- a commodity purchase whose mails come more than an hour later, in the same session: still its own
+      Market.bought({ item = "Tender Wolf Meat", id = 12208, count = 40, price = 10579, kind = "commodity" })
+      M.epoch = M.epoch + 96 * 60
+      Market.mailItem("Auction won", "Tender Wolf Meat", 12208, 20, {})
+      b = Market.mailItem("Auction won", "Tender Wolf Meat", 12208, 20, {})
+      check("capture: the mails of a purchase of the same session are counted on it, also 96 minutes later", #list == n0 + 6 and b == list[n0 + 6] and b.delivered == 40)
+      b = Market.mailItem("Auction won", "Tender Wolf Meat", 12208, 20, {})
+      check("capture: one more mail than was bought is a row of its own", #list == n0 + 7 and b.kind == "mail")
+      for i = #list, n0 + 1, -1 do list[i] = nil end
+    end
     -- the rows these captures give the pane
     local rows = Market.buildAuctions()
     local won, bought = 0, 0
-    for _, r in ipairs(rows) do if r.s == SID then if r.what == "Won" then won = won + 1 elseif r.what == "Bought" then bought = bought + 1 end end end
+    for _, r in ipairs(rows) do if r.s == SID then if r.what == "Collected" then won = won + 1 elseif r.what == "Bought" then bought = bought + 1 end end end
     check("capture: the pane then lists 4 purchases and 5 deliveries with no purchase", bought == 4 and won == 5, bought .. " " .. won)
     ns.DB.active = active
+  end
+
+  -- ── review round 1: shapes of the founder's save that showed a wrong number or one trade twice ───────────────
+  do
+    ahRows({
+      bought = {
+        -- Tender Wolf Meat x40 bought, its two delivery mails 96 minutes later in the same session (18 Nov 10:43, 12:19)
+        { s = SID, t = T + 10, item = "Tender Wolf Meat", id = 12208, count = 40, price = 10579, kind = "commodity" },
+        { s = SID, t = T + 10 + 5760, item = "Tender Wolf Meat", id = 12208, count = 20, kind = "mail" },
+        { s = SID, t = T + 10 + 5760, item = "Tender Wolf Meat", id = 12208, count = 20, kind = "mail" },
+        -- Wool Cloth x120 bought, nine mails of 20: six are its own, three have no purchase (19 Nov 21:53)
+        { s = SID, t = T + 6000, item = "Wool Cloth", id = 2592, count = 120, price = 17000, kind = "commodity" },
+        { s = SID, t = T + 6060, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" }, { s = SID, t = T + 6060, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
+        { s = SID, t = T + 6061, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" }, { s = SID, t = T + 6061, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
+        { s = SID, t = T + 6062, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" }, { s = SID, t = T + 6062, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
+        { s = SID, t = T + 6063, item = "Wool Cloth", id = 2592, count = 20, kind = "mail", seller = "Ann" }, { s = SID, t = T + 6063, item = "Wool Cloth", id = 2592, count = 20, kind = "mail", seller = "Ann" },
+        { s = SID, t = T + 6064, item = "Wool Cloth", id = 2592, count = 20, kind = "mail", seller = "Bob" },
+        -- one more Wool Cloth mail ten minutes later: not the same visit, a row of its own
+        { s = SID, t = T + 6700, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
+      },
+      posted = {
+        -- ten auctions of one breastplate each, posted in one call at 10s each (the founder's save: Runed Copper Breastplate)
+        { s = SID, t = T + 100, item = "Runed Copper Breastplate", id = 2864, count = 10, bid = 900, buyout = 1000, hours = 24, kind = "item" },
+        -- a commodity lot of 3 at 55s each
+        { s = SID, t = T + 101, item = "Ironweb Spider Silk", id = 14227, count = 3, unit = 5500, buyout = 16500, hours = 24, kind = "commodity" },
+      },
+      sold = {
+        { s = SID, t = T + 200, item = "Runed Copper Breastplate", bid = 1000, buyout = 1000, cut = 50, deposit = 30, net = 980 },
+        { s = SID, t = T + 201, item = "Runed Copper Breastplate", bid = 1000, buyout = 1000, cut = 50, deposit = 30, net = 980 },
+        { s = SID, t = T + 202, item = "Ironweb Spider Silk", bid = 16500, buyout = 3, cut = 825, deposit = 150, net = 15825 },
+        -- rows written before 0.9.46: `net` was the purse change of several mails (7 Nov, Azora's Will and Moccasins)
+        { s = SID, t = T + 300, item = "Azora's Will", bid = 4400, buyout = 4400, cut = 220, deposit = 210, net = 7607 },
+        { s = SID, t = T + 301, item = "Moccasins of the White Hare", bid = 3800, buyout = 3800, cut = 190, deposit = 286, net = 2176 },
+      },
+    })
+    -- a stored row of a session whose record is gone (the desktop app picked it up): whose it is, is not known
+    ns.DB.loot.ah.sold[#ns.DB.loot.ah.sold + 1] = { s = "t-auctions-gone", t = T + 50, item = "Linen Cloth", bid = 100, buyout = 100, cut = 5, deposit = 1, net = 96 }
+    local rows, all = Market.buildAuctions()
+    local mine = {}
+    for _, r in ipairs(rows) do if r.s == SID then mine[#mine + 1] = r end end
+    local meat = find(mine, "Bought", "Tender Wolf Meat")
+    check("round 1: a purchase and its mails 96 minutes later in the same session are one row", #meat == 1 and meat[1].price == 10579 and #find(mine, "Collected", "Tender Wolf Meat") == 0)
+    local wool, loose = find(mine, "Bought", "Wool Cloth"), find(mine, "Collected", "Wool Cloth")
+    check("round 1: six of nine mails are the purchase's; the three left over are one Collected row of 60, the later one its own row", #wool == 1 and #loose == 2 and loose[1].count == 20 and loose[1].mails == 1
+      and loose[2].count == 60 and loose[2].mails == 3 and loose[2].price == nil, #loose .. " " .. tostring(loose[2] and loose[2].count))
+    eq("round 1: a folded row names a seller only when its mails agree", loose[2].note, "")
+    eq("round 1: the sum counts the four mails with no purchase", all.won, 4)
+    local post = find(mine, "Posted", "Runed Copper Breastplate")[1]
+    check("round 1: ten auctions posted at once: the row says so and its price is the price of one", post.lots == true and post.count == 10 and post.price == 1000)
+    local plate = find(mine, "Sold", "Runed Copper Breastplate")
+    check("round 1: a sale of one of them takes no count from the posting of ten", #plate == 2 and plate[1].count == nil and plate[2].count == nil, tostring(plate[1].count) .. " " .. tostring(plate[2].count))
+    local silk = find(mine, "Sold", "Ironweb Spider Silk")[1]
+    check("round 1: a commodity lot sold whole still gives its count", silk.count == 3 and find(mine, "Posted", "Ironweb Spider Silk")[1].lots == nil)
+    local az, moc = find(mine, "Sold", "Azora's Will")[1], find(mine, "Sold", "Moccasins of the White Hare")[1]
+    check("round 1: a stored net that is not bid - cut + deposit is dropped, the invoice's figures stay", az.net == nil and az.price == 4400 and az.cut == 220 and az.deposit == 210 and moc.net == nil)
+    check("round 1: a net that is the invoice's sum is kept", plate[1].net == 980 and silk.net == 15825)
+    eq("round 1: the row whose session record is gone is counted, not listed", all.unowned .. "/" .. #find(rows, "Sold", "Linen Cloth"), "1/0")
+    -- the tooltips
+    local function tipOf(r) local tip = _G.GameTooltip; tip:ClearLines(); GP.auctionTip(nil, r, tip); return (table.concat(tip.lines or {}, "\n"):gsub("|T.-|t", ""):gsub("\194\160", " ")) end
+    check("round 1: the hover of a sale with an inconsistent stored net has no Mail paid line", tipOf(az):find("Buyer paid", 1, true) ~= nil and tipOf(az):find("Mail paid", 1, true) == nil, tipOf(az))
+    check("round 1: the hover of a consistent sale keeps it", tipOf(silk):find("Mail paid", 1, true) ~= nil and tipOf(silk):find("Each", 1, true) ~= nil)
+    check("round 1: the hover of ten auctions posted at once divides nothing", tipOf(post):find("Each", 1, true) == nil and tipOf(post):find("The price is for one of them", 1, true) ~= nil, tipOf(post))
+    check("round 1: the hover of a Collected row says what it is", tipOf(loose[2]):find("Price: Not recorded", 1, true) ~= nil and tipOf(loose[2]):find("Mails", 1, true) ~= nil)
+    -- the period: the sale mails by their invoices, and the rows no list shows
+    local list, sum = GP.auctions({ lifetime = true, ledger = {} })
+    eq("round 1: all time counts the row it cannot list", sum.unowned, 1)
+    local _, sumS = GP.auctions({ sessions = { sess }, ledger = {} })
+    eq("round 1: the mail money of a period is the invoices' (sales - cut + deposits), never a stored net", sumS.mail, sumS.sales - sumS.cut + sumS.deposit)
+    eq("round 1: a period of sessions cannot count the rows of sessions that are gone", sumS.unowned, 0)
+    eq("round 1: four delivery mails with no purchase in the session", sumS.won, 4)
   end
 
   -- ── journal: the item behind an auction row ────────────────────────────────────────────────────────────────
@@ -252,6 +358,7 @@ return function(P)
   end
 
   ns.DB.sessions[SID] = nil
+  ns.DB.sessions[SID2] = nil
   ns.DB.loot.ah = keep.ah
   M.epoch = keep.epoch
   ns.Recorder.current = keep.current

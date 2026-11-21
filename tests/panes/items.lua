@@ -42,7 +42,7 @@ return function(P)
         eq(tag .. ": the pane hands its live rows to readers", content.lootRows, tbl.rows)
         local hid = content.lootCols or {}
         eq(tag .. ": the columns of 4.1 (From and Place only while a third of the rows have a value)", keys(tbl),
-          mode == "newest" and ("time,icon,item" .. (hid.from and "" or ",from") .. (hid.loc and "" or ",loc") .. (wide and ",coords" or "")) or "icon,item,qty,last")
+          mode == "newest" and ("time,icon,item" .. (hid.from and "" or ",from") .. (hid.loc and "" or ",loc") .. ((wide and not hid.coords) and ",coords" or "")) or "icon,item,qty,last")
         check(tag .. ": no Value, Vendor price or Qty column", tbl.head.price == nil and tbl.head.times == nil and tbl.head.first == nil)
         -- the control row: segmented, quality filter, search 176, right to left, S2 apart, inside the window
         local seg, qf, se = P.box(content.lootModeControl), P.box(content.lootQuality), P.box(content.search)
@@ -95,11 +95,11 @@ return function(P)
           local src = e.src or ""
           if e.item and not e.money and not e.mail and not src:find("^Auction ") and not src:find("^Mail") and (not first or e.t < first) then first = e.t end
         end
-        local n = 0
-        for _, r in ipairs(rows) do n = n + (r.item.agg and r.item.drops or 1) end
+        local n = #rows
         check(tag .. ": no answer line; the section header is the first thing on the page", content.lootSummary == nil and math.abs(P.box(content.lootSection).t - P.box(tbl.frame).t + UI.H.SECTION) < 0.51)
         eq(tag .. ": the header says where the list starts", content.lootSection.label:GetText(), UI.upper("Items since " .. UI.fmtSince(first)))
-        eq(tag .. ": its meta counts the looted rows shown", content.lootSection.meta:GetText(), UI.plural(n, "item"))
+        -- (a row of the list is a pickup, of one item or a stack; a row of By item is an item)
+        eq(tag .. ": its meta counts the rows shown as what they are", content.lootSection.meta:GetText(), UI.plural(n, mode == "byitem" and "item" or "pickup"))
       end
     end
   end
@@ -249,7 +249,7 @@ return function(P)
     }, " ; "))
     check("Items real shapes: an auction purchase, a mail and a returned auction are not listed", #rows == 11)
     eq("Items real shapes: the header starts at the oldest item kept, whatever the filter", content.lootSection.label:GetText(), UI.upper("Items since " .. UI.fmtSince(now - 9000)))
-    eq("Items real shapes: the meta counts the rows in the filter's words", content.lootSection.meta:GetText(), "11 green or better")
+    eq("Items real shapes: the meta counts the pickups in the filter's words", content.lootSection.meta:GetText(), "11 pickups green or better")
     local function rowOf(name) for _, r in ipairs(dataRows(tbl)) do if strip(r.c.item:GetText()) == name then return r end end end
     local function tipOf(r) tip:ClearLines(); r.scripts.OnEnter(r); local t = table.concat(tip.lines or {}, "\n"); r.scripts.OnLeave(r); return t end
     check("Items real shapes: Enemy says Name not recorded on hover", tipOf(rowOf("Hibernal Armor")):find("Enemy: Name not recorded", 1, true) ~= nil, tipOf(rowOf("Hibernal Armor")))
@@ -259,8 +259,9 @@ return function(P)
     check("Items real shapes: a row of 0.9.52 that came with no loot window shows the place it was stamped with", rowOf("Weed Whacker").c.loc:GetText() == "Felwood" and tipOf(rowOf("Weed Whacker")):find("Place: Felwood", 1, true) ~= nil)
     check("Items real shapes: a named source says nothing more on hover", tipOf(rowOf("Formula: Enchant Bracer")):find("Not recorded", 1, true) == nil)
     eq("Items real shapes: the helpers the pane reads", table.concat({ tostring(ns._test.lootFrom({ src = "Creature" })), tostring(ns._test.lootFrom({ src = "Picked up" })), tostring(ns._test.lootFrom({ src = "Quest reward" })),
-      tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar" })), tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar", pushed = true })), tostring(ns._test.lootPlace({ src = "Kobold", zone = "Durotar" })) }, ","),
-      "Enemy,nil,Quest,nil,Durotar,Durotar")
+      tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar" })), tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar", pushed = true })), tostring(ns._test.lootPlace({ src = "Kobold", zone = "Durotar" })),
+      tostring(ns._test.lootPlace({ src = "Kobold", zone = "Durotar", guid = "Creature-0-1-1-1-6-00AA" })), tostring(ns._test.lootFrom({ src = "Kobold" })), tostring(ns._test.lootFrom({ src = "Kobold", guid = "Creature-0-1-1-1-6-00AA" })) }, ","),
+      "Enemy,nil,Quest,nil,Durotar,nil,Durotar,nil,Kobold")
     -- search reads what the row shows
     typeIn(content.search, "enemy")
     eq("Items real shapes: a search for Enemy finds the two rows that say so", #dataRows(tbl), 2)
@@ -277,7 +278,7 @@ return function(P)
     check("Items real shapes: the columns come back with the rows", tbl.cols.from ~= nil and tbl.cols.loc ~= nil)
     -- By item on the same rows
     content.setLootMode("byitem"); M.settle()
-    eq("Items real shapes: By item counts the same looted rows", content.lootSection.meta:GetText(), "11 green or better")
+    eq("Items real shapes: By item counts its own rows, items", content.lootSection.meta:GetText(), "11 items green or better")
     content.setLootMode("newest")
     -- the capture of 0.9.52: an item that reaches the bags with no loot window is stamped where the character stands
     local keepZone, keepMap = M.zone, M.uiMap
@@ -291,20 +292,152 @@ return function(P)
     local e = log[#log]
     check("Items capture: a pushed row is stamped at the pickup, with its map, and marked", #log == n0 + 1 and e.item == "Rolled Ring" and e.zone == "Westfall" and e.pushed == true and (e.map == nil or e.map == 52), tostring(e.zone) .. " " .. tostring(e.map))
     check("Items capture: its source is never the on-screen placeholder", e.src ~= "an enemy", e.src)
+    check("Items capture: a pushed row with no kill and no opened object behind it says nothing of how it was named", (e.src == "Picked up") == (e.srcBy == nil), tostring(e.src) .. " " .. tostring(e.srcBy))
+    -- a kill, then a pushed item: the name is the last kill's, a guess by timing, and the row says so (srcBy)
+    ns.Emitter.event("KILL", { name = "Pebbles" }, true)
+    M.now = M.now + 2
+    M.fire("CHAT_MSG_LOOT", "You receive loot: |cff1eff00|Hitem:9004::::::::12:::::|h[Head of Someone]|h|r.")
+    e = log[#log]
+    check("Items capture: an item pushed after a kill is marked as named by that kill", e.item == "Head of Someone" and e.src == "Pebbles" and e.pushed == true and e.srcBy == "kill", tostring(e.src) .. " " .. tostring(e.srcBy))
+    eq("Items capture: the pane shows no name for it, Enemy with Name not recorded", table.concat({ ns._test.lootFrom(e) }, "|"), "Enemy|Name not recorded")
+    M.now = M.now + 30
     -- a kill whose name the client hid, then a pushed item: Creature, as a loot window stores it
     ns.Emitter.event("KILL", { name = "an enemy" }, true)
     M.now = M.now + 2
     M.fire("CHAT_MSG_LOOT", "You receive loot: |cff1eff00|Hitem:9002::::::::12:::::|h[Rolled Cloak]|h|r.")
     e = log[#log]
     check("Items capture: an item after a kill with a hidden name is stored as Creature, never as an enemy", e.item == "Rolled Cloak" and e.src == "Creature" and e.pushed == true, e.src)
-    -- a loot window: the row keeps the window's place and is not marked
+    -- a loot window: the row names the window's mob, is stamped when the item arrives and is not marked
     M.units.target = { name = "Defias Thug", hostile = true, dead = true, guid = "Creature-0-1-1-1-7-00AB" }
+    M.zone, M.uiMap = "Duskwood", 47
     M.fire("LOOT_OPENED"); M.units.target = nil
+    M.zone, M.uiMap = "Westfall", 52
     M.fire("CHAT_MSG_LOOT", "You receive loot: |cff1eff00|Hitem:9003::::::::12:::::|h[Looted Belt]|h|r.")
     e = log[#log]
-    check("Items capture: a row from a loot window names the mob, has the window's place and no mark", e.item == "Looted Belt" and e.src == "Defias Thug" and e.zone == "Westfall" and e.pushed == nil, tostring(e.src) .. " " .. tostring(e.pushed))
+    check("Items capture: a row from a loot window names the mob, is stamped where the item arrived and has no mark", e.item == "Looted Belt" and e.src == "Defias Thug" and e.zone == "Westfall" and e.pushed == nil and e.srcBy == nil
+      and e.guid == "Creature-0-1-1-1-7-00AB", tostring(e.src) .. " " .. tostring(e.zone) .. " " .. tostring(e.pushed))
+    eq("Items capture: the pane shows the loot window's name", tostring((ns._test.lootFrom(e))), "Defias Thug")
     M.now = M.now + 30
     M.zone, M.uiMap = keepZone, keepMap
+    for i = #log, 1, -1 do log[i] = nil end
+    for i, x in pairs(keep) do log[i] = x end
+    content.setLootQuality("green")
+  end
+
+  -- ── review round 1 (docs/UX_PRAGMATIC.md 0.2.1): a place, a name or a quest is shown only when the stored rows
+  --    prove it. Rows written before 0.9.52 (no `map`, no `pushed`), shaped like the founder's of 20 Nov 2026. ──
+  do
+    local content = open(1600, 1000, "normal", "newest", "all")
+    local log = ns.DB.loot.log
+    local keep = {}
+    for i = #log, 1, -1 do keep[i] = log[i]; log[i] = nil end
+    local sid, now = ns.DB.active, GetServerTime()
+    local sess = ns.DB.sessions[sid]
+    local nSeg, events = #sess.segments, ns.DB.story.events
+    local nEv = #events
+    local c0 = ns.char()
+    local keepRuns = c0.goldRuns
+    local Gq, W = "ff1eff00", "ffffffff"
+    local function add(dt, item, src, more)
+      local e = { t = now - dt, item = item, count = 1, q = Gq, src = src, s = sid, id = 2000 + #log }
+      for k, v in pairs(more or {}) do e[k] = v end
+      log[#log + 1] = e
+      return e
+    end
+    local function kill(dt, name) sess.segments[#sess.segments + 1] = ("%d\t%d\t%.3f\tKILL\t%s"):format(#sess.segments + 1, now - dt, 1, name) end
+    local function coin(dt, x, y) log[#log + 1] = { t = now - dt, money = 120, src = "Creature", s = sid, zone = "Mount Hyjal", x = x, y = y } end
+    local STALE = { zone = "Mount Hyjal", x = 0.6903, y = 0.6981 }
+    -- a loot window at -2000 s: a herb, stamped 69.0, 69.8. Every later pushed item reuses that stamp for 33 minutes.
+    add(2000, "Hyjal Herb", "Herb node", STALE)
+    add(1995, "Hyjal Herb Seed", "Herb node", STALE)
+    kill(1500, "Forgotten Soldier"); coin(1498, 0.2225, 0.5418)
+    add(1499, "Formula: Enchant Bracer", "Forgotten Soldier", STALE)
+    add(1300, "Bear Berries", "Bear Berries", { zone = "Mount Hyjal", x = 0.6903, y = 0.6981, q = W })   -- (an opened world object: no kill of that name)
+    kill(1105, "Jammal'an the Prophet"); kill(1101, "Pebbles")
+    add(1100, "Head of Jammal'an", "Pebbles", { zone = "The Temple of Atal'Hakkar", q = W })
+    kill(1000, "Healing Ward")
+    add(990, "Deadwood Tribal Beads", "Healing Ward", STALE)
+    -- a mob looted through its loot window: the row carries the loot GUID and a fresh stamp
+    add(900, "Battlefield Destroyer", "Vilebranch Warrior", { zone = "The Hinterlands", x = 0.678, y = 0.638, guid = "Creature-0-1-1-1-2649-00AA" })
+    -- a name with a kill of another name 5 s before it, and a kill of its own name 25 s before: neither names it
+    kill(825, "Vilebranch Scalper"); kill(805, "Someone Else")
+    add(800, "Scalper Loot", "Vilebranch Scalper", { zone = "The Hinterlands", x = 0.5, y = 0.5 })
+    -- two quests turned in 1 s apart, a reward of each; then one quest alone
+    local function done(dt, name) events[#events + 1] = { kind = "QUESTDONE", s = sid, t = now - dt, text = "Complete: " .. name } end
+    done(700, "Final Death"); done(699, "Blight No More")
+    add(700, "Lichbane", "Quest reward", { zone = "Mount Hyjal" })
+    add(699, "Plaguecrusher Greaves", "Quest reward", { zone = "Mount Hyjal" })
+    done(600, "A Rest Without Pain")
+    add(600, "Manual: Major Healing Potion", "Quest reward", { zone = "Mount Hyjal" })
+    -- a row of a session whose record is gone cannot be judged: no name
+    log[#log + 1] = { t = now - 500, item = "Orphan Blade", count = 1, q = Gq, src = "Some Mob", s = sid, zone = "Tanaris", x = 0.3, y = 0.3 }
+    content.setLootQuality("all"); M.settle()
+    local tbl = content.lootTables.newest
+    local F, Pl, XY = ns._test.lootFrom, ns._test.lootPlace, ns._test.lootCoords
+    local function row(name) for _, e in ipairs(log) do if e.item == name then return e end end end
+    local function says(name) local e = row(name); local f, why = F(e); return tostring(f) .. "/" .. tostring(why) .. "/" .. tostring(Pl(e)) .. "/" .. tostring(XY(e)) end
+    eq("Items truth: the loot window's own rows keep their place and coordinates", says("Hyjal Herb") .. " ; " .. says("Hyjal Herb Seed"), "Herb node/nil/Mount Hyjal/69.0, 69.8 ; Herb node/nil/Mount Hyjal/69.0, 69.8")
+    eq("Items truth: a row named by the last kill shows Enemy, and neither the stale place nor its coordinates", says("Formula: Enchant Bracer"), "Enemy/Name not recorded/nil/nil")
+    eq("Items truth: a party member's name is never the source", says("Head of Jammal'an"), "Enemy/Name not recorded/nil/nil")
+    eq("Items truth: nor a totem's", says("Deadwood Tribal Beads"), "Enemy/Name not recorded/nil/nil")
+    eq("Items truth: an opened world object keeps its name; its stamp is still the old loot window's, so no place", says("Bear Berries"), "Bear Berries/nil/nil/nil")
+    eq("Items truth: a name with the loot window's GUID is shown, with its place", says("Battlefield Destroyer"), "Vilebranch Warrior/nil/The Hinterlands/67.8, 63.8")
+    eq("Items truth: a name with no kill of that name in the 20 s before it is not a kill guess (the capture counts 15 s): it stays, with no place", says("Scalper Loot"), "Vilebranch Scalper/nil/nil/nil")
+    eq("Items truth: two turn-ins within 5 s: neither reward names a quest", says("Lichbane") .. " ; " .. says("Plaguecrusher Greaves"), "Quest/Quest not recorded/nil/nil ; Quest/Quest not recorded/nil/nil")
+    eq("Items truth: one turn-in within 5 s names the quest", says("Manual: Major Healing Potion"), "Quest: A Rest Without Pain/nil/nil/nil")
+    -- no two shown rows more than 15 s apart share an exact stamp without a loot window of their own
+    do
+      local seen, far, bare = {}, 0, 0
+      for _, r in ipairs(dataRows(tbl)) do
+        local e = r.item
+        if XY(e) and not Pl(e) then bare = bare + 1 end
+        if XY(e) and e.x then
+          local k = e.zone .. "|" .. e.x .. "|" .. e.y
+          if seen[k] and math.abs(seen[k] - e.t) > 15 and not e.guid then far = far + 1 end
+          seen[k] = seen[k] or e.t
+        end
+      end
+      eq("Items truth: no stamp is shown on two rows more than 15 s apart", far, 0)
+      eq("Items truth: no coordinates without a place", bare, 0)
+    end
+    -- the columns: 3 of 12 rows have a place, under a third: no Place column and so no Coords column, even at 1600 px
+    check("Items truth: Coords is never shown without Place", content.lootCols.loc == true and content.lootCols.coords == true and tbl.cols.loc == nil and tbl.cols.coords == nil, tostring(content.lootCols.loc) .. " " .. tostring(content.lootCols.coords))
+    typeIn(content.search, "hyjal herb")
+    check("Items truth: one place on every row shown: no Place column, and no Coords column either", #dataRows(tbl) == 2 and tbl.cols.loc == nil and tbl.cols.coords == nil, #dataRows(tbl))
+    typeIn(content.search, "")
+    local function tipOf(r) tip:ClearLines(); r.scripts.OnEnter(r); local t = table.concat(tip.lines or {}, "\n"); r.scripts.OnLeave(r); return t end
+    local function rowOf(name) for _, r in ipairs(dataRows(tbl)) do if strip(r.c.item:GetText()) == name then return r end end end
+    check("Items truth: the place and coordinates of a row stay in its hover when the columns are left out", tipOf(rowOf("Battlefield Destroyer")):find("Place: The Hinterlands  67.8, 63.8", 1, true) ~= nil, tipOf(rowOf("Battlefield Destroyer")))
+    check("Items truth: a reward with two candidate quests says so on hover", tipOf(rowOf("Lichbane")):find("Quest not recorded", 1, true) ~= nil and tipOf(rowOf("Lichbane")):find("Final Death", 1, true) == nil)
+    -- a row whose session record is gone: nothing can be said about its name
+    do
+      local e = row("Orphan Blade")
+      e.s = "t-items-gone"
+      eq("Items truth: a name whose session record is gone is not shown", tostring((F(e))) .. "/" .. tostring(select(2, F(e))), "nil/Not recorded")
+      e.s = sid
+    end
+    -- the header: a pickup is a row, and the list says when it is not complete
+    row("Bear Berries").count = 7
+    c0.goldRuns = nil
+    content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+    eq("Items truth: the header counts pickups, not items (12 rows hold 18 units)", content.lootSection.meta:GetText(), "12 pickups")
+    c0.goldRuns = { { inst = "Maraudon", t = now - 3000, secs = 600, items = 36 } }
+    content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+    eq("Items truth: a run from before the list's start says nothing about the list", content.lootSection.meta:GetText(), "12 pickups")
+    c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 400, items = 36 } }
+    content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+    eq("Items truth: a run inside the span that counted 36 items where the list holds 2: the header says so", content.lootSection.meta:GetText(), "12 pickups, not every item is kept")
+    check("Items truth: the reason is on the remark's hover, never on the screen", content.lootSection.metaHit and content.lootSection.metaHit.shown ~= false and type(content.lootSection.metaHit.ebTip) == "table"
+      and content.lootSection.metaHit.ebTip.text:find("desktop app", 1, true) ~= nil)
+    c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 400, items = 2 } }
+    content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+    eq("Items truth: a run whose 2 items are both in the list leaves no remark", content.lootSection.meta:GetText(), "12 pickups")
+    content.setLootMode("byitem"); M.settle()
+    eq("Items truth: By item counts items", content.lootSection.meta:GetText(), "12 items")
+    content.setLootMode("newest"); M.settle()
+    c0.goldRuns = keepRuns
+    for i = #sess.segments, nSeg + 1, -1 do sess.segments[i] = nil end
+    for i = #events, nEv + 1, -1 do events[i] = nil end
     for i = #log, 1, -1 do log[i] = nil end
     for i, x in pairs(keep) do log[i] = x end
     content.setLootQuality("green")

@@ -716,13 +716,15 @@ end
 if #pushed.PRE == 0 then pushed.PRE = { "You receive item:" } end
 pushed.recent = {}   -- { at = GetTime(), item = name, src = stored source }: the pushed lines of the last seconds
 pushed.REQUEST_S = 3
+-- Returns the source, nil (no loot GUID), and how it was named: "object" (the world object opened in the last 15 s),
+-- "kill" (the last kill of the last 15 s, a guess by timing: the pane shows no name for it), nil otherwise.
 local function pushedSource(msg, item)
   local now = GetTime()
   local line = false
   if type(msg) == "string" then
     for _, pre in ipairs(pushed.PRE) do if msg:sub(1, #pre) == pre then line = true end end
   end
-  if pushed.obj and (now - pushed.obj.at) < 15 then return pushed.obj.name or "Object", nil end
+  if pushed.obj and (now - pushed.obj.at) < 15 then return pushed.obj.name or "Object", nil, "object" end
   if (now - pushed.turnIn) < 5 then return "Quest reward", nil end
   -- (a kill whose name the client hid is "Creature", the word a loot window stores for it: the on-screen
   -- placeholder "an enemy" is never stored as a source)
@@ -733,7 +735,7 @@ local function pushedSource(msg, item)
     keep[#keep + 1] = { at = now, item = item, src = src }
     pushed.recent = keep
   end
-  return src, nil
+  return src, nil, (src ~= "Picked up") and "kill" or nil
 end
 -- QUEST_TURNED_IN: the pushed items of the last pushed.REQUEST_S seconds that named no world object are this
 -- turn-in's reward. Only rows written a moment ago by this session are touched, never older data. Returns how many
@@ -747,7 +749,7 @@ function pushed.request()
         for i = #list, math.max(1, #list - 20), -1 do
           local e = list[i]
           if type(e) == "table" and not e.money and e.item == r.item and e.src == r.src and (list == sessionLoot or e.s == ns.DB.active) then
-            e.src, e.guid = "Quest reward", nil
+            e.src, e.guid, e.srcBy = "Quest reward", nil, nil
             if list ~= sessionLoot then n = n + 1 end
             break
           end
@@ -2789,11 +2791,12 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
       local tnow = (GetServerTime and GetServerTime()) or time()
       -- no loot window in the last ~15s: the item was pushed, attribute it to what just happened instead
-      -- (0.9.52, gate G: such a row is stamped where the character stands now and marked `pushed`. Before, it took
-      -- the place of the last loot window, which could be another zone or none at all.)
+      -- (0.9.52, gate G: every row is stamped where the character stands when the item arrives, and a row with no
+      -- loot window is marked `pushed` and says how its source was named, `srcBy`. Before, a row took the place of
+      -- the last loot window, which could be minutes old, another zone or none at all.)
       local src, srcGUID = lootSource, lootSourceGUID
-      local at, wasPushed = lootLoc, nil
-      if GetTime() > lootWindowUntil + 12 then src, srcGUID = pushedSource(msg, item); at, wasPushed = locStamp(), true end
+      local at, wasPushed, srcBy = locStamp(), nil, nil
+      if GetTime() > lootWindowUntil + 12 then src, srcGUID, srcBy = pushedSource(msg, item); wasPushed = true end
       local quest = nil
       if id and GetItemInfoInstant then local _, _, _, _, _, classID = GetItemInfoInstant(id); if classID == 12 then quest = true end end
       local entry = { t = tnow, item = item, count = count, q = q, icon = icon, src = src, quest = quest, id = id }
@@ -2805,7 +2808,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
         ns.DB.loot.log = ns.DB.loot.log or {}
         ns.DB.loot.log[#ns.DB.loot.log + 1] = {
           t = tnow, item = item, count = count, q = q, icon = icon, src = src, guid = srcGUID, s = ns.DB.active, quest = quest, id = id,
-          x = at and at.x, y = at and at.y, zone = at and at.zone, map = at and at.map, pushed = wasPushed,
+          x = at and at.x, y = at and at.y, zone = at and at.zone, map = at and at.map, pushed = wasPushed, srcBy = srcBy,
         }
         ns.trimToCap(ns.DB.loot.log, 2000)
       end
@@ -3125,6 +3128,11 @@ if ns.UI and ns.UI.registerTab then
       -- window, which can be another zone, so its place is not shown; from 0.9.52 the row is marked `pushed` and
       -- stamped where it was picked up.
       PUSHED = { ["Picked up"] = true, ["an enemy"] = true, ["Quest reward"] = true },
+      -- what a loot window stores for a source with no unit: shown as stored, they name no one
+      LABEL = { ["Herb node"] = true, ["Mining node"] = true, ["Fishing spot"] = true, ["Skinned creature"] = true, ["Object"] = true },
+      KILL_S = 20,    -- a kill this long before a pickup gave the row its name (capture: 15 s, plus the two clocks)
+      STAMP_S = 15,   -- a loot window's stamp is its rows' own for this long (capture: the window counts 15 s)
+      PARTIAL_TIP = { title = "Not every item is kept", text = "The list holds the items still stored in the game. The items of play sessions the desktop app has already saved are no longer stored here." },
       st = { sortKey = "time", sortAsc = false } }
     local st = IT.st
     local function cfg() return (ns.DB and ns.DB.settings) or {} end
@@ -3146,28 +3154,102 @@ if ns.UI and ns.UI.registerTab then
       if n == "" then return nil end
       return n
     end
+    -- The kills of a session record, name -> their times: the KILL rows of its segments (every kill the addon named
+    -- wrote one). Nil when the record is gone or full, and then nothing can be said about a name.
+    function IT.killsOf(sid)
+      local sess = sid and ns.DB and ns.DB.sessions and ns.DB.sessions[sid]
+      local segs = type(sess) == "table" and sess.segments or nil
+      if type(segs) ~= "table" or #segs >= 5000 then return nil end
+      IT.kills = IT.kills or {}
+      local c = IT.kills[sid]
+      if c and c.n == #segs then return c.by end
+      local by = {}
+      for _, g in ipairs(segs) do
+        if type(g) == "string" then
+          local t, name = g:match("^%d+\t(%d+)\t[^\t]*\tKILL\t(.*)$")
+          if t then by[name] = by[name] or {}; by[name][#by[name] + 1] = tonumber(t) end
+        end
+      end
+      IT.kills[sid] = { n = #segs, by = by }
+      return by
+    end
+    -- How a row got the name in its source (docs/UX_PRAGMATIC.md 0.2.1: a name by timing is not shown):
+    --   "window"  the loot window named it: a row written from 0.9.52 that is not `pushed`, or an older row that
+    --             carries the window's loot GUID
+    --   "object"  the world object opened just before (from 0.9.52 `srcBy`; before it, a name with no kill behind it)
+    --   "kill"    the last kill before the pickup, a guess by timing (from 0.9.52 `srcBy`; before it, the session
+    --             record has a kill of that name in the IT.KILL_S seconds before the row)
+    --   nil       not known: the session record that would tell is gone
+    function IT.namedBy(e, name)
+      if e.pushed then return e.srcBy == "object" and "object" or "kill" end
+      if e.map then return "window" end
+      if type(e.guid) == "string" and e.guid ~= "" then return "window" end
+      local kills = IT.killsOf(e.s)
+      if not kills then return nil end
+      local t = tonumber(e.t) or 0
+      for _, kt in ipairs(kills[name] or {}) do if kt <= t + 1 and t - kt <= IT.KILL_S then return "kill" end end
+      return "object"
+    end
     -- Where it came from, and what the hover says when the cell is short of a name:
-    --   a named source as stored (the legacy " at (x, y)" split off), "Quest: <name>", "Container" (an opened bag
-    --   item: the stored loot GUID starts with Item-), "Enemy" with the tip "Name not recorded" (the client hid the
-    --   name), and nothing at all, tip "Not recorded", for a row with no recorded source.
+    --   a source the loot window or an opened object named, as stored (the legacy " at (x, y)" split off),
+    --   "Quest: <name>", "Container" (an opened bag item: the stored loot GUID starts with Item-), "Enemy" with the
+    --   tip "Name not recorded" (the client hid the name, or the stored name is only the last kill before the
+    --   pickup), and nothing at all, tip "Not recorded", for a row with no recorded source.
     -- Returns text or nil, tip or nil, the legacy coordinates.
     function IT.from(e)
       local srcName, legacy = (e.src or ""):match("^(.-) at (%(.-%))$")
       srcName = srcName or e.src
       if srcName == "Quest reward" then
         local qn = IT.questNames and IT.questNames[e]
-        return qn and ("Quest: " .. qn) or "Quest", nil, legacy
+        return qn and ("Quest: " .. qn) or "Quest", (not qn) and "Quest not recorded" or nil, legacy
       end
       if srcName == "Container" or (srcName == "Unknown source" and type(e.guid) == "string" and e.guid:sub(1, 5) == "Item-") then return "Container", nil, legacy end
       if IT.ENEMY[srcName] then return "Enemy", "Name not recorded", legacy end
       if srcName == nil or srcName == "" or IT.NONE[srcName] then return nil, "Not recorded", legacy end
+      if IT.LABEL[srcName] then return srcName, nil, legacy end
+      local by = IT.namedBy(e, srcName)
+      if by == "kill" then return "Enemy", "Name not recorded", legacy end
+      if by == nil then return nil, "Not recorded", legacy end
       return srcName, nil, legacy
     end
-    -- the zone stamped with the row; nil for a row whose stored place cannot be trusted (IT.PUSHED before 0.9.52)
+    -- Whether the stored place is where this row was picked up. From 0.9.52 every row is stamped as the item arrives
+    -- (`map`, `pushed`). Before, a row carried the stamp of the last loot window, however old, so it counts only
+    -- when the window was this row's own: the row has the window's loot GUID, or it is within IT.STAMP_S seconds of
+    -- the first row of its session with that exact stamp. A row that reached the bags with no loot window (no
+    -- source, a quest reward, a name by the last kill or by an opened object) never had its own.
+    function IT.stampKey(e) return tostring(e.s) .. "|" .. tostring(e.zone) .. "|" .. tostring(e.x) .. "|" .. tostring(e.y) end
+    function IT.readStamps(loot)
+      local first = {}
+      for _, e in ipairs(loot) do
+        local t = tonumber(e.t)
+        if t and e.zone and not (e.pushed or e.map) then
+          local k = IT.stampKey(e)
+          if not first[k] or t < first[k] then first[k] = t end
+        end
+      end
+      IT.firstAt = first
+    end
+    function IT.own(e)
+      if e.pushed or e.map then return true end
+      local src = (e.src or ""):match("^(.-) at %(.-%)$") or e.src or ""
+      if IT.PUSHED[src] then return false end
+      if type(e.guid) == "string" and e.guid ~= "" then return true end
+      if src ~= "" and not (IT.LABEL[src] or IT.ENEMY[src] or IT.NONE[src] or src == "Container") and IT.namedBy(e, src) ~= nil then return false end
+      local first, t = IT.firstAt and IT.firstAt[IT.stampKey(e)], tonumber(e.t)
+      return first ~= nil and t ~= nil and t >= first and t - first <= IT.STAMP_S
+    end
+    -- the zone stamped with the row; nil for a row whose stored place is not its own (IT.own)
     function IT.place(e)
-      if e.agg then return nil end
-      if IT.PUSHED[e.src or ""] and not e.pushed then return nil end
+      if e.agg or not e.zone then return nil end
+      if not IT.own(e) then return nil end
       return e.zone
+    end
+    -- the coordinates of a row that shows its place, as text; nil when it has none
+    function IT.coords(e)
+      if IT.place(e) == nil then return nil end
+      if e.x and e.y then return UI.fmtCoords(e.x, e.y) end
+      local legacy = (e.src or ""):match("^.- at (%(.-%))$")
+      return legacy and (legacy:gsub("[()]", "")) or nil
     end
     -- an auction or mail row: a purchase or a delivery, not loot
     function IT.notLoot(e)
@@ -3204,6 +3286,7 @@ if ns.UI and ns.UI.registerTab then
     ns._test.lootAggregate = IT.aggregate
     ns._test.lootContent = function() return content end
     ns._test.lootFrom, ns._test.lootPlace = function(e) return IT.from(e) end, function(e) return IT.place(e) end
+    ns._test.lootCoords, ns._test.lootIT = function(e) return IT.coords(e) end, IT
     local SORT = {
       time = function(e) return e.t or 0 end, last = function(e) return e.t or 0 end,
       item = function(e) return (IT.name(e) or ""):lower() end, from = function(e) return (IT.from(e) or ""):lower() end,
@@ -3289,7 +3372,7 @@ if ns.UI and ns.UI.registerTab then
         { key = "last", label = "Last looted", kind = "tag", min = 96, sort = true },
       },
     }
-    IT.spec = { from = spec.newest[4], loc = spec.newest[5] }
+    IT.spec = { from = spec.newest[4], loc = spec.newest[5], coords = spec.newest[6] }
     IT.tbls = {}
     -- the name, then its stack count ("x4", fgMuted, a text of its own) S1 after it, then the QUEST badge: the name
     -- shortens inside what is left of the column, the count and the badge never do
@@ -3321,9 +3404,9 @@ if ns.UI and ns.UI.registerTab then
             tip:AddLine(UI.fmtWhen(e.t), 0.78, 0.79, 0.80)
             -- (what a short or blank cell stands for; the reason is never on the screen itself)
             local from, why = IT.from(e)
-            if why then tip:AddLine((from and "Enemy: " or "From: ") .. why, 0.78, 0.79, 0.80) end
-            local place = IT.place(e)
-            if place then tip:AddLine("Place: " .. place, 0.78, 0.79, 0.80) else tip:AddLine("Place: Not recorded", 0.78, 0.79, 0.80) end
+            if why then tip:AddLine((from == "Enemy" and "Enemy: " or from == "Quest" and "" or "From: ") .. why, 0.78, 0.79, 0.80) end
+            local place, xy = IT.place(e), IT.coords(e)
+            if place then tip:AddLine("Place: " .. place .. (xy and ("  " .. xy) or ""), 0.78, 0.79, 0.80) else tip:AddLine("Place: Not recorded", 0.78, 0.79, 0.80) end
           end
         end })
     end
@@ -3354,13 +3437,10 @@ if ns.UI and ns.UI.registerTab then
         if not row.ebBadge then row.ebBadge = UI.Badge(row, "Quest") end
         row.ebBadge:Show()
       elseif row.ebBadge then row.ebBadge:Hide() end
-      local from, _, legacy = IT.from(e)
-      if c.from then c.from:SetText(from or "") end
+      if c.from then c.from:SetText(IT.from(e) or "") end
       if c.loc then c.loc:SetText(IT.place(e) or "") end
-      if c.coords then
-        local ok = IT.place(e) ~= nil
-        c.coords:SetText((ok and e.x and e.y) and UI.fmtCoords(e.x, e.y) or (legacy and legacy:gsub("[()]", "")) or "")
-      end
+      -- (coordinates only beside their place: never for a row whose place is blank, never with the Place column hidden)
+      if c.coords then c.coords:SetText(c.loc and IT.coords(e) or "") end
       if c.qty then c.qty:SetText(UI.fmtNum(e.count or 1)) end
       if c.last then c.last:SetText(UI.fmtDate(e.t or 0)) end
     end
@@ -3379,21 +3459,45 @@ if ns.UI and ns.UI.registerTab then
     content:HookScript("OnSizeChanged", function() pcall(IT.place2) end)
     -- the quest a quest reward belongs to: the QUESTDONE row of the same turn-in (kept beside the rows, never saved)
     function IT.readQuests(loot)
-      IT.questNames = IT.questNames or setmetatable({}, { __mode = "k" })
+      IT.questNames = setmetatable({}, { __mode = "k" })
       local done = {}
       for _, ev in ipairs((ns.DB and ns.DB.story and ns.DB.story.events) or {}) do
         if ev.kind == "QUESTDONE" and type(ev.text) == "string" then done[#done + 1] = ev end
       end
       for _, e in ipairs(loot) do
-        if not e.money and e.src == "Quest reward" and not IT.questNames[e] then
+        if not e.money and e.src == "Quest reward" then
+          -- (named only when one turn-in of the session lies within 5 s: with two, which one gave this item is
+          -- not stored, and the cell reads "Quest")
+          local hit, n = nil, 0
           for _, ev in ipairs(done) do
-            if ev.s == e.s and math.abs((ev.t or 0) - (e.t or 0)) <= 5 then IT.questNames[e] = ev.text:match("^Complete:%s+(.+)$"); break end
+            if ev.s == e.s and math.abs((ev.t or 0) - (e.t or 0)) <= 5 then hit = ev; n = n + 1 end
           end
+          if n == 1 then IT.questNames[e] = hit.text:match("^Complete:%s+(.+)$") end
         end
       end
     end
+    -- Whether the list has a hole after its start: a dungeon run of the character whose stored item count is larger
+    -- than the loot rows the save still holds for its span (the rows of a session the desktop app picked up are
+    -- deleted, the run's own counters stay).
+    function IT.partial(loot, since)
+      local c = ns.DB and ns.charGuid and ns.charGuid() and ns.char and ns.char() or nil
+      if not (c and since and type(c.goldRuns) == "table") then return false end
+      for _, r in ipairs(c.goldRuns) do
+        local t0, n = tonumber(r.t), tonumber(r.items)
+        if t0 and n and n > 0 and t0 >= since then
+          local t1, have = t0 + (tonumber(r.secs) or 0) + 60, 0
+          for _, e in ipairs(loot) do
+            if e.item and not e.money and tonumber(e.t) and e.t >= t0 and e.t <= t1 then have = have + 1 end
+          end
+          if have < n then return true end
+        end
+      end
+      return false
+    end
     -- The section header: where the list starts (the oldest item the save still holds for this character, at any
-    -- quality) and how many rows the filter shows: "ITEMS SINCE TUE 17 NOV", "91 green or better".
+    -- quality) and what the filter shows, counted as what it is: pickups in the list ("89 pickups green or better":
+    -- one row is one pickup, of one item or a stack), items in By item ("74 items green or better": one row is one
+    -- item). The one muted remark, when the list has a hole after its start: ", not every item is kept".
     function IT.head(loot, n, q)
       local first
       for _, e in ipairs(loot) do
@@ -3402,15 +3506,19 @@ if ns.UI and ns.UI.registerTab then
       IT.since = first
       IT.section:SetLabel(first and ("Items since " .. UI.fmtSince(first)) or "Items")
       local meta
+      IT.isPartial = IT.partial(loot, first)
+      local remark = IT.isPartial and q == ""
       if n > 0 then
-        if q ~= "" or st.quality == "all" then meta = UI.plural(n, "item")
-        else meta = ("%d %s"):format(n, (qualityOf(st.quality)[2]:lower():gsub(" and better", " or better"))) end
+        meta = UI.plural(n, st.mode == "byitem" and "item" or "pickup")
+        if not (q ~= "" or st.quality == "all") then meta = meta .. " " .. (qualityOf(st.quality)[2]:lower():gsub(" and better", " or better")) end
+        if remark then meta = meta .. ", not every item is kept" end
       end
-      IT.section:SetMeta(meta)
+      IT.section:SetMeta(meta, (meta and remark) and IT.PARTIAL_TIP or nil)
     end
     lootRebuild = function()
       local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
       IT.readQuests(loot)
+      IT.readStamps(loot)
       local q = search:GetText() or ""
       local rows, list
       if st.mode == "byitem" then rows = IT.sortRows(IT.aggregate(loot, q, IT.matches), st.sortKey, st.sortAsc); list = rows
@@ -3430,18 +3538,22 @@ if ns.UI and ns.UI.registerTab then
         else rows = list end
         -- From and Place show only while a third of the rows have a value; Place also hides when it is the same on
         -- every row (docs/UX_PRAGMATIC.md 0.3). What a hidden column held stays in the row's tooltip.
-        local nFrom, nLoc, same, firstLoc = 0, 0, true, nil
+        local nFrom, nLoc, nXY, same, firstLoc = 0, 0, 0, true, nil
         for _, e in ipairs(list) do
           if IT.from(e) then nFrom = nFrom + 1 end
+          if IT.coords(e) then nXY = nXY + 1 end
           local p = IT.place(e)
           if p then nLoc = nLoc + 1; firstLoc = firstLoc or p; if p ~= firstLoc then same = false end else same = false end
         end
         local hideFrom = #list > 0 and (nFrom == 0 or nFrom * 3 < #list)
         local hideLoc = #list > 0 and (nLoc == 0 or nLoc * 3 < #list or (same and #list > 1))
+        -- (Coords stand beside their Place: hidden with it, and by the same third)
+        local hideXY = hideLoc or (#list > 0 and (nXY == 0 or nXY * 3 < #list))
         local changed = false
         if (IT.spec.from.hide or false) ~= hideFrom then IT.spec.from.hide = hideFrom; changed = true end
         if (IT.spec.loc.hide or false) ~= hideLoc then IT.spec.loc.hide = hideLoc; changed = true end
-        IT.colHidden = { from = hideFrom, loc = hideLoc }
+        if (IT.spec.coords.hide or false) ~= hideXY then IT.spec.coords.hide = hideXY; changed = true end
+        IT.colHidden = { from = hideFrom, loc = hideLoc, coords = hideXY }
         if changed then IT.tbls.newest.relayout(G.mainW(G.winW())) end
       end
       for mode, t in pairs(IT.tbls) do if mode == st.mode then t.frame:Show() else t.frame:Hide() end end
@@ -3449,9 +3561,8 @@ if ns.UI and ns.UI.registerTab then
       tbl.setSort(st.sortKey, st.sortAsc)
       tbl.setRows(rows, IT.fill)
       for i = 1, tbl.shownN do pcall(IT.placeBadge, tbl, tbl.rows[i]) end
-      -- (the count is of looted rows in both modes: By item folds them, it does not count something else)
-      IT.nShown = 0
-      for _, e in ipairs(list) do IT.nShown = IT.nShown + (e.agg and e.drops or 1) end
+      -- (the header counts the rows the mode shows: pickups in the list, items in By item)
+      IT.nShown = #list
       IT.head(loot, IT.nShown, q)
       if #rows == 0 then
         if q ~= "" then tbl.setState(('No item matches "%s". '):format(q), "Clear search", function() search:SetText("") end)

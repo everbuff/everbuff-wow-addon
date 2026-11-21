@@ -1638,8 +1638,9 @@ function UI.Summary(parent)
       if i > 1 and x + lead + w > S.S3 + avail then b:Hide(); for k = i, #f.pool do f.pool[k]:Hide() end; break end
       if i > 1 then
         local sep = f.seps[i]
-        if not sep then sep = UI.Text(f, "BODY", "fgMuted"); sep:SetText(" \194\183 "); f.seps[i] = sep end
-        sep:ClearAllPoints(); sep:SetPoint("TOPLEFT", f, "TOPLEFT", x, -4); sep:Show()
+        -- (the dot is a glyph of its own, centred in the gap and on the text's middle line, as a day row has it)
+        if not sep then sep = UI.Text(f, "BODY", "fgMuted", { justify = "CENTER" }); sep:SetText("\194\183"); f.seps[i] = sep end
+        sep:ClearAllPoints(); sep:SetPoint("LEFT", f.pool[i - 1], "RIGHT", 0, 0); sep:SetWidth(lead); sep:Show()
         x = x + lead
       end
       -- the first segment alone longer than the line: its last run shortens with "..."
@@ -1685,7 +1686,17 @@ function UI.Section(parent, label)
   f.link = UI.KitButton(f, "", "link"); f.link:SetPoint("TOPRIGHT", f, "TOPRIGHT", -S.S3, -5); f.link:Hide()
   f.right = CreateFrame("Frame", nil, f); f.right:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0); f.right:SetSize(1, UI.H.CONTROL)
   function f.SetLabel(_, t) UI.SetText(f.label, t) end
-  function f.SetMeta(_, t) if t and t ~= "" then f.meta:SetText(t); f.meta:Show() else f.meta:Hide() end end
+  -- (tip: the hover of the meta, for the one remark a header may carry; the reason is never screen text)
+  function f.SetMeta(_, t, tip)
+    if t and t ~= "" then f.meta:SetText(t); f.meta:Show() else f.meta:Hide() end
+    if tip and t and t ~= "" then
+      if not f.metaHit then
+        f.metaHit = CreateFrame("Frame", nil, f)
+        f.metaHit:SetPoint("TOPLEFT", f.meta, "TOPLEFT", 0, 2); f.metaHit:SetPoint("BOTTOMRIGHT", f.meta, "BOTTOMRIGHT", 0, -2)
+      end
+      UI.SetTip(f.metaHit, tip); f.metaHit:Show()
+    elseif f.metaHit then f.metaHit:Hide() end
+  end
   function f.SetLink(_, t, fn) if t then f.link:SetLabel(t); f.link.ebOnClick = fn; f.link:Show() else f.link:Hide() end end
   return f
 end
@@ -1783,7 +1794,12 @@ function UI.Hero(parent, opts)
     for _, fs in ipairs({ h.hero, h.meta2 }) do
       fs:ClearAllPoints()
     end
-    h.hero:SetPoint("TOPLEFT", h, "TOPLEFT", x0, -34); h.hero:SetPoint("TOPRIGHT", h, "TOPRIGHT", -rInset, -34)
+    -- With a portrait and nothing under the hero line (no meta, no bar), the title and the hero line are centred on
+    -- the portrait: their block is 52 high from y 12, the portrait 56 from y S5.
+    local bare = opts.image and not h.barFrac and not h.meta2:IsShown() and (h.meta1:GetText() or "") == "" and not (h.meta1r:IsShown() and (h.meta1r:GetText() or "") ~= "")
+    local dy = bare and math.max(0, (S.S5 + 28) - (S.S3 + 26)) or 0
+    h.dy = dy
+    h.hero:SetPoint("TOPLEFT", h, "TOPLEFT", x0, -34 - dy); h.hero:SetPoint("TOPRIGHT", h, "TOPRIGHT", -rInset, -34 - dy)
     h.meta2:SetPoint("TOPLEFT", h, "TOPLEFT", x0, -86); h.meta2:SetPoint("TOPRIGHT", h, "TOPRIGHT", -rInset, -86)
     -- META line 1: the right text takes its width, the left text what is left
     local rw = h.meta1r:IsShown() and (h.meta1r:GetText() or "") ~= "" and UI.TextWidth("META", h.meta1r:GetText()) or 0
@@ -1793,7 +1809,7 @@ function UI.Hero(parent, opts)
     local avail = w - x0 - rInset
     local x = x0
     if h.kicker:IsShown() then
-      h.kicker:ClearAllPoints(); h.kicker:SetPoint("TOPLEFT", h, "TOPLEFT", x, -16)
+      h.kicker:ClearAllPoints(); h.kicker:SetPoint("TOPLEFT", h, "TOPLEFT", x, -16 - dy)
       x = x + UI.TextWidth("LABEL", h.kicker:GetText()) + S.S2
     end
     local bw = 0
@@ -1803,10 +1819,10 @@ function UI.Hero(parent, opts)
     local room = x0 + avail - x - bw
     if mw > 0 and tw + mw > room then mw = math.max(0, room - tw) end
     tw = math.max(1, math.min(tw, room - mw))
-    h.title:ClearAllPoints(); h.title:SetPoint("TOPLEFT", h, "TOPLEFT", x, -S.S3); h.title:SetWidth(tw)
+    h.title:ClearAllPoints(); h.title:SetPoint("TOPLEFT", h, "TOPLEFT", x, -S.S3 - dy); h.title:SetWidth(tw)
     x = x + tw
     if h.titleMeta:IsShown() then
-      h.titleMeta:ClearAllPoints(); h.titleMeta:SetPoint("TOPLEFT", h, "TOPLEFT", x + S.S2, -16)
+      h.titleMeta:ClearAllPoints(); h.titleMeta:SetPoint("TOPLEFT", h, "TOPLEFT", x + S.S2, -16 - dy)
       h.titleMeta:SetWidth(math.max(1, mw - S.S2)); x = x + mw
     end
     -- (badges sit on the title line's vertical centre: anchored to the title's right edge, y offset 0)

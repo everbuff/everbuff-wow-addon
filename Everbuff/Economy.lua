@@ -192,8 +192,10 @@ local function describe(e)
       e.detail = m.item .. ((type(m.buyer) == "string" and m.buyer ~= "") and (" to " .. m.buyer) or "")
       e.group = m.item
     else
-      e.detail = r.sender and ("from " .. person(r.sender, nil, r.rel)) or "mailbox"
-      if r.x == "unmatched" then e.detail = "mailbox, no mail taken has this amount" end
+      -- (a row with no sender says nothing in Detail: the hover has "Sender not recorded". Never an invented word.)
+      e.detail = r.sender and ("from " .. person(r.sender, nil, r.rel)) or ""
+      if not r.sender then e.blank = src == "mail" and "Sender not recorded" or "Item not recorded" end
+      if r.x == "unmatched" then e.detail, e.blank = "no mail taken has this amount", nil end
       e.group = r.sender or "not recorded"
     end
     if src == "mail" and r.rel == "stranger" then e.flag = "stranger" end
@@ -240,6 +242,8 @@ function Gold.entries(sess, ix)
   local out = {}
   local log = sess and sess.goldLog
   if type(log) ~= "table" then return out end
+  local evAll = ns.DB and ns.DB.story and ns.DB.story.events
+  local evFrom = type(evAll) == "table" and type(evAll[1]) == "table" and tonumber(evAll[1].t) or nil   -- the event list starts here
   local t0, m0 = num(sess.startedEpoch), tonumber(sess.startedMono)
   for i, r in ipairs(log) do
     if type(r) == "string" then
@@ -282,6 +286,16 @@ function Gold.entries(sess, ix)
         if not ev and open and open.kind == kind and open.s == sess.id and e.t >= num(open.t) - TOL then ev = open.where end
       end
       place(e, ev)
+      -- A gain booked as mail with no sender, where the stored records say no mailbox was open: its coin row was
+      -- stamped in another zone than the mailbox visit of that moment, or the event list covers the moment and
+      -- holds no mailbox visit for it (#52: before 0.9.52 the mailbox flag could outlive the visit). The stored row
+      -- stays; the pane says "Source not seen" for it and not "Mail".
+      if e.src == "mail" and not e.ref.sender and e.ref.x ~= "unmatched" and e.loot and e.zone then
+        local v = take(b.ev.MAIL, {}, function(x) return e.t >= num(x.t) - TOL and e.t <= num(x.closed or x.t) + TOL end)
+        if not v and open and open.kind == "MAIL" and open.s == sess.id and e.t >= num(open.t) - TOL then v = open.where end
+        if v then e.unseen = (type(v.zone) == "string" and v.zone ~= e.zone) or nil
+        elseif evFrom and e.t >= evFrom then e.unseen = true end
+      end
     end
     -- Auction rows (docs/UX_PRAGMATIC.md 4.2). Each loot.ah row is taken once, and a row is named only when
     -- nothing else could be meant:
@@ -2698,6 +2712,9 @@ Gold.VIEWS, Gold.PERIODS = GP.VIEWS, GP.PERIODS
 Gold.MAX_ROWS = 500       -- journal rows listed at once (a row is a frame): the newest; the header says how many more
 Gold.RATE_MIN_S = 1800    -- a per hour figure needs this much play in the period (docs/UX_PRAGMATIC.md 4.2, 6)
 GP.UNTRACED_TIP = "Gold that moved while you played and the addon saw no source for it."
+-- the hover of the header's one remark (the reason is never screen text, docs/UX_PRAGMATIC.md 0.2.2)
+GP.PARTIAL_TIP = { title = "Not every entry is kept", text = "The cards and the day rows count every copper of the period. The list holds the entries still stored in the game: the entries of play sessions the desktop app has already saved are no longer stored here." }
+GP.PARTIAL_AH_TIP = { title = "Not every row is kept", text = "The answer line counts every copper of the period. The list holds the auction rows the game still knows this character made: the rows of play sessions the desktop app has already saved are not listed." }
 GP.AWAY_TIP = "Your balance changed by this much while the addon was not running."
 GP.MOVED_TIP = "Gold that moved between your own characters or the bank. It is not earned or spent."
 GP.EMPTY = "No gold has moved in this period."
@@ -2741,13 +2758,20 @@ function GP.periodHead(sc)
   if sc.days and sc.period and sc.period.from then return UI.fmtSince(sc.period.from) end
   return sc.label or ""
 end
+-- the Source cell of a journal row: the word of its kind, or "Source not seen" (also for a mail row the records
+-- place away from every mailbox, e.unseen)
+function GP.srcWord(e)
+  if e.unseen then return GP.UNTRACED.unexplained, true end
+  return GP.UNTRACED[e.src] or Gold.WORD[e.src] or e.src, GP.UNTRACED[e.src] ~= nil
+end
 -- the search text of a journal row
 function GP.hay(e)
-  return ((Gold.WORD[e.src] or "") .. " " .. GP.srcLabel(e.src) .. " " .. (e.detail or "") .. " " .. (e.zone or "") .. " " .. (e.flag or "")):lower()
+  return ((e.unseen and "" or (Gold.WORD[e.src] or "")) .. " " .. (e.unseen and GP.UNTRACED.unexplained or GP.srcLabel(e.src)) .. " " .. (e.detail or "") .. " " .. (e.zone or "") .. " " .. (e.flag or "")):lower()
 end
 -- what a journal row says in Detail. A row with no source seen says so in its Source cell and nothing twice.
 function GP.detailOf(e)
   if GP.UNTRACED[e.src] and e.src ~= "away" and not (e.ref and e.ref.drift) then return "" end
+  if e.blank then return "" end   -- (the hover says what is missing)
   return (e.detail or "") ~= "" and e.detail or GP.srcLabel(e.src)
 end
 
@@ -2799,8 +2823,10 @@ function GP.tradeSide(tip, word, list, m)
 end
 function GP.journalTip(row, e, tip)
   if not e or e.ebSection then return end
-  tip:AddLine(("%s  %s"):format(GP.srcLabel(e.src), signed(e.delta)), 1, 1, 1)
+  tip:AddLine(("%s  %s"):format(e.unseen and GP.UNTRACED.unexplained or GP.srcLabel(e.src), signed(e.delta)), 1, 1, 1)
   if GP.detailOf(e) ~= "" and (e.detail or "") ~= "" then line(tip, e.detail) end
+  if e.unseen then line(tip, "Booked as mail, but no mailbox was open where this coin arrived.")
+  elseif e.blank then line(tip, e.blank) end
   if e.vendorPrice then line(tip, ("Vendor price %s, paid %s"):format(fmtMoney(e.vendorPrice), fmtMoney(e.delta))) end
   local tr = e.tradeRec
   if tr then GP.tradeSide(tip, "You gave", tr.gave, tr.gaveMoney); GP.tradeSide(tip, "You got", tr.got, tr.gotMoney) end
@@ -2834,13 +2860,18 @@ function GP.auctionTip(row, r, tip)
   if r.item then tip:AddLine(r.item .. (num(r.count) > 1 and ("  x" .. r.count) or ""), 1, 1, 1)
   else tip:AddLine(r.what or "Auction", 1, 1, 1); line(tip, "Item: Not recorded") end
   pair(tip, "When", UI.fmtWhen(r.t or 0))
-  if r.price and num(r.count) > 1 then pair(tip, "Each", fmtMoney(math.floor(r.price / r.count))) end
+  -- (several auctions posted at once: the price is of one of them and is never divided by their number)
+  if r.lots then line(tip, "Posted as several auctions. The price is for one of them.")
+  elseif r.price and num(r.count) > 1 then pair(tip, "Each", fmtMoney(math.floor(r.price / r.count))) end
   if r.what == "Sold" then
     if r.price then pair(tip, "Buyer paid", fmtMoney(r.price)) end
     if r.cut and r.cut > 0 then pair(tip, "House cut", fmtMoney(r.cut)) end
     if r.deposit and r.deposit > 0 then pair(tip, "Deposit returned", fmtMoney(r.deposit)) end
+    -- (row.net is nil when the stored figure is not this invoice's own sum, Market.buildAuctions)
     if r.net then pair(tip, "Mail paid", fmtMoney(r.net)) end
-  elseif r.what == "Won" then line(tip, "Price: Not recorded")
+  elseif r.what == "Collected" then
+    line(tip, "Taken from the mailbox. Price: Not recorded")
+    if num(r.mails) > 1 then pair(tip, "Mails", tostring(r.mails)) end
   elseif r.what == "Posted" and r.hours then pair(tip, "Posted for", UI.fmtDur(r.hours * 3600)) end
   if (r.note or "") ~= "" then pair(tip, r.what == "Sold" and "Buyer" or "Seller", r.note) end
 end
@@ -2856,15 +2887,19 @@ function Gold.netCard(ledger, entries)
 end
 
 -- The auction rows of a period, newest first, and their sums (Market.buildAuctions is every trade of the character).
--- sum: posted, sold, bought (purchases with a price), won (deliveries with none), expired, cancelled, and in copper
--- spent (the prices of the purchases), sales (what the buyers paid), cut, deposit (returned), mail (what the sale
--- mails paid: sales - cut + deposit).
+-- sum: posted, sold, bought (purchases with a price), won (delivery mails with none; folded into Collected rows),
+-- expired, cancelled, and in copper spent (the prices of the purchases), sales (what the buyers paid), cut, deposit
+-- (returned), mail (what the sale mails paid by their invoices: sales - cut + deposit). sum.unowned: stored auction
+-- rows of the period that no list shows because their session record is gone (in a period of sessions: not known, 0).
 function GP.auctions(sc)
-  local rows, out = {}, {}
-  if ns.Market and ns.Market.buildAuctions then rows = ns.Market.buildAuctions() end
+  local rows, out, all = {}, {}, nil
+  if ns.Market and ns.Market.buildAuctions then rows, all = ns.Market.buildAuctions() end
   local inSess = {}
   for _, s in ipairs(sc.sessions or {}) do if s.id then inSess[s.id] = true end end
-  local sum = { posted = 0, sold = 0, sales = 0, cut = 0, deposit = 0, mail = 0, bought = 0, won = 0, spent = 0, expired = 0, cancelled = 0 }
+  local sum = { posted = 0, sold = 0, sales = 0, cut = 0, deposit = 0, mail = 0, bought = 0, won = 0, spent = 0, expired = 0, cancelled = 0, unowned = 0 }
+  for _, t in ipairs(type(all) == "table" and all.unownedAt or {}) do
+    if sc.lifetime or (sc.from and sc.to and t >= sc.from and t < sc.to) then sum.unowned = sum.unowned + 1 end
+  end
   for _, r in ipairs(rows) do
     local keep
     if sc.lifetime then keep = true
@@ -2875,9 +2910,9 @@ function GP.auctions(sc)
       if r.what == "Posted" then sum.posted = sum.posted + 1
       elseif r.what == "Sold" then
         sum.sold = sum.sold + 1; sum.sales = sum.sales + num(r.price); sum.cut = sum.cut + num(r.cut)
-        sum.deposit = sum.deposit + num(r.deposit); sum.mail = sum.mail + num(r.net)
+        sum.deposit = sum.deposit + num(r.deposit); sum.mail = sum.mail + num(r.price) - num(r.cut) + num(r.deposit)
       elseif r.what == "Bought" then sum.bought = sum.bought + 1; sum.spent = sum.spent + num(r.price)
-      elseif r.what == "Won" then sum.won = sum.won + 1
+      elseif r.what == "Collected" then sum.won = sum.won + math.max(1, num(r.mails))
       elseif r.what == "Expired" then sum.expired = sum.expired + 1
       elseif r.what == "Cancelled" then sum.cancelled = sum.cancelled + 1 end
     end
@@ -3018,7 +3053,7 @@ function GP.paintList(c)
     local key, asc = st.sortKey, st.sortAsc
     if not (key == "time" and not asc) then
       local function val(e)
-        if key == "amount" then return e.delta elseif key == "src" then return GP.srcLabel(e.src)
+        if key == "amount" then return e.delta elseif key == "src" then return (GP.srcWord(e))
         elseif key == "detail" then return GP.detailOf(e):lower() elseif key == "loc" then return (e.zone or ""):lower() end
         return e.t or 0
       end
@@ -3046,8 +3081,9 @@ function GP.paintList(c)
     tbl.setRows(rows, function(row, e)
       local cc = row.c
       cc.time:SetText(UI.fmtClock(e.t or 0))
-      cc.src:SetText(GP.UNTRACED[e.src] or Gold.WORD[e.src] or e.src)
-      if GP.UNTRACED[e.src] then UI.SetColor(cc.src, "fgSubtle") end
+      local word, muted = GP.srcWord(e)
+      cc.src:SetText(word)
+      if muted then UI.SetColor(cc.src, "fgSubtle") end
       cc.detail:SetText(GP.detailOf(e))
       cc.loc:SetText(e.zone or "")
       if cc.coords then cc.coords:SetText((e.x and e.y) and UI.fmtCoords(e.x, e.y) or "") end
@@ -3059,9 +3095,13 @@ function GP.paintList(c)
     local partial = false
     for _, r in ipairs(src.rows) do if r.dir ~= 0 and r.amount ~= 0 and not r.kept then partial = true end end
     c.journalPartial = partial
-    c.section:SetMeta(matched > Gold.MAX_ROWS and ("newest %d of %d"):format(Gold.MAX_ROWS, matched)
-      or (sc.lifetime and matched > 0 and q == "" and #entries > 0 and ("entries since " .. UI.fmtSince(num(entries[1].t))))
-      or (partial and matched > 0 and q == "" and "not every entry is kept") or nil)
+    -- All time is a word for a stored lifetime field (the cards): the list says where its own rows start
+    if sc.lifetime and #entries > 0 then c.section:SetLabel("Entries since " .. UI.fmtSince(num(entries[1].t))) end
+    -- (the two remarks are said together: the cut at the newest rows never takes the place of the coverage)
+    local parts = {}
+    if matched > Gold.MAX_ROWS then parts[#parts + 1] = ("newest %d of %d"):format(Gold.MAX_ROWS, matched) end
+    if partial and matched > 0 and q == "" then parts[#parts + 1] = "not every entry is kept" end
+    c.section:SetMeta(#parts > 0 and table.concat(parts, ", ") or nil, (partial and matched > 0 and q == "") and GP.PARTIAL_TIP or nil)
     if matched == 0 then
       if q ~= "" then tbl.setState(('No entry matches "%s". '):format(q), "Clear search", function() c.search:SetText("") end)
       elseif partial then tbl.setState("No entry of this period is kept.")
@@ -3109,8 +3149,10 @@ function GP.paintList(c)
       if cc.player then cc.player:SetText(r.note or "") end
       cc.price:SetText(r.price and money(r.price) or "")
     end)
-    -- (all time is every row the save still holds: the header says where they start, once)
-    if sc.lifetime and #list > 0 then c.section:SetMeta("rows since " .. UI.fmtSince(num(list[#list].t))) end
+    -- (all time is the rows the save still holds for this character: the header says where they start, once, and
+    -- the one remark says so when stored rows are left out)
+    if sc.lifetime and #list > 0 then c.section:SetLabel("Auctions since " .. UI.fmtSince(num(list[#list].t))) end
+    if sum.unowned > 0 and #list > 0 then c.section:SetMeta("not every row is kept", GP.PARTIAL_AH_TIP) end
     if #list == 0 then tbl.setState(ans and "No auction row of this period is kept." or GP.NO_AUCTION) end
   end
   -- the section header's right side, right to left: the view, then search (Journal only)
@@ -3163,6 +3205,21 @@ function GP.place(c)
   put(c.cards, H.STAT); pcall(c.cards.layout); y = y + H.STAT
   y = y + S.S5
   put(c.section, H.SECTION); y = y + H.SECTION
+  -- the header's remark stands after the label; when the controls leave no room for it, on a line of its own under
+  -- the header (never cut, never under a control)
+  local meta = c.section.meta
+  c.metaBelow = nil
+  if meta:IsShown() then
+    local used = (tonumber(c.viewSeg:GetWidth()) or 0) + (c.search:IsShown() and ((tonumber(c.search:GetWidth()) or 0) + S.S2) or 0)
+    local need = S.S3 + UI.TextWidth("LABEL", c.section.label:GetText()) + S.S2 + UI.TextWidth("META", meta:GetText()) + S.S3
+    meta:ClearAllPoints()
+    if need <= w - used then meta:SetPoint("LEFT", c.section.label, "RIGHT", S.S2, 0)
+    else
+      meta:SetPoint("TOPLEFT", c.section, "TOPLEFT", S.S3, -(H.SECTION + S.S1))
+      y = y + S.S1 + UI.LINE_H.META + S.S1
+      c.metaBelow = true
+    end
+  end
   if c.answer:IsShown() then put(c.answer, H.SUMMARY); pcall(c.answer.layout); y = y + H.SUMMARY + S.S1 end
   local tbl = c.tbl[c.view]
   if tbl then
@@ -3332,7 +3389,7 @@ function ns.BuildEconomyPane(pane)
     { key = "item", label = "Item", flex = 1, min = 140 },
     { key = "result", label = "Result", kind = "tag", min = 72, measure = { "Posted, 2d", "Cancelled" } },
     { key = "player", label = "Player", min = 104, tip = "Who bought it, or who sold it to you" },
-    { key = "price", label = "Price", kind = "money", min = 88, tip = "For the whole stack. A sale: what the buyer paid." },
+    { key = "price", label = "Price", kind = "money", min = 88, tip = "For the whole stack. A sale: what the buyer paid. Several auctions posted at once: the price of one." },
   }
   c.auctionSpec = {}
   for _, sp in ipairs(aSpec) do c.auctionSpec[sp.key] = sp end

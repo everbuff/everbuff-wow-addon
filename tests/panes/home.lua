@@ -197,6 +197,15 @@ return function(P)
     local function card(key) for i, d in ipairs(c.cardDefs or {}) do if d.key == key then return c.cardRow.cards[i] end end end
     eq("Now at the cap: the hero is the session's net gold", c.hero.hero.text, UI.money(3000, true) .. " this session")
     eq("Now at the cap: no per hour figure one second under 30 minutes of play", tostring(c.hero.meta1.text or ""), "")
+    -- (with no line under the hero figure, the name line and the figure are centred on the portrait: the box had an
+    -- empty lower third and the text sat higher than the picture)
+    do
+      local pb, tb, vb = P.box(c.hero.imageFrame), P.box(c.hero.title), P.box(c.hero.hero)
+      local mid = (tb.t + vb.t + vb.h) / 2
+      check("Now at the cap: with no meta line the two text lines are centred on the portrait", math.abs(mid - (pb.t + pb.h / 2)) <= 3 and tb.t >= pb.t - 1 and vb.t + vb.h <= pb.t + pb.h + 1,
+        ("text %s..%s, portrait %s..%s"):format(tb.t, vb.t + vb.h, pb.t, pb.t + pb.h))
+      check("Now at the cap: the name's meta moves with the name", math.abs((P.box(c.hero.titleMeta).t + P.box(c.hero.titleMeta).h) - (tb.t + tb.h)) <= 4)
+    end
     check("Now at the cap: the level is not the hero and Max level is not on the page", not tostring(c.hero.hero.text):find("Level", 1, true) and not tostring(c.hero.meta1.text):find("Max level", 1, true))
     check("Now at the cap: no XP bar", c.hero.track.shown == false)
     check("Now at the cap: no THIS SESSION header and no XP PER HOUR card", not c.sesHead:IsShown() and not c.cards:IsShown() and not labels():find("XP", 1, true), labels())
@@ -213,6 +222,7 @@ return function(P)
     eq("Now at the cap: the last card ends on the main column's edge", P.box(c.cardRow.cards[#c.cardDefs]).l + P.box(c.cardRow.cards[#c.cardDefs]).w, P.box(c.hero).l + G.mainW(900))
     led.played = 1800; reopen()
     eq("Now at the cap: from 30 minutes on the hero names the rate", c.hero.meta1.text, UI.money(6000, true) .. " per hour")
+    check("Now at the cap: with the rate line the hero keeps its three line layout", c.hero.dy == 0 and math.abs(P.box(c.hero.title).t - P.box(c.hero).t - S.S3) <= 0.5, tostring(c.hero.dy))
     ns.DB.combat.lastAck = { at = GetServerTime() - 120, fights = 2, source = "file" }
     ses.deaths = 3; reopen()
     -- (lastAck.at is when the addon saw the confirmation, not when the desktop app saved: the count leads and the
