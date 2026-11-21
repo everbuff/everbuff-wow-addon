@@ -179,6 +179,18 @@ so an item dragged onto the merchant window is `unexplained` (a known case). An 
 | Sales and purchases | A purchase's amount is `C_MerchantFrame.GetItemInfo(index).price` (legacy `GetMerchantItemInfo` as fallback) times the quantity over the stack count. A change takes the waiting entry whose amount it equals; else the entries (searched over the 8 oldest with a known amount) that sum to it, one row each; else the oldest entry is used up as before, and when several were waiting and every amount was known the row names no item and carries `x=unmatched`. An entry waits 5 s, and every purse change that takes one restarts the wait of the rest (sell all junk, a slow server) |
 | Context | Where the client has `C_PlayerInteractionManager.IsInteractingWithNpcOfType`, a merchant, trainer, mailbox or auctioneer it reports open counts as open even when the window event was not seen. It never closes a window the events say is open |
 
+Two more rules from 0.9.52 (docs/UX_PRAGMATIC.md gate H and everbuff-wow-addon #52; built on the draft branch, not
+released, both wait for the founder's yes):
+
+| Rule | What is written |
+| --- | --- |
+| Mailbox flag (#52) | The mailbox counts as open from MAIL_SHOW to MAIL_CLOSED, and the client does not always send MAIL_CLOSED. PLAYER_ENTERING_WORLD now clears the flag (a loading screen closes the mailbox). The last fallback of an income, "at the mailbox with no take waiting is `mail`", no longer applies while the character is inside an instance (`characters[guid].inInstance`): the income goes on to the coin line and the loot window, or stays `unexplained`. A take that is waiting still claims its amount anywhere. |
+| Split share | A coin line whose digits no single income has is matched against two to four incomes in a row that are still waiting for a source (3 s) and add up to exactly its amount, in either order of line and purse changes. Each of them becomes `looted` (with `share=1` for a share line): its journal row is rewritten in place, the ledgers and the day row move the amount from `unexplained` to `looted`, the place and the open dungeon run are credited, and the loot log gets one coin row per part. Exact sums only; a single income with the line's digits is taken first. On the founder's saves of 18 to 21 Nov 464 of 479 unexplained incomes are parts of such shares. |
+
+`characters[guid].goldShareSince` (0.9.52, optional, write-once): the server epoch of the character's first load with
+these two rules. Loot > Gold does not offer its Sources view for a period that holds time inside a dungeon from before
+it. Rows written before it are not rewritten.
+
 Every function and event above is feature-tested (`type(x) == "function"`) or registered through pcall, and each
 rule keeps the behavior of 0.9.45 as its fallback on a client that lacks it. `tests/gold_sources.lua` holds these
 (with `tests/coin_locales.lua`, the coin lines of the 13 locales mined from the client), and `tests/gold_profile.lua`
@@ -577,7 +589,7 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 
 | Surface | When | What |
 | --- | --- | --- |
-| Loot > Gold pane | the addon window is open | periods by server day, who (character, realm, account), the Days and Characters views. Other characters' names and balances are shown here, and so in recordings |
+| Loot > Gold pane | the addon window is open | periods by server day. From the pragmatic pass (docs/UX_PRAGMATIC.md 4.2, draft branch) the pane shows the logged-in character only, with the total of all characters on the BALANCE card; the Days, Characters, Zones and Runs views, the PER HOUR card and the status line named in the rows below are gone from it (the rate is NET's second line after 30 minutes of play; a break of the records is BALANCE's second line) |
 | Home > Overview, GOLD card | the addon window is open | today's net and today's pace (the day's net over the time played that day, after 5 minutes), and on a second line the total of all characters when more than one is known |
 | Minimap button tooltip | while the mouse is over the button | the gold block (at most 18 lines) under the two help lines; it follows the purse while it is open. Off with `settings.gold.tips = false` |
 | Chat | only as the direct reply to a typed `/eb gold` (four lines, a fifth while a farm timer runs), `/eb gold chars` (the roster), `/eb gold stats` (0.9.45: today, week and month in, out and net for the character, its realm and the account, three lines) or `/eb gold timer` (0.9.45: starts the farm timer, "Farm timer started.") | never a login summary. These replies also answer in combat: they open, move and change nothing on screen |
@@ -664,10 +676,11 @@ ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE GOLDAWAY TRADE`. (`money`, 0.
 
 ## Loot log entry
 
-Item: `{ t, s (session id), item, count, q (hex color), icon, src, guid?, quest?, x?, y?, zone? }`. `quest = true` marks a quest item (item class 12).
+Item: `{ t, s (session id), item, count, q (hex color), icon, src, guid?, quest?, x?, y?, zone?, map?, pushed? }`. `quest = true` marks a quest item (item class 12).
+From 0.9.52 (docs/UX_PRAGMATIC.md gate G, built on the draft branch, not released): `map` is the uiMapID of the place (absent when unknown; contract of 0.9.37, written from now on), and `pushed = true` marks an item that reached the bags with no loot window (a roll won later, a quest reward, a pushed drop). Such a row is stamped where the character stands at the pickup. Before 0.9.52 it took `x`, `y` and `zone` from the last loot window, which can be another zone or none: for the sources `Picked up`, `an enemy` and `Quest reward` a place without `pushed` is not reliable, and Loot > Items does not show it. Rows already written are not rewritten.
 Coin: `{ t, s (session id), money (copper), src, guid?, x?, y?, zone? }`. From 0.9.46 (#43) coin that reached the purse with no loot window of the player's own, named by the client's coin line, is a coin row too, with `src` `"Group share"` (the line said it is the player's share of what a group member looted) or `"Coin"` (the player's own loot line, no window seen), no `guid`, and the place the player stood.
 `src` is the SOURCE only: the mob name when readable, else `"Mining node"` / `"Herb node"` / `"Fishing spot"` /
-`"Skinned creature"` / `"Object"` / `"Creature"` / `"Unknown source"`; items pushed without a loot window use the world object just clicked (its name), the mob just killed, `"Quest reward"`, or `"Picked up"`. Location is separate: `zone` (name) and `x`, `y` (numeric coordinates), each its own field and its own UI column.
+`"Skinned creature"` / `"Object"` / `"Creature"` / `"Container"` (0.9.52: the loot GUID is an `Item-`, an opened bag item; before it such a row is `"Unknown source"` with that `guid`) / `"Unknown source"`; items pushed without a loot window use the world object just clicked (its name), the mob just killed, `"Quest reward"`, or `"Picked up"`. From 0.9.52 a kill whose name the client hid gives `"Creature"`; the on-screen placeholder `"an enemy"` is no longer stored as a source (older rows keep it). Location is separate: `zone` (name) and `x`, `y` (numeric coordinates), each its own field and its own UI column.
 (Rows written before 2026-09-25 embedded " at (x, y)" in `src`; the UI splits those on display.)
 Mailbox rows (2026-09-25): `src` is `"Auction sale"` (coin row), `"Auction won"`, `"Auction returned"` or
 `"Mail from <sender>"`, with `mail = { sender, subject, item?, buyer?, seller?, cod?, rel? }` (`rel` from 0.9.40, #36: `alt`, `guild`, `friend`, `stranger` or `system`, as in the gold journal). Location is the mailbox.
@@ -723,7 +736,7 @@ takes the same facts from rows it does ingest. Measured on the save file of 2026
 | List | Rows | Size | Pane in game | What the backend reads instead |
 | --- | ---: | ---: | --- | --- |
 | `story.rep` | 76 | 11.5 KB | Progress, reputation history per faction | `story.events` REP (tier reached) and `characters[guid].reputation` (standings, `character_snapshots.reputation`) |
-| `loot.ah` | 24 | 2.7 KB | Loot, Auctions | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
+| `loot.ah` (0.9.52: `bought[]` rows may carry `named` = `"bid"` or `"invoice"`, how a `C_AuctionHouse.PlaceBid` row got its item, and `delivered`, the units its won mails have brought; a won mail adds a `kind = "mail"` row only when no priced row of that item id, or no unnamed bid of exactly the invoice's amount, is waiting for it) | 24 | 2.7 KB | Loot > Gold, Auction house | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
 | `characters[guid].crafts` | 0 | 0 KB | Character, Crafting | `story.events` SKILLUP with `craft` and `crafted` |
 | `characters[guid].recipes` | 2 | 0.1 KB | Character, Crafting | `story.events` RECIPE |
 

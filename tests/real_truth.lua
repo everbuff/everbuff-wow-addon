@@ -1,4 +1,4 @@
--- The Dungeons, Fights, Deaths and Data and sync screens on a real save, against numbers worked out from that save by
+-- The Dungeons, Fights, Deaths, Gold, Items and Data and sync screens on a real save, against numbers worked out from that save by
 -- hand (docs/UX_PRAGMATIC.md: "Example numbers come from the founder's save of 21 Nov 2026 ... derived with throwaway
 -- scripts and not through addon code"). A player's save is private, so this is not part of tests/run_tests.lua:
 --
@@ -184,7 +184,7 @@ do
   local titles = {}
   for i, it in ipairs(nv.lookList) do titles[i] = it.title .. " / " .. strip(it.meta) end
   eq("Now: WORTH A LOOK is the session's three gold lines, largest first", #nv.lookList, 3)
-  check("Now: the largest is the 28g 19s buyout at 11:48", nv.lookList[1].title == "Buyout" and nv.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 11:48", titles[1])
+  check("Now: the largest is the 28g 19s purchase at 11:48, named by its auction row", nv.lookList[1].title == "Bought Black Lotus x3" and nv.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 11:48", titles[1])
   check("Now: the flight names what it is", nv.lookList[3].title == "Flight: Tal", titles[3])
   local words = {}
   for _, r in ipairs(nv.lookRows) do if r.shown ~= false then words[#words + 1] = tostring(r.title.text) .. " " .. tostring(r.meta.text) end end
@@ -273,6 +273,151 @@ do
   eq("Leveling: the last row", got[21], "2 Thu 5 Nov, 03:13 Tirisfal Glades")
   eq("Leveling: one muted line counts the 38 other levels", v.noteText, "38 levels have no recorded date.")
   check("Leveling: no dash stands for a date", (table.concat(got, "\n") .. "\n"):find(" %- ") == nil)
+end
+-- ── Loot > Gold (docs/UX_PRAGMATIC.md 4.2). Copper values worked out from the save's ledgers, day rows and journals
+-- by throwaway scripts. The boot stamps the coin capture of 0.9.52 as starting now, so every stored run is before it. ──
+do
+  local Gold = ns.Gold
+  local GP = Gold.GP
+  local money = GP.money
+  local function gold() for _, tab in ipairs(T.tabs) do if tab.name == "Loot" then return tab.paneByKey.gold.content end end end
+  local function tip(f) local t = _G.GameTooltip; t:ClearLines(); f.scripts.OnEnter(f); local s = table.concat(t.lines or {}, "\n"); f.scripts.OnLeave(f); return s end
+  local function cardsOf(c) local o = {}; for i, cd in ipairs(c.shownCards) do o[i] = strip(cd.value.text) .. " [" .. strip(cd.meta.text) .. "]" end return table.concat(o, " | ") end
+  local function plain(s) return (strip(s):gsub("\194\160", " ")) end
+  -- Session: 3 journal rows, all spending
+  Gold.open("session"); M.settle()
+  local c = gold()
+  eq("Gold session: the header", c.section.label.text, "THIS SESSION")
+  check("Gold session: BALANCE 12s 19c, all characters 12g 0s (120,078 copper, never 12g 78c)", c.shownCards[1].value.text == money(1219) and c.shownCards[1].meta.text == "all characters " .. money(120078)
+    and plain(ns.fmtMoney(120078, { units = 2 })) == "12g 0s", c.shownCards[1].meta.text)
+  check("Gold session: earned 0, spent 309,910, net -309,910", c.scopeData.ledger.gained == 0 and c.scopeData.ledger.spent == 309910 and c.shownCards[3].value.text == money(-309910, true) and c.shownCards[4].value.text == money(-309910, true), cardsOf(c))
+  check("Gold session: no per hour figure 9 minutes in, no entry count, nothing untraced", c.rate == nil and strip(c.shownCards[4].meta.text) == "" and c.shownCards[3].meta.text == "mostly auction house" and not cardsOf(c):find("entr"), cardsOf(c))
+  check("Gold session: Sources is offered (no dungeon time in the session)", c.srcOff == nil and c.view == "sources")
+  do
+    local rows = shown(c.tbl.sources)
+    local got = {}
+    for i, r in ipairs(rows) do got[i] = strip(r.c.src.text) .. "|" .. strip(r.c.what.text) .. "|" .. r.c.whatAmt.text .. "|" .. r.c.amount.text end
+    eq("Gold session: the two sources, each with what it mostly came from", table.concat(got, " ; "),
+      ("Flights|Tal|%s|%s ; Auction house|Black Lotus x3|%s|%s"):format(money(45), money(-45, true), money(281985), money(-309865, true)))
+    check("Gold session: no Times and no Share column (the flight was 0% of 30g 99s)", c.tbl.sources.head.n == nil and c.tbl.sources.head.share == nil)
+  end
+  -- Session, Journal: the auction rows name their item
+  Gold.open("session", "journal"); M.settle()
+  do
+    local got = {}
+    for i, r in ipairs(shown(c.tbl.journal)) do got[i] = r.c.time.text .. " " .. strip(r.c.detail.text) .. " " .. r.c.amount.text end
+    eq("Gold session journal: three rows", table.concat(got, " ; "),
+      ("11:50 Tal %s ; 11:49 Bought Golden Sansam x20 %s ; 11:48 Bought Black Lotus x3 %s"):format(money(-45, true), money(-27880, true), money(-281985, true)))
+  end
+  -- Today: the day row 20261121
+  Gold.open("today"); M.settle()
+  check("Gold today: earned 84,773, spent 309,910, net -225,137 (-22g 51s)", c.scopeData.ledger.gained == 84773 and c.scopeData.ledger.spent == 309910 and c.shownCards[2].value.text == money(84773, true)
+    and c.shownCards[4].value.text == money(-225137, true) and c.section.label.text == "TODAY", cardsOf(c))
+  check("Gold today: auction sales 59,773 and mail 25,000 make the 84,773", c.scopeData.ledger.auctionSales == 59773 and c.scopeData.ledger.mail == 25000)
+  check("Gold today: 610 s played, so no per hour figure", c.scopeData.elapsed < 1800 and c.rate == nil and strip(c.shownCards[4].meta.text) == "", c.scopeData.elapsed)
+  -- Today, Auction house: 10 rows, not 12
+  Gold.open("today", "auctions"); M.settle()
+  do
+    eq("Auctions today: the answer", table.concat(c.answerData.segs, " | "), ("Spent **%s** | Received **%s** | Net **%s**"):format(money(309865), money(59773), money(-250092, true)))
+    check("Auctions today: Spent 309,865 = the ledger's auctions; Received 59,773 = sold 58,768 - cut 2,935 + deposits 3,940; Net -250,092",
+      c.answerData.spent == 309865 and c.answerData.received == 59773 and c.answerData.net == -250092 and c.auctionSum.sales == 58768 and c.auctionSum.cut == 2935 and c.auctionSum.deposit == 3940
+      and c.auctionSum.sales - c.auctionSum.cut + c.auctionSum.deposit == c.answerData.received and c.auctionSum.spent == c.answerData.spent, c.auctionSum.sales)
+    eq("Auctions today: net reads -25g 0s", plain(ns.fmtMoney(-250092, { units = 2, signed = true })), "-25g 0s")
+    local rows = shown(c.tbl.auctions)
+    local got = {}
+    for i, r in ipairs(rows) do got[i] = plain(r.c.item.text) .. "|" .. r.c.result.text .. "|" .. r.c.price.text end
+    eq("Auctions today: 10 rows: 2 purchases (their delivery mails are not rows), 8 sales at what the buyer paid, with the posted count", table.concat(got, " ; "), table.concat({
+      "Golden Sansam x20|Bought|" .. money(27880), "Black Lotus x3|Bought|" .. money(281985),
+      "Formula: Enchant Bracer - Superior Stamina|Sold|" .. money(9077), "Formula: Enchant Boots - Greater Stamina|Sold|" .. money(29000),
+      "Ironweb Spider Silk x3|Sold|" .. money(16500), "Red Wolf Meat x3|Sold|" .. money(759), "Tender Wolf Meat x2|Sold|" .. money(398),
+      "White Spider Meat x7|Sold|" .. money(1043), "Mystery Meat x3|Sold|" .. money(780), "Golden Sansam|Sold|" .. money(1211) }, " ; "))
+    check("Auctions today: bought 2, sold 8, no delivery left over", c.auctionSum.bought == 2 and c.auctionSum.sold == 8 and c.auctionSum.won == 0)
+    check("Auctions today: the Black Lotus row knows its seller from the delivery mail", tip(rows[2]):find("Acornelius Thost", 1, true) ~= nil)
+    local cols = {}
+    for _, sp in ipairs(c.tbl.auctions.spec) do if c.tbl.auctions.cols[sp.key] then cols[#cols + 1] = sp.label end end
+    eq("Auctions today: columns (1 of 10 rows names a player: no Player column)", table.concat(cols, "|"), "When||Item|Result|Price")
+  end
+  -- Week: counted from where the day rows start, and it holds dungeon time from before the capture fix
+  Gold.open("week"); M.settle()
+  eq("Gold week: the header is the real range (goldSince 1795030532), not WEEK", c.section.label.text, "SINCE WED 18 NOV 20:35")
+  check("Gold week: earned 2,538,223, spent 3,347,026, net -808,803", c.scopeData.ledger.gained == 2538223 and c.scopeData.ledger.spent == 3347026 and c.shownCards[4].value.text == money(-808803, true), cardsOf(c))
+  check("Gold week: 134,194 in and 503,600 out with no source seen, said on the cards, never as away", c.shownCards[2].meta.text == money(134194) .. " not traced" and c.shownCards[3].meta.text == money(503600) .. " not traced"
+    and not cardsOf(c):lower():find("away"), cardsOf(c))
+  check("Gold week: 85,100 s played, so NET carries the rate", c.scopeData.elapsed == 85100 and c.shownCards[4].meta.text == money(-808803 * 3600 / 85100, true) .. " per hour", c.shownCards[4].meta.text)
+  check("Gold week: Sources is not offered (the Maraudon and Blackrock runs are in it): the page opens on Journal", c.srcOff ~= nil and c.view == "journal" and c.st.view == "sources"
+    and tip(c.viewSeg.segs[1]):find("Sources are not reliable for dungeon time before Sat 21 Nov.", 1, true) ~= nil, tip(c.viewSeg.segs[1]))
+  do
+    local secs = c.tbl.journal.sections()
+    eq("Gold week journal: today's day row carries the day's net, -22g 51s", secs[1].text, UI.upper("TODAY \194\183 " .. money(-225137, true)))
+    eq("Gold week journal: yesterday's is the day row of Fri 20 Nov, -114g 54s", secs[2].text, UI.upper("YESTERDAY \194\183 " .. money(845791 - 1991196, true)))
+    eq("Gold week journal: 767 entries are kept from 20:35 on, the newest 500 listed", c.journalCount .. " " .. tostring(c.section.meta.text), "767 newest 500 of 767")
+    eq("Gold week: the day the history starts in says from when", GP.dayHead("20261118", Gold.baseStored(), S.now, true), "WEDNESDAY 18 NOV, FROM 20:35 \194\183 " .. money(538507 - 547476, true))
+  end
+  -- All time: the lifetime ledger
+  Gold.open("all"); M.settle()
+  check("Gold all: earned 6,627,648, spent 6,626,453, net +1,195; 571,606 and 517,784 not traced; no rate", c.scopeData.ledger.gained == 6627648 and c.scopeData.ledger.spent == 6626453
+    and c.shownCards[4].value.text == money(1195, true) and c.shownCards[2].meta.text == money(571606) .. " not traced" and c.shownCards[3].meta.text == money(517784) .. " not traced"
+    and strip(c.shownCards[4].meta.text) == "" and c.section.label.text == "ALL TIME", cardsOf(c))
+  Gold.open("all", "auctions"); M.settle()
+  do
+    local n = { Bought = 0, Won = 0, Sold = 0, Posted = 0, Expired = 0, Cancelled = 0 }
+    for _, r in ipairs(shown(c.tbl.auctions)) do n[r.item.what] = n[r.item.what] + 1 end
+    eq("Auctions all: of the rows kept, 42 purchases with a price (2,384,440 copper), 98 posted, 61 sold, 2 returned; 49 of the 55 delivery mails are taken up, 6 have no purchase",
+      ("%d %d %d %d %d %d %d"):format(n.Bought, c.auctionSum.spent, n.Posted, n.Sold, n.Expired + n.Cancelled, n.Won, 55 - n.Won), "42 2384440 98 61 2 6 49")
+    local dash = 0
+    for _, r in ipairs(shown(c.tbl.auctions)) do for _, cell in pairs(r.c) do if cell.text == "-" then dash = dash + 1 end end end
+    eq("Auctions all: no cell is a dash", dash, 0)
+    eq("Auctions all: the header says where the kept rows start (7 Nov 20:54)", c.section.label.text .. " / " .. tostring(c.section.meta.text), "ALL TIME / rows since Sat 7 Nov")
+  end
+  Gold.open("session"); M.settle()
+end
+-- ── Loot > Items (docs/UX_PRAGMATIC.md 4.1) ──
+do
+  Real.open(S, "loot/items"); M.settle()
+  local ic = T.lootContent()
+  ic.setLootMode("newest"); ic.setLootQuality("green"); M.settle()
+  local tbl = ic.lootTables.newest
+  local rows = shown(tbl)
+  eq("Items: the header says where the list starts (the oldest item row kept, 17 Nov 11:28)", ic.lootSection.label.text, "ITEMS SINCE TUE 17 NOV")
+  -- (91 rows are green or better; 2 of them are auction purchases, Black Lotus and Death Lotus, which are not loot)
+  eq("Items: 89 looted rows green or better", #rows .. " / " .. tostring(ic.lootSection.meta.text), "89 / 89 green or better")
+  check("Items: no line above the list", ic.lootSummary == nil)
+  local days = {}
+  for _, s in ipairs(tbl.sections()) do days[#days + 1] = s.text end
+  eq("Items: the day rows, with no count and no Today (nothing was looted on 21 Nov)", table.concat(days, " | "), "YESTERDAY | THURSDAY 19 NOV | WEDNESDAY 18 NOV | TUESDAY 17 NOV")
+  local per, from, place, bad = {}, { named = 0, quest = 0, container = 0, enemy = 0, blank = 0 }, 0, {}
+  for _, r in ipairs(rows) do
+    local e = r.item
+    local d = os.date("%d", e.t); per[d] = (per[d] or 0) + 1
+    local f = T.lootFrom(e)
+    if f == nil then from.blank = from.blank + 1 elseif f == "Enemy" then from.enemy = from.enemy + 1 elseif f == "Container" then from.container = from.container + 1
+    elseif f:find("^Quest") then from.quest = from.quest + 1 else from.named = from.named + 1 end
+    if T.lootPlace(e) then place = place + 1 end
+    for k, cell in pairs(r.c) do
+      local t = cell.text
+      if t == "-" or t == "an enemy" or t == "Creature" or t == "Picked up" or t == "Unknown source" or t == "Auction won" then bad[#bad + 1] = k .. "=" .. t end
+    end
+    if r.c.from and r.c.from.text ~= (f or "") then bad[#bad + 1] = "from cell" end
+  end
+  eq("Items: rows per day, 20 Nov / 19 / 18 / 17", ("%d %d %d %d"):format(per["20"] or 0, per["19"] or 0, per["18"] or 0, per["17"] or 0), "20 25 20 24")
+  eq("Items: From: 8 named, 8 quest rewards, 3 opened containers, 26 enemies with no name recorded, 44 blank", ("%d %d %d %d %d"):format(from.named, from.quest, from.container, from.enemy, from.blank), "8 8 3 26 44")
+  eq("Items: no dash and no stored placeholder in any cell", table.concat(bad, ","), "")
+  check("Items: no Value or Vendor price column", tbl.head.price == nil)
+  check("Items: Place shows on " .. place .. " of 89 rows, under a third, so the column is left out and the place is in the hover", (place * 3 < 89) == (ic.lootCols.loc == true) and (ic.lootCols.loc and tbl.cols.loc == nil or tbl.cols.loc ~= nil), place)
+  -- the two greens stamped "Orgrimmar" while the character was in Blackrock Depths (19 Nov 18:01 and 18:03)
+  local stale = 0
+  for _, r in ipairs(rows) do
+    if r.item.item == "Hibernal Armor" or r.item.item == "Champion's Armor of Nature's Wrath" then
+      if r.item.zone == "Orgrimmar" and T.lootPlace(r.item) == nil then stale = stale + 1 end
+    end
+  end
+  eq("Items: the two rows stored with Orgrimmar while in Blackrock Depths show no place", stale, 2)
+  ic.setLootMode("byitem"); M.settle()
+  eq("Items by item: the same 89 looted rows, folded", tostring(ic.lootSection.meta.text), "89 green or better")
+  local cols = {}
+  for _, sp in ipairs(ic.lootTables.byitem.spec) do cols[#cols + 1] = sp.label end
+  eq("Items by item: Item, Count, Last looted", table.concat(cols, "|"), "|Item|Count|Last looted")
+  ic.setLootMode("newest"); M.settle()
 end
 say(("real_truth: %d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

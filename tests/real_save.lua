@@ -431,8 +431,8 @@ R.HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeon
 R.PAGES = { "home/now", "home/sessions", "home/fights", "home/deaths",
   "dungeons/runs", "dungeons/bydungeon", "dungeons/run",
   "loot/items", "loot/items:all", "loot/items:byitem",
-  "loot/gold", "loot/gold:today", "loot/gold:week", "loot/gold:all", "loot/gold:journal", "loot/gold:days", "loot/gold:zones",
-  "loot/gold:runs", "loot/gold:chars", "loot/gold:auctions",
+  "loot/gold", "loot/gold:today", "loot/gold:week", "loot/gold:all", "loot/gold:journal", "loot/gold:todayjournal",
+  "loot/gold:auctions", "loot/gold:auctionstoday",
   "character/leveling", "character/reputation", "character/professions",
   "settings/general", "settings/golddisplay", "settings/data" }
 
@@ -445,11 +445,10 @@ function R.view(ns, host, pane, state)
     elseif state == "all" then ns.Gold.open("all", "journal")
     elseif state == "previous" then ns.Gold.open("previous")
     elseif state == "today" then ns.Gold.open("today")
-    elseif state == "days" then ns.Gold.open("all", "days")
-    elseif state == "chars" then ns.Gold.open("today", "chars")
+    elseif state == "todayjournal" then ns.Gold.open("today", "journal")
     elseif state == "week" then ns.Gold.open("week")
-    elseif state == "zones" or state == "runs" then ns.Gold.open("all", state)
     elseif state == "auctions" then ns.UI.Open("Loot", "auctions")
+    elseif state == "auctionstoday" then ns.Gold.open("today", "auctions")
     elseif state == "empty" then ns.Gold.open("day:" .. ns.Gold.dayKey(GetServerTime() - 400 * 86400, ns.Gold.baseStored()))
     else ns.Gold.open("session"); ns.Gold.filter(state) end
   end

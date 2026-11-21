@@ -134,7 +134,7 @@ return function(P)
         -- this character, today
         Gold.open("today", view); M.settle()
         local vt = ("%s %s"):format(tag, v[2])
-        check(vt .. ": the breakdown is open", c.st.view == view and c.breakdown.text:GetText() == "Break down by: " .. v[2], c.st.view)
+        check(vt .. ": the view is open (Sources gives way to Journal when the period holds dungeon time from before 0.9.52)", c.st.view == view and (c.view == view or (view == "sources" and c.srcOff ~= nil and c.view == "journal")) and c.viewSeg.value == c.view, c.view)
         local n = kitTables(vt, c)
         check(vt .. ": its list has rows", n >= 1 or view == "journal" or view == "sources" or view == "auctions", n)
         cards(vt, c)
@@ -146,23 +146,10 @@ return function(P)
         cards(vt, c)
         audit(vt)
       end
-      -- Characters for the account with the characters not seen in 90 days counted, at its fullest
-      Gold.open("today", "chars"); M.settle()
-      c.setWho("account"); M.settle()
-      if P.visible(c.staleBtn) and not c.st.withStale then click(c.staleBtn) end
-      local ct = c.tbl.chars
-      local total = ct.rows[1]
-      local ro = c.rosterData
-      check(tag .. " Characters: the total row holds every purse in full, a character to log in on too", total.item.total == true and total.c.balance:GetText() == Gold.GP.money(ro.total)
-        and not total.c.balance:IsTruncated() and ro.total > 2 * BIG and (function()
-          for i = 1, ct.shownN do local r = ct.rows[i]; if r.c.seen:GetText() == "log in once" then return not r.c.seen:IsTruncated() end end
-          return false
-        end)(), total.c.balance:GetText())
-      kitTables(tag .. " Characters, everyone counted", c)
-      cards(tag .. " Characters, everyone counted", c)
-      audit(tag .. " Characters, everyone counted")
-      if c.st.withStale then click(c.staleBtn) end
-      c.setWho("char"); M.settle()
+      -- BALANCE's meta holds every character's gold in full, or steps down without cutting a number
+      Gold.open("today"); M.settle()
+      local meta = c.shownCards[1].meta
+      check(tag .. ": BALANCE's meta is not cut inside its number", not meta:IsTruncated() and (meta:GetText():find("^all ") ~= nil or (c.audit.state == "broken" and meta:GetText() == "records do not add up")), meta:GetText())
 
       -- the Overview gold card and the Sessions gold band on the same purses
       for _, page in ipairs({ "overview", "sessions" }) do

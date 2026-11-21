@@ -183,33 +183,37 @@ return function(P)
     check("pill: turned off it is hidden", p.shown == false)
   end
 
-  -- ── the PER HOUR card and the 10 s repaint of the running session ────────────────────────────────────────────
+  -- ── the rate on the NET card and the 10 s repaint of the running session (docs/UX_PRAGMATIC.md 4.2) ──────────
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     local tag = ("Gold 0.9.45 %dx%d"):format(size[1], size[2])
     local c = open(size[1], size[2], "session")
-    local wide = UI.G.isWide(UI.G.winW())
     check(tag .. ": the open pane keeps the 10 s repaint running", Gold._rateTicker ~= nil and Gold.rateOnScreen() == true)
-    local sc = Gold.scope("session")
-    local card = Gold.netCard(sc.ledger, Gold.scopeEntries(sc))
-    if wide then
-      check(tag .. ": PER HOUR is the net over the time played (4.9)", c.shownCards[5].label:GetText() == "PER HOUR" and c.shownCards[5].value:GetText() == Gold.GP.money(card.net * 3600 / sc.elapsed, true), c.shownCards[5].value:GetText())
+    check(tag .. ": four cards at every width, no PER HOUR card", #c.shownCards == 4 and c.shownCards[4].label:GetText() == "NET", #c.shownCards)
+    local function sc() return Gold.scope("session") end
+    local function want()
+      local s = sc()
+      local card = Gold.netCard(s.ledger, Gold.scopeEntries(s))
+      return s.elapsed >= Gold.RATE_MIN_S and (Gold.GP.money(card.net * 3600 / s.elapsed, true) .. " per hour") or ""
     end
-    -- (A16: the rate is said once: on the PER HOUR card at WIDE, on the answer line below it; NET counts its entries)
-    local function rateText() return wide and c.shownCards[5].value:GetText() or c.summary.Text() end
-    check(tag .. ": the rate is said once, on PER HOUR or the answer line", (wide and c.summary.Text():find("per hour", 1, true) == nil) or (not wide and c.summary.Text():find(Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. "** per hour", 1, true) ~= nil or c.summary.Text():find(Gold.GP.money(card.net * 3600 / sc.elapsed, true) .. " per hour", 1, true) ~= nil), c.summary.Text())
-    check(tag .. ": NET counts its entries", c.shownCards[4].meta:GetText():find(" entries$") ~= nil, c.shownCards[4].meta:GetText())
-    -- five more minutes of play, then the repaint: the cards follow, an open menu stays open
+    -- (the floor: a per hour figure from a few minutes of play means nothing)
+    local ses = ns.Recorder.current()
+    local keepStart = ses.startedEpoch
+    ses.startedEpoch = M.epoch - (Gold.RATE_MIN_S - 60)
+    Gold.open("session"); M.settle()
+    check(tag .. ": under 30 minutes of play NET says no rate", c.rate == nil and c.shownCards[4].meta:GetText() == "", c.shownCards[4].meta:GetText())
+    ses.startedEpoch = M.epoch - (Gold.RATE_MIN_S + 60)
+    Gold.open("session"); M.settle()
+    check(tag .. ": from 30 minutes NET's meta is the net per hour of play", c.rate ~= nil and c.shownCards[4].meta:GetText() == want() and want() ~= "", c.shownCards[4].meta:GetText())
+    check(tag .. ": no card counts entries", (function() for _, cd in ipairs(c.shownCards) do if (cd.meta:GetText() or ""):find("entr", 1, true) then return false end end return true end)())
+    -- five more minutes of play, then the repaint: the card follows
     Gold._tickAt = M.now
+    local before = c.shownCards[4].meta:GetText()
     for _ = 1, 30 do M.now = M.now + 10; M.epoch = M.epoch + 10; Gold.tick() end
-    click(c.breakdown)
-    check(tag .. ": a menu is open", c.breakdown.menu.shown ~= false)
-    local before = rateText()
     Gold._rateTicker.fn(); M.settle()
-    check(tag .. ": the repaint draws the rate over the longer play", rateText() ~= before, rateText())
-    check(tag .. ": the repaint does not close the open menu", c.breakdown.menu.shown ~= false)
-    c.breakdown.menu:Hide()
+    check(tag .. ": the repaint draws the rate over the longer play", c.shownCards[4].meta:GetText() ~= before and c.shownCards[4].meta:GetText() == want(), c.shownCards[4].meta:GetText())
     Gold.open("all"); M.settle()
-    check(tag .. ": All time has no rate and no PER HOUR card (B17)", c.rate == nil and #c.shownCards == 4 and c.summary.Text():find("per hour", 1, true) == nil, #c.shownCards)
+    check(tag .. ": All time has no rate (B17)", c.rate == nil and #c.shownCards == 4 and (c.shownCards[4].meta:GetText() or ""):find("per hour", 1, true) == nil, c.shownCards[4].meta:GetText())
+    ses.startedEpoch = keepStart
     M.epoch, M.now = saved.epoch, saved.now
   end
   _G.EverbuffFrame:Hide()

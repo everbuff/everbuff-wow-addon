@@ -1073,8 +1073,6 @@ local function stripValues(rows, key, signed, selId)
 end
 ns._test = ns._test or {}
 ns._test.stripValues = stripValues
--- the strip is also the Days view's (Loot > Gold, Economy.lua): one bar per day
-UI.makeStrip, UI.renderStrip, UI.STRIP_H = makeStrip, renderStrip, STRIP_H + 18
 
 -- a session with nothing in it: under 2 minutes, no XP, gold, kills or items (hidden unless sessionsShowShort, 4.2)
 local function isShort(sess, now)
@@ -1250,7 +1248,7 @@ local function buildSessions(content)
       if shownN < #names then out = out .. " +" .. (#names - shownN) end
       L[4][#L[4] + 1] = { pre .. out, C.fgSubtle }
     end
-    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "While you were away: " .. coin2(sum.unexplained), C.fgSubtle } end
+    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Not traced: " .. coin2(sum.unexplained), C.fgSubtle } end
     if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %s"):format(UI.plural(sum.above, "sale")), C.fgSubtle } end
     if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. UI.money(sum.away, true) } end
     if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%s past the limit not kept"):format(UI.plural(sum.dropped, "entry")) } end

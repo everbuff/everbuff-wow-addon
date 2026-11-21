@@ -929,7 +929,11 @@ check("event search rejects non-matching", not ns._test.eventMatches({ kind = "K
 check("event search still respects the filter tab", not ns._test.eventMatches({ kind = "LOOT", text = "Kobold" }, "combat", "kobold"))
 M.tick()
 check("loot search matches item", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "linen"))
-check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "auction"))
+check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner" }, "miner"))
+-- (docs/UX_PRAGMATIC.md 4.1: auction and mail rows are purchases and deliveries, Gold > Auction house owns them)
+check("the Items pane never lists an auction or a mail row", not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction won", mail = { bid = 5 } }, "")
+  and not ns._test.lootMatches({ item = "Linen Cloth", src = "Mail from Thrall" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction returned" }, ""))
+check("loot search does not match a source word the pane never shows", not ns._test.lootMatches({ item = "Linen Cloth", src = "Picked up" }, "picked") and not ns._test.lootMatches({ item = "Linen Cloth", src = "an enemy" }, "an enemy"))
 check("#38 the Items pane never lists a coin row (coin is the Gold pane's)", not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, "gold") and not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, ""))
 check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "wool"))
 -- ── dungeon run detail: boss-by-boss attempts, deaths, notable loot ──
@@ -1441,7 +1445,7 @@ do
   }
   local agg = ns._test.lootAggregate(log, "", function() return true end)
   check("aggregation: one row per item, coin excluded, most quantity first", #agg == 2 and agg[1].item == "Linen Cloth" and agg[1].count == 6 and agg[1].drops == 3, agg[1] and agg[1].count)
-  check("aggregation: most frequent source, the drop count kept apart for its own column", agg[1].src == "Kobold Miner" and agg[1].drops == 3, agg[1].src)
+  check("aggregation: the newest pickup is the row's Last looted, the pickups are counted", agg[1].t == 3 and agg[1].first == 1 and agg[1].drops == 3, agg[1].t)
   check("aggregation keeps id and quality for tooltips and color", agg[2].id == 7777 and agg[2].q == "ff0070dd")
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
@@ -1765,8 +1769,11 @@ TakeInboxItem(2, 1)
 local ret = ns.DB.loot.ah.returned[#ns.DB.loot.ah.returned]
 check("expired auction recorded as a return", ret and ret.item == "Wool Cloth" and ret.count == 8 and ret.reason == "expired", ret and ret.reason)
 TakeInboxItem(3, 1)
-local won = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought - 1]
-check("won mail completes the earlier bid with the item and seller", won and won.item == "Rough Stone" and won.seller == "Sellerguy" and won.auctionId == 9001, won and tostring(won.item))
+-- (0.9.52: a won mail names a bid only by its invoice. This mail's invoice names no amount, and the two purchases
+-- stored are other items, so it is a row of its own with no price: the bid is not given a name by guesswork.)
+local won = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought]
+check("won mail whose invoice fits no purchase is its own row, with the item and seller and no price", won and won.item == "Rough Stone" and won.seller == "Sellerguy" and won.kind == "mail" and won.price == nil and won.count == 5, won and tostring(won.item))
+check("the bid placed earlier keeps no guessed name", (function() for _, b in ipairs(ns.DB.loot.ah.bought) do if b.auctionId == 9001 and b.item ~= nil then return false end end return true end)())
 M.fire("MAIL_CLOSED")
 local arows, asum = ns.Market.buildAuctions()
 check("auctions pane rows and sums", #arows >= 5 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 12345 + 240, asum.spent)
@@ -2442,7 +2449,7 @@ end
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
 -- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show", "gold_auctions" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end

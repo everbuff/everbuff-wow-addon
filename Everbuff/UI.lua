@@ -478,13 +478,17 @@ function ns.fmtMoney(c, opts)
       text = math.floor(copper / 100) .. u("s") .. NBSP .. ("%02d"):format(copper % 100) .. u("c")
     else text = copper .. u("c") end
   elseif opts and opts.units then
-    -- the design system's money (2.5 rule 4): at most `units` of the largest non-zero units, digits then a no-break
-    -- space and the game's 12 px coin icon (or the letter), the units joined by a space
+    -- the design system's money (2.5 rule 4): at most `units` of the largest units, digits then a no-break space
+    -- and the game's 12 px coin icon (or the letter), the units joined by a space. The units shown are neighbours:
+    -- from 1g the copper is dropped, cut and not rounded, so 12g 0s 78c reads "12g 0s", never "12g 78c"
+    -- (docs/UX_PRAGMATIC.md 0.3). A unit that is zero with nothing under it is left out: 12g flat reads "12g".
     c = round(c)
     local parts = { { math.floor(c / 10000), "g" }, { math.floor(c / 100) % 100, "s" }, { c % 100, "c" } }
     local out = {}
-    for _, p in ipairs(parts) do
-      if p[1] > 0 and #out < opts.units then
+    for i, p in ipairs(parts) do
+      local lower = false
+      for j = i + 1, #parts do if parts[j][1] > 0 then lower = true end end
+      if (p[1] > 0 or (#out > 0 and lower)) and #out < opts.units then
         local digits = p[2] == "g" and grouped(p[1]) or tostring(p[1])
         out[#out + 1] = digits .. (opts.icons and (NBSP .. COIN_ICON12[p[2]]) or p[2])
       end

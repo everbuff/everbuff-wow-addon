@@ -1852,11 +1852,12 @@ return function(P)
     local WANT = {
       fights = "auras bossName difficultyID duration encounterID endEpoch endLocalHi endMono enemies foes gear id instanceMapID instanceType level map outcome player realm schema session spec startEpoch startLocal startLocalHi startMono stats uid uploaded x y zone",
       story = "downtime kind map s shown t text x y zone",
-      loot = "count guid icon id item money q s src t x y zone",
+      -- (0.9.52, gate G of docs/UX_PRAGMATIC.md: an item row carries `map`, and `pushed` when it came with no loot window)
+      loot = "count guid icon id item map money q s src t x y zone",
       gold = "inst items lootValue looted quests secs t",
     }
     for _, k in ipairs({ "fights", "story", "loot", "gold" }) do
-      check("contract: nothing new on the " .. k .. " rows (the keys of 0.9.49, no other)", got[k] == WANT[k] and got[k] ~= "", got[k])
+      check("contract: nothing new on the " .. k .. " rows (the keys of 0.9.49 and the loot keys of 0.9.52, no other)", (got[k]:gsub(" pushed", "")) == WANT[k] and got[k] ~= "", got[k])
     end
     check("contract: no schema bump", ns.DB.schema == 2)
     -- the limits

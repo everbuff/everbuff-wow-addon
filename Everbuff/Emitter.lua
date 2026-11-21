@@ -724,7 +724,9 @@ local function pushedSource(msg, item)
   end
   if pushed.obj and (now - pushed.obj.at) < 15 then return pushed.obj.name or "Object", nil end
   if (now - pushed.turnIn) < 5 then return "Quest reward", nil end
-  local src = (lastKillName and (now - lastKillAt) < 15) and lastKillName or "Picked up"
+  -- (a kill whose name the client hid is "Creature", the word a loot window stores for it: the on-screen
+  -- placeholder "an enemy" is never stored as a source)
+  local src = (lastKillName and (now - lastKillAt) < 15) and (lastKillName ~= "an enemy" and lastKillName or "Creature") or "Picked up"
   if line and item then
     local keep = {}
     for _, r in ipairs(pushed.recent) do if now - r.at <= pushed.REQUEST_S then keep[#keep + 1] = r end end
@@ -1734,14 +1736,7 @@ function Emitter.coinChat(msg)
   for qi, o in ipairs(open) do
     if Emitter.coinMatches(line.groups, o.amount, line.den) then
       table.remove(open, qi)
-      if o.i then Emitter._grewrite = { ses = o.ses, i = o.i, row = o.row } end
-      Emitter._gref = line.share and { share = 1 } or nil
-      Emitter._dayAt = o.epoch
-      Emitter.goldDay("unexplained", -o.amount)
-      credit(goldDB(), o.ses or sessionDB(), "looted", o.amount)
-      Emitter._dayAt = nil
-      Emitter._grewrite, Emitter._gref = nil, nil
-      Emitter.coinRow(o.amount, line.share)
+      Emitter.coinBook(o, line.share)
       if ns.Gold and ns.Gold.fire then ns.Gold.fire() end
       return
     end
@@ -1759,8 +1754,63 @@ function Emitter.coinChat(msg)
       return
     end
   end
+  if Emitter.coinSplit(line) then return end
   local q = Emitter.qList("_coin")
   q[#q + 1] = { share = line.share, groups = line.groups, den = line.den, at = now }
+end
+-- An income written with no source turns into looted coin: its journal row is rewritten in place, the day row and
+-- the ledgers move from unexplained to looted (which also credits the place and the dungeon run, Gold.placeCredit),
+-- and the loot log gets its coin row. `o` is an entry of Emitter._openGain.
+function Emitter.coinBook(o, share)
+  if o.i then Emitter._grewrite = { ses = o.ses, i = o.i, row = o.row } end
+  Emitter._gref = share and { share = 1 } or nil
+  Emitter._dayAt = o.epoch
+  Emitter.goldDay("unexplained", -o.amount)
+  credit(goldDB(), o.ses or sessionDB(), "looted", o.amount)
+  Emitter._dayAt = nil
+  Emitter._grewrite, Emitter._gref = nil, nil
+  Emitter.coinRow(o.amount, share)
+end
+-- One coin line paid in several purse changes (0.9.52, gate H of docs/UX_PRAGMATIC.md). The client pays one group
+-- share in two purse events at times ("Your share of the loot is 2 Silver, 55 Copper", then +154 and +101): no
+-- single gain has the line's digits, so both stayed unexplained. Two to four incomes in a row that are still
+-- waiting for a source (the 3 s of Emitter._openGain) and add up to exactly the line's amount are that line's coin.
+-- Exact sums only; the oldest fitting run is taken. Returns true when the line was used.
+function Emitter.coinSplit(line)
+  local open = Emitter.qList("_openGain")
+  for i = 1, #open do
+    local sum = open[i].amount
+    for j = i + 1, math.min(#open, i + 3) do
+      sum = sum + open[j].amount
+      if Emitter.coinMatches(line.groups, sum, line.den) then
+        local part = {}
+        for k = j, i, -1 do table.insert(part, 1, table.remove(open, k)) end
+        for _, o in ipairs(part) do Emitter.coinBook(o, line.share) end
+        if ns.Gold and ns.Gold.fire then ns.Gold.fire() end
+        return true
+      end
+    end
+  end
+  return false
+end
+-- the same when the line came first: a line still waiting (Emitter._coin) and the incomes that now add up to it
+function Emitter.coinLate()
+  local q = Emitter.qList("_coin")
+  for i, cm in ipairs(q) do
+    if Emitter.coinSplit(cm) then table.remove(q, i); return true end
+  end
+  return false
+end
+-- Whether an income with no other source is the mailbox's (#52). The mailbox counts as open from MAIL_SHOW to
+-- MAIL_CLOSED, and the client does not always send MAIL_CLOSED (walking away, a loading screen), so on its own the
+-- flag made every group share of a dungeon "mail". The flag is cleared on PLAYER_ENTERING_WORLD (a loading screen
+-- closes the mailbox), and inside an instance, where there is no mailbox, an income with no mail take waiting is
+-- never the mailbox's: it goes on to the coin line and the loot window, or stays with no source.
+function Emitter.mailHere()
+  if not Emitter.at("mail") then return false end
+  local c = ns.DB and ns.charGuid and ns.charGuid() and ns.char() or nil
+  if c and c.inInstance ~= nil then return false end
+  return true
 end
 
 -- Repairs by the drop of the repair cost (rule 24). The cost is sampled while the purse is unchanged: when the
@@ -1990,7 +2040,7 @@ local function onMoney()
     else
       coin = Emitter.coinClaim(delta)
       if coin or GetTime() < lootWindowUntil then how = "looted"
-      elseif Emitter.at("mail") then how = "mail" end
+      elseif Emitter.mailHere() then how = "mail" end
     end
     if how == "looted" then                             -- gained while a loot window was open = looted coin
       local own = GetTime() < lootWindowUntil
@@ -2031,6 +2081,8 @@ local function onMoney()
       if not Emitter._drift then
         local q = Emitter.qList("_openGain")
         q[#q + 1] = { amount = delta, at = GetTime(), epoch = Emitter._dayAt, ses = ses, i = i, row = i and ses.goldLog[i] }
+        -- (a coin line that came first and is paid in several purse changes: this income may complete it)
+        Emitter.coinLate()
       end
     end
     if Emitter.at("merchant") then Emitter.repairSample() end
@@ -2466,6 +2518,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
     end
   elseif event == "PLAYER_ENTERING_WORLD" then
+    mailOpen = false   -- (#52: a loading screen always closes the mailbox, and the client may send no MAIL_CLOSED)
     Emitter.backfillLootQuality()
     refreshClassColor(); paintFlag()
     place()   -- settings are loaded now, so move the flag to the corner the user saved last time
@@ -2698,6 +2751,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local typ = sg and sg:match("^(%a+)%-")
       if typ == "GameObject" then lootSource = "Object"
       elseif typ == "Creature" then lootSource = "Creature"
+      elseif typ == "Item" then lootSource = "Container"   -- (an opened bag item: a lockbox, a clam, a crate)
       else lootSource = "Unknown source" end
       lootSourceGUID = sg
     end
@@ -2735,8 +2789,11 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       end
       local tnow = (GetServerTime and GetServerTime()) or time()
       -- no loot window in the last ~15s: the item was pushed, attribute it to what just happened instead
+      -- (0.9.52, gate G: such a row is stamped where the character stands now and marked `pushed`. Before, it took
+      -- the place of the last loot window, which could be another zone or none at all.)
       local src, srcGUID = lootSource, lootSourceGUID
-      if GetTime() > lootWindowUntil + 12 then src, srcGUID = pushedSource(msg, item) end
+      local at, wasPushed = lootLoc, nil
+      if GetTime() > lootWindowUntil + 12 then src, srcGUID = pushedSource(msg, item); at, wasPushed = locStamp(), true end
       local quest = nil
       if id and GetItemInfoInstant then local _, _, _, _, _, classID = GetItemInfoInstant(id); if classID == 12 then quest = true end end
       local entry = { t = tnow, item = item, count = count, q = q, icon = icon, src = src, quest = quest, id = id }
@@ -2748,7 +2805,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
         ns.DB.loot.log = ns.DB.loot.log or {}
         ns.DB.loot.log[#ns.DB.loot.log + 1] = {
           t = tnow, item = item, count = count, q = q, icon = icon, src = src, guid = srcGUID, s = ns.DB.active, quest = quest, id = id,
-          x = lootLoc and lootLoc.x, y = lootLoc and lootLoc.y, zone = lootLoc and lootLoc.zone,
+          x = at and at.x, y = at and at.y, zone = at and at.zone, map = at and at.map, pushed = wasPushed,
         }
         ns.trimToCap(ns.DB.loot.log, 2000)
       end
@@ -3046,9 +3103,11 @@ if ns.UI and ns.UI.registerTab then
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
   ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 
-  -- ── Loot > Items (docs/UX_OVERHAUL.md 4.8): every item you picked up, newest first under day rows, or one row per
-  --    item. Coin is not listed here: every purse change, looted coin included, is in Loot > Gold (#38). Returned
-  --    auctions are in Gold > Auction house. Built from the kit; all state on one table (no new upvalues here).
+  -- ── Loot > Items (docs/UX_PRAGMATIC.md 4.1; the design system is docs/UX_OVERHAUL.md 2): what dropped, from whom,
+  --    where. Every item the character looted, newest first under day rows, or one row per item. The section header
+  --    says once where the list starts and how many rows it shows; there is no line above it. Coin is not listed
+  --    here (Loot > Gold, #38), nor are auction and mail rows (purchases and deliveries: Gold > Auction house).
+  --    Built from the kit; all state on one table (no new upvalues here).
   local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
   ns._test = ns._test or {}; ns._test.fmtMoney = fmtMoney
   local lootRebuild
@@ -3059,6 +3118,13 @@ if ns.UI and ns.UI.registerTab then
     local IT = { Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 },
       QUALITY = { { "all", "Everything", 0 }, { "white", "White and better", 1 }, { "green", "Green and better", 2 },
         { "blue", "Blue and better", 3 }, { "purple", "Purple and better", 4 } },
+      -- the words the capture stored when it had no name (never shown): an enemy whose name the client hid, and
+      -- nothing recorded at all
+      ENEMY = { ["Creature"] = true, ["an enemy"] = true }, NONE = { ["Picked up"] = true, ["Unknown source"] = true },
+      -- rows that reached the bags with no loot window. Before 0.9.52 such a row took the place of the last loot
+      -- window, which can be another zone, so its place is not shown; from 0.9.52 the row is marked `pushed` and
+      -- stamped where it was picked up.
+      PUSHED = { ["Picked up"] = true, ["an enemy"] = true, ["Quest reward"] = true },
       st = { sortKey = "time", sortAsc = false } }
     local st = IT.st
     local function cfg() return (ns.DB and ns.DB.settings) or {} end
@@ -3072,7 +3138,6 @@ if ns.UI and ns.UI.registerTab then
       if #q < 8 then return 0.8, 0.8, 0.8 end
       return (tonumber(q:sub(3, 4), 16) or 200) / 255, (tonumber(q:sub(5, 6), 16) or 200) / 255, (tonumber(q:sub(7, 8), 16) or 200) / 255
     end
-    function IT.price(e) return (ns.Now and ns.Now.sellPrice and tonumber(e.id) and ns.Now.sellPrice(tonumber(e.id))) or 0 end
     -- the name a row shows: link brackets stripped, never a placeholder
     function IT.name(e)
       local n = e.item
@@ -3081,54 +3146,69 @@ if ns.UI and ns.UI.registerTab then
       if n == "" then return nil end
       return n
     end
-    -- where it came from: the enemy, "Quest: <name>", "Mail from Thrall", "Auction won"; legacy " at (x, y)" split off
+    -- Where it came from, and what the hover says when the cell is short of a name:
+    --   a named source as stored (the legacy " at (x, y)" split off), "Quest: <name>", "Container" (an opened bag
+    --   item: the stored loot GUID starts with Item-), "Enemy" with the tip "Name not recorded" (the client hid the
+    --   name), and nothing at all, tip "Not recorded", for a row with no recorded source.
+    -- Returns text or nil, tip or nil, the legacy coordinates.
     function IT.from(e)
       local srcName, legacy = (e.src or ""):match("^(.-) at (%(.-%))$")
       srcName = srcName or e.src
-      if srcName == "Quest reward" and IT.questNames and IT.questNames[e] then srcName = "Quest: " .. IT.questNames[e] end
-      return srcName, legacy
+      if srcName == "Quest reward" then
+        local qn = IT.questNames and IT.questNames[e]
+        return qn and ("Quest: " .. qn) or "Quest", nil, legacy
+      end
+      if srcName == "Container" or (srcName == "Unknown source" and type(e.guid) == "string" and e.guid:sub(1, 5) == "Item-") then return "Container", nil, legacy end
+      if IT.ENEMY[srcName] then return "Enemy", "Name not recorded", legacy end
+      if srcName == nil or srcName == "" or IT.NONE[srcName] then return nil, "Not recorded", legacy end
+      return srcName, nil, legacy
     end
-    -- the Items list never shows coin, nor an auction that came back (that is Gold > Auction house)
+    -- the zone stamped with the row; nil for a row whose stored place cannot be trusted (IT.PUSHED before 0.9.52)
+    function IT.place(e)
+      if e.agg then return nil end
+      if IT.PUSHED[e.src or ""] and not e.pushed then return nil end
+      return e.zone
+    end
+    -- an auction or mail row: a purchase or a delivery, not loot
+    function IT.notLoot(e)
+      local src = e.src or ""
+      return e.mail ~= nil or src:sub(1, 8) == "Auction " or src == "Mail" or src:sub(1, 10) == "Mail from "
+    end
+    -- the Items list never shows coin, an auction row or a mail row
     function IT.matches(e, q)
-      if e.money then return false end
-      if e.src == "Auction returned" then return false end
+      if e.money or IT.notLoot(e) then return false end
       if st.minQ > 0 and IT.rank(e) < st.minQ then return false end
       if not q or q == "" then return true end
-      local hay = ((IT.name(e) or "") .. " " .. (e.src or "") .. " " .. ((IT.questNames and IT.questNames[e]) or "") .. " " .. (e.zone or "")):lower()
+      local hay = ((IT.name(e) or "") .. " " .. (IT.from(e) or "") .. " " .. (IT.place(e) or "")):lower()
       return hay:find(q:lower(), 1, true) ~= nil
     end
     ns._test.lootMatches = function(e, q) local m = st.minQ; st.minQ = 0; local r = IT.matches(e, q); st.minQ = m; return r end
-    -- By item: one row per item, its pickups (times), total quantity, first seen and the most frequent source
+    -- By item: one row per item, how many in all and when it was last looted
     function IT.aggregate(loot, q, matches)
       local by, order = {}, {}
       for _, e in ipairs(loot) do
         if not e.money and e.item and matches(e, q) then
           local a = by[e.item]
           if not a then
-            a = { item = e.item, count = 0, drops = 0, q = e.q, icon = e.icon, id = e.id, quest = e.quest, t = e.t, first = e.t, srcs = {}, agg = true }
+            a = { item = e.item, count = 0, drops = 0, q = e.q, icon = e.icon, id = e.id, quest = e.quest, t = e.t, first = e.t, agg = true }
             by[e.item] = a; order[#order + 1] = a
           end
           a.count = a.count + (tonumber(e.count) or 1); a.drops = a.drops + 1
           if (e.t or 0) > (a.t or 0) then a.t = e.t end
           if (e.t or 0) < (a.first or math.huge) then a.first = e.t end
-          if e.src then a.srcs[e.src] = (a.srcs[e.src] or 0) + 1 end
         end
-      end
-      for _, a in ipairs(order) do
-        local best, bn = nil, 0
-        for src, n in pairs(a.srcs) do if n > bn then best, bn = src, n end end
-        a.src = best
       end
       table.sort(order, function(a, b) if a.count ~= b.count then return a.count > b.count end return (a.t or 0) > (b.t or 0) end)
       return order
     end
     ns._test.lootAggregate = IT.aggregate
     ns._test.lootContent = function() return content end
+    ns._test.lootFrom, ns._test.lootPlace = function(e) return IT.from(e) end, function(e) return IT.place(e) end
     local SORT = {
-      time = function(e) return e.t or 0 end, first = function(e) return e.first or e.t or 0 end,
+      time = function(e) return e.t or 0 end, last = function(e) return e.t or 0 end,
       item = function(e) return (IT.name(e) or ""):lower() end, from = function(e) return (IT.from(e) or ""):lower() end,
-      loc = function(e) return (e.zone or ""):lower() end, price = function(e) return IT.price(e) end,
-      times = function(e) return e.drops or 1 end, qty = function(e) return tonumber(e.count) or 1 end,
+      loc = function(e) return (IT.place(e) or ""):lower() end,
+      qty = function(e) return tonumber(e.count) or 1 end,
       quality = function(e) return IT.rank(e) end,
     }
     function IT.sortRows(rows, key, asc)
@@ -3147,15 +3227,14 @@ if ns.UI and ns.UI.registerTab then
     end
     ns._test.lootSort = function(rows, key, asc) return IT.sortRows(rows, key, asc) end
 
-    -- the page: one scroll holding the summary line and the list
+    -- the page: one scroll holding the section header and the list
     local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
     local sf, child = UI.ScrollChild(v, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
     local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
-    IT.summary = UI.Summary(col)
-    content.lootSummary = IT.summary
-    -- one list-page structure on Runs, By dungeon and Items: the section header with the list's count
-    IT.section = UI.Section(col, "All items")
-    -- the control row, right to left: search, quality filter, Newest · By item
+    -- one list-page structure on Runs and Items: the section header says where the list starts, its meta the count
+    IT.section = UI.Section(col, "Items")
+    content.lootSection = IT.section
+    -- the control row, right to left: search, quality filter, List · By item
     local controls = content.ebControls or v
     local search = UI.Search(controls, "Search loot")   -- (fits the one search width, 176 - 26)
     search:SetPoint("TOPRIGHT", controls, "TOPRIGHT", 0, 0)
@@ -3170,7 +3249,7 @@ if ns.UI and ns.UI.registerTab then
       onPick = function(key) IT.setQuality(key) end })
     qf:SetPoint("TOPRIGHT", search, "TOPLEFT", -S.S2, 0)
     content.lootQuality = qf
-    local seg = UI.Segmented(controls, { { "newest", "Newest", "Every pickup, newest first" }, { "byitem", "By item", "One row per item: how often, how many in all" } },
+    local seg = UI.Segmented(controls, { { "newest", "List", "Every item, newest first" }, { "byitem", "By item", "One row per item: how many in all" } },
       { value = st.mode, onPick = function(key) IT.setMode(key) end })
     seg:SetPoint("TOPRIGHT", qf, "TOPLEFT", -S.S2, 0)
     content.lootModeControl = seg
@@ -3194,26 +3273,23 @@ if ns.UI and ns.UI.registerTab then
     content.setLootQuality, content.setLootMode = function(k) IT.setQuality(k) end, function(k) IT.setMode(k) end
 
     -- two tables, one per mode. The badge after a quest item's name is a neutral QUEST badge.
-    local PRICE_TIP = "What a vendor pays for one. \"-\" when the game has not told the addon yet."
     local spec = {
       newest = {
         { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" }, sort = true },
         { key = "icon", label = "", kind = "icon" },
         { key = "item", label = "Item", flex = 1, min = 120, sort = true },
-        { key = "from", label = "From", min = 160, sort = true },
+        { key = "from", label = "From", min = 160, max = 240, sort = true },
         { key = "loc", label = "Place", min = 120, sort = true },
-        { key = "price", label = "Vendor price", kind = "money", min = 80, sort = true, tip = PRICE_TIP },
         { key = "coords", label = "Coords", kind = "num", min = 72, wide = true },
       },
       byitem = {
         { key = "icon", label = "", kind = "icon" },
         { key = "item", label = "Item", flex = 1, min = 120, sort = true },
-        { key = "times", label = "Times", kind = "num", min = 48, sort = true, tip = "How many times you picked it up" },
-        { key = "qty", label = "Total", kind = "num", min = 56, sort = true, tip = "How many you picked up in all" },
-        { key = "first", label = "First seen", kind = "tag", min = 96, sort = true },
-        { key = "price", label = "Vendor price", kind = "money", min = 80, sort = true, tip = PRICE_TIP },
+        { key = "qty", label = "Count", kind = "num", min = 56, sort = true, tip = "How many you looted in all" },
+        { key = "last", label = "Last looted", kind = "tag", min = 96, sort = true },
       },
     }
+    IT.spec = { from = spec.newest[4], loc = spec.newest[5] }
     IT.tbls = {}
     -- the name, then its stack count ("x4", fgMuted, a text of its own) S1 after it, then the QUEST badge: the name
     -- shortens inside what is left of the column, the count and the badge never do
@@ -3235,13 +3311,20 @@ if ns.UI and ns.UI.registerTab then
         sortKey = mode == "byitem" and "qty" or "time", sortAsc = false,
         onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; if lootRebuild then lootRebuild() end end,
         onLayout = function(t) for i = 1, t.shownN do pcall(placeBadge, t, t.rows[i]) end end,
-        onHeight = function() if IT.place then pcall(IT.place) end end,
+        onHeight = function() if IT.place2 then pcall(IT.place2) end end,
         tooltip = function(row, e, tip)
           if not e or e.ebSection then return end
           if row.itemId and tip.SetHyperlink then tip:SetHyperlink("item:" .. tostring(row.itemId))
           else tip:AddLine(IT.name(e) or "Item", IT.rgb(e.q)) end
-          if e.agg then tip:AddLine(("Picked up %s, %s in all"):format(UI.plural(e.drops, "time"), UI.fmtNum(e.count)), 0.78, 0.79, 0.80)
-          elseif e.t then tip:AddLine(UI.fmtWhen(e.t), 0.78, 0.79, 0.80) end
+          if e.agg then tip:AddLine(("Looted %s, %s in all"):format(UI.plural(e.drops, "time"), UI.fmtNum(e.count)), 0.78, 0.79, 0.80)
+          elseif e.t then
+            tip:AddLine(UI.fmtWhen(e.t), 0.78, 0.79, 0.80)
+            -- (what a short or blank cell stands for; the reason is never on the screen itself)
+            local from, why = IT.from(e)
+            if why then tip:AddLine((from and "Enemy: " or "From: ") .. why, 0.78, 0.79, 0.80) end
+            local place = IT.place(e)
+            if place then tip:AddLine("Place: " .. place, 0.78, 0.79, 0.80) else tip:AddLine("Place: Not recorded", 0.78, 0.79, 0.80) end
+          end
         end })
     end
     content.lootTables = IT.tbls
@@ -3271,26 +3354,20 @@ if ns.UI and ns.UI.registerTab then
         if not row.ebBadge then row.ebBadge = UI.Badge(row, "Quest") end
         row.ebBadge:Show()
       elseif row.ebBadge then row.ebBadge:Hide() end
-      if c.from then
-        local srcName = IT.from(e)
-        if srcName and srcName ~= "" then c.from:SetText(srcName) else c.from:SetText("Other"); UI.SetColor(c.from, "fgMuted") end
-      end
-      if c.loc then c.loc:SetText(e.zone or "-"); if not e.zone then UI.SetColor(c.loc, "fgMuted") end end
+      local from, _, legacy = IT.from(e)
+      if c.from then c.from:SetText(from or "") end
+      if c.loc then c.loc:SetText(IT.place(e) or "") end
       if c.coords then
-        local _, legacy = IT.from(e)
-        c.coords:SetText((e.x and e.y) and UI.fmtCoords(e.x, e.y) or (legacy and legacy:gsub("[()]", "")) or "-")
+        local ok = IT.place(e) ~= nil
+        c.coords:SetText((ok and e.x and e.y) and UI.fmtCoords(e.x, e.y) or (legacy and legacy:gsub("[()]", "")) or "")
       end
-      if c.times then c.times:SetText(UI.fmtNum(e.drops or 1)) end
       if c.qty then c.qty:SetText(UI.fmtNum(e.count or 1)) end
-      if c.first then c.first:SetText(UI.fmtDate(e.first or e.t or 0)) end
-      local p = IT.price(e)
-      if p > 0 then c.price:SetText(UI.money(p)) else c.price:SetText("-"); UI.SetColor(c.price, "fgMuted") end
+      if c.last then c.last:SetText(UI.fmtDate(e.t or 0)) end
     end
-    IT.place = function()
+    IT.place2 = function()
       local w = G.mainW(G.winW())
       col:SetWidth(w)
-      IT.summary:ClearAllPoints(); IT.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); IT.summary:SetWidth(w); pcall(IT.summary.layout)
-      local y = H.SUMMARY + S.S3
+      local y = 0
       IT.section:ClearAllPoints(); IT.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); IT.section:SetWidth(w); y = y + H.SECTION
       local t = IT.tbls[st.mode]
       t.frame:ClearAllPoints(); t.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); t.frame:SetWidth(w)
@@ -3299,7 +3376,7 @@ if ns.UI and ns.UI.registerTab then
       col:SetHeight(y); sf:SetContentHeight(y)
       IT.contentH = y
     end
-    content:HookScript("OnSizeChanged", function() pcall(IT.place) end)
+    content:HookScript("OnSizeChanged", function() pcall(IT.place2) end)
     -- the quest a quest reward belongs to: the QUESTDONE row of the same turn-in (kept beside the rows, never saved)
     function IT.readQuests(loot)
       IT.questNames = IT.questNames or setmetatable({}, { __mode = "k" })
@@ -3315,76 +3392,81 @@ if ns.UI and ns.UI.registerTab then
         end
       end
     end
-    -- the answer: this session's items at this filter, and the best of them
-    function IT.answer(loot)
-      local sid = ns.DB and ns.DB.active
-      local n, best = 0, nil
+    -- The section header: where the list starts (the oldest item the save still holds for this character, at any
+    -- quality) and how many rows the filter shows: "ITEMS SINCE TUE 17 NOV", "91 green or better".
+    function IT.head(loot, n, q)
+      local first
       for _, e in ipairs(loot) do
-        if e.s == sid and IT.matches(e, "") then
-          n = n + 1
-          if not best or IT.rank(e) > IT.rank(best) or (IT.rank(e) == IT.rank(best) and IT.price(e) > IT.price(best)) then best = e end
-        end
+        if e.item and not e.money and not IT.notLoot(e) and tonumber(e.t) and (not first or e.t < first) then first = e.t end
       end
-      local qlabel = qualityOf(st.quality)[2]:lower()
-      local segs = {}
-      if st.quality == "all" then segs[1] = { text = n == 0 and "This session: no items yet" or ("This session: **%s**"):format(UI.plural(n, "item")) }
-      else segs[1] = { text = n == 0 and ("This session: nothing %s yet"):format(qlabel:gsub(" and better", " or better")) or ("This session: **%s**, %s"):format(UI.plural(n, "item"), qlabel) } end
-      if best then
-        local r, g, b = IT.rgb(best.q)
-        segs[2] = { text = ("best: |cff%02x%02x%02x%s|r"):format(math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), IT.name(best) or "item"),
-          tip = function(tip) if tonumber(best.id) and tip.SetHyperlink then tip:SetHyperlink("item:" .. tostring(best.id)) else tip:AddLine(IT.name(best) or "Item") end end }
+      IT.since = first
+      IT.section:SetLabel(first and ("Items since " .. UI.fmtSince(first)) or "Items")
+      local meta
+      if n > 0 then
+        if q ~= "" or st.quality == "all" then meta = UI.plural(n, "item")
+        else meta = ("%d %s"):format(n, (qualityOf(st.quality)[2]:lower():gsub(" and better", " or better"))) end
       end
-      IT.summary:SetSegments(segs)
+      IT.section:SetMeta(meta)
     end
     lootRebuild = function()
       local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
       IT.readQuests(loot)
-      IT.answer(loot)
       local q = search:GetText() or ""
-      local rows
-      if st.mode == "byitem" then rows = IT.sortRows(IT.aggregate(loot, q, IT.matches), st.sortKey, st.sortAsc)
+      local rows, list
+      if st.mode == "byitem" then rows = IT.sortRows(IT.aggregate(loot, q, IT.matches), st.sortKey, st.sortAsc); list = rows
       else
-        local list = {}
+        list = {}
         for i = #loot, 1, -1 do if loot[i].item and IT.matches(loot[i], q) then list[#list + 1] = loot[i] end end
         list = IT.sortRows(list, st.sortKey, st.sortAsc)
         if st.sortKey == "time" and not st.sortAsc then
-          -- newest first: a day row over each day, "TODAY · 3 ITEMS"
-          local days, order = {}, {}
-          for _, e in ipairs(list) do
-            local k = date("%Y-%m-%d", e.t or 0)
-            if not days[k] then days[k] = 0; order[#order + 1] = k end
-            days[k] = days[k] + 1
-          end
+          -- newest first: a day row over each day
           rows = {}
           local last
           for _, e in ipairs(list) do
             local k = date("%Y-%m-%d", e.t or 0)
-            if k ~= last then last = k; rows[#rows + 1] = { ebSection = UI.fmtDay(e.t or 0) .. " \194\183 " .. UI.plural(days[k], "item") } end
+            if k ~= last then last = k; rows[#rows + 1] = { ebSection = UI.fmtDay(e.t or 0) } end
             rows[#rows + 1] = e
           end
         else rows = list end
+        -- From and Place show only while a third of the rows have a value; Place also hides when it is the same on
+        -- every row (docs/UX_PRAGMATIC.md 0.3). What a hidden column held stays in the row's tooltip.
+        local nFrom, nLoc, same, firstLoc = 0, 0, true, nil
+        for _, e in ipairs(list) do
+          if IT.from(e) then nFrom = nFrom + 1 end
+          local p = IT.place(e)
+          if p then nLoc = nLoc + 1; firstLoc = firstLoc or p; if p ~= firstLoc then same = false end else same = false end
+        end
+        local hideFrom = #list > 0 and (nFrom == 0 or nFrom * 3 < #list)
+        local hideLoc = #list > 0 and (nLoc == 0 or nLoc * 3 < #list or (same and #list > 1))
+        local changed = false
+        if (IT.spec.from.hide or false) ~= hideFrom then IT.spec.from.hide = hideFrom; changed = true end
+        if (IT.spec.loc.hide or false) ~= hideLoc then IT.spec.loc.hide = hideLoc; changed = true end
+        IT.colHidden = { from = hideFrom, loc = hideLoc }
+        if changed then IT.tbls.newest.relayout(G.mainW(G.winW())) end
       end
       for mode, t in pairs(IT.tbls) do if mode == st.mode then t.frame:Show() else t.frame:Hide() end end
       local tbl = IT.tbls[st.mode]
       tbl.setSort(st.sortKey, st.sortAsc)
       tbl.setRows(rows, IT.fill)
       for i = 1, tbl.shownN do pcall(IT.placeBadge, tbl, tbl.rows[i]) end
+      -- (the count is of looted rows in both modes: By item folds them, it does not count something else)
       IT.nShown = 0
-      for _, r in ipairs(rows) do if not r.ebSection then IT.nShown = IT.nShown + 1 end end
-      IT.section:SetMeta(IT.nShown > 0 and UI.plural(IT.nShown, "item") or nil)
+      for _, e in ipairs(list) do IT.nShown = IT.nShown + (e.agg and e.drops or 1) end
+      IT.head(loot, IT.nShown, q)
       if #rows == 0 then
         if q ~= "" then tbl.setState(('No item matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
-        elseif st.minQ >= 2 then tbl.setState("Loot anything green or better and it shows here. Lower the quality filter to see grey and white items.")
-        else tbl.setState("Loot anything and it shows here, with where it came from.") end
+        elseif IT.since then tbl.setState("No item matches this filter.")
+        else tbl.setState("No item stored yet.") end
       end
       content.lootRows = tbl.rows
-      IT.place()
+      content.lootCols = IT.colHidden
+      IT.place2()
     end
     qf:SetValue(st.quality, qualityOf(st.quality)[2])
     for _, t in pairs(IT.tbls) do t.setSort(st.mode == "byitem" and "qty" or "time", false) end
     st.sortKey = st.mode == "byitem" and "qty" or "time"
     lootRebuild()
-  end, function() if lootRebuild then lootRebuild() end end, "Everything you picked up: drops, quest rewards, mail and auctions won.")
+  end, function() if lootRebuild then lootRebuild() end end, "What dropped, from whom and where.")
 end
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──

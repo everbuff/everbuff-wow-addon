@@ -14,6 +14,7 @@ ns.deps = {
   { "function", "C_AuctionHouse.CalculateItemDeposit", "guarded" },
   { "function", "C_AuctionHouse.CancelAuction", "guarded" },
   { "function", "C_AuctionHouse.ConfirmCommoditiesPurchase", "guarded" },
+  { "function", "C_AuctionHouse.GetAuctionInfoByID", "guarded" },
   { "function", "C_AuctionHouse.GetCancelCost", "guarded" },
   { "function", "C_AuctionHouse.PlaceBid", "guarded" },
   { "function", "C_AuctionHouse.PostCommodity", "guarded" },

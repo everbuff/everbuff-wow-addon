@@ -418,7 +418,7 @@ for _, dataTag in ipairs(REAL and {} or { "normal", "long" }) do
     _G.UIParent._w, _G.UIParent._h = sz[1], sz[2]
     VIEW.w, VIEW.h = sz[1], sz[2]
     for _, key in ipairs(PAGES) do
-      -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":week", ":days", ":chars", ":zones", ":runs",
+      -- "loot/gold:journal", ":flagged", ":all", ":previous", ":today", ":week", ":todayjournal", ":auctionstoday",
       -- ":auctions", ":empty" or ":<source key>" (that source's page) open the Gold pane in that state; "loot/items:byitem",
       -- ":all" (every quality) and ":nomatch" (a search with no match) open Items in that state
       local host, pane, state = key:match("^(%w+)/(%w+):?(%w*)$")

@@ -102,101 +102,14 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
 
   for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
     local tag = ("Gold 0.9.47 %dx%d"):format(size[1], size[2])
-    -- ── Zones ────────────────────────────────────────────────────────────────────────────────────────────────
+    -- ── the views cut by docs/UX_PRAGMATIC.md 4.2: Zones, Runs, Days and Characters are not screens any more ──
     do
       local c = open(size[1], size[2], "zones")
-      check(tag .. ": Break down by offers Zones and Runs after the four views", Gold.VIEWS[5][2] == "Zones" and Gold.VIEWS[6][2] == "Runs" and c.breakdown.text:GetText() == "Break down by: Zones")
-      local rows = dataRows(c.tbl.zones)
-      check(tag .. ": Zones lists the total, each place and the evicted places", #rows == 5 and P.visible(c.tbl.zones.frame) and not P.visible(c.tbl.sources.frame), #rows)
-      local t, first, last = rows[1], rows[2], rows[5]
-      check(tag .. ": the total row is first and counts the evicted places", t.item.total and t.c.zone:GetText() == "Every place" and t.c.looted:GetText() == money(123456 + 2000 + 40 + 700)
-        and t.c.quests:GetText() == money(50300), t.c.zone:GetText())
-      check(tag .. ": places by looted coin, the biggest first: name, looted, quests, played, per hour, last visit", first.c.zone:GetText() == "Elwynn Forest" and first.c.looted:GetText() == money(123456)
-        and first.c.quests:GetText() == money(50000) and first.c.played:GetText() == UI.fmtDur(5400) and first.c.rate:GetText() == money(173456 * 3600 / 5400) and first.c.last:GetText() == UI.fmtDate(now - 600), first.c.rate:GetText())
-      check(tag .. ": a place under 5 minutes has no rate, one the client named no map for is named so", rows[3].c.zone:GetText() == "Westfall" and rows[3].c.rate:GetText() == "-"
-        and rows[4].c.zone:GetText() == Gold.NO_MAP and rows[4].c.played:GetText() == "-")
-      check(tag .. ": the evicted places are one muted row at the end", last.item.evicted and last.c.zone:GetText() == "2 earlier places" and last.c.looted:GetText() == money(700) and colorIs(last.c.zone, "fgMuted"))
-      check(tag .. ": the section header says whose places they are", c.section.label:GetText() == "ZONES" and c.section.meta:GetText():find("this character", 1, true) ~= nil)
-      local ok, why = inside(c, c.tbl.zones)
-      check(tag .. ": every Zones cell is inside the column", ok, why)
-      local text = tipOf(first)
-      check(tag .. ": a place's hover names its coin and what is not counted", text:find("Elwynn Forest", 1, true) ~= nil and text:find("Vendor sales and repairs are not counted by place", 1, true) ~= nil, text)
-      -- sort by quests ascending: the total stays first, the evicted row last
-      c.tbl.zones.head.quests.scripts.OnClick(c.tbl.zones.head.quests); M.settle()
-      c.tbl.zones.head.quests.scripts.OnClick(c.tbl.zones.head.quests); M.settle()
-      rows = dataRows(c.tbl.zones)
-      check(tag .. ": a sort keeps the total first and the evicted row last", rows[1].item.total and rows[5].item.evicted and c.st.zoneSort == "quests", c.st.zoneSort)
-      c.st.zoneSort, c.st.zoneAsc = "looted", false; c.tbl.zones.setSort("looted", false)
-      -- empty
-      ns.char().goldZones, ns.char().goldZonesEvicted = nil, nil
-      Gold.open("today", "zones"); M.settle()
-      check(tag .. ": with no place yet the list says what comes", #dataRows(c.tbl.zones) == 0 and c.tbl.zones.stateFS:GetText() == "Loot coin or turn in a quest and the place shows here.")
-    end
-    -- ── Runs ─────────────────────────────────────────────────────────────────────────────────────────────────
-    do
-      local c = open(size[1], size[2], "runs")
-      local wide = UI.G.isWide(UI.G.winW())
-      local tbl = c.tbl.runs
-      local rows = dataRows(tbl)
-      check(tag .. ": Runs lists the total, the open run, the closed runs newest first and the evicted runs", #rows == 5 and P.visible(tbl.frame) and c.st.view == "runs", #rows)
-      check(tag .. ": the total row counts every run", rows[1].item.total and rows[1].c.inst:GetText() == "Every run" and rows[1].c.looted:GetText() == money(5000 + 32000 + 100 + 9000), rows[1].c.inst:GetText())
-      local openRow, st, dm = rows[2], rows[3], rows[4]
-      check(tag .. ": the open run is first and says it is in progress", openRow.c.inst:GetText() == "Shadowfang Keep (in progress)" and openRow.c.length:GetText() == UI.fmtDur(840) and openRow.c.looted:GetText() == money(5000), openRow.c.inst:GetText())
-      check(tag .. ": an item waiting for its price makes the vendor price read \"so far\"", openRow.c.value:GetText() == money(1234) .. " so far" and st.c.value:GetText() == money(0) .. " so far", openRow.c.value:GetText())
-      check(tag .. ": a closed run: date, dungeon, length, looted, quests and the vendor price in its own column", dm.c.inst:GetText() == "The Deadmines" and dm.c.time:GetText() == UI.fmtDate(now - 3 * 86400)
-        and dm.c.length:GetText() == UI.fmtDur(3600) and dm.c.looted:GetText() == money(32000) and dm.c.quests:GetText() == money(12000) and dm.c.value:GetText() == money(51000), dm.c.value:GetText())
-      if wide then
-        check(tag .. ": wide: coin per hour is coin over the time played, never the vendor price; items counted", dm.c.rate:GetText() == money(44000) and dm.c.items:GetText() == "14" and st.c.rate:GetText() == "-", dm.c.rate:GetText())
-      else
-        check(tag .. ": narrow: Coin per hour and Items are left out", tbl.cols.rate == nil and tbl.cols.items == nil)
-      end
-      check(tag .. ": the evicted runs are one row at the end", rows[5].item.evicted and rows[5].c.inst:GetText() == "4 earlier runs" and rows[5].c.time:GetText() == "-")
-      local ok, why = inside(c, tbl)
-      check(tag .. ": every Runs cell is inside the column", ok, why)
-      local text = tipOf(dm)
-      check(tag .. ": a run's hover says the vendor price is never added to coin", text:find("The Deadmines", 1, true) ~= nil and text:find("never added to coin", 1, true) ~= nil, text)
-      ns.char().goldRuns, ns.char().goldRunsEvicted, ns.char().goldRun = nil, nil, nil
-      Gold.open("today", "runs"); M.settle()
-      check(tag .. ": with no run yet the list says so", #dataRows(tbl) == 0 and tbl.stateFS:GetText() == "Run a dungeon and its coin shows here.")
-    end
-    -- ── Days: the balance line, folded months ────────────────────────────────────────────────────────────────
-    do
-      local c = open(size[1], size[2], "days", "all")
-      check(tag .. ": Days shows the net bars first, and a button for the balance line", P.visible(c.dayStrip) and not P.visible(c.dayLine) and P.visible(c.chartBtn) and c.chartBtn.text:GetText() == "Show balance")
-      click(c.chartBtn)
-      check(tag .. ": the button puts the balance line in the bars' place and names the way back", P.visible(c.dayLine) and not P.visible(c.dayStrip) and c.chartBtn.text:GetText() == "Show net per day")
-      local lb, colB, hb = P.box(c.dayLine), P.box(c.col), P.box(c.tbl.days.frame)
-      check(tag .. ": the line is inside the column and ends above the list", lb.l >= colB.l and lb.l + lb.w <= colB.l + colB.w + 0.5 and lb.t + lb.h <= hb.t + 0.5, (lb.t + lb.h) .. " " .. hb.t)
-      local line = c.dayLine
-      check(tag .. ": 30 slots, drawn across the whole width", line.n == 30 and math.abs(line.slot * 30 - lb.w) < 1 and #line.values == 30)
-      check(tag .. ": days with a row are solid, carried days dashed, today solid", line.solid >= 2 and line.dashes > 0 and line.values[30].live == true and line.values[30].stale == false, line.solid .. " " .. line.dashes)
-      UI.SetWindowSize(size[1] + 80, size[2]); M.settle()
-      check(tag .. ": a wider window draws the line again for its width", math.abs(c.dayLine.slot * 30 - P.box(c.dayLine).w) < 1)
-      UI.SetWindowSize(size[1], size[2]); M.settle()
-      click(c.chartBtn)
-      check(tag .. ": the button brings the net bars back", P.visible(c.dayStrip) and not P.visible(c.dayLine) and c.chartBtn.text:GetText() == "Show balance")
-      Gold.open("all", "sources"); M.settle()
-      check(tag .. ": the chart button is only on Days", not P.visible(c.chartBtn) and not P.visible(c.dayLine) and not P.visible(c.dayStrip))
-      -- folded months: rows of their own under the days, opening nothing
-      local me = ns.char()
-      local oldest
-      for k in pairs(me.goldDays) do if not oldest or k < oldest then oldest = k end end
-      local o = me.goldDays[oldest].o or 0
-      me.goldMonths = { ["201901"] = { g = 900000, s = 100000, t = 36000, n = 300, d = 28, looted = 900000, repairs = 100000, o = o - 1000000, c = o - 200000 },
-        ["201902"] = { g = 300000, s = 100000, t = 7200, n = 90, d = 12, quests = 300000, vendor = 100000, o = o - 200000, c = o } }
-      Gold.open("all", "days"); M.settle()
-      local rows = dataRows(c.tbl.days)
-      local folded = {}
-      for _, r in ipairs(rows) do if r.item.folded then folded[#folded + 1] = r end end
-      check(tag .. ": the folded months are rows under the days, newest first, with their days counted", #folded == 2 and folded[1].c.day:GetText() == "Feb 2019, 12 days" and folded[2].c.day:GetText() == "Jan 2019, 28 days"
-        and rows[#rows] == folded[2], folded[1] and folded[1].c.day:GetText())
-      check(tag .. ": a month row reads earned, spent, net and its closing balance", folded[2].c.earned:GetText() == money(900000, true) and folded[2].c.spent:GetText() == money(-100000, true)
-        and folded[2].c.net:GetText() == money(800000, true) and folded[2].c.bal:GetText() == money(o - 200000))
-      local scopeBefore = c.st.scope
-      folded[1].scripts.OnClick(folded[1], "LeftButton"); M.settle()
-      check(tag .. ": a click on a month row opens nothing", c.st.scope == scopeBefore and c.st.view == "days" and folded[1].item.ebNoOpen == true)
-      local text = tipOf(folded[1])
-      check(tag .. ": its hover says why it is a month", text:find("folded into their month", 1, true) ~= nil and text:find("Click to see", 1, true) == nil, text)
+      local views = {}
+      for i, v in ipairs(Gold.VIEWS) do views[i] = v[2] end
+      eq(tag .. ": the views are Sources, Auction house and Journal", table.concat(views, ","), "Sources,Auction house,Journal")
+      check(tag .. ": the key of a view that is gone opens Sources", c.st.view == "sources" and c.tbl.zones == nil and c.tbl.runs == nil and c.tbl.days == nil and c.tbl.chars == nil, c.st.view)
+      check(tag .. ": the places and runs are still counted (Dungeons reads the runs)", type(Gold.zones) == "function" and type(Gold.runs) == "function" and #Gold.zones().rows >= 1 and #Gold.runs().rows >= 1)
     end
     -- ── the audit: reconciled, broken, not checkable ─────────────────────────────────────────────────────────
     do
@@ -207,25 +120,26 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
         local a = c.audit
         check(tag .. ": " .. scope .. ": a character played from zero reconciles", a ~= nil and a.state == "ok" and a.key == (scope == "all" and "history" or scope) and a.checks >= 1, a and tostring(a.text or a.reason))
         check(tag .. ": " .. scope .. ": BALANCE's hover says the records add up", tipOf(c.shownCards[1]):find("The records add up for this period.", 1, true) ~= nil)
-        check(tag .. ": " .. scope .. ": nothing on the page says they do not", (c.untracedText or ""):find("do not add up", 1, true) == nil)
+        check(tag .. ": " .. scope .. ": nothing on the page says they do not", (c.shownCards[1].meta:GetText() or ""):find("do not add up", 1, true) == nil)
       end
       check(tag .. ": the reconciled character's cards read what was played", c.shownCards[2].value:GetText() == money(2340, true) and c.shownCards[3].value:GetText() == money(-450, true), c.shownCards[2].value:GetText())
       back()
       -- the played data: changes while away in every period, so not checkable, and never a break
       c = open(size[1], size[2], "sources", "session")
-      check(tag .. ": the running session of the gold data is audited and cannot be checked", c.audit ~= nil and c.audit.key == "session" and c.audit.state == "unknown" and (c.untracedText or ""):find("do not add up", 1, true) == nil)
+      check(tag .. ": the running session of the gold data is audited and cannot be checked", c.audit ~= nil and c.audit.key == "session" and c.audit.state == "unknown" and (c.shownCards[1].meta:GetText() or ""):find("do not add up", 1, true) == nil)
       for _, scope in ipairs({ "all", "today", "yesterday", "week", "month", "last30" }) do
         Gold.open(scope, "sources"); M.settle()
-        check(tag .. ": " .. scope .. " on the played data does not read broken", c.audit ~= nil and c.audit.state == "unknown" and (c.untracedText or ""):find("do not add up", 1, true) == nil, c.audit and tostring(c.audit.reason))
+        check(tag .. ": " .. scope .. " on the played data does not read broken", c.audit ~= nil and c.audit.state == "unknown" and (c.shownCards[1].meta:GetText() or ""):find("do not add up", 1, true) == nil, c.audit and tostring(c.audit.reason))
       end
-      -- a break: on the untraced line, muted, never red; its hover says where
+      -- a break: BALANCE's meta says so, muted, never red; its hover says where
       Gold.open("session", "sources"); M.settle()
       local ses = ns.Recorder.current()
       ses.gold.other = (ses.gold.other or 0) + 1
       Gold.open("session", "sources"); M.settle()
-      check(tag .. ": a break is said on the untraced line, in fgMuted", c.audit.state == "broken" and c.untraced:GetText():lower():find("some gold changes could not be traced", 1, true) ~= nil and c.untraced:GetText():find("Hover", 1, true) == nil and colorIs(c.untraced, "fgMuted"), c.untraced:GetText())
-      local text = tipOf(c.untracedHit)
-      check(tag .. ": the hover names the break", text:find("Unexplained spending", 1, true) ~= nil, text)
+      local meta = c.shownCards[1].meta
+      check(tag .. ": a break is said on the BALANCE card, in fgMuted", c.audit.state == "broken" and meta:GetText() == "records do not add up" and not meta:IsTruncated() and colorIs(meta, "fgMuted"), meta:GetText())
+      local text = tipOf(c.shownCards[1])
+      check(tag .. ": the hover names the break", text:find("Spending not explained", 1, true) ~= nil and text:find("do not add up", 1, true) ~= nil, text)
       ses.gold.other = ses.gold.other - 1
     end
   end

@@ -182,6 +182,54 @@ return function(P)
     M.fire("CHAT_MSG_MONEY", "You loot 3|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t 20|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t"); money(320)
     is("a line with coin icons", row(), "looted", 320, "")
     later()
+    -- 0.9.52 (gate H): one share paid in two purse changes. The founder's save, 20 Nov 15:25:35: +154 and +101, then
+    -- "Your share of the loot is 2 Silver, 55 Copper". No single change has the line's digits; the two together do.
+    do
+      local n1, l0, un1, log0 = rows(), g.looted or 0, day().unexplained or 0, #ns.DB.loot.log
+      money(154); money(101)
+      check("#43 sources: split share, the purse first: two rows with no source meanwhile", rows() == n1 + 2 and row(n1 + 1).src == "unexplained" and row(n1 + 2).src == "unexplained")
+      M.fire("CHAT_MSG_MONEY", "Your share of the loot is 2 Silver, 55 Copper.")
+      local a, b = row(n1 + 1), row(n1 + 2)
+      check("#43 sources: split share, the purse first: both rows become looted with share=1, amounts and balances kept", rows() == n1 + 2 and a.src == "looted" and a.delta == 154 and a.ref == "share=1"
+        and b.src == "looted" and b.delta == 101 and b.ref == "share=1" and b.bal == M.money and a.bal == M.money - 101, ("%s %s [%s] [%s]"):format(tostring(a.src), tostring(b.src), tostring(a.ref), tostring(b.ref)))
+      check("#43 sources: split share: the ledgers and the day row move both parts from unexplained to looted", (g.looted or 0) == l0 + 255 and (day().unexplained or 0) == un1, (g.looted or 0) - l0)
+      check("#43 sources: split share: one Group share coin row per part in the loot log", #ns.DB.loot.log == log0 + 2 and ns.DB.loot.log[log0 + 1].money == 154 and ns.DB.loot.log[log0 + 2].money == 101
+        and ns.DB.loot.log[log0 + 2].src == "Group share", #ns.DB.loot.log - log0)
+      later()
+      -- the line first, then its two purse changes (119 + 110 = 2s 29c)
+      n1 = rows()
+      M.fire("CHAT_MSG_MONEY", "Your share of the loot is 2 Silver, 29 Copper."); money(119)
+      is("split share, the line first: the first part alone fits nothing yet", row(), "unexplained", 119, "")
+      money(110)
+      check("#43 sources: split share, the line first: the second part completes it, both are looted with share=1", rows() == n1 + 2 and row(n1 + 1).src == "looted" and row(n1 + 1).ref == "share=1"
+        and row(n1 + 2).src == "looted" and row(n1 + 2).ref == "share=1", tostring(row(n1 + 1).src) .. " " .. tostring(row(n1 + 2).src))
+      check("#43 sources: split share, the line first: the line is used up", #E.qList("_coin") == 0 and #E.qList("_openGain") == 0)
+      later()
+      -- three and four parts
+      n1 = rows()
+      money(10); money(20); money(30); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 60 Copper.")
+      check("#43 sources: split share in three parts", row(n1 + 1).src == "looted" and row(n1 + 2).src == "looted" and row(n1 + 3).src == "looted")
+      later(); n1 = rows()
+      money(11); money(22); money(33); money(44); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 1 Silver, 10 Copper.")
+      check("#43 sources: split share in four parts", row(n1 + 1).src == "looted" and row(n1 + 4).src == "looted" and row(n1 + 4).ref == "share=1")
+      later(); n1 = rows()
+      -- exact sums only, at most four parts, only changes of the last 3 s
+      money(10); money(20); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 31 Copper.")
+      check("#43 sources: a line that fits no sum changes nothing", row(n1 + 1).src == "unexplained" and row(n1 + 2).src == "unexplained" and rows() == n1 + 2)
+      later(); n1 = rows()
+      money(1); money(2); money(3); money(4); money(5); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 15 Copper.")
+      check("#43 sources: five parts are not one share", row(n1 + 1).src == "unexplained" and row(n1 + 5).src == "unexplained")
+      later(); n1 = rows()
+      money(70); later(4); money(30); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 1 Silver.")
+      check("#43 sources: a part older than 3 s is not counted in", row(n1 + 1).src == "unexplained" and row(n1 + 2).src == "unexplained")
+      later(); n1 = rows()
+      -- a single change with the line's digits is taken before any sum
+      money(50); money(25); money(25); M.fire("CHAT_MSG_MONEY", "You loot 50 Copper")
+      check("#43 sources: one change with the line's own digits is the line's, the others stay", row(n1 + 1).src == "looted" and row(n1 + 1).ref == "" and row(n1 + 2).src == "unexplained" and row(n1 + 3).src == "unexplained",
+        tostring(row(n1 + 1).src) .. " " .. tostring(row(n1 + 2).src))
+      check("#43 sources: the chain holds over the split shares", chain(s0))
+      later()
+    end
     -- a text the client hides is skipped, with no error
     local hidden = "You loot 4 Copper"
     M.secrets[hidden] = true

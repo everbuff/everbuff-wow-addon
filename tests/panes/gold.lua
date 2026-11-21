@@ -1,12 +1,13 @@
 -- Pane tests: gold, one model on every surface (everbuff-wow-addon #38). Everbuff/Economy.lua holds the model
--- (ns.Gold) and LOOT > Gold (docs/UX_OVERHAUL.md 4.9); Home / Sessions shows a session's gold band. Played on
+-- (ns.Gold) and LOOT > Gold (docs/UX_PRAGMATIC.md 4.2); Home / Sessions shows a session's gold band. Played on
 -- tests/play_gold.lua ("gold": two evenings with a name behind every row).
 --   model     every journal row parsed, the balance chain intact, each source summing to the session ledger, the
 --             quest, item, merchant, mob and player named, Location and Coordinates only from the row's own record
---   Gold pane the period control (Session, Today, Week, All time) and More; the answer line; 4 cards, 5 at WIDE; the
---             untraced line; the list under its section header with "Break down by" and search: Sources (EARNED,
---             SPENT, MOVED groups, a row opens its source page), Journal (day rows, "N to review"), Days,
---             Characters (the scope filter in place of search), Zones, Runs, Auction house
+--   Gold pane the period control (Session, Today, Week, All); 4 cards with what was not traced, no line above them
+--             and no note under them; the list under its section header, which names the period and holds the view:
+--             Sources (EARNED, SPENT, a row opens its source page), Auction house (the answer Spent, received, net;
+--             one purchase one row) and Journal (day rows with the day's net, search); where the gold history
+--             starts inside a period; Sources not offered for dungeon time from before the coin capture of 0.9.52
 --   elsewhere the Sessions band, nothing written into the save file
 return function(P)
   local check, eq, M, ns = P.check, P.eq, P.M, P.ns
@@ -37,6 +38,8 @@ return function(P)
     return out
   end
   local function period(c, key) for _, b in ipairs(c.period.segs) do if b.key == key then click(b) end end end
+  local function view(c, key) for _, b in ipairs(c.viewSeg.segs) do if b.key == key then click(b) end end end
+  local function strip(s) return (tostring(s or ""):gsub("|T.-|t", ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("\194\160", " ")) end
   local function typeIn(e, text) e:SetText(text); e.scripts.OnTextChanged(e); M.settle() end
   local function tipOf(f) f.scripts.OnEnter(f); local t = table.concat(tip.lines, " | "); f.scripts.OnLeave(f); return t end
   local function keys(tbl) local t = {}; for _, col in ipairs(tbl.spec) do if not col.wide or (tbl.cols and tbl.cols[col.key]) then t[#t + 1] = col.key end end; return table.concat(t, ",") end
@@ -47,6 +50,8 @@ return function(P)
   ns.Recorder.current = function() return ns.DB.active and ns.DB.sessions[ns.DB.active] or nil end
   local function open(w, h, data, scope, view, flags)
     local c = P.open("loot", "gold", w, h, data or "gold")
+    -- (the coin capture of 0.9.52 as old as the character, so Sources is offered: its own tests set it otherwise)
+    ns.char().goldShareSince = 1
     Gold.open(scope or "session", view, flags); M.settle()
     return c
   end
@@ -147,7 +152,7 @@ return function(P)
         if type(v) == "table" then walk(v, seen) end
       end
     end
-    pick(c.breakdown, "Journal"); Gold.open("all", "journal"); Gold.open("today", "days"); Gold.open("week", "chars")
+    view(c, "journal"); Gold.open("all", "journal"); Gold.open("today", "auctions"); Gold.open("week")
     ns.UI.Open("Loot", "items"); M.settle(); ns.UI.Open("Home", "sessions"); M.settle()
     walk(ns.DB, {})
     eq("model: the panes write nothing into the save file", marks, 0)
@@ -161,75 +166,82 @@ return function(P)
       local ses = ns.Recorder.current()
       local G = UI.G
       local winW = G.winW()
-      local wide, mainW = G.isWide(winW), G.mainW(winW)
-      -- the control row: Session, Today, Week, All time, then More
+      local mainW = G.mainW(winW)
+      -- the control row: Session, Today, Week, All; nothing else
       local segs = {}
       for i, b in ipairs(c.period.segs) do segs[i] = b.text:GetText() end
-      eq(tag .. ": the period control", table.concat(segs, ","), "Session,Today,Week,All time")
-      local pb, mb = P.box(c.period), P.box(c.more)
-      check(tag .. ": the period control, then More, at the control row's right, S2 apart", near(pb.l + pb.w + UI.S.S2, mb.l) and near(pb.t, mb.t) and mb.l + mb.w <= P.box(_G.EverbuffFrame).l + winW - G.BOX_R_INSET + 0.5,
-        ("%s %s %s"):format(pb.l + pb.w, mb.l, mb.l + mb.w))
-      check(tag .. ": Session is selected, More is quiet", c.period.value == "session" and not c.more.ebActive and c.more.text:GetText() == "More")
-      -- the answer line
+      eq(tag .. ": the period control", table.concat(segs, ","), "Session,Today,Week,All")
+      local pb = P.box(c.period)
+      check(tag .. ": the period control ends at the control row's right, Session selected", pb.l + pb.w <= P.box(_G.EverbuffFrame).l + winW - G.BOX_R_INSET + 0.5 and c.period.value == "session", pb.l + pb.w)
+      check(tag .. ": no More button, no Break down by, no line above the cards and no note under them", c.more == nil and c.breakdown == nil and c.summary == nil and c.untraced == nil and c.reviewBtn == nil)
+      -- the cards: 4 at every width, as wide as the column, S3 apart, values in fg, at the top of the page
       local sc = Gold.scope("session")
       local card = Gold.netCard(sc.ledger, Gold.scopeEntries(sc))
-      local line = c.summary.Text()
-      check(tag .. ": the answer line: the net this session, what it mostly came from, the rate of play", line:find(money(card.net, true) .. " this session, mostly ", 1, true) == 1
-        -- (A16: the rate is said once a screen, on the PER HOUR card at WIDE, else on this line)
-        and (line:find(" per hour of play", 1, true) ~= nil) == (not wide), line)
-      -- the cards: 4, 5 at WIDE, as wide as the column, S3 apart, values in fg
       local cards = c.shownCards
-      eq(tag .. ": the cards", cardLabels(cards), wide and "BALANCE,EARNED,SPENT,NET,PER HOUR" or "BALANCE,EARNED,SPENT,NET")
-      check(tag .. ": the card row of this width shows, the other is hidden", P.visible(wide and c.cards5 or c.cards4) and not P.visible(wide and c.cards4 or c.cards5))
+      eq(tag .. ": the cards", cardLabels(cards), "BALANCE,EARNED,SPENT,NET")
       local cbad = {}
       local colB = P.box(c.col)
       local first, last = P.box(cards[1]), P.box(cards[#cards])
       if not near(first.l, colB.l) or not near(last.l + last.w, colB.l + mainW) then cbad[#cbad + 1] = "the row is not the column's width" end
+      if not near(first.t, colB.t) then cbad[#cbad + 1] = "the cards are not the first thing on the page" end
       for i = 2, #cards do
         local a, b = P.box(cards[i - 1]), P.box(cards[i])
         if not near(a.l + a.w + UI.S.S3, b.l) or not near(a.h, UI.H.STAT) then cbad[#cbad + 1] = "gap or height " .. i end
       end
       for i, cd in ipairs(cards) do
         if cd.value:IsTruncated() then cbad[#cbad + 1] = "value cut " .. i end
+        if cd.meta:IsTruncated() then cbad[#cbad + 1] = "meta cut " .. i .. ": " .. tostring(cd.meta:GetText()) end
         if not colorIs(cd.value, "fg") then cbad[#cbad + 1] = "value not fg " .. i end
+        if (cd.meta:GetText() or ""):find("entr", 1, true) then cbad[#cbad + 1] = "an entry count on card " .. i end
       end
-      check(tag .. ": the cards fill the column, 12 px apart, 80 high, values in full and in fg", #cbad == 0, table.concat(cbad, "; "))
+      check(tag .. ": the cards open the page, fill the column, 12 px apart, 80 high, values and metas in full, no entry count", #cbad == 0, table.concat(cbad, "; "))
       eq(tag .. ": BALANCE", cards[1].value:GetText(), money(ns.char().gold.balance))
       eq(tag .. ": EARNED / SPENT", cards[2].value:GetText() .. " / " .. cards[3].value:GetText(), money(ses.gained, true) .. " / " .. money(-ses.spent, true))
       eq(tag .. ": NET", cards[4].value:GetText(), money(card.net, true))
-      check(tag .. ": the cards' meta lines: all characters, entries, per hour", cards[1].meta:GetText():find("^all characters ") ~= nil and cards[2].meta:GetText():find(" entries$") ~= nil
-        and cards[4].meta:GetText():find(" entries$") ~= nil and cards[4].meta:GetText():find("per hour", 1, true) == nil, cards[1].meta:GetText() .. " | " .. cards[4].meta:GetText())
-      if wide then check(tag .. ": PER HOUR names its stretch of play", cards[5].meta:GetText():find("^over ") ~= nil and cards[5].value:GetText() == money(c.rate, true), cards[5].meta:GetText()) end
-      -- the untraced line: under the cards, fgMuted, never red
-      local ub = P.box(c.untraced)
-      check(tag .. ": the untraced line sits S3 under the cards in fgMuted", P.visible(c.untraced) and c.untraced:GetText():find("^While you were away: %+.- in") ~= nil and c.untraced:GetText():find("Hover", 1, true) == nil and colorIs(c.untraced, "fgMuted")
-        and near(ub.t, first.t + first.h + UI.S.S3), c.untraced:GetText())
-      check(tag .. ": its hover explains it", tipOf(c.untracedHit):find(GP.UNTRACED_TIP, 1, true) ~= nil)
-      -- the list: SOURCES, Break down by and search at the header's right
-      local hb, bb, sb = P.box(c.section), P.box(c.breakdown), P.box(c.search)
-      check(tag .. ": the section header SOURCES, then Break down by and the 176 px search at its right", c.section.label:GetText() == "SOURCES" and c.breakdown.text:GetText() == "Break down by: Sources"
-        and not c.breakdown.ebActive and near(sb.w, UI.SEARCH_W) and near(sb.l + sb.w, hb.l + hb.w) and near(bb.l + bb.w + UI.S.S2, sb.l) and hb.t >= ub.t + ub.h, ("%s %s %s"):format(bb.l + bb.w, sb.l, hb.l + hb.w))
+      check(tag .. ": the data has gold with no source seen both ways", sc.ledger.unexplained > 0 and (sc.ledger.other or 0) > 0)
+      eq(tag .. ": EARNED says what moved in with no source seen", cards[2].meta:GetText(), money(sc.ledger.unexplained) .. " not traced")
+      eq(tag .. ": SPENT says what moved out with no source seen", cards[3].meta:GetText(), money(sc.ledger.other) .. " not traced")
+      check(tag .. ": BALANCE's meta is every character's gold", cards[1].meta:GetText():find("^all ") ~= nil or (c.audit.state == "broken" and cards[1].meta:GetText() == "records do not add up"), cards[1].meta:GetText())
+      check(tag .. ": their hover says it in the list's words", tipOf(cards[2]):find(GP.UNTRACED.unexplained, 1, true) ~= nil and tipOf(cards[2]):find(GP.UNTRACED_TIP, 1, true) ~= nil
+        and tipOf(cards[3]):find(GP.UNTRACED.other, 1, true) ~= nil, tipOf(cards[2]))
+      -- the list: its section header names the period; the view control sits at the header's right
+      local hb, vb = P.box(c.section), P.box(c.viewSeg)
+      local vlabels = {}
+      for i, b in ipairs(c.viewSeg.segs) do vlabels[i] = b.text:GetText() end
+      eq(tag .. ": the views", table.concat(vlabels, ","), "Sources,Auction house,Journal")
+      check(tag .. ": the section header THIS SESSION under the cards, the view control at its right, no search on Sources", c.section.label:GetText() == "THIS SESSION" and near(vb.l + vb.w, hb.l + hb.w)
+        and c.viewSeg.value == "sources" and not P.visible(c.search) and near(hb.t, first.t + first.h + UI.S.S5) and P.box(c.section.label).l + P.box(c.section.label).w < vb.l, ("%s %s"):format(vb.l + vb.w, hb.l + hb.w))
       local tbl = c.tbl.sources
       local others = 0
       for k, t in pairs(c.tbl) do if k ~= "sources" and P.visible(t.frame) then others = others + 1 end end
-      check(tag .. ": Sources shows, every other table is hidden", P.visible(tbl.frame) and others == 0 and not P.visible(c.dayStrip))
+      check(tag .. ": Sources shows, every other table is hidden, no auction answer", P.visible(tbl.frame) and others == 0 and not P.visible(c.answer))
       local secs = {}
       for i, s in ipairs(tbl.sections()) do secs[i] = s:GetText() end
-      eq(tag .. ": the groups: EARNED, SPENT, MOVED", table.concat(secs, " | "), UI.upper("Earned " .. money(ses.gained, true) .. " | Spent " .. money(-ses.spent, true)))
-      eq(tag .. ": Sources columns", keys(tbl), "src,what,whatAmt,n,share,amount")
+      check(tag .. ": the groups are words only, EARNED then SPENT: a total is never a list row", secs[1] == "EARNED" and secs[2] == "SPENT" and not table.concat(secs, " "):find("%d"), table.concat(secs, " | "))
+      eq(tag .. ": Sources columns", keys(tbl), "src,what,whatAmt,amount")
+      eq(tag .. ": the column of the largest group is MOSTLY FROM", tbl.head.what.fs:GetText(), "MOSTLY FROM")
       local rows = dataRows(tbl)
-      local sbad = {}
+      local sbad, away = {}, nil
       for _, r in ipairs(rows) do
         local it = r.item
         if r.c.src:GetText() ~= GP.srcLabel(it.key) then sbad[#sbad + 1] = it.key .. " label" end
-        if r.c.amount:GetText() ~= money(it.dir * it.amount, true) then sbad[#sbad + 1] = it.key .. " amount" end
+        if r.c.amount:GetText() ~= (it.dir == 0 and money(it.amount, true) or money(it.dir * it.amount, true)) then sbad[#sbad + 1] = it.key .. " amount" end
         if GP.UNTRACED[it.key] and not colorIs(r.c.src, "fgSubtle") then sbad[#sbad + 1] = it.key .. " not subtle" end
         if colorIs(r.c.amount, "red") or colorIs(r.c.amount, "green") then sbad[#sbad + 1] = it.key .. " coloured" end
+        for _, k in ipairs({ "what", "whatAmt", "amount", "src" }) do if r.c[k]:GetText() == "-" then sbad[#sbad + 1] = it.key .. " a dash in " .. k end end
+        if it.dir ~= 0 and it.kept and it.top[1] and not GP.NO_NAME[it.top[1].name] and r.c.what:GetText() == "" then sbad[#sbad + 1] = it.key .. " no mostly from" end
+        if it.dir ~= 0 and not it.kept and r.c.what:GetText() ~= "" then sbad[#sbad + 1] = it.key .. " mostly from on rows that do not add up" end
+        if it.key == "away" then away = r end
       end
-      check(tag .. ": source rows: the label, the signed amount, untraced ones in fgSubtle, nothing red or green", #sbad == 0 and #rows >= 14, table.concat(sbad, "; "))
+      check(tag .. ": source rows: the label, the signed amount, untraced ones in fgSubtle, nothing red or green, no dash, mostly from only on rows that add up", #sbad == 0 and #rows >= 14, table.concat(sbad, "; "))
+      local labels = {}
+      for _, r in ipairs(rows) do labels[r.item.key] = r.c.src:GetText() end
+      check(tag .. ": gold with no source seen is not called away", labels.unexplained == "Source not seen" and labels.other == "Spending not explained", tostring(labels.unexplained))
+      check(tag .. ": what changed while the addon was not running is its own row, neither earned nor spent", away ~= nil and away.c.src:GetText() == "While you were away" and away.c.amount:GetText() == money(4200, true)
+        and secs[#secs] == "NOT EARNED OR SPENT" and tipOf(away):find(GP.AWAY_TIP, 1, true) ~= nil, away and away.c.amount:GetText())
       local mcut = {}
       for _, r in ipairs(rows) do if r.c.whatAmt:IsTruncated() then mcut[#mcut + 1] = r.item.key end end
-      check(tag .. ": the biggest single's amount has a cell of its own and is never cut", #mcut == 0, table.concat(mcut, ","))
+      check(tag .. ": the largest group's amount has a cell of its own and is never cut", #mcut == 0, table.concat(mcut, ","))
       tableChecks(tag .. " Sources", tbl, c)
       check(tag .. ": the page scrolls as one: the column holds the table", c.contentH >= P.box(tbl.frame).t - colB.t + tbl.height, c.contentH)
       -- a source row opens its page
@@ -248,54 +260,59 @@ return function(P)
       eq(tag .. ": the newest quest entry names its quest", jr[1].c.detail:GetText(), "The Defias Brotherhood")
       c.srcDetail.Close(); M.settle()
       check(tag .. ": Back returns to Sources", not c.srcDetail.IsOpen() and P.visible(tbl.frame))
+      -- the other two views at this size: inside the column, nothing cut
+      view(c, "journal")
+      tableChecks(tag .. " Journal", c.tbl.journal, c)
+      local sb = P.box(c.search)
+      vb = P.box(c.viewSeg)
+      check(tag .. ": on Journal the 176 px search sits S2 before the view control, after the header's label", P.visible(c.search) and near(sb.w, UI.SEARCH_W) and near(sb.l + sb.w + UI.S.S2, vb.l)
+        and P.box(c.section.label).l + P.box(c.section.label).w <= sb.l, ("%s %s"):format(sb.l + sb.w, vb.l))
+      Gold.open("all", "auctions"); M.settle()
+      tableChecks(tag .. " Auction house", c.tbl.auctions, c)
+      if P.visible(c.answer) then
+        local ab = P.box(c.answer)
+        check(tag .. ": the auction answer sits under the section header, over the table", near(ab.t, P.box(c.section).t + UI.H.SECTION) and ab.t + ab.h <= P.box(c.tbl.auctions.frame).t + 0.5, ab.t)
+      end
     end
   end
 
-  -- ── the breakdowns, search, review, tooltips, periods ───────────────────────────────────────────────────────
+  -- ── the views, search, tooltips, periods ────────────────────────────────────────────────────────────────────
   do
     local c = open(1250, 760)
     local ses = ns.Recorder.current()
-    check("Gold breakdowns: the menu offers every breakdown", table.concat(offered(c.breakdown), ",") == "Sources,Journal,Days,Characters,Zones,Runs,Auction house")
     -- Journal
-    check("Gold Journal: picked from Break down by", pick(c.breakdown, "Journal") and c.st.view == "journal" and c.section.label:GetText() == "JOURNAL"
-      and c.breakdown.text:GetText() == "Break down by: Journal" and c.breakdown.ebActive)
+    view(c, "journal")
+    check("Gold Journal: picked from the view control", c.st.view == "journal" and c.view == "journal" and c.viewSeg.value == "journal" and c.section.label:GetText() == "THIS SESSION" and P.visible(c.tbl.journal.frame))
     local jt = c.tbl.journal
     local jr = dataRows(jt)
     eq("Gold Journal: every entry of the session", #jr, #ses.goldLog)
-    check("Gold Journal: newest first, a day row over each day", jr[1].item.t >= jr[#jr].item.t and #jt.sections() >= 1 and jt.sections()[1]:GetText():find(" ENTRIES$") ~= nil)
+    check("Gold Journal: newest first, a day row over each day, no entry count on it", jr[1].item.t >= jr[#jr].item.t and #jt.sections() >= 1 and jt.sections()[1]:GetText():find("ENTR", 1, true) == nil, jt.sections()[1]:GetText())
     local jbad = {}
     for i, r in ipairs(jr) do
       local e = r.item
       if r.c.amount:GetText() ~= money(e.delta, true) then jbad[#jbad + 1] = i .. " amount" end
-      if r.c.loc:GetText() ~= (e.zone or "-") then jbad[#jbad + 1] = i .. " place" end
+      if r.c.loc:GetText() ~= (e.zone or "") then jbad[#jbad + 1] = i .. " place" end
       if (r.c.loc:GetText() or ""):find("%d+%.%d, %d") then jbad[#jbad + 1] = i .. " coords inside the place" end
       if colorIs(r.c.amount, "red") or colorIs(r.c.detail, "red") then jbad[#jbad + 1] = i .. " red" end
+      for k, cell in pairs(r.c) do if cell.GetText and cell:GetText() == "-" then jbad[#jbad + 1] = i .. " a dash in " .. k end end
+      if (e.src == "unexplained" or e.src == "other") and not (e.ref and e.ref.drift) and (r.c.src:GetText() ~= GP.UNTRACED[e.src] or r.c.detail:GetText() ~= "") then jbad[#jbad + 1] = i .. " untraced wording" end
     end
-    check("Gold Journal: signed amounts, Place and Coords apart, nothing red", #jbad == 0, table.concat(jbad, "; "):sub(1, 300))
+    check("Gold Journal: signed amounts, Place and Coords apart, a missing place blank, nothing red, a row with no source says so once", #jbad == 0, table.concat(jbad, "; "):sub(1, 300))
+    local noPlace
+    for _, r in ipairs(jr) do if not r.item.zone then noPlace = r end end
+    check("Gold Journal: a blank place says Not recorded on hover", noPlace ~= nil and tipOf(noPlace):find("Place: Not recorded", 1, true) ~= nil)
     tableChecks("Gold Journal", jt, c)
-    -- the review button
-    check("Gold Journal: the ghost button counts the entries worth a look", P.visible(c.reviewBtn) and c.reviewBtn.text:GetText() == "6 to review" and c.flagged == 6, c.reviewBtn.text:GetText())
-    local rb, sb = P.box(c.reviewBtn), P.box(c.search)
-    check("Gold Journal: it sits before search", near(rb.l + rb.w + UI.S.S2, sb.l))
-    check("Gold Journal: its tooltip gives each reason in one line", tipOf(c.reviewBtn):find("a player you do not know", 1, true) ~= nil)
-    click(c.reviewBtn)
-    jr = dataRows(jt)
-    local allFlag = true
-    for _, r in ipairs(jr) do if not r.item.flag then allFlag = false end end
-    check("Gold Journal: a click lists the six entries worth a look", allFlag and #jr == 6 and c.reviewBtn.text:GetText() == "Show every entry", #jr)
-    click(c.reviewBtn)
-    eq("Gold Journal: a second click lists every entry again", #dataRows(jt), #ses.goldLog)
     -- search
     typeIn(c.search, "wu shen")
     jr = dataRows(jt)
     check("Gold search: the matching entries", #jr == 3 and jr[1].item.src == "training", #jr)
     typeIn(c.search, "zzzz")
     check("Gold search: no match says so, with Clear search", jt.stateFS and jt.stateFS:GetText() == 'No entry matches "zzzz". ' and jt.stateLink and jt.stateLink.shown ~= false, jt.stateFS and jt.stateFS:GetText())
-    typeIn(c.search, "")
-    pick(c.breakdown, "Sources")
     typeIn(c.search, "wu shen")
-    check("Gold search: typing on Sources opens the Journal on the matches", c.st.view == "journal" and #dataRows(jt) == 3)
-    typeIn(c.search, "")
+    view(c, "sources")
+    check("Gold search: leaving Journal clears the search and hides the box", (c.search:GetText() or "") == "" and not P.visible(c.search) and c.view == "sources")
+    view(c, "journal")
+    eq("Gold search: back on Journal every entry is listed", #dataRows(jt), #ses.goldLog)
     -- sort
     jt.head.amount.scripts.OnClick(jt.head.amount); M.settle()
     jr = dataRows(jt)
@@ -314,7 +331,7 @@ return function(P)
     check("Gold tooltip: a trade lists both sides, the time and the balance", t:find("You gave: ", 1, true) and t:find("You got: Light Leather x20", 1, true) and t:find("balance after", 1, true), t)
     t = tipOf(sale)
     check("Gold tooltip: a sale above the vendor price says both prices and why it is worth a look", t:find("Vendor price ", 1, true) and t:find("Worth a look: sold for more than a vendor pays", 1, true), t)
-    pick(c.breakdown, "Sources")
+    view(c, "sources")
     local srow, urow
     for _, r in ipairs(dataRows(c.tbl.sources)) do
       if r.item.key == "looted" then srow = r end
@@ -322,44 +339,69 @@ return function(P)
     end
     t = tipOf(srow)
     check("Gold tooltip: a source lists its biggest contributors and what a click does", t:find("^Looted coin") and t:find("Defias", 1, true) and t:find("Click to see every entry.", 1, true), t)
-    check("Gold tooltip: an untraced source says what it is, in the same words everywhere", urow and urow.c.src:GetText() == "While you were away (in)" and tipOf(urow):find(GP.UNTRACED_TIP, 1, true) ~= nil)
+    check("Gold tooltip: an untraced source says what it is, in the same words everywhere", urow and urow.c.src:GetText() == "Source not seen" and tipOf(urow):find(GP.UNTRACED_TIP, 1, true) ~= nil
+      and tipOf(urow):find("away", 1, true) == nil)
     -- periods
     local prev = Gold.scope("previous").sessions[1]
-    local label = "Session " .. UI.fmtWhen(prev.startedEpoch)
-    local more = offered(c.more)
-    check("Gold periods: More offers Yesterday, This month, Last 30 days, then the earlier sessions", more[1] == "Yesterday" and more[2] == "This month" and more[3] == "Last 30 days"
-      and more[4] == label and #more <= 3 + Gold.MORE_SESSIONS, table.concat(more, ","))
-    check("Gold periods: an earlier session is picked from More", pick(c.more, label))
-    check("Gold periods: the pick shows on More, active with its clear glyph; the period control shows none", c.st.scope == prev.id and c.more.ebActive and c.more.clear.shown ~= false
-      and c.period.value == nil and c.more.text:GetText() == UI.fmtWhen(prev.startedEpoch), c.more.text:GetText())
+    Gold.open(prev.id); M.settle()
+    check("Gold periods: a session opened from another page lights no period and is named in the section header", c.st.scope == prev.id and c.period.value == nil
+      and c.section.label:GetText() == UI.upper("Session of " .. UI.fmtStamp(prev.startedEpoch)), c.section.label:GetText())
     check("Gold periods: an ended session shows its numbers and its balance at its end", c.shownCards[1].label:GetText() == "BALANCE AT ITS END" and c.shownCards[2].value:GetText() == money(prev.gained, prev.gained > 0), c.shownCards[2].value:GetText())
-    click(c.more.clear)
-    check("Gold periods: the clear glyph goes back to Session", c.st.scope == "session" and c.period.value == "session" and not c.more.ebActive)
     period(c, "all")
-    check("Gold periods: All time reads the lifetime ledger and is saved", c.shownCards[2].value:GetText() == money(ns.char().gold.gained, true) and ns.DB.settings.goldPeriod == "all" and c.period.value == "all")
+    check("Gold periods: All reads the lifetime ledger, is saved, and its header says ALL TIME", c.shownCards[2].value:GetText() == money(ns.char().gold.gained, true) and ns.DB.settings.goldPeriod == "all" and c.period.value == "all"
+      and c.section.label:GetText() == "ALL TIME", c.section.label:GetText())
     period(c, "today")
-    check("Gold periods: Today", c.st.scope == "today" and c.period.value == "today" and c.summary.Text():find(" today", 1, true) ~= nil, c.summary.Text())
+    check("Gold periods: Today", c.st.scope == "today" and c.period.value == "today" and (c.section.label:GetText() == "TODAY" or c.section.label:GetText():find("^SINCE ") ~= nil), c.section.label:GetText())
     period(c, "session")
-    -- Auction house: the breakdown, and the old Loot > Auctions key opens it
+    -- Auction house: the view, and the old Loot > Auctions key opens it
     ns.UI.Open("Loot", "auctions"); M.settle()
-    check("Gold Auction house: the old Loot / Auctions key opens Gold on Auction house, all time", c.st.view == "auctions" and c.st.scope == "all" and c.section.label:GetText() == "AUCTION HOUSE" and P.visible(c.tbl.auctions.frame))
-    local _, a = GP.auctions(c.scopeData)
-    local ans = c.summary.Text()
-    check("Gold Auction house: the answer line counts posted, sold, the house cut, the profit and the expired", ans:find("^Posted " .. a.posted) and ans:find("Sold " .. a.sold .. " for ", 1, true) and ans:find("House cut ", 1, true)
-      and ans:find("Profit ", 1, true) and (a.expired == 0 or ans:find("^Posted " .. a.posted .. ", expired " .. a.expired) ~= nil), ans)
-    eq("Gold Auction house: columns", keys(c.tbl.auctions), "when,icon,item,result,buyer,dur,price")
-    local results, mailItem = {}, nil
-    for _, r in ipairs(dataRows(c.tbl.auctions)) do results[r.c.result:GetText()] = true; if r.c.item:GetText() == "Item from auction mail" then mailItem = r end end
+    ns.char().goldShareSince = 1; c.refresh(); M.settle()
+    local at = c.tbl.auctions
+    check("Gold Auction house: the old Loot / Auctions key opens Gold on Auction house, all time", c.st.view == "auctions" and c.st.scope == "all" and c.viewSeg.value == "auctions" and c.section.label:GetText() == "ALL TIME" and P.visible(at.frame))
+    check("Gold Auction house: all time says where its rows start, once", (c.section.meta:GetText() or ""):find("^rows since ") ~= nil and P.visible(c.section.meta), c.section.meta:GetText())
+    local g = c.scopeData.ledger
+    local ans = strip(c.answer.Text())
+    check("Gold Auction house: the answer is Spent, received, net, from the ledger, and adds up", P.visible(c.answer) and c.answerData.spent == (g.auctions or 0) and c.answerData.received == (g.auctionSales or 0)
+      and c.answerData.net == c.answerData.received - c.answerData.spent and ans:find("^Spent .+Received .+Net ") ~= nil and ans:find("Profit", 1, true) == nil and ans:find("Posted", 1, true) == nil, ans)
+    check("Gold Auction house: its hover says what the three words count", tipOf(c.answer.pool[1]):find("Received is what auction mail paid out", 1, true) ~= nil)
+    eq("Gold Auction house: columns (Player only while a third of the rows name one)", keys(at), c.auctionCols.player and "when,icon,item,result,player,price" or "when,icon,item,result,price")
+    local results, abad = {}, {}
+    for i, r in ipairs(dataRows(at)) do
+      local it = r.item
+      results[it.what] = true
+      for k, cell in pairs(r.c) do if cell.GetText and cell:GetText() == "-" then abad[#abad + 1] = i .. " a dash in " .. k end end
+      local want = it.what .. ((it.what == "Posted" and it.hours) and (", " .. UI.fmtDur(it.hours * 3600)) or "")
+      if r.c.result:GetText() ~= want then abad[#abad + 1] = i .. " result " .. tostring(r.c.result:GetText()) end
+      if r.c.price:GetText() ~= (it.price and money(it.price) or "") then abad[#abad + 1] = i .. " price" end
+      if not it.item and r.c.item:GetText() ~= "" then abad[#abad + 1] = i .. " an item with no name shows text" end
+    end
     check("Gold Auction house: sold, posted and bought rows show", results.Sold and results.Posted and results.Bought)
-    if mailItem then check("Gold Auction house: a missing item reads Item from auction mail, muted, and says why", colorIs(mailItem.c.item, "fgMuted") and tipOf(mailItem):find("The item name was not in the mail.", 1, true) ~= nil) end
-    tableChecks("Gold Auction house", c.tbl.auctions, c)
-    -- Zones and Runs
-    pick(c.breakdown, "Zones")
-    local zr = dataRows(c.tbl.zones)
-    check("Gold Zones: the total first, then the places", c.st.view == "zones" and P.visible(c.tbl.zones.frame) and (#zr == 0 or zr[1].item.total == true))
-    pick(c.breakdown, "Runs")
-    check("Gold Runs: shows", c.st.view == "runs" and P.visible(c.tbl.runs.frame))
-    pick(c.breakdown, "Sources")
+    check("Gold Auction house: Result folds the duration, a missing price or item is blank, never a dash", #abad == 0, table.concat(abad, "; "):sub(1, 300))
+    check("Gold Auction house: day rows carry no entry count", #at.sections() >= 1 and at.sections()[1]:GetText():find("ENTR", 1, true) == nil, at.sections()[1]:GetText())
+    tableChecks("Gold Auction house", at, c)
+    -- a purchase and its delivery mails are one row; a delivery with no purchase is Won with no price
+    do
+      local sid, now = ns.DB.active, GetServerTime()
+      local keep = ns.DB.loot.ah
+      ns.DB.loot.ah = { posted = {}, sold = {}, returned = {}, bought = {
+        { s = sid, t = now - 60, item = "Mageweave Cloth", id = 4338, count = 120, price = 53300, kind = "commodity" },
+        { s = sid, t = now - 50, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" }, { s = sid, t = now - 50, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" },
+        { s = sid, t = now - 49, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" }, { s = sid, t = now - 49, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" },
+        { s = sid, t = now - 48, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" }, { s = sid, t = now - 48, item = "Mageweave Cloth", id = 4338, count = 20, kind = "mail" },
+        { s = sid, t = now - 40, item = "Wool Cloth", id = 2592, count = 20, kind = "mail" },
+        { s = sid, t = now - 30, auctionId = 7, price = 16046, count = 1, kind = "item", item = "Silk Cloth", id = 4306 },
+      } }
+      Gold.open("session", "auctions"); M.settle()
+      local rows = dataRows(at)
+      local texts = {}
+      for i, r in ipairs(rows) do texts[i] = strip(r.c.item:GetText()) .. "|" .. r.c.result:GetText() .. "|" .. r.c.price:GetText() end
+      eq("Gold Auction house: one purchase is one row, a lone delivery is Won with a blank price, a guessed name is blank",
+        table.concat(texts, " ; "), ("|Bought|%s ; Wool Cloth x20|Won| ; Mageweave Cloth x120|Bought|%s"):format(money(16046), money(53300)))
+      check("Gold Auction house: the blank item says Not recorded on hover, the Won row that its price is not", tipOf(rows[1]):find("Item: Not recorded", 1, true) ~= nil and tipOf(rows[2]):find("Price: Not recorded", 1, true) ~= nil)
+      eq("Gold Auction house: 2 purchases with a price, 1 delivery with none", c.auctionSum.bought .. "/" .. c.auctionSum.won, "2/1")
+      ns.DB.loot.ah = keep
+    end
+    Gold.open("session"); M.settle()
     -- a long journal lists Gold.MAX_ROWS entries and says so
     do
       local keep = Gold.MAX_ROWS
@@ -369,10 +411,25 @@ return function(P)
       check("Gold long journal: the newest entries are listed, the header says how many in all", #dataRows(c.tbl.journal) == 20 and c.section.meta:GetText() == ("newest 20 of %d"):format(n), c.section.meta:GetText())
       Gold.MAX_ROWS = keep
     end
+    -- a journal that lost rows: the header says so, once
+    do
+      local row = table.remove(ses.goldLog, 3)
+      Gold.open("session", "journal"); M.settle()
+      check("Gold partial journal: the header says not every entry is kept", c.journalPartial == true and c.section.meta:GetText() == "not every entry is kept", c.section.meta:GetText())
+      table.insert(ses.goldLog, 3, row)
+      Gold.open("session", "journal"); M.settle()
+      check("Gold whole journal: no remark", c.journalPartial == false and not P.visible(c.section.meta))
+    end
     -- an empty period
     ses.goldLog, ses.gold, ses.gained, ses.spent, ses.trades = {}, {}, 0, 0, {}
     Gold.open("session"); M.settle()
-    check("Gold empty: the sentence of 4.9", c.tbl.sources.stateFS and c.tbl.sources.stateFS:GetText() == GP.EMPTY and c.summary.Text() == "No gold moved this session", c.summary.Text())
+    check("Gold empty: the one sentence", c.tbl.sources.stateFS and c.tbl.sources.stateFS:GetText() == "No gold has moved in this period." and GP.EMPTY == "No gold has moved in this period.", c.tbl.sources.stateFS and c.tbl.sources.stateFS:GetText())
+    check("Gold empty: the cards read zero with no meta about sources", c.shownCards[2].value:GetText() == money(0) and c.shownCards[2].meta:GetText() == "" and c.shownCards[3].meta:GetText() == "", c.shownCards[2].value:GetText() .. "|" .. c.shownCards[2].meta:GetText() .. "|" .. c.shownCards[3].meta:GetText())
+    ns.DB.loot.ah = { posted = {}, sold = {}, returned = {}, bought = {} }
+    view(c, "auctions")
+    check("Gold empty: Auction house has no answer line and says so", not P.visible(c.answer) and c.tbl.auctions.stateFS:GetText() == GP.NO_AUCTION, c.tbl.auctions.stateFS:GetText())
+    view(c, "journal")
+    check("Gold empty: Journal says the same sentence", c.tbl.journal.stateFS:GetText() == GP.EMPTY)
     local listening = {}
     for _, f in ipairs(P.descendants(c)) do for ev in pairs(rawget(f, "events") or {}) do listening[#listening + 1] = ev end end
     check("Gold: the pane registers no events (it refreshes when it is shown)", #listening == 0, table.concat(listening, ","))
@@ -414,7 +471,7 @@ return function(P)
       eq(tag .. ": block heads", band.blocks[1].head.text .. "|" .. band.blocks[2].head.text .. "|" .. band.blocks[3].head.text .. "|" .. band.blocks[4].head.text, "TOP SOURCES|BEST EARNERS|BIGGEST SINKS|NOTES")
       check(tag .. ": top source, best quest, biggest sink and the strangers are named",
         band.blocks[1].lines[1].text:find("^Trades received  ") and band.blocks[2].lines[1].text:find("^Quest: The Defias Brotherhood") and band.blocks[3].lines[1].text:find("^Auction house  ")
-        and band.blocks[4].lines[1].text:find("^Traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^While you were away: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
+        and band.blocks[4].lines[1].text:find("^Traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^Not traced: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
     end
   end
   do
@@ -430,7 +487,7 @@ return function(P)
     click(c.goldHead.link)
     local gold
     for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then gold = tab.paneByKey.gold.content end end
-    check("Sessions gold: the button opens that session's journal in the Gold pane", P.visible(gold) and gold.st.scope == prevRow.item.id and gold.st.view == "journal" and gold.more.ebActive == true and #dataRows(gold.tbl.journal) == #prevRow.item.goldLog, gold.st.scope)
+    check("Sessions gold: the button opens that session's journal in the Gold pane", P.visible(gold) and gold.st.scope == prevRow.item.id and gold.st.view == "journal" and gold.period.value == nil and #dataRows(gold.tbl.journal) == #prevRow.item.goldLog, gold.st.scope)
     -- a session from before 0.9.40
     local ses = ns.Recorder.current()
     ses.goldLog, ses.trades, ses.goldLogDropped = nil, nil, nil
@@ -438,131 +495,75 @@ return function(P)
     click(shown(c.tbl.rows)[1])
     check("Sessions gold: a session without a journal keeps its top sources and says why the rest is empty", band.blocks[1].lines[1].text:find("^Trades received") ~= nil and band.blocks[2].lines[1].text == "Recorded before addon 0.9.40" and band.blocks[4].lines[1].text:find("^Changed while away: %+42") ~= nil, band.blocks[2].lines[1].text)
   end
-  -- ── 0.9.44 (#43): periods by server day, who, Days and Characters ───────────────────────────────────────────
+  -- ── day periods: the day rows, where the history starts, and when Sources is not offered ────────────────────
   local DAY = 86400
-  local MIRA, ORG = "Player-1-0000B1", "Player-1-0000B2"
-  -- two more characters in the data in use: one seen three days ago with a day row today, one of another realm and
-  -- faction not seen for 100 days; Hartbank (tests/play_gold.lua) has never logged in with 0.9.44. The purses are the
-  -- size a player really has (#49): above 10,000g on the data as played (Orgrim at the Classic cap of 214,748g), above
-  -- 1,000,000g on the long data (Orgrim at the 9,999,999g cap), so a column that only fits a small balance fails here
-  local ALT
-  local function addAlts(data)
-    local rich = data == "goldlong"
-    ALT = rich and { mira = 12345678912, org = 99999999999, bank = 15000007777, g = 5000000000, s = 2000000000 }
-      or { mira = 123456789, org = 2147483647, bank = 150000000, g = 50000000, s = 20000000 }
+  for _, size in ipairs(SIZES) do
+    local tag = ("Gold days %dx%d"):format(size[1], size[2])
+    local c = open(size[1], size[2], "gold", "today")
+    local me = ns.char()
     local base = Gold.baseStored()
     local now = GetServerTime()
-    for guid in pairs(ns.DB.characters) do if guid ~= ns.charGuid() and guid ~= "Player-1-0000A1" then ns.DB.characters[guid] = nil end end
-    ns.DB.characters[MIRA] = { name = "Mira", surname = "Dawnfall", realm = GetRealmName(), class = "WARRIOR", faction = "Alliance", level = 21, seen = now - 3 * DAY,
-      gold = { balance = ALT.mira, gained = ALT.mira, spent = 0 },
-      goldDays = { [Gold.dayKey(now, base)] = { g = ALT.g, s = ALT.s, o = ALT.mira - (ALT.g - ALT.s), c = ALT.mira, t = 900, n = 3, looted = ALT.g, repairs = ALT.s, away = 0 } } }
-    ns.DB.characters[ORG] = { name = "Orgrim", realm = "Forever Realm [EU] - Other Shore", class = "SHAMAN", faction = "Horde", level = 40, seen = now - 100 * DAY,
-      gold = { balance = ALT.org, gained = ALT.org, spent = 0 } }
-    ns.DB.characters["Player-1-0000A1"].gold = { balance = ALT.bank }
-  end
-
-  for _, size in ipairs(SIZES) do
-    for _, data in ipairs({ "gold", "goldlong" }) do
-      local tag = ("Gold 0.9.44 %dx%d %s"):format(size[1], size[2], data)
-      local c = open(size[1], size[2], data, "today")
-      addAlts(data); Gold.open("today"); M.settle()
-      local me = ns.char()
-      local base = Gold.baseStored()
-      local now = GetServerTime()
-      local kT = Gold.dayKey(now, base)
-      local today = me.goldDays[kT]
-      local wide = UI.G.isWide(UI.G.winW())
-      -- Today: the day row's numbers on the cards
-      check(tag .. ": Today is selected and reads the day row", c.period.value == "today" and today ~= nil and c.shownCards[2].value:GetText() == money(today.g, today.g > 0)
-        and c.shownCards[3].value:GetText() == (today.s > 0 and money(-today.s, true) or money(0)) and c.shownCards[1].label:GetText() == "BALANCE" and c.shownCards[1].value:GetText() == money(me.gold.balance), c.shownCards[2].value:GetText())
-      local src = c.sourceData
-      local okSrc = src.inTotal == today.g and src.outTotal == today.s
-      for _, r in ipairs(src.rows) do if r.dir ~= 0 and r.amount ~= (today[r.key] or 0) then okSrc = false end end
-      check(tag .. ": the sources of Today are the day row's keys", okSrc and #src.rows >= 10)
-      -- ── Days ──
-      check(tag .. ": Days is picked from Break down by", pick(c.breakdown, "Days") and c.st.view == "days" and c.section.label:GetText() == "DAYS")
-      local dt = c.tbl.days
-      check(tag .. ": the Days table shows, every other table is hidden", P.visible(dt.frame) and not P.visible(c.tbl.sources.frame) and not P.visible(c.tbl.journal.frame) and not P.visible(c.tbl.chars.frame))
-      eq(tag .. ": Days columns", keys(dt), wide and "day,earned,spent,net,played,rate,top,bal" or "day,earned,spent,net,bal")
-      local dr = dataRows(dt)
-      check(tag .. ": Today has one day with the row's numbers", #dr == 1 and dr[1].c.earned:GetText() == money(today.g, today.g > 0) and dr[1].c.net:GetText() == money(today.g - today.s, true)
-        and dr[1].c.bal:GetText() == money(today.c), #dr)
-      local stb, hb = P.box(c.dayStrip), P.box(dt.frame)
-      check(tag .. ": the strip of the last 30 days sits above the table, inside the column", P.visible(c.dayStrip) and c.dayStrip.n == 30 and stb.t + stb.h <= hb.t + 0.5
-        and stb.l + stb.w <= P.box(c.col).l + P.box(c.col).w + 0.5, stb.w)
-      check(tag .. ": the chart button shows the balance line instead", P.visible(c.chartBtn) and c.chartBtn.text:GetText() == "Show balance")
-      click(c.chartBtn)
-      check(tag .. ": the balance line replaces the bars", P.visible(c.dayLine) and not P.visible(c.dayStrip) and c.chartBtn.text:GetText() == "Show net per day")
-      click(c.chartBtn)
-      tableChecks(tag .. " Days", dt, c)
-      -- All time: every day, newest first
-      me.goldDays[Gold.dayKey(now - 12 * DAY, base)] = { g = 9000, s = 1000, o = 2000, c = 10050, t = 3700, n = 3, looted = 9000, repairs = 1000, away = 50 }
-      me.goldDays[Gold.dayKey(now - 20 * DAY, base)] = { g = 2000, s = 0, o = 0, c = 2000, t = 60, n = 1, quests = 2000 }
-      period(c, "all")
-      dr = dataRows(dt)
-      local nDays = 0
-      for _ in pairs(me.goldDays) do nDays = nDays + 1 end
-      check(tag .. ": All time lists every day, newest first", #dr == nDays and nDays >= 4 and dr[1].item.key == kT and dr[#dr].item.key == Gold.dayKey(now - 20 * DAY, base), #dr)
-      if wide then
-        local old
-        for _, r in ipairs(dr) do if r.item.key == Gold.dayKey(now - 12 * DAY, base) then old = r end end
-        check(tag .. ": Played and Per hour come from the day's active seconds", old and old.c.played:GetText() == UI.fmtDur(3700) and old.c.rate:GetText() == money(8000 * 3600 / 3700, true), old and old.c.played:GetText())
-      end
-      dt.head.earned.scripts.OnClick(dt.head.earned); M.settle()
-      dr = dataRows(dt)
-      local sorted = true
-      for i = 2, #dr do if (dr[i].item.g - dr[i - 1].item.g) * (c.st.dayAsc and 1 or -1) < 0 then sorted = false end end
-      check(tag .. ": a click on Earned sorts by it", sorted and c.st.daySort == "earned")
-      c.st.daySort, c.st.dayAsc = "day", false; dt.setSort("day", false); c.refresh()
-      -- a day's tooltip, then a click opens its sources
-      dr = dataRows(dt)
-      local oldRow
-      for _, r in ipairs(dr) do if r.item.key == Gold.dayKey(now - 12 * DAY, base) then oldRow = r end end
-      local t = tipOf(oldRow)
-      check(tag .. ": a day's tooltip lists its sources and what a click does", t:find("Looted coin", 1, true) and t:find("While you were away", 1, true) and t:find("Click to see this day's sources.", 1, true), t)
-      click(oldRow)
-      check(tag .. ": a click on a day opens Sources for that day, the day on More", c.st.view == "sources" and c.st.scope == "day:" .. Gold.dayKey(now - 12 * DAY, base) and P.visible(c.tbl.sources.frame)
-        and c.more.ebActive and c.period.value == nil and c.shownCards[2].value:GetText() == money(9000, true) and c.shownCards[1].label:GetText() == "BALANCE AT ITS END" and c.shownCards[1].value:GetText() == money(10050), c.st.scope)
-      local looted
-      for _, r in ipairs(dataRows(c.tbl.sources)) do if r.item.key == "looted" then looted = r end end
-      check(tag .. ": a day older than the journals keeps its totals; its source opens nothing", looted and looted.c.amount:GetText() == money(9000, true) and looted.item.n == 0 and looted.item.ebNoOpen == true)
-      Gold.open("today"); M.settle()
-      -- ── Characters: the scope filter in place of search ──
-      check(tag .. ": Characters is picked from Break down by", pick(c.breakdown, "Characters") and c.st.view == "chars" and c.section.label:GetText() == "CHARACTERS")
-      check(tag .. ": the scope filter takes the place of search", P.visible(c.whoFilter) and not P.visible(c.search) and c.whoFilter.text:GetText() == "This character")
-      eq(tag .. ": the scope filter offers", table.concat(offered(c.whoFilter), ","), "This character,This realm,Account")
-      local ct = c.tbl.chars
-      local ro = Gold.roster("all")
-      local cr = dataRows(ct)
-      check(tag .. ": the total first, then every character counted, by balance", cr[1].item.total == true and cr[1].c.balance:GetText() == money(ro.total) and cr[1].c.name:GetText() == ("All %d characters"):format(ro.count)
-        and cr[2].item.balance >= cr[3].item.balance, cr[1].c.name:GetText())
-      local function rowOf(guid) for _, r in ipairs(dataRows(ct)) do if r.item.guid == guid then return r end end end
-      local meRow, mira = rowOf(ns.charGuid()), rowOf(MIRA)
-      check(tag .. ": the current character says you and now", meRow.c.name:GetText():find(" %(you%)$") ~= nil and meRow.c.seen:GetText() == "now", meRow.c.name:GetText())
-      check(tag .. ": another character in its class colour, with today, 7 days and its age", mira.c.name:GetText() == "Mira Dawnfall" and math.abs(mira.c.name._color[1] - RAID_CLASS_COLORS.WARRIOR.r) < 0.01
-        and mira.c.today:GetText() == money(ALT.g - ALT.s, true) and mira.c.balance:GetText() == money(ALT.mira), mira.c.name:GetText())
-      check(tag .. ": the not seen in 90 days button counts them", P.visible(c.staleBtn) and c.staleBtn.text:GetText() == "Show 1 not seen in 90 days", c.staleBtn.text:GetText())
-      click(c.staleBtn)
-      check(tag .. ": included, the stale character is counted", dataRows(ct)[1].c.balance:GetText() == money(ro.total + ALT.org))
-      click(c.staleBtn)
-      -- hide from totals with a click
-      click(rowOf(MIRA))
-      check(tag .. ": a click on a character hides it from totals", ns.DB.settings.gold.hidden[MIRA] == true and dataRows(ct)[1].c.balance:GetText() == money(ro.total - ALT.mira) and rowOf(MIRA).c.seen:GetText() == "hidden")
-      t = tipOf(rowOf(MIRA))
-      check(tag .. ": its tooltip says a click counts it again", t:find("Click to count it in totals again.", 1, true) ~= nil, t)
-      click(rowOf(MIRA))
-      check(tag .. ": shown again, no empty table is left in the settings", dataRows(ct)[1].c.balance:GetText() == money(ro.total) and ns.DB.settings.gold.hidden == nil)
-      -- Account: the cards add up the characters
-      check(tag .. ": Account is picked from the scope filter", pick(c.whoFilter, "Account") and c.st.who == "account" and c.whoFilter.ebActive)
-      check(tag .. ": BALANCE becomes ACCOUNT GOLD; EARNED sums the day rows", c.shownCards[1].label:GetText() == "ACCOUNT GOLD" and c.shownCards[1].value:GetText() == money(ro.total)
-        and c.shownCards[2].value:GetText() == money(today.g + ALT.g, true), c.shownCards[2].value:GetText())
-      pick(c.whoFilter, "This realm")
-      check(tag .. ": This realm leaves the other realm out", c.shownCards[1].value:GetText() == money(Gold.roster("realm").total) and c.shownCards[1].label:GetText() == "REALM GOLD")
-      pick(c.whoFilter, "This character")
-      tableChecks(tag .. " Characters", ct, c)
-      pick(c.breakdown, "Sources")
-      check(tag .. ": leaving Characters goes back to this character and to search", c.st.who == "char" and P.visible(c.search) and not P.visible(c.whoFilter))
-    end
+    local kT = Gold.dayKey(now, base)
+    local today = me.goldDays[kT]
+    -- Today: the day row's numbers on the cards
+    check(tag .. ": Today is selected and reads the day row", c.period.value == "today" and today ~= nil and c.shownCards[2].value:GetText() == money(today.g, today.g > 0)
+      and c.shownCards[3].value:GetText() == (today.s > 0 and money(-today.s, true) or money(0)) and c.shownCards[1].label:GetText() == "BALANCE" and c.shownCards[1].value:GetText() == money(me.gold.balance), c.shownCards[2].value:GetText())
+    local src = c.sourceData
+    local okSrc = src.inTotal == today.g and src.outTotal == today.s
+    for _, r in ipairs(src.rows) do if r.dir ~= 0 and r.amount ~= (today[r.key] or 0) then okSrc = false end end
+    check(tag .. ": the sources of Today are the day row's keys", okSrc and #src.rows >= 10)
+    -- the Journal's day rows are gold days and carry the day's net from the day row
+    Gold.open("today", "journal"); M.settle()
+    local jt = c.tbl.journal
+    local head = jt.sections()[1]:GetText()
+    eq(tag .. ": a Journal day row carries the day's net", head, UI.upper(GP.dayHead(kT, base, now, true)))
+    check(tag .. ": it is the day row's earned minus spent", head:find(UI.upper(money(today.g - today.s, true)), 1, true) ~= nil and head:find("^TODAY") ~= nil, head)
+    typeIn(c.search, "a")
+    check(tag .. ": while a search narrows the rows the day row shows no net", #jt.sections() >= 1 and jt.sections()[1]:GetText():find(UI.upper(money(today.g - today.s, true)), 1, true) == nil, jt.sections()[1]:GetText())
+    typeIn(c.search, "")
+    Gold.open("session", "journal"); M.settle()
+    check(tag .. ": a session's Journal shows no day net (NET is the session's)", jt.sections()[1]:GetText():find(UI.upper(money(today.g - today.s, true)), 1, true) == nil, jt.sections()[1]:GetText())
+    -- a first day that starts mid-day says from when
+    local keepSince = me.goldSince
+    local d0 = Gold.keyStart(kT, base)
+    me.goldSince = d0 + 60
+    check(tag .. ": a day the history starts in says from when", GP.dayHead(kT, base, now, false) == "TODAY, FROM " .. UI.fmtClock(d0 + 60), GP.dayHead(kT, base, now, false))
+    -- the history starts inside the period: the header says the real range, not the period word
+    Gold.open("today"); M.settle()
+    eq(tag .. ": Today counted from where the history starts", c.section.label:GetText(), UI.upper("Since " .. UI.fmtStamp(d0 + 60)))
+    Gold.open("week"); M.settle()
+    eq(tag .. ": Week counted from where the history starts", c.section.label:GetText(), UI.upper("Since " .. UI.fmtStamp(d0 + 60)))
+    check(tag .. ": the header's text does not run into the view control", P.box(c.section.label).l + P.box(c.section.label).w < P.box(c.viewSeg).l and not c.section.label:IsTruncated())
+    me.goldSince = d0 - 30 * DAY
+    Gold.open("week"); M.settle()
+    eq(tag .. ": a week inside the history is WEEK", c.section.label:GetText(), "WEEK")
+    Gold.open("today"); M.settle()
+    eq(tag .. ": a day inside the history is TODAY", c.section.label:GetText(), "TODAY")
+    me.goldSince = keepSince
+    -- Sources is not offered for a period with dungeon time from before the coin capture of 0.9.52
+    me.goldRuns = { { inst = "The Deadmines", t = now - 1800, secs = 1200, looted = 365, quests = 0 } }
+    me.goldShareSince = now - 60
+    Gold.open("today"); M.settle()
+    local sb = c.viewSeg.segs[1]
+    check(tag .. ": a period with a dungeon run from before the fix opens on Journal", c.srcOff ~= nil and c.view == "journal" and c.viewSeg.value == "journal" and P.visible(c.tbl.journal.frame) and not P.visible(c.tbl.sources.frame), c.view)
+    check(tag .. ": the Sources button is greyed and says why on hover, with the date", colorIs(sb.text, "fgFaint") and tipOf(sb):find(("Sources are not reliable for dungeon time before %s."):format(UI.fmtSince(now - 60)), 1, true) ~= nil, tipOf(sb))
+    click(sb)
+    check(tag .. ": a click on it changes nothing", c.view == "journal" and c.viewSeg.value == "journal" and colorIs(sb.text, "fgFaint"))
+    view(c, "auctions")
+    check(tag .. ": Auction house is still offered", c.view == "auctions")
+    view(c, "sources")
+    -- the same run after the fix: Sources as usual
+    me.goldShareSince = now - 3600
+    Gold.open("today"); M.settle()
+    check(tag .. ": a run from after the fix leaves Sources on, with no hover", c.srcOff == nil and c.view == "sources" and sb.ebTip == nil and not colorIs(sb.text, "fgFaint"))
+    -- a period the run is not in keeps Sources
+    me.goldShareSince = now - 60
+    me.goldRuns[1].t = now - 10 * DAY
+    Gold.open("today"); M.settle()
+    check(tag .. ": a run outside the period does not take Sources away", c.srcOff == nil and c.view == "sources")
+    Gold.open("all"); M.settle()
+    check(tag .. ": All time holds it, so it opens on Journal", c.srcOff ~= nil and c.view == "journal")
+    me.goldRuns = nil
   end
   -- the first run: no day row yet, one character
   do
@@ -573,15 +574,11 @@ return function(P)
     Gold.open("today"); M.settle()
     check("Gold first run: Today with no day row shows zeros, the balance and the empty sentence", c.shownCards[2].value:GetText() == money(0) and c.shownCards[4].value:GetText() == money(0, true)
       and c.shownCards[1].value:GetText() == money(me.gold.balance) and c.tbl.sources.stateFS:GetText() == GP.EMPTY, c.shownCards[2].value:GetText())
-    pick(c.breakdown, "Days")
-    check("Gold first run: Days says what comes", c.tbl.days.stateFS:GetText() == "Each day you play gets a row here, with what you earned and spent.")
-    pick(c.breakdown, "Characters")
-    local cr = dataRows(c.tbl.chars)
-    check("Gold first run: Characters lists the one character and says how the others come", #cr == 1 and cr[1].c.name:GetText():find(" %(you%)$") ~= nil and P.visible(c.charsNote)
-      and c.charsNote.text:GetText() == "Log in on your other characters once and their gold shows here.", #cr)
-    for _, key in ipairs({ "week", "yesterday", "month", "last30" }) do Gold.open(key); M.settle() end
-    check("Gold first run: every day period opens on an empty history without an error", #UI.paneErrors() == 0, table.concat(UI.paneErrors(), " || "))
-    pick(c.breakdown, "Sources")
+    check("Gold first run: with one character BALANCE has no meta", c.shownCards[1].meta:GetText() == "", c.shownCards[1].meta:GetText())
+    for _, key in ipairs({ "week", "yesterday", "month", "last30", "all" }) do
+      for _, v in ipairs(Gold.VIEWS) do Gold.open(key, v[1]); M.settle() end
+    end
+    check("Gold first run: every period and view opens on an empty history without an error", #UI.paneErrors() == 0, table.concat(UI.paneErrors(), " || "))
     -- the pane follows the purse while it is open: one refresh 0.1 s after a change
     Gold.open("today"); M.settle()
     local before = c.shownCards[2].value:GetText()

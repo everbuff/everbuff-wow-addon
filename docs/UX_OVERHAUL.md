@@ -1217,106 +1217,83 @@ At WIDE (tonight too, since it only adds cards): 6 cards, adding XP ("4,210" / "
 
 **Empty:** "Run a dungeon and its best, average and pay show here." With one run, the row shows and Average equals Best.
 
-### 4.8 Loot > Items (phase 2)
+### 4.8 Loot > Items (phase 2; content from `docs/UX_PRAGMATIC.md` 4.1)
 
-**Tooltip:** "Everything you picked up: drops, quest rewards, mail and auctions won."
+**Tooltip:** "What dropped, from whom and where."
 
-**Control row right:** segmented `Newest · By item` (from `itemsMode`), quality filter, search 176.
-- Measured at 900: segmented `2 x (46+24) = 140` + S2 + filter (longest label "Purple and better" about 105 + 44 = 149) + S2 + search 176 = 481. The controls start at x 395; the sub-tabs end at about 300, which leaves 95 px. It fits.
+**Control row right:** segmented `List · By item` (from `itemsMode`), quality filter, search 176.
 
 **Quality filter:** "Green and better ▾" by default (from `itemsQuality`). Menu: Everything, White and better, Green and better, Blue and better, Purple and better. Item names are in their quality colours. Settings uses the same labels.
 
-**Summary line:** counts only what the filter shows: "This session: 1 item, green and better · best: Cavedweller Bracers". The name is in its quality colour and shows the item tooltip on hover.
+**No summary line.** The section header opens the page: label "ITEMS SINCE TUE 17 NOV" (the oldest item row the save still holds for the character, at any quality), meta at the right "89 green or better" (the looted rows the filter shows, the same count in both modes; "N items" at Everything or while a search narrows the list).
 
-**Columns at 900** (24 + 400 fixed + 4 gaps (48) + Item 212)
+**Columns**
 
 | Column | Width | Content |
 |---|---|---|
 | When | 40 | |
-| Item | flex (max 360) | icon 20, quality name, muted "x2" |
-| From | 160 | the enemy, "Quest: ...", "Mail from Thrall", "Auction won" |
-| Place | 120 | |
-| Vendor price | 80 | "-" when unknown |
-| Coords | 72, WIDE only | |
+| Item | flex | icon 20, quality name, muted "x2", the QUEST badge |
+| From | 160 (max 240) | a named source as stored; "Quest: <name>" ("Quest" when the turn-in is no longer stored); "Container" (stored loot GUID starts with `Item-`); "Enemy" for the stored words `Creature` and `an enemy`, hover "Enemy: Name not recorded"; blank for `Picked up` and `Unknown source`, hover "From: Not recorded" |
+| Place | 120 | the zone stamped with the row. Blank, hover "Place: Not recorded", for a row that came with no loot window before the capture of 0.9.52 (`Picked up`, `an enemy`, `Quest reward` without `pushed`): its stored place is the last loot window's and can be another zone |
+| Coords | 72, WIDE only | blank whenever Place is |
 
-- Rows open nothing; the item tooltip shows on hover.
-- "Auction returned" moves to Gold > Auction house.
-- By item columns: Item flex · Times 48 · Total 56 · First seen 96 · Vendor price (each) 80.
+- From and Place show only while a third of the listed rows have a value; Place is also left out when it is the same on every row (rule 0.3 of the pragmatic pass). The hover keeps what a hidden column held.
+- Not listed: coin (Loot > Gold), auction and mail rows (`Auction won`, `Auction returned`, `Mail from ...`: purchases and deliveries, Gold > Auction house owns them).
+- No Value, Vendor price, Times, First seen or Qty column. No stored placeholder word and no "-" in any cell.
+- Rows open nothing; the item tooltip shows on hover; shift-click links the item in chat.
+- By item columns: Item flex · Count 56 · Last looted 96.
+- Day rows are the day only ("YESTERDAY"), no count.
 
-**Empty:** "Loot anything green or better and it shows here. Lower the quality filter to see grey and white items." No match: `No item matches "saber". ` plus "Clear search".
+**Empty:** "No item stored yet." A filter with no row: "No item matches this filter." A search with no row: `No item matches "saber". ` plus "Clear search".
 
-**Rail:** `BEST THIS WEEK` (5 ROW2) and `BY SOURCE` (counts).
-
-### 4.9 Loot > Gold (phase 2)
+### 4.9 Loot > Gold (phase 2; content from `docs/UX_PRAGMATIC.md` 4.2)
 
 **Tooltip:** "Where your gold came from and where it went, traced to every copper."
 
-**Control row right:** period segmented `Session · Today · Week · All time` (from `goldPeriod`), plus the "More ▾" overflow.
-- The overflow holds Yesterday, This month, Last 30 days and the last 8 sessions.
-- A pick shows its name in the overflow, in the active style with the clear glyph, and the segmented control shows no selection.
+**Control row right:** period segmented `Session · Today · Week · All` (from `goldPeriod`). No overflow. A session or a day opened from another page (the Sessions gold band) lights no segment and is named in the section header ("SESSION OF FRI 20 NOV 15:08").
 
-**Summary line:** "+26g 99s this session, mostly looted coin · +42g 61s per hour of play".
+**No summary line above the cards and no note under them.**
 
-**Cards**
-- At 900, 4 cards of 162:
+**Cards** (4 at every width)
 
-  | Label | Value | Meta |
-  |---|---|---|
-  | BALANCE | "12,383g 78s" | "all characters 12,393g" |
-  | EARNED | "+30g 6s" | "42 entries" |
-  | SPENT | "-3g 7s" | "9 entries" |
-  | NET | "+26g 99s" | "+42g 61s per hour" |
+| Label | Value | Meta |
+|---|---|---|
+| BALANCE | "12s 19c" | "all characters 12g 0s"; "records do not add up" when the audit of the period finds a break (the hover names it) |
+| EARNED | "+8g 47s" | "13g 41s not traced" when gold came in with no source seen, else "mostly auction sales" |
+| SPENT | "-30g 99s" | "50g 36s not traced" when gold went out with no source seen, else "mostly auction house" |
+| NET | "-22g 51s" | "-3g 42s per hour" only when the period holds 30 minutes of play (`Gold.RATE_MIN_S`); never for all time |
 
-- At WIDE, 5 cards, adding PER HOUR ("+42g 61s" / "over 38m", or "shows after 5 minutes").
-- Values are `fg`, never dimmed.
-
-**Untraced line** (only when something is untraced): META `fgMuted` S3 under the cards: "While you were away (in): 42s. Hover for details." Never red.
+- Values are `fg`, never dimmed. No entry counts.
+- The hovers hold the detail: the full balance and the audit on BALANCE, the untraced amount with its sentence on EARNED and SPENT, the gold a crash left unattributed and what changed while the addon was not running on NET.
+- Money shows two neighbouring units: 12g 0s 78c reads "12g 0s", never "12g 78c"; a flat 12g reads "12g".
 
 **List:**
-- Section header label = the breakdown name ("SOURCES"). Right side: filter "Break down by: Sources ▾" and search 176.
-- Breakdowns: Sources (default), Journal, Days, Characters, Zones, Runs, Auction house.
-- The scope filter "This character ▾" (This character, This realm, Account) appears only in the Characters breakdown, at its section header in place of search. Everything else shows the logged-in character.
+- Section header label = the period: "THIS SESSION", "TODAY", "WEEK", "ALL TIME". When the gold history (`goldSince`) starts inside the period the real range takes its place: "SINCE WED 18 NOV 20:35".
+- Right side: the view segmented `Sources · Auction house · Journal`, and on Journal the search 176 before it.
+- The header's one remark follows the label: "newest 500 of 767", "entries since Wed 18 Nov" and "rows since Sat 7 Nov" (all time: where the kept rows start), "not every entry is kept".
+- Until the coin capture of 0.9.52 (gate H) group coin in dungeons could be booked as mail or with no source. A period that holds time inside a dungeon from before the character's first load with it (`goldShareSince`) does not offer Sources: the page opens on Journal, the Sources segment is greyed and its hover says "Sources are not reliable for dungeon time before <date>."
 
-**Sources breakdown:**
-- In-table group rows (DAY_ROW style): "EARNED +30g 6s", "SPENT -3g 7s", "MOVED BETWEEN CHARACTERS AND BANK 0c". The last has the tooltip "Gold that moved between your own characters or the bank. It is not earned or spent."
-- Columns at 900 (24 + 396 fixed + 5 gaps (60) + Source 204):
-
-  | Column | Width | Content |
-  |---|---|---|
-  | Source | flex | |
-  | Biggest single | 200 | "Razormane Hunter 1g 2s" |
-  | Times | 48 | |
-  | Share | 48 | header tooltip "Share of everything earned" / "spent" |
-  | Amount | 88 | |
-  | › | 12 | |
-
-- Untraced rows read "While you were away (in)" / "While you were away (out)" in `fgSubtle`, with the tooltip "Your balance changed by this much while the addon could not see why, for example while logged out or with the addon off." The same phrase and tooltip appear on every screen.
+**Sources view:**
+- Group rows are words only: "EARNED", "SPENT", and "NOT EARNED OR SPENT" for what changed while the addon was not running ("While you were away") and gold moved between the player's own characters and the bank.
+- Columns: Source flex · Mostly from (the largest group of the source and, in a cell of its own, its amount; for Auction house the item with its units, "Black Lotus x3"; blank when the journal rows kept do not add up to the source's amount) · Amount 88 · ›.
+- Gold that moved with no source seen reads "Source not seen" (in) and "Spending not explained" (out) in `fgSubtle`, with the tooltip "Gold that moved while you played and the addon saw no source for it." Only `away` is "While you were away".
 - A source row opens a detail page of its Journal entries: Back "‹ Sources", TITLE "Looted coin", META "This session · 31 times · +18g 2s".
 
-**Journal breakdown:**
-- Today's columns, Coords at WIDE.
-- The ghost button "6 to review" sits at the section header right, before search. It filters to the rows worth a look; the tooltip gives each reason in one line.
+**Journal view:**
+- Columns When, Source, Detail, Place, Coords (WIDE), Amount, Balance (WIDE). A missing place is blank (hover "Place: Not recorded").
+- Auction rows name their item when the purchase or posting is stored: "Bought Black Lotus x3", "Deposit: Iron Bar x17". A purchase is found by its exact price within 5 s; a deposit only when one posting and one deposit are that near (postings a few seconds apart keep "Deposit").
+- Day rows are gold days (they turn at the daily reset, as Today does). On a day period or all time they carry the day's net from the day row: "YESTERDAY · -114g 54s". A day the history starts in says from when: "WEDNESDAY 18 NOV, FROM 20:35".
 
-**Auction house breakdown:**
-- Summary line "Posted 8 · Sold 8 for 11g 85s · House cut 59s · Profit 11g 26s · Expired 0".
-- Columns at 900 (24 + 360 fixed + 5 gaps (60) + Item 240):
+**Auction house view:**
+- Answer line under the section header, three segments: "Spent 30g 98s · Received 5g 97s · Net -25g 0s". Spent is `ledger.auctions`, Received `ledger.auctionSales`, Net the difference; the hover has sold, house cut and deposits returned when the kept sale rows add up to Received.
+- Columns When · Item (icon, name, "x3") · Result (folds the duration: "Posted, 1d") · Price. Player (the buyer of a sale, the seller of a purchase) only while a third of the rows name one.
+- One purchase is one row: a delivery mail is taken up by the priced row of the same item id bought at most an hour before it with that many units still to come. A delivery with no purchase reads "Won" with a blank Price.
+- A sale's Price is what the buyer paid (the invoice's bid), its count the posting's (same item, buyout equal to the bid).
+- A purchase whose item was named by the old "newest row without a name" rule shows a blank Item (hover "Item: Not recorded").
 
-  | Column | Width | Content |
-  |---|---|---|
-  | When | 40 | |
-  | Item | flex | |
-  | Result | 72 | Sold, Bought, Expired, Cancelled |
-  | Buyer | 104 | |
-  | Duration | 56 | |
-  | Price | 88 | each stack; per unit in the tooltip |
+**Empty:** "No gold has moved in this period." Auction house: "No auction in this period."
 
-- A missing item reads "Item from auction mail" in `fgMuted`, with the tooltip "The item name was not in the mail. It is counted in your gold all the same."
-
-**Empty:**
-- "No gold has moved in this period. Loot, sell or quest and it shows here, traced to its source."
-- Characters with one character: "Log in on your other characters once and their gold shows here."
-
-**Rail:** `TODAY vs YOUR AVERAGE DAY` (earned, spent, net, each a `fmtDelta`-style word: "12g more", "3g less"), and the gold-per-day chart (30 days, today in `accent`).
+**Cut by the pragmatic pass:** the Days, Characters, Zones and Runs views with their charts, the "More" and "Break down by" dropdowns, the scope filter, the review button, the PER HOUR card, the Times, Share, Buyer and Duration columns, the untraced line. The stored data behind Zones and Runs (`goldZones`, `goldRuns`) is still written; Dungeons reads the runs.
 
 ### 4.10 Character > Leveling (phase 2; Quests folded in)
 

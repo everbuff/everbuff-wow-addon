@@ -8,7 +8,12 @@
 --   character.crafts[]  { s, t, item, id, icon, count, prof, zone, x, y }
 --   character.recipes[] { s, t, name, prof }
 --   loot.ah.posted[]    { s, t, item, id, icon, count, bid, buyout, unit, hours, kind = "item" | "commodity" }
---   loot.ah.bought[]    { s, t, item?, id?, count, price, auctionId?, kind }
+--   loot.ah.bought[]    { s, t, item?, id?, count, price, auctionId?, kind, seller?, named?, delivered? }
+--     kind "item" | "commodity" is a purchase with its price; kind "mail" is a delivery whose purchase was not found
+--     (no price). named = "bid" | "invoice": how a C_AuctionHouse.PlaceBid row, which has no item at bid time, got
+--     its item (asked at the bid, or the won mail whose invoice names this exact price). A PlaceBid row with an item
+--     and no `named` was written before 0.9.52 and took the name of whichever won mail came next: a guess, which
+--     the pane does not show. delivered: units of a priced row that its won mails have brought so far.
 --   loot.ah.sold[]      { s, t, item, buyer?, bid, buyout, deposit, cut, net }   (from the seller invoice mail)
 --   loot.ah.returned[]  { s, t, item, count, reason = "expired" | "cancelled" }   (from the returned-item mail)
 -- Every row carries the addon session id `s` and a server-time `t`.
@@ -21,6 +26,7 @@
 local ADDON, ns = ...
 
 local Market = { tradeSkill = nil }
+Market.DELIVERY_S = 3600   -- a won mail belongs to a priced purchase of the same item made at most this long before it
 ns.Market = Market
 
 local function isFinite(v) return v == v and v ~= math.huge and v ~= -math.huge end
@@ -143,13 +149,38 @@ function Market.mailItem(src, name, id, count, meta)
     end
     return push(ah().returned, { s = sid(), t = nowEpoch(), item = safeStr(name), id = plainNum(id), count = plainNum(count) or 1, reason = reason }, 500)
   elseif src == "Auction won" then
-    -- the price was recorded at bid or buy time; the mail confirms the item and the seller
+    -- The price was recorded at bid or buy time; the mail brings the item and the seller. It belongs to a priced
+    -- row by a fact only, never by "the newest row without a name" (docs/UX_PRAGMATIC.md 4.2):
+    --   1. a priced row of the same item id, bought at most an hour ago in this session, with that many units still
+    --      to come (a commodity purchase arrives as several mails): its `delivered` grows, no row is added;
+    --   2. a row without an item (C_AuctionHouse.PlaceBid) whose price is the amount this mail's invoice names.
+    -- A mail that fits neither is a row of its own with no price.
     local list = ah().bought
-    for i = #list, math.max(1, #list - 20), -1 do
-      local b = list[i]
-      if b and not b.item and (nowEpoch() - (b.t or 0)) < 7 * 24 * 3600 then b.item = safeStr(name); b.id = plainNum(id); b.seller = meta and meta.seller; return b end
+    local now, n, mid = nowEpoch(), plainNum(count) or 1, plainNum(id)
+    local seller = meta and safeStr(meta.seller) or nil
+    if mid then
+      for i = math.max(1, #list - 60), #list do
+        local b = list[i]
+        if b and b.kind ~= "mail" and b.id == mid and ns.isMine(b) and plainNum(b.price) and now >= (b.t or 0) and now - (b.t or 0) <= Market.DELIVERY_S
+          and (plainNum(b.count) or 1) - (plainNum(b.delivered) or 0) >= n then
+          b.delivered = (plainNum(b.delivered) or 0) + n
+          b.seller = b.seller or seller
+          return b
+        end
+      end
     end
-    return push(list, { s = sid(), t = nowEpoch(), item = safeStr(name), id = plainNum(id), count = plainNum(count) or 1, seller = meta and meta.seller, kind = "mail" }, 500)
+    local paid = meta and plainNum(meta.bid) or nil
+    if paid and paid > 0 then
+      for i = #list, math.max(1, #list - 60), -1 do
+        local b = list[i]
+        if b and b.kind ~= "mail" and not b.item and ns.isMine(b) and plainNum(b.price) == paid and (now - (b.t or 0)) < 7 * 24 * 3600 then
+          b.item, b.id, b.seller, b.named = safeStr(name), mid, seller, "invoice"
+          b.count, b.delivered = n, n
+          return b
+        end
+      end
+    end
+    return push(list, { s = sid(), t = now, item = safeStr(name), id = mid, count = n, seller = seller, kind = "mail" }, 500)
   end
   return nil
 end
@@ -172,7 +203,19 @@ if hooksecurefunc and C_AuctionHouse then
   end
   if C_AuctionHouse.PlaceBid then
     hooksecurefunc(C_AuctionHouse, "PlaceBid", function(auctionID, amount)
-      Market.bought({ auctionId = plainNum(auctionID), price = plainNum(amount), count = 1, kind = "item" })
+      -- (the item, when the client still answers for this auction at the bid: then the row is named by a fact and
+      -- not by a mail that comes later)
+      local name, id
+      pcall(function()
+        local info = C_AuctionHouse.GetAuctionInfoByID and C_AuctionHouse.GetAuctionInfoByID(auctionID)
+        if type(info) == "table" then
+          id = plainNum(info.itemID) or (type(info.itemKey) == "table" and plainNum(info.itemKey.itemID)) or nil
+          local link = safeStr(info.itemLink)
+          name = link and link:match("|h%[(.-)%]|h") or nil
+          if not name and id and C_Item and C_Item.GetItemNameByID then name = safeStr(C_Item.GetItemNameByID(id)) end
+        end
+      end)
+      Market.bought({ auctionId = plainNum(auctionID), price = plainNum(amount), count = 1, kind = "item", item = name, id = name and id or nil, named = name and "bid" or nil })
     end)
   end
   if C_AuctionHouse.StartCommoditiesPurchase then
@@ -249,19 +292,79 @@ end)
 
 -- ── rows for the panes (the auctions are a breakdown of Loot > Gold, Economy.lua; the crafts and recipes are listed in
 -- Character > Professions, Progress.lua) ──────────────────────────────────────────────────────────────────────────
--- Rows for the Auctions pane, newest first, plus the summary numbers.
+-- Rows for Loot > Gold > Auction house, newest first, plus the summary numbers (docs/UX_PRAGMATIC.md 4.2). One trade
+-- is one row:
+--   Posted   price = the buyout (else the starting bid), hours
+--   Sold     price = what the buyer paid (the invoice's bid), never the mail's money, which also holds the deposit
+--            that came back and lacks the house cut; cut, deposit and net ride along for the tooltip. count is the
+--            posted row's, when a posting of this item at exactly this price is stored (each posting names one
+--            sale); else there is none.
+--   Bought   a purchase with its price. The won mails of a purchase are not rows: a mail is taken up by the earliest
+--            priced row of the same item id bought at most an hour before it with that many units still to come
+--            (rows written before 0.9.52 keep their mails in the list; from 0.9.52 Market.mailItem counts them on the
+--            priced row as `delivered`).
+--   Won      a delivery whose purchase is not stored: no price.
+--   Expired, Cancelled   a returned item.
+-- row.guessed: a PlaceBid row named by the old "newest row without a name" rule; the pane shows no item for it.
+function Market.guessed(r) return r.kind == "item" and r.auctionId ~= nil and r.item ~= nil and r.named == nil end
 function Market.buildAuctions()
   if not ns.DB then return {}, {} end
   local all = ah(); local rows = {}
   -- the logged-in character's trades only (#23); loot.ah itself keeps every character's rows
   local a = { posted = ns.mine(all.posted), sold = ns.mine(all.sold), bought = ns.mine(all.bought), returned = ns.mine(all.returned) }
-  local sum = { posted = #a.posted, sold = #a.sold, bought = #a.bought, returned = #a.returned, net = 0, spent = 0, cut = 0 }
+  local sum = { posted = #a.posted, sold = #a.sold, bought = 0, won = 0, returned = #a.returned, net = 0, spent = 0, cut = 0, sales = 0, deposit = 0 }
   -- (a row keeps its session id `s`, so Loot > Gold can list the auctions of a period)
-  for _, r in ipairs(a.posted) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = r.buyout or r.bid, what = "Posted", hours = plainNum(r.hours), note = "" } end
-  for _, r in ipairs(a.sold) do sum.net = sum.net + (r.net or 0); sum.cut = sum.cut + (r.cut or 0); rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = 1, price = r.net, cut = plainNum(r.cut), what = "Sold", note = r.buyer or "" } end
-  for _, r in ipairs(a.bought) do sum.spent = sum.spent + (r.price or 0); rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = r.price, what = "Bought", note = r.seller or "" } end
-  for _, r in ipairs(a.returned) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "" } end
-  table.sort(rows, function(x, y) return (x.t or 0) > (y.t or 0) end)
+  local byItem = {}   -- item name -> its postings, oldest first, for the count of a sale
+  for _, r in ipairs(a.posted) do
+    rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = r.buyout or r.bid, what = "Posted", hours = plainNum(r.hours), note = "" }
+    if r.item then byItem[r.item] = byItem[r.item] or {}; table.insert(byItem[r.item], { r = r }) end
+  end
+  for _, r in ipairs(a.sold) do
+    local bid = plainNum(r.bid)
+    sum.net = sum.net + (plainNum(r.net) or 0); sum.cut = sum.cut + (plainNum(r.cut) or 0)
+    sum.sales = sum.sales + (bid or 0); sum.deposit = sum.deposit + (plainNum(r.deposit) or 0)
+    local count
+    if bid then
+      for _, p in ipairs(byItem[r.item or ""] or {}) do
+        if not p.used and (p.r.t or 0) <= (r.t or 0) and plainNum(p.r.buyout) == bid then p.used = true; count = plainNum(p.r.count); break end
+      end
+    end
+    rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = count, price = bid, cut = plainNum(r.cut), deposit = plainNum(r.deposit), net = plainNum(r.net),
+      what = "Sold", note = r.buyer or "" }
+  end
+  local open = {}   -- item id (else name) -> priced rows with units still to come, oldest first
+  for _, r in ipairs(a.bought) do
+    local key, n = r.id or r.item, plainNum(r.count) or 1
+    if r.kind == "mail" or not plainNum(r.price) then
+      local hit
+      if r.kind == "mail" and key then
+        for _, p in ipairs(open[key] or {}) do
+          if p.rem >= n and (r.t or 0) >= (p.r.t or 0) and (r.t or 0) - (p.r.t or 0) <= Market.DELIVERY_S then hit = p; break end
+        end
+      end
+      if hit then
+        hit.rem = hit.rem - n
+        if (hit.row.note or "") == "" and r.seller then hit.row.note = r.seller end
+      else
+        sum.won = sum.won + 1
+        rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = nil, what = r.kind == "mail" and "Won" or "Bought", note = r.seller or "" }
+      end
+    else
+      sum.bought = sum.bought + 1; sum.spent = sum.spent + r.price
+      local guessed = Market.guessed(r)
+      local row = { s = r.s, t = r.t, item = (not guessed) and r.item or nil, id = (not guessed) and r.id or nil, count = r.count, price = r.price, what = "Bought",
+        note = (not guessed) and r.seller or "", guessed = guessed or nil }
+      rows[#rows + 1] = row
+      if key and not guessed then
+        open[key] = open[key] or {}
+        table.insert(open[key], { r = r, row = row, rem = n - (plainNum(r.delivered) or 0) })
+      end
+    end
+  end
+  for _, r in ipairs(a.returned) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "" } end
+  local order = {}
+  for i, r in ipairs(rows) do order[r] = i end
+  table.sort(rows, function(x, y) if (x.t or 0) ~= (y.t or 0) then return (x.t or 0) > (y.t or 0) end return order[x] > order[y] end)
   return rows, sum
 end
 

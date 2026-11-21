@@ -464,15 +464,7 @@ return function(P)
     d[k(29)] = { g = 0, s = 70, t = 60, n = 1, o = 170, c = 100, other = 70 }
     d[k(30)] = { g = 9, s = 0, t = 60, n = 1, o = 161, c = 170, looted = 9 }      -- one day too old for the strip
     d[k(150)] = { g = 9000, s = 0, t = 60, n = 1, o = 0, c = 9000, looted = 9000 }
-    local sv = G.stripDays("char")
-    local filled, holes = 0, 0
-    for i = 1, 30 do if sv[i] == false then holes = holes + 1 elseif type(sv[i]) == "table" then filled = filled + 1 end end
-    check("strip: 30 slots, one per day, never fewer", filled + holes == 30 and #sv == 30, filled + holes)
-    check("strip: today is the last slot, 5 days ago the 25th, 29 days ago the first", sv[30] and sv[30].key == k(0) and sv[30].v == 6 and sv[30].live == true
-      and sv[25] and sv[25].key == k(5) and sv[25].v == 400 and sv[1] and sv[1].key == k(29) and sv[1].v == -70, sv[25] and sv[25].key)
-    check("strip: a day without a row leaves its slot empty, an older day is not packed in", filled == 3 and holes == 27 and sv[29] == false and sv[2] == false)
-    check("strip: a slot's label is its day's", sv[25].label == G.dayLabel(k(5)))
-    check("strip: the same 30 days whatever the period shown", #G.period("history", "char").days == 5)
+    check("history: every day row is a day of the whole history", #G.period("history", "char").days == 5)
   end
 
   -- ── a 0.9.43 save file loads with no invented history ───────────────────────────────────────────────────────
