@@ -169,16 +169,24 @@ do
   eq("Now: this session is its two logins", #ns.Gold.joined(), 2)
   eq("Now: the hero is the session's gold, -22g 51s", nv.hero.hero.text, UI.money(-225137, true) .. " this session")
   eq("Now: no per hour figure 11 minutes into the session", strip(nv.hero.meta1.text), "")
-  check("Now: the session ledger behind it: +84,773, -309,910, played from 11:45:25", nv.sessionGold.gained == 84773 and nv.sessionGold.spent == 309910 and nv.sessionGold.net == -225137
-    and nv.sessionGold.played == S.now - 1795257925 and nv.sessionGold.played < 1800 and nv.sessionGold.perHour == nil, nv.sessionGold.played)
+  -- (played: 66 s of the first login, 1795257925 to 1795257991, and the second from 1795258021 on: 627 s at the
+  -- save's last second. The 30 s logged out between them are not played.)
+  check("Now: the session ledger behind it: +84,773, -309,910, played 66 s + the second login so far", nv.sessionGold.gained == 84773 and nv.sessionGold.spent == 309910 and nv.sessionGold.net == -225137
+    and nv.sessionGold.played == 66 + (S.now - 1795258021) and nv.sessionGold.played < 1800 and nv.sessionGold.perHour == nil, nv.sessionGold.played)
   local labels, byKey = {}, {}
   for i, d in ipairs(nv.cardDefs) do labels[i] = d.label; byKey[d.key] = nv.cardRow.cards[i] end
   eq("Now: the cards, each with a value: no XP per hour, no DEATHS at 0", table.concat(labels, " | "), "Balance | Played | Last run | Saved to everbuff.gg")
   check("Now: BALANCE 12s 19c of 1,219 copper, all characters 120,078", byKey.balance.value.text == UI.money(1219) and byKey.balance.meta.text == "all characters " .. UI.money(120078), byKey.balance.meta.text)
   check("Now: PLAYED has no second line", strip(byKey.played.meta.text) == "" and tostring(byKey.played.value.text):find("^%d+m$") ~= nil, byKey.played.value.text)
-  -- (10m 57s at 11:56:22, the save's last second: a played time is said to the nearest minute, UI.fmtPlayed)
-  eq("Now: PLAYED counts from the first login, 11:45:25", byKey.played.value.text, UI.fmtPlayed(S.now - 1795257925))
-  eq("Now: 10m 57s at the save's last second reads 11m", UI.fmtPlayed(1795258582 - 1795257925), "11m")
+  -- (66 s + 561 s = 627 s = 10m 27s at 11:56:22, the save's last second: "10m". The span from the first login,
+  -- 657 s, would read "11m" and count the 30 s logged out as played.)
+  eq("Now: PLAYED is the two logins added up", byKey.played.value.text, UI.fmtPlayed(66 + (S.now - 1795258021)))
+  eq("Now: 10m 27s at the save's last second reads 10m", UI.fmtPlayed((1795257991 - 1795257925) + (1795258582 - 1795258021)), "10m")
+  if S.now == 1795258582 then eq("Now: the card says 10m on the save", byKey.played.value.text, "10m") end
+  do
+    local tipText = type(nv.cardDefs[2].tip) == "table" and nv.cardDefs[2].tip.text or ""
+    check("Now: the PLAYED hover says the logins are added up, not a span", tipText:find("its 2 logins added up", 1, true) ~= nil and tipText:find("from the first", 1, true) == nil, tipText)
+  end
   check("Now: LAST RUN is the stored Blackrock Spire run", byKey.run.value.text == "Blackrock Spire" and ns.Now.lastRun().meta == "Fri 20 Nov \194\183 1h 9m \194\183 7 bosses \194\183 2 deaths", ns.Now.lastRun().meta)
   check("Now: the card's line is never cut: it fits the card or drops the day", not byKey.run.meta:IsTruncated(), byKey.run.meta.text)
   -- (lastAck.at = 1795257911 is when the addon applied the confirmation at the 11:45 login. The desktop's copy of
@@ -309,8 +317,12 @@ do
     for i, r in ipairs(rows) do got[i] = strip(r.c.src.text) .. "|" .. strip(r.c.what.text) .. "|" .. r.c.whatAmt.text .. "|" .. r.c.amount.text end
     -- (auction sales 59,773 and mail 25,000 make the 84,773 earned)
     eq("Gold session: the four sources, each with what it mostly came from", table.concat(got, " ; "),
-      ("Auction sales|Formula: Enchant Boots - Greater Stamina|%s|%s ; Mail received|Yoco Ratnik|%s|%s ; Flights|Tal|%s|%s ; Auction house|Black Lotus x3|%s|%s"):format(
-        money(28150), money(59773, true), money(25000), money(25000, true), money(45), money(-45, true), money(281985), money(-309865, true)))
+      ("Auction sales|Formula: Enchant Boots - Greater Stamina|%s|%s ; Mail received|Yoco Ratnik||%s ; Flights|Tal||%s ; Auction house|Black Lotus x3|%s|%s"):format(
+        money(28150), money(59773, true), money(25000, true), money(-45, true), money(281985), money(-309865, true)))
+    -- (the mail of 2g 50s and the flight of 45c are each the whole of their source: the amount is not said twice)
+    local cut = {}
+    for _, r in ipairs(rows) do if r.c.what.IsTruncated and r.c.what:IsTruncated() then cut[#cut + 1] = strip(r.c.what.text) end end
+    eq("Gold session: no MOSTLY FROM name is cut at 1104 wide", table.concat(cut, ","), "")
     check("Gold session: no Times and no Share column (the flight was 0% of 30g 99s)", c.tbl.sources.head.n == nil and c.tbl.sources.head.share == nil)
   end
   -- Session, Journal: the auction rows name their item
@@ -364,8 +376,10 @@ do
     and tip(c.viewSeg.segs[1]):find("Sources are not reliable for dungeon time before Sat 21 Nov.", 1, true) ~= nil, tip(c.viewSeg.segs[1]))
   do
     local secs = c.tbl.journal.sections()
-    eq("Gold week journal: today's day row carries the day's net, -22g 51s", secs[1].text, UI.upper("TODAY \194\183 " .. money(-225137, true)))
-    eq("Gold week journal: yesterday's is the day row of Fri 20 Nov, -114g 54s", secs[2].text, UI.upper("YESTERDAY \194\183 " .. money(845791 - 1991196, true)))
+    -- (review round 3: neither carries a net. The day row of Fri 20 Nov, -114g 54s, is Fri 05:00 to Sat 05:00 and
+    -- the kept rows do not add up to it, so the save cannot split it at midnight; see the day rows check below.)
+    eq("Gold week journal: today's day row is the bare day", secs[1].text, "TODAY")
+    eq("Gold week journal: yesterday's is the bare day, not the gold day row's -114g 54s", secs[2].text, "YESTERDAY")
     -- (1,711 rows were written since 18 Nov 20:35, the day rows' n: 297 + 895 + 502 + 12 + 5 of today; 767 are kept.
     -- The cut at 500 never takes the place of the coverage remark.)
     eq("Gold week journal: 767 entries are kept from 20:35 on, the newest 500 listed, and the header says both", c.journalCount .. " " .. tostring(c.section.meta.text), "767 newest 500 of 767, not every entry is kept")
@@ -392,12 +406,22 @@ do
       eq("Gold week journal: no row says mailbox", anyBox, 0)
     end
     -- (day rows are calendar days. The day row 20261118 starts at 20:35 and no entry of Wed 18 Nov from then on is
-    -- kept, so Week lists no row of that day: its oldest day row is Thursday. No stored session touches 00:00 to
-    -- 05:00 of Thu, Fri or Sat, so each day row's net is the net of its calendar day.)
+    -- kept, so Week lists no row of that day: its oldest day row is Thursday. No day row carries a net: a gold day
+    -- runs 05:00 to 05:00 and the kept rows do not add up to the day rows of 18, 19 and 20 Nov (session records
+    -- are gone), so nothing stored says how much of each fell before or after midnight. The 19 Nov snapshot
+    -- proves it for Thursday: 115 rows of Thu 00:00 to 05:00, net -230,173, booked on the day row of the 18th,
+    -- whose session record the 21 Nov save no longer holds. "+57g 7s" for Thursday was the net of Thu 05:00 to
+    -- Fri 05:00. Today's day row is whole (84,773 and 309,910), but yesterday's is not (kept 725,040 of 845,791
+    -- earned), so the save cannot say that none of yesterday's missing rows fell after midnight.)
     local secs2 = {}
     for i, s in ipairs(secs) do secs2[i] = s.text end
-    eq("Gold week journal: the day rows", table.concat(secs2, " | "), UI.upper(table.concat({ "TODAY \194\183 " .. money(-225137, true), "YESTERDAY \194\183 " .. money(845791 - 1991196, true),
-      "THURSDAY 19 NOV \194\183 " .. money(1069152 - 498444, true) }, " | ")))
+    eq("Gold week journal: the day rows are bare days", table.concat(secs2, " | "), UI.upper(table.concat({ "TODAY", "YESTERDAY", "THURSDAY 19 NOV" }, " | ")))
+    do
+      local byKey = GP.keptSums(Gold.baseStored(), ns.char().goldSince)
+      local d = ns.char().goldDays
+      check("Gold week journal: the kept rows add up to the day row of 21 Nov only", byKey["20261121"].g == d["20261121"].g and byKey["20261121"].s == d["20261121"].s
+        and byKey["20261120"].g == 725040 and d["20261120"].g == 845791 and byKey["20261119"].g ~= d["20261119"].g and (byKey["20261118"] or { g = 0 }).g ~= d["20261118"].g, byKey["20261120"].g)
+    end
   end
   -- All time: the lifetime ledger
   Gold.open("all"); M.settle()
@@ -431,8 +455,12 @@ do
     local from, net = facts(1794961755)
     eq("Gold all journal: Wednesday's day row is the bare day", wed, "WEDNESDAY 18 NOV")
     check("Gold all journal: Wed 18 Nov holds rows from before 20:35 and rows of two gold days: no FROM, no net", from == nil and net == nil, tostring(from) .. " " .. tostring(net))
+    -- (Thu 19 Nov: the day row 20261119 is 05:00 to 05:00 and the rows of Thu 00:00 to 05:00 are gone with their
+    -- session record: 1,069,152 - 498,444 is not the net of the calendar day and is not shown)
     local _, netThu = facts(1795099037)
-    eq("Gold all journal: Thu 19 Nov is exactly the day row 20261119", netThu, 1069152 - 498444)
+    eq("Gold all journal: Thu 19 Nov has no net: the day row 20261119 is not the calendar day", netThu, nil)
+    local _, netSat = facts(1795258000)
+    eq("Gold all journal: nor has Sat 21 Nov, while the day row of the 20th is not whole in the kept rows", netSat, nil)
     eq("Gold all journal: no row is listed under a Tuesday (the oldest kept entry is of Wed 18 Nov 01:14)", late, 0)
   end
   Gold.open("all", "auctions"); M.settle()

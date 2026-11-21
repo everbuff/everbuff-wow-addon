@@ -229,7 +229,12 @@ local function describe(e)
     local a = e.ah
     local name = a and type(a.item) == "string" and a.item ~= "" and not (ns.Market and ns.Market.guessed and ns.Market.guessed(a)) and a.item or nil
     local n = a and num(a.count) or 0
-    if name and e.ahKind == "bought" then
+    if name and e.ahKind == "bought" and ns.Market and ns.Market.unconfirmed and ns.Market.unconfirmed(a) then
+      -- (a bid named when it was placed, with no won mail yet: the copper left the purse for a bid on this item;
+      -- nothing says the auction was won, so it never reads "Bought")
+      e.detail = "Bid: " .. name
+      e.group = "Bid: " .. name
+    elseif name and e.ahKind == "bought" then
       e.detail = "Bought " .. name .. (n > 1 and (" x" .. n) or "")
       e.group, e.qty = name, n > 0 and n or 1
     elseif name and e.ahKind == "posted" then
@@ -483,14 +488,15 @@ function Gold.scope(key, who, withStale)
       sc.live = sess == cur
       sc.when = sessionLabel(sess)
       if sess == cur then sc.balance = num(charGold.balance) end
-      -- this session of several logins: every record's ledger, and the time from the first login to now
+      -- this session of several logins: every record's ledger, and the time logged in (each record's length added
+      -- up: the time logged out between two logins is not played time)
       if parts and #parts > 1 then
         local first = parts[#parts]
         for i = 2, #parts do
           sc.sessions[i] = parts[i]
           for k, v in pairs(sessionLedger(parts[i])) do sc.ledger[k] = num(sc.ledger[k]) + v end
+          sc.elapsed = sc.elapsed + elapsedOf(parts[i])
         end
-        sc.elapsed = math.max(0, nowT() - num(first.startedEpoch))
         sc.when = sessionLabel(first)
         sc.logins = #parts
       end
@@ -2945,6 +2951,7 @@ function GP.auctionTip(row, r, tip)
   elseif r.what == "Collected" then
     line(tip, "Taken from the mailbox. Price: Not recorded")
     if num(r.mails) > 1 then pair(tip, "Mails", tostring(r.mails)) end
+  elseif r.what == "Bid" then line(tip, "A bid you placed. No auction mail has confirmed it as won, so it is not counted as bought.")
   elseif r.what == "Posted" and r.hours then pair(tip, "Posted for", UI.fmtDur(r.hours * 3600)) end
   if r.postedAt then pair(tip, "Posted", UI.fmtWhen(r.postedAt)) end
   if r.byInvoice then line(tip, "The item is the one the auction mail of this price names.") end
@@ -3078,29 +3085,82 @@ function GP.dayHead(t, now, from, net)
   if net then label = label .. " \194\183 " .. money(net, true) end
   return label
 end
+-- The kept journal rows of the character, added up for GP.dayFacts: per gold day key and per calendar day, earned
+-- and spent apart, read straight from the stored goldLog rows with the clock Gold.entries gives them. Only rows
+-- from the start of the gold history on count (a day row holds nothing older); `away` rows are in no day row's
+-- g or s and are left out. Returns byKey, byCal ({ g, s, n }), loose (gold day keys and calendar days that hold a
+-- row whose time of day is not stored: nothing can be proven about them) and old (calendar days with a kept row
+-- from before the gold history).
+function GP.keptSums(base, since)
+  local byKey, byCal, loose, old = {}, {}, {}, {}
+  local function add(map, k, d)
+    local a = map[k]
+    if not a then a = { g = 0, s = 0, n = 0 }; map[k] = a end
+    if d > 0 then a.g = a.g + d else a.s = a.s - d end
+    a.n = a.n + 1
+  end
+  for _, sess in ipairs(Gold.sessions()) do
+    local log = sess.goldLog
+    local t0, m0 = num(sess.startedEpoch), tonumber(sess.startedMono)
+    for _, r in ipairs(type(log) == "table" and log or {}) do
+      if type(r) == "string" then
+        local mono, d, src = r:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t")
+        d, mono = tonumber(d), tonumber(mono)
+        if d and src then
+          local timed = m0 and mono
+          local t = timed and math.floor(t0 + (mono - m0) + 0.5) or t0
+          local k, cal = Gold.dayKey(t, base), date("%Y%m%d", t)
+          if not timed then loose[k], loose[cal] = true, true end
+          if t < since - 2 then old[cal] = true
+          elseif src ~= "away" then add(byKey, k, d); add(byCal, cal, d) end
+        end
+      end
+    end
+  end
+  return byKey, byCal, loose, old
+end
+-- MOSTLY FROM of the Sources view: never narrower than its header, and a name longer than GP.WHAT_MAX px shortens
+GP.WHAT_MIN, GP.WHAT_MAX = 96, 360
 -- What a day row may say beside its day. Returns facts(t) -> from, net for the calendar day of `t`.
 --   from  goldSince, when it lies inside the day and no kept row of the day is older than it.
---   net   earned minus spent of the gold day row of the same date (goldDays), only with `withNet` and only when
---         that row counts exactly this calendar day. A gold day turns over at the daily reset, not at midnight, so
---         the two differ by the hours between midnight and the reset, on both ends: the net shows only when no
---         kept row lies in those hours and no stored session of the character touches them. A day with a row from
---         before goldSince has no net either (the day row starts at goldSince).
+--   net   earned minus spent of the calendar day, only with `withNet` and only when the stored data proves it.
+--         A gold day row (goldDays) turns over at the daily reset, not at midnight, and holds no time of day, so a
+--         calendar day is made of parts of two gold days. The proof: for every gold day that overlaps the
+--         calendar day, the kept journal rows of that gold day add up exactly to its day row, earned and spent
+--         each (a gold day with no row has no kept row either). Then no change of those gold days is missing and
+--         the kept rows of the calendar day are all of it: the net is their sum. A session record that is gone
+--         (they are deleted when the desktop app picks a session up) leaves its day row larger than the kept
+--         rows, so the day reads bare. That no session is stored for some hours proves nothing and is never read.
+--         A day with a row from before goldSince has no net either (the day rows start at goldSince).
 function GP.dayFacts(entries, withNet)
   local base = Gold.baseStored()
   local c = ns.DB and ns.charGuid() and ns.char() or {}
   local since = num(c.goldSince)
-  local first, mixed = {}, {}
+  local first = {}
   for _, e in ipairs(entries or {}) do
     local t = num(e.t)
     local cal = date("%Y%m%d", t)
     if not first[cal] or t < first[cal] then first[cal] = t end
-    if base then
-      local k = Gold.dayKey(t, base)
-      if k ~= cal then mixed[cal], mixed[k] = true, true end
-    end
   end
-  local sessions = withNet and base and Gold.sessions() or {}
-  local cur, now = current(), nowT()
+  local days = type(c.goldDays) == "table" and c.goldDays or nil
+  -- (credits held back while the day base was not known are in no day row yet)
+  local can = withNet and base and days and since > 0 and not (Gold._held and #Gold._held > 0)
+  local byKey, byCal, loose, old, oldest, folded
+  if can then
+    byKey, byCal, loose, old = GP.keptSums(base, since)
+    for k in pairs(days) do if type(k) == "string" and k:match("^%d%d%d%d%d%d%d%d$") and (not oldest or k < oldest) then oldest = k end end
+    folded = type(c.goldMonths) == "table" and next(c.goldMonths) ~= nil
+  end
+  -- the kept rows of the gold day `k` are all of its changes
+  local function whole(k)
+    if loose[k] then return false end
+    local r, a = days[k], byKey[k]
+    if type(r) ~= "table" then
+      -- (no day row: no change that day, unless the row was folded into its month, Gold.fold, oldest first)
+      return a == nil and not (folded and oldest and k < oldest)
+    end
+    return num(r.g) == (a and a.g or 0) and num(r.s) == (a and a.s or 0)
+  end
   return function(t)
     t = num(t)
     local cal = date("%Y%m%d", t)
@@ -3108,18 +3168,21 @@ function GP.dayFacts(entries, withNet)
     local cs = t - (num(d.hour) * 3600 + num(d.min) * 60 + num(d.sec))   -- the day's midnight
     local before = since > 0 and first[cal] ~= nil and first[cal] < since - 2
     local from = (since > cs and since < cs + DAY and not before) and since or nil
-    local r = withNet and base and not before and not mixed[cal] and type(c.goldDays) == "table" and c.goldDays[cal] or nil
-    if type(r) ~= "table" then return from, nil end
-    local ks = Gold.keyStart(cal, base)
-    local a, b = math.min(cs, ks), math.max(cs, ks)
-    if b > a then
-      for _, s in ipairs(sessions) do
-        local s0 = num(s.startedEpoch)
-        local s1 = s.endedEpoch or (s == cur and now) or s0
-        if (s0 < b and s1 >= a) or (s0 < b + DAY and s1 >= a + DAY) then return from, nil end
-      end
+    if not can or before or old[cal] or loose[cal] then return from, nil end
+    -- every gold day with a part inside this calendar day
+    local k = Gold.dayKey(cs, base)
+    local any = type(days[k]) == "table"
+    if not whole(k) then return from, nil end
+    local b = Gold.dayStart(cs, base) + DAY
+    while date("%Y%m%d", b) == cal do
+      k = Gold.dayKey(b, base)
+      if not whole(k) then return from, nil end
+      any = any or type(days[k]) == "table"
+      b = b + DAY
     end
-    return from, num(r.g) - num(r.s)
+    if not any then return from, nil end
+    local a = byCal[cal]
+    return from, (a and a.g or 0) - (a and a.s or 0)
   end
 end
 
@@ -3151,15 +3214,29 @@ function GP.paintList(c)
       if #other > 0 then items[#items + 1] = { ebSection = "Not earned or spent" }; for _, r in ipairs(other) do items[#items + 1] = r end end
     end
     for _, r in ipairs(items) do if r.key then r.ebNoOpen = (r.dir == 0 or r.n == 0) or nil end end
+    -- (mostly from: the largest group of the source, only while the journal rows kept add up to its amount)
+    local function mostly(r)
+      local t = r.kept and r.top and r.top[1] or nil
+      if t and GP.NO_NAME[t.name] then t = nil end
+      return t, t and (t.name .. ((t.qty and t.qty > 1) and (" x" .. t.qty) or "")) or ""
+    end
+    -- MOSTLY FROM is as wide as its longest name (to GP.WHAT_MAX), so a name is whole whenever the row has the
+    -- room and its amount stands right beside it; Source takes the rest and gives way first
+    local whatW = GP.WHAT_MIN
+    for _, r in ipairs(items) do
+      if r.key then local _, text = mostly(r); whatW = math.max(whatW, UI.TextWidth("BODY", text) + 2) end
+    end
+    whatW = math.min(whatW, GP.WHAT_MAX)
+    for _, col in ipairs(tbl.spec) do if col.key == "what" then col.min, col.max = whatW, whatW end end
     tbl.setRows(items, function(row, r)
       local cc = row.c
       cc.src:SetText(GP.srcLabel(r.key))
       if GP.UNTRACED[r.key] then UI.SetColor(cc.src, "fgSubtle") end
-      -- (mostly from: the largest group of the source, only while the journal rows kept add up to its amount)
-      local t = r.kept and r.top[1] or nil
-      if t and GP.NO_NAME[t.name] then t = nil end
-      cc.what:SetText(t and (t.name .. ((t.qty and t.qty > 1) and (" x" .. t.qty) or "")) or "")
-      cc.whatAmt:SetText(t and money(t.amount) or "")
+      local t, text = mostly(r)
+      cc.what:SetText(text)
+      -- (its amount only when it is a part of the source: a group that is the whole source would print the
+      -- row's amount twice, side by side)
+      cc.whatAmt:SetText((t and t.amount ~= r.amount) and money(t.amount) or "")
       cc.amount:SetText(r.dir == 0 and money(r.amount, true) or money(r.dir * r.amount, true))
     end)
     if #items == 0 then tbl.setState(GP.EMPTY) end
@@ -3497,7 +3574,7 @@ function ns.BuildEconomyPane(pane)
     { key = "src", label = "Source", flex = 1, min = 140 },
     -- (the largest group of the source as a name that may shorten and its amount in a money cell of its own: a
     -- number is never cut, 2.4)
-    { key = "what", label = "Mostly from", flex = 1, min = 96, max = 220 },
+    { key = "what", label = "Mostly from", flex = 1, min = GP.WHAT_MIN, max = GP.WHAT_MIN },
     { key = "whatAmt", label = "", kind = "money", min = 40 },
     { key = "amount", label = "Amount", kind = "money", min = 88, strong = true },
   }, { tooltip = GP.sourceTip, onHeight = function() pcall(GP.place, c) end,

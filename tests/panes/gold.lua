@@ -231,6 +231,12 @@ return function(P)
         for _, k in ipairs({ "what", "whatAmt", "amount", "src" }) do if r.c[k]:GetText() == "-" then sbad[#sbad + 1] = it.key .. " a dash in " .. k end end
         if it.dir ~= 0 and it.kept and it.top[1] and not GP.NO_NAME[it.top[1].name] and r.c.what:GetText() == "" then sbad[#sbad + 1] = it.key .. " no mostly from" end
         if it.dir ~= 0 and not it.kept and r.c.what:GetText() ~= "" then sbad[#sbad + 1] = it.key .. " mostly from on rows that do not add up" end
+        -- (review round 3: a group that is the whole source does not print the row's amount a second time)
+        local top = it.kept and it.top and it.top[1] or nil
+        if top and not GP.NO_NAME[top.name] then
+          local want = top.amount ~= it.amount and money(top.amount) or ""
+          if r.c.whatAmt:GetText() ~= want then sbad[#sbad + 1] = it.key .. " largest group's amount " .. tostring(r.c.whatAmt:GetText()) end
+        end
         if it.key == "away" then away = r end
       end
       check(tag .. ": source rows: the label, the signed amount, untraced ones in fgSubtle, nothing red or green, no dash, mostly from only on rows that add up", #sbad == 0 and #rows >= 14, table.concat(sbad, "; "))
@@ -242,6 +248,14 @@ return function(P)
       local mcut = {}
       for _, r in ipairs(rows) do if r.c.whatAmt:IsTruncated() then mcut[#mcut + 1] = r.item.key end end
       check(tag .. ": the largest group's amount has a cell of its own and is never cut", #mcut == 0, table.concat(mcut, ","))
+      -- (MOSTLY FROM is as wide as its longest name, to GP.WHAT_MAX: no name is cut while the row has the room)
+      local ncut, longest = {}, 0
+      for _, r in ipairs(rows) do
+        longest = math.max(longest, UI.TextWidth("BODY", r.c.what:GetText() or ""))
+        if r.c.what:IsTruncated() then ncut[#ncut + 1] = r.item.key end
+      end
+      if longest <= GP.WHAT_MAX and tbl.cols.src.w >= 140 then check(tag .. ": no MOSTLY FROM name is cut while Source keeps its width", #ncut == 0, table.concat(ncut, ",")) end
+      check(tag .. ": MOSTLY FROM is no wider than its longest name needs", tbl.cols.what.w <= math.max(GP.WHAT_MIN, math.min(GP.WHAT_MAX, longest + 2)), tbl.cols.what.w)
       tableChecks(tag .. " Sources", tbl, c)
       check(tag .. ": the page scrolls as one: the column holds the table", c.contentH >= P.box(tbl.frame).t - colB.t + tbl.height, c.contentH)
       -- a source row opens its page
@@ -708,26 +722,59 @@ return function(P)
       local fromA, netA = facts(m0 + 5340)
       check("Gold day rows: a day with rows from before the gold history has no FROM and no net", fromA == nil and netA == nil, tostring(fromA) .. " " .. tostring(netA))
       local fromB, netB = facts(m0 + DAY + 50460)
-      check("Gold day rows: a day whose gold day row counts exactly that day carries the row's net", fromB == nil and netB == 500, tostring(netB))
-      -- without the rows from before the history, day A lists only its row of 21:01 and says FROM; the session of
-      -- 01:14 (its rows gone) still touches the hours before the reset, so the day row's net is not shown
+      check("Gold day rows: a day whose two gold days are both whole in the kept rows carries the sum of its own rows", fromB == nil and netB == 500, tostring(netB))
+      -- without the rows from before the history, day A lists only its row of 21:01 and says FROM. Its net from
+      -- 20:35 on is proven by the rows alone: the day row of A (500) is exactly the kept rows since 20:35. The
+      -- session record of 01:14 (its rows gone) lies before the history and changes nothing: records are not read.
       ns.DB.sessions["t-day-2"] = nil
       ns.DB.sessions["t-day-1"].goldLog = {}
       Gold.open("today", "journal"); Gold.open("all", "journal"); M.settle()
       local heads = {}
       for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
-      eq("Gold day rows: the day the history starts in says from when once no listed row is older; no net while a session touches the hours before the reset",
-        heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100)))
-      -- with that night session gone the day row of A counts the calendar day from 20:35 on: FROM and the net
+      eq("Gold day rows: the day the history starts in says from when, and its net from then on once the kept rows add up to its day row",
+        heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100) .. " \194\183 " .. money(500, true)))
       ns.DB.sessions["t-day-1"] = nil
       Gold.open("today", "journal"); Gold.open("all", "journal"); M.settle()
       heads = {}
       for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
-      eq("Gold day rows: no row and no session between midnight and the reset: FROM and the day row's net", heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100) .. " \194\183 " .. money(500, true)))
-      -- a session that plays past midnight into day B+1 takes the net off day B (its gold day runs on to the reset)
-      ns.DB.sessions["t-day-5"] = sess("t-day-5", m0 + 2 * DAY - 600, 1800, {})
-      local _, netB2 = GP.dayFacts(Gold.scopeEntries(Gold.scope("all")), true)(m0 + DAY + 50460)
-      eq("Gold day rows: a session past midnight takes the net off the day before", netB2, nil)
+      eq("Gold day rows: a session record with no gold row, there or gone, changes nothing", heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100) .. " \194\183 " .. money(500, true)))
+      -- Review round 3. A night session on day B, 01:00 to 01:30, earns 300 before the daily reset: the capture
+      -- books it on the day row of A (800), and it is a row of calendar day B.
+      local function netOf(t) local _, n = GP.dayFacts(Gold.scopeEntries(Gold.scope("all")), true)(t); return n end
+      ns.DB.sessions["t-day-n"] = sess("t-day-n", m0 + DAY + 3600, 1800, { { 300, 300, "quests", "" } })
+      me.goldDays[calA].g = 800
+      eq("Gold day rows: with every record kept, a night before the reset is counted in its calendar day: B is 300 + 700 - 200", netOf(m0 + DAY + 50460), 800)
+      eq("Gold day rows: and the day before does not hold it: A from 20:35 is 500", netOf(m0 + 75660), 500)
+      -- THE CASE OF THE FOUNDER'S SAVE: the desktop app picks that night session up and its record is deleted,
+      -- while the day row of A keeps its 800. Nothing stored now says when the missing 300 happened: before or
+      -- after midnight. Neither day may show a net (before: B read +500, the net of 05:00 to 05:00, as its own).
+      ns.DB.sessions["t-day-n"] = nil
+      eq("Gold day rows: a night session deleted while its day row stays: the day after has no net", netOf(m0 + DAY + 50460), nil)
+      eq("Gold day rows: and the day before has none either", netOf(m0 + 75660), nil)
+      Gold.open("today", "journal"); Gold.open("all", "journal"); M.settle()
+      heads = {}
+      for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
+      eq("Gold day rows: both day rows are then the bare day", table.concat(heads, " | "), UI.upper(dayB .. " | " .. dayA .. ", FROM " .. UI.fmtClock(m0 + 74100)))
+      me.goldDays[calA].g = 500
+      eq("Gold day rows: (the fixture is whole again)", netOf(m0 + DAY + 50460), 500)
+      -- a session that plays past midnight into the day after B: its row of 00:10 is booked on the day row of B
+      -- (750) and is not a row of calendar day B. Kept, B is still its own 500; deleted, B has no net.
+      ns.DB.sessions["t-day-5"] = sess("t-day-5", m0 + 2 * DAY - 600, 1800, { { 1200, 50, "quests", "" } })
+      me.goldDays[calB].g = 750
+      eq("Gold day rows: a kept row after midnight is left out of the day before, which keeps its net", netOf(m0 + DAY + 50460), 500)
+      ns.DB.sessions["t-day-5"] = nil
+      eq("Gold day rows: that record deleted while the day row stays: no net", netOf(m0 + DAY + 50460), nil)
+      me.goldDays[calB].g = 700
+      -- a row with no time of day stored (a session with no startedMono) proves nothing about its days
+      ns.DB.sessions["t-day-4"].startedMono = nil
+      eq("Gold day rows: a row whose time of day is not stored: no net", netOf(m0 + DAY + 50460), nil)
+      ns.DB.sessions["t-day-4"].startedMono = 1000
+      -- a day row that was never written for a gold day with kept rows: no net
+      local rowA = me.goldDays[calA]
+      me.goldDays[calA] = nil
+      eq("Gold day rows: kept rows of a gold day with no day row: no net", netOf(m0 + DAY + 50460), nil)
+      me.goldDays[calA] = rowA
+      Gold.open("all", "journal"); M.settle()
       -- a search never shows a net
       Gold.open("all", "journal"); M.settle()
       ns.DB.sessions["t-day-5"] = nil
@@ -741,6 +788,22 @@ return function(P)
     end
     ns.DB.sessions, ns.DB.active = keep.sessions, keep.active
     me.goldDays, me.goldSince, me.goldRuns = keep.days, keep.since, keep.runs
+    Gold.open("session"); M.settle()
+  end
+  -- ── review round 3: the amount beside MOSTLY FROM only when the largest group is a part of its source. Shaped
+  --    like the founder's 21 Nov: one flight (45c to Tal) is the whole of Flights; two repairs make Repairs. ──
+  do
+    local c = open(1104, 697, "gold", "session")
+    local t0 = GetServerTime() - 7200
+    ns.DB.sessions["t-src-1"] = { id = "t-src-1", guid = ns.charGuid(), startedEpoch = t0, startedMono = 1000, endedEpoch = t0 + 600, gained = 0, spent = 445,
+      gold = { flights = 45, repairs = 400, spent = 445, gained = 0 },
+      goldLog = { "1010\t-45\tflights\t9955\tnpc=Tal", "1020\t-300\trepairs\t9655\tnpc=Kaja", "1030\t-100\trepairs\t9555\tnpc=Borya" } }
+    Gold.open("t-src-1", "sources"); M.settle()
+    local got = {}
+    for _, r in ipairs(dataRows(c.tbl.sources)) do got[#got + 1] = r.c.src:GetText() .. "|" .. r.c.what:GetText() .. "|" .. r.c.whatAmt:GetText() .. "|" .. r.c.amount:GetText() end
+    eq("Gold Sources: a group that is the whole source does not repeat the amount; a part says its own", table.concat(got, " ; "),
+      ("Repairs|Kaja|%s|%s ; Flights|Tal||%s"):format(money(300), money(-400, true), money(-45, true)))
+    ns.DB.sessions["t-src-1"] = nil
     Gold.open("session"); M.settle()
   end
   -- the first run: no day row yet, one character
@@ -837,7 +900,8 @@ return function(P)
     local sc = Gold.scope("session")
     check("Session join: the ledger is the sum of the logins", sc.ledger.gained == one.ledger.gained + 84773 and sc.ledger.spent == one.ledger.spent and (sc.ledger.auctionSales or 0) == (one.ledger.auctionSales or 0) + 84773
       and sc.logins == 2, sc.ledger.gained)
-    eq("Session join: played counts from the first login", sc.elapsed, now - (t0 - 96))
+    -- (played is the time logged in: 66 s of the first login and this one so far, never the 30 s logged out between)
+    eq("Session join: played is the lengths of the logins added up, not the span from the first one", sc.elapsed, 66 + (now - t0))
     eq("Session join: the journal is every login's rows, oldest first", #Gold.scopeEntries(sc) .. " " .. Gold.scopeEntries(sc)[1].delta, (#Gold.scopeEntries(one) + 2) .. " 59773")
     eq("Session join: every figure of the session goes through it", Gold.metric("gained", "char", "session") .. " " .. Gold.metric("played", "char", "session"), sc.ledger.gained .. " " .. sc.elapsed)
     local sg = ns.Now.sessionGold()

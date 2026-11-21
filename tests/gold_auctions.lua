@@ -220,6 +220,37 @@ return function(P)
       check("capture: the mails of a purchase of the same session are counted on it, also 96 minutes later", #list == n0 + 6 and b == list[n0 + 6] and b.delivered == 40)
       b = Market.mailItem("Auction won", "Tender Wolf Meat", 12208, 20, {})
       check("capture: one more mail than was bought is a row of its own", #list == n0 + 7 and b.kind == "mail")
+      -- review round 3: a bid named at the bid is a purchase only once a won mail has confirmed it. Until then it
+      -- is a row that says "Bid" (it may be outbid or refused): not bought, not spent.
+      do
+        local n1 = #list
+        local _, s0 = Market.buildAuctions()
+        Market.bought({ auctionId = 604, price = 7000, count = 1, kind = "item", item = "Mooncloth", id = 14342, named = "bid" })
+        local r1, s1 = Market.buildAuctions()
+        local bid = find(r1, "Bid", "Mooncloth")
+        check("round 3: a named bid with no won mail is a Bid row with its amount, not a purchase", #bid == 1 and bid[1].price == 7000 and #find(r1, "Bought", "Mooncloth") == 0
+          and Market.unconfirmed(list[n1 + 1]) == true, #bid)
+        eq("round 3: it is not counted as bought and its amount is not in spent", s1.bought .. " " .. s1.spent .. " " .. s1.openBids, s0.bought .. " " .. s0.spent .. " " .. (s0.openBids + 1))
+        local tip = _G.GameTooltip; tip:ClearLines(); GP.auctionTip(nil, bid[1], tip)
+        check("round 3: its hover says no mail has confirmed it", table.concat(tip.lines or {}, "\n"):find("No auction mail has confirmed it", 1, true) ~= nil)
+        -- the only mail of that item names another amount (the bid was outbid, the mail is another purchase's):
+        -- one unit, same item id, minutes later. It never confirms the bid.
+        M.epoch = M.epoch + 60
+        local m = Market.mailItem("Auction won", "Mooncloth", 14342, 1, { bid = 7500, seller = "Tailor" })
+        local r2, s2 = Market.buildAuctions()
+        check("round 3: a won mail of the same item that names another amount does not confirm the bid", m.kind == "mail" and list[n1 + 1].delivered == nil and #find(r2, "Bid", "Mooncloth") == 1
+          and #find(r2, "Bought", "Mooncloth") == 0 and #find(r2, "Collected", "Mooncloth") == 1 and s2.bought == s0.bought and s2.spent == s0.spent, tostring(m.kind))
+        -- a mail whose invoice cannot be read confirms nothing either
+        m = Market.mailItem("Auction won", "Mooncloth", 14342, 1, {})
+        check("round 3: nor does a mail with no invoice amount", m.kind == "mail" and list[n1 + 1].delivered == nil)
+        -- its own mail: the invoice names 7,000
+        m = Market.mailItem("Auction won", "Mooncloth", 14342, 1, { bid = 7000, seller = "Weaver" })
+        local r3, s3 = Market.buildAuctions()
+        local got = find(r3, "Bought", "Mooncloth")
+        check("round 3: the won mail whose invoice names its amount makes it a purchase", m == list[n1 + 1] and m.delivered == 1 and #got == 1 and got[1].price == 7000 and got[1].note == "Weaver"
+          and #find(r3, "Bid", "Mooncloth") == 0 and s3.bought == s0.bought + 1 and s3.spent == s0.spent + 7000 and s3.openBids == s0.openBids, #got)
+        for i = #list, n1 + 1, -1 do list[i] = nil end
+      end
       for i = #list, n0 + 1, -1 do list[i] = nil end
     end
     -- the rows these captures give the pane
@@ -320,7 +351,7 @@ return function(P)
         { s = SID, t = T + 84, auctionId = 132893650, price = 16499, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051 },
         { s = SID, t = T + 87, auctionId = 132893638, price = 16499, count = 1, kind = "item" },
         -- a purchase that has its item: a won mail of its price is its own and names no bid
-        { s = SID, t = T + 90, item = "Mithril Casing", id = 10561, count = 1, price = 4685, kind = "item", named = "bid" },
+        { s = SID, t = T + 90, item = "Mithril Casing", id = 10561, count = 1, price = 4685, kind = "item", named = "bid", delivered = 1 },
         { s = SID, t = T + 91, auctionId = 5, price = 4685, count = 1, kind = "item" },
         -- a bid of another session with the same price: a mail of this session does not name it
         { s = SID2, t = T + 3800, auctionId = 6, price = 16499, count = 1, kind = "item" },
@@ -464,6 +495,24 @@ return function(P)
     src = Gold.sources(sc, Gold.scopeEntries(sc))
     for _, r in ipairs(src.rows) do if r.key == "auctions" then ah = r end end
     check("sources: rows that do not add up to the ledger are not kept: the amount is the ledger's", ah.kept == false and ah.amount == sess.gold.auctions)
+  end
+
+  -- ── review round 3: the journal never says "Bought" for a bid no mail has confirmed ───────────────────────────
+  do
+    local row = { s = SID, t = T + 700, auctionId = 605, item = "Mooncloth", id = 14342, count = 1, price = 7000, kind = "item", named = "bid" }
+    ahRows({ bought = { row } })
+    sess.goldLog = { ("%.1f\t%d\tauctions\t%d\tkind=bid"):format(1700, -7000, 993000) }
+    sess.gold = { auctions = 7000 }; sess.spent = 7000
+    local e = Gold.entries(sess)
+    eq("round 3 journal: a named bid with no won mail reads Bid, not Bought", e[1].detail, "Bid: Mooncloth")
+    local sc = Gold.scope(SID)
+    local src = Gold.sources(sc, Gold.scopeEntries(sc))
+    local ah
+    for _, r in ipairs(src.rows) do if r.key == "auctions" then ah = r end end
+    eq("round 3 sources: and Auction house is mostly that bid, said as a bid", ah and ah.top[1] and ah.top[1].name, "Bid: Mooncloth")
+    row.count, row.delivered = 4, 4
+    e = Gold.entries(sess)
+    eq("round 3 journal: once its won mail has come it reads Bought, with the mail's count", e[1].detail, "Bought Mooncloth x4")
   end
 
   ns.DB.sessions[SID] = nil

@@ -906,10 +906,13 @@ function Now.refresh(content)
     end
   end
 
-  local elapsed = start and math.max(0, now - start) or 0
+  -- (played is the time logged in: the lengths of the session's records added up, never the span from the first
+  -- login to now, which would count the time logged out between two logins as played)
+  local elapsed = 0
   local sdeaths = 0
-  for _, s in ipairs(parts) do sdeaths = sdeaths + num(s.deaths) end
-  local playedTip = #parts > 1 and ("How long this session has run, from the first of its %d logins. Opens your sessions."):format(#parts) or "How long this session has run. Opens your sessions."
+  for _, s in ipairs(parts) do sdeaths = sdeaths + num(s.deaths); elapsed = elapsed + UI.sessionSecs(s, now) end
+  if not start then elapsed = 0 end
+  local playedTip = #parts > 1 and ("Time logged in this session, its %d logins added up. Time logged out between them is not counted. Opens your sessions."):format(#parts) or "How long this session has run. Opens your sessions."
   local deathsOpen = Now.deathsOpen()
   content.deathsOpen = deathsOpen
   if atMax then

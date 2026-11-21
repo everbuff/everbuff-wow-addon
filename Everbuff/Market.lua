@@ -166,7 +166,9 @@ function Market.mailItem(src, name, id, count, meta)
     if mid then
       for i = math.max(1, #list - 60), #list do
         local b = list[i]
-        if b and b.kind ~= "mail" and b.id == mid and ns.isMine(b) and plainNum(b.price) and now >= (b.t or 0)
+        -- (a row named at the bid is never confirmed by the item alone: a bid can be outbid and the mail then
+        -- belongs to another purchase of that item. Only the invoice's amount confirms it, rule 2.)
+        if b and b.kind ~= "mail" and b.named ~= "bid" and b.id == mid and ns.isMine(b) and plainNum(b.price) and now >= (b.t or 0)
           and (now - (b.t or 0) <= Market.DELIVERY_S or (b.s ~= nil and b.s == sid()))
           and (plainNum(b.count) or 1) - (plainNum(b.delivered) or 0) >= n then
           b.delivered = (plainNum(b.delivered) or 0) + n
@@ -335,8 +337,14 @@ end)
 --   Collected  deliveries whose purchase is not stored: no price. Mails of one item taken within Market.FOLD_S of
 --            each other in one session are one row with the units summed (row.mails).
 --   Expired, Cancelled   a returned item.
+--   Bid      a row named at the bid (named = "bid", C_AuctionHouse.PlaceBid) that no "Auction won" mail has
+--            confirmed yet (no `delivered`): a bid can be outbid or refused, so it is listed as a bid with its
+--            amount and is not a purchase: not in sum.bought, not in sum.spent (sum.openBids counts them), and no
+--            delivery is counted on it. The won mail whose invoice names its amount makes it a Bought row.
 -- row.guessed: a PlaceBid row named by the old "newest row without a name" rule; the pane shows no item for it.
 function Market.guessed(r) return r.kind == "item" and r.auctionId ~= nil and r.item ~= nil and r.named == nil end
+-- a bid named when it was placed that no won mail has confirmed: nothing stored says the auction was won
+function Market.unconfirmed(r) return type(r) == "table" and r.named == "bid" and (plainNum(r.delivered) or 0) <= 0 end
 Market.OPEN_H = 48
 -- The item of each purchase row that has none of its own (no item, or a guessed one), by a stored fact: the loot row
 -- of an "Auction won" mail of the same session whose invoice names exactly the row's price, taken at or after the
@@ -393,7 +401,7 @@ function Market.buildAuctions()
     end
   end
   -- (a row keeps its session id `s`, so Loot > Gold can list the auctions of a period)
-  sum.bids, sum.bidRows, sum.ended, sum.endedRows = 0, {}, 0, {}
+  sum.bids, sum.bidRows, sum.ended, sum.endedRows, sum.openBids = 0, {}, 0, {}, 0
   local now = nowEpoch()
   local byItem = {}   -- item name -> its postings, oldest first, for the outcome of each
   local posts = {}
@@ -480,6 +488,10 @@ function Market.buildAuctions()
         -- a bid with no item, and no auction mail of its session names its price: nothing says what it bought, or
         -- that it bought at all. It is not a row; what was paid is in the ledger's Spent.
         sum.bids = sum.bids + 1; sum.bidRows[#sum.bidRows + 1] = { t = plainNum(r.t) or 0, s = r.s }
+      elseif Market.unconfirmed(r) then
+        -- a bid on a named item with no won mail: a row that says "Bid", never a purchase (it may have been outbid)
+        sum.openBids = sum.openBids + 1
+        rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = nil, price = r.price, what = "Bid", note = "" }
       else
         sum.bought = sum.bought + 1; sum.spent = sum.spent + r.price
         local row = { s = r.s, t = r.t, item = inv and inv.item or r.item, id = inv and inv.id or r.id, icon = inv and inv.icon or nil, count = r.count, price = r.price, what = "Bought",
