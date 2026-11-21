@@ -251,7 +251,7 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       end
       return found and not cutOff
     end
-    check("Dungeons: no purse line while the looted coin is what the purse gained", dv.purseLine == nil)
+    check("Dungeons: no purse note while the looted coin is what the purse gained", dv.purseLine == nil and dv.purseTip == nil)
     check("Dungeons: the clocks of the run are two lines, in full", dv.timeLine == "Inside 30m 0s" and dv.timeLine2 == "Active 30m 0s" and onPage(dv.timeLine) and onPage(dv.timeLine2), dv.timeLine)
     -- the list row of the run reads the same block as its page
     local function listRow()
@@ -268,15 +268,20 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     rec.xp = { gain = 12300, kill = 9000, quest = 0, n = 45, l0 = 23, p0 = 0.4, l1 = 24, p1 = 0.1, need = 30000 }
     rec.hidden = { xp = 12 }
     ns._test.renderRun(view()); M.settle()
-    eq("Dungeons: the page says when the looted coin is not what the purse gained", dv.purseLine, ("Coin %s of %s gained inside"):format(fmt(365), fmt(11253)))
-    check("Dungeons: that line is on the page in full", onPage(dv.purseLine))
-    eq("Dungeons: the XP line reads XP, XP per hour, the levels and the runs the next level takes", dv.xpLine,
-      "12,300 XP, all from kills")
-    eq("Dungeons: the levels, the runs the next level takes and the kills (a lower bound) are the line under it", dv.xpMore,
-      "level 23.4 to 24.1 · about 3 more runs to level 25 · at least 45 kills")
+    -- (the purse against the looted coin is a hover of the WORTH card, never a line: the card already has the coin)
+    eq("Dungeons: the WORTH hover says when the looted coin is not what the purse gained", dv.purseTip,
+      ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(fmt(11253), fmt(365)))
+    check("Dungeons: and the hover carries it", tipOf(dv.card.worth):find(dv.purseTip, 1, true) ~= nil, tipOf(dv.card.worth))
+    local pageText = {}
+    for _, fs in ipairs(dv.lines) do if fs.shown ~= false then pageText[#pageText + 1] = tostring(fs.text) end end
+    pageText = table.concat(pageText, " | ")
+    check("Dungeons: the page has no purse line, no XP section, no kill count and no forecast of runs to a level",
+      dv.purseLine == nil and dv.xpLine == nil and dv.xpMore == nil and dv.sections.xp == nil
+      and pageText:find("gained inside", 1, true) == nil and pageText:find("more run", 1, true) == nil and pageText:find("kills", 1, true) == nil, pageText)
+    eq("Dungeons: the XP hover has the split, the levels and what the client hid, and nothing forecast", table.concat(dv.xpTip, " | "),
+      "XP earned inside, and per hour of the time inside. | All from kills. | Level 23.4 to 24.1. | 12 XP lines were hidden by the client.")
     -- (one rate on the page: the XP card's, per hour of the 30 minutes inside)
     eq("Dungeons: the XP card carries the rate, per hour of time inside", dv.card.xp and dv.card.xp.meta.text, "24,600 per hour")
-    check("Dungeons: the XP lines and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage(dv.xpMore) and onPage("12 XP lines were hidden by the client."))
     row = listRow()
     table.remove(list)
   end

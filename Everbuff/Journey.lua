@@ -303,6 +303,19 @@ function Now.atMax()
   return l >= (plain(call(GetMaxPlayerLevel)) or 60)
 end
 
+-- Whether Home > Deaths has a page now (Deaths.lua hides the tab while no stored death names its killer). Every
+-- link to it asks this, so no click on Now goes nowhere.
+function Now.deathsOpen() return UI.SubVisible ~= nil and UI.SubVisible("Home", "deaths") == true end
+-- the stored run record (the open one too) a moment falls in, or nil
+function Now.runRecAt(t)
+  if not (ns.Runs and ns.Runs.views) or num(t) <= 0 then return nil end
+  local ok, vs = pcall(ns.Runs.views, false)
+  for _, v in ipairs(ok and vs or {}) do
+    local a, z = num(v.startT), v.inProgress and math.huge or num(v.endT)
+    if a > 0 and t >= a and t <= z and v.rec then return v.rec end
+  end
+  return nil
+end
 -- WORTH A LOOK: what happened this session, in rank order, newest first within a rank (4.1)
 function Now.lookItems(now)
   now = now or nowT()
@@ -319,9 +332,17 @@ function Now.lookItems(now)
     local parts = { UI.fmtClock(e.t) }
     if type(e.zone) == "string" and e.zone ~= "" then parts[#parts + 1] = e.zone end
     if f and num(f.duration) > 0 then parts[#parts + 1] = "in a " .. UI.fmtDur(f.duration) .. " pull" end
+    -- (a row opens a page that exists: Deaths while that tab has one, else the run the death happened in, whose page
+    -- lists its deaths; with neither the row opens nothing and has no chevron)
+    local open
+    if Now.deathsOpen() then open = function() UI.Open("Home", "deaths") end
+    else
+      local rec = Now.runRecAt(num(e.t))
+      if rec then open = function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, rec) end end end
+    end
     out[#out + 1] = { kind = "death", rank = 1, t = num(e.t), icon = UI.KIND_ICON.death,
       title = (type(e.foe) == "string" and e.foe ~= "") and ("Died to " .. e.foe) or "You died",
-      meta = table.concat(parts, " \194\183 "), onClick = function() UI.Open("Home", "deaths") end }
+      meta = table.concat(parts, " \194\183 "), onClick = open }
   end
   if #deaths > 2 then extra.deaths = #deaths - 2 end
   -- 2 dungeon runs of this session, one row each, at most 2
@@ -459,7 +480,7 @@ function Now.lookItems(now)
       else
       out[#out + 1] = { kind = "lockout", rank = 6, t = num(l.resetAt), icon = UI.KIND_ICON.lockout, title = title,
         meta = "Resets in " .. UI.fmtDur(l.resetAt - now, { minutes = true }),
-        tip = (not match) and { title = l.name, text = "Saved before Everbuff recorded this dungeon on this character." } or nil,
+        tip = (not match) and { title = l.name, text = "Saved before everbuff.gg captured this dungeon on this character." } or nil,
         onClick = match and function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, match) end end or nil }
       end
     end
@@ -547,7 +568,7 @@ function Welcome.build(content)
   content.welcomeStep = 1
 end
 local STEP_TEXT = {
-  { "Welcome to Everbuff", "Everbuff records your pulls, loot, deaths and leveling while you play, so you can see how you are doing here and watch it back on everbuff.gg. You can change everything later in Settings." },
+  { "Welcome to everbuff.gg", "The addon captures your pulls, loot, deaths and leveling while you play, so you can see how you are doing here and watch it back on everbuff.gg. You can change everything later in Settings." },
   { "Show your gold on screen?", "A small line near the flag shows your gold and how much you made this session. It never covers your game." },
   { "Three things to get started", "" },
 }
@@ -569,7 +590,7 @@ function Welcome.draw(content)
     if ns.Logging and ns.Logging.state then local _, c = ns.Logging.state(); combatOn = c and true or false end
     local st = UI.StatusState and UI.StatusState() or {}
     local rows = {
-      { st.sess and "accent" or "warn", st.sess and "Recording is on" or "Recording starts when you enter the world" },
+      { st.sess and "accent" or "warn", st.sess and "CAPTURING" or "Capture starts when you enter the world" },
       { combatOn and "accent" or "warn", combatOn and "Combat log: on" or "Combat log: off" },
       { st.lastAck and "accent" or "fgFaint", st.lastAck and "Desktop app: seen" or "Desktop app: not seen yet", (not st.lastAck) and "Install it from everbuff.gg to record video" or nil },
     }
@@ -622,7 +643,7 @@ function Now.build(content)
     { onClick = function() UI.Open("Home", "sessions") end },
     { onClick = function() UI.Open("Character", "leveling") end },
     { onClick = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session") else UI.Open("Loot", "gold") end end },
-    { onClick = function() UI.Open("Home", "deaths") end },
+    { onClick = function() if Now.deathsOpen() then UI.Open("Home", "deaths") end end },
   })
   content.nextHead = UI.Section(col, "Next")
   content.nextRows = {}
@@ -637,7 +658,8 @@ function Now.build(content)
     f.link:SetPoint("TOPLEFT", f, "TOPLEFT", S.S3, -4)
     return f
   end
-  content.moreDeaths = linkRow(function() UI.Open("Home", "deaths") end)
+  -- (the rest of the deaths: their list while Deaths has a page, else Sessions, which counts them per session)
+  content.moreDeaths = linkRow(function() if Now.deathsOpen() then UI.Open("Home", "deaths") else UI.Open("Home", "sessions") end end)
   content.more = linkRow(function() UI.Open("Home", "activity") end)
   Welcome.build(content)
   content:HookScript("OnSizeChanged", function() if nowView then pcall(Now.place, nowView) end end)
@@ -782,7 +804,10 @@ function Now.refresh(content)
   for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do if type(s) == "table" and ns.isMySession(s) then lk, ld = lk + num(s.kills), ld + num(s.deaths) end end
   -- (the META is this session's other counts, as the card's period; the lifetime counts are in the tooltip)
   cards[4]:Set("Deaths", UI.fmtNum(sdeaths), UI.plural(kills, "kill") .. " \194\183 " .. UI.plural(items, "item"))
-  UI.SetTip(cards[4], { title = "Deaths this session", text = "Opens every death.", pairs = { { "Lifetime", UI.plural(lk, "kill") .. " \194\183 " .. UI.plural(ld, "death") } } })
+  local deathsOpen = Now.deathsOpen()
+  content.deathsOpen = deathsOpen
+  if cards[4].SetClickable then cards[4]:SetClickable(deathsOpen) end
+  UI.SetTip(cards[4], { title = "Deaths this session", text = deathsOpen and "Opens every death." or nil, pairs = { { "Lifetime", UI.plural(lk, "kill") .. " \194\183 " .. UI.plural(ld, "death") } } })
 
   -- NEXT
   local nx = Now.nextItems(w - (S.S3 + 24 + S.S2) - S.S3, now)

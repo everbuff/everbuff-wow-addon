@@ -83,7 +83,7 @@ return function(P)
       and sum:find("Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m", 1, true) ~= nil, sum)
     check(tag .. ": no \"of N\" without a limit", sum:find(" of 5", 1, true) == nil, sum)
     eq(tag .. ": the hero is the newest run", lv.heroRun and lv.heroRun.id, fx.rfc.id)
-    eq(tag .. ": its verdict: the result of a first run", lv.heroVerdict, "2 of 4 bosses in 12m 30s")
+    eq(tag .. ": its verdict: the result of a first run", lv.heroVerdict, "2 of 4 bosses in 12m")
     check(tag .. ": the hero's META names the day and the bosses missed, and never says first run", lv.hero.meta1 and tostring(lv.hero.meta1.text or ""):find("first run", 1, true) == nil
       and tostring(lv.hero.meta1.text or ""):find("missed Jergosh the Invoker", 1, true) ~= nil, lv.hero.meta1 and lv.hero.meta1.text)
     check(tag .. ": its second line counts the deaths", lv.hero.meta2 and strip(lv.hero.meta2.text):find("^1 death") ~= nil, lv.hero.meta2 and lv.hero.meta2.text)
@@ -183,7 +183,7 @@ return function(P)
     table.insert(ns.char().dungeonRuns, 1, bare)
     T.openRun(bare); M.settle()
     local bad = {}
-    for _, k in ipairs({ "bosses", "loot", "deaths", "xp", "party", "pace", "pulls" }) do if dv.sections[k].shown ~= false then bad[#bad + 1] = k end end
+    for _, k in ipairs({ "bosses", "loot", "deaths", "party", "pace", "pulls" }) do if dv.sections[k].shown ~= false then bad[#bad + 1] = k end end
     check(tag .. ": a section with nothing in it is not on the page", #bad == 0 and next(dv.empties) == nil, table.concat(bad, " | "))
     check(tag .. ": the cards of a bare run are TIME and BOSSES, with 0 bosses and no total", #dv.cards == 2 and dv.card.bosses.value.text == "0" and dv.card.xp == nil and dv.card.worth == nil, #dv.cards)
     check(tag .. ": the META of a run with no stored size says neither solo nor a party", dv.metaText:find("solo", 1, true) == nil and dv.metaText:find("party", 1, true) == nil, dv.metaText)
@@ -256,7 +256,7 @@ return function(P)
     M.epoch = M.epoch + 5
     M.tick()
     check(tag .. ": the ticker moves the clocks; a second in which only they moved lays nothing out again", dv.timeLine:find("^Inside 12m 45s") ~= nil and dv.renders == renders
-      and dv.cards[1].value.text == "12m 45s", dv.timeLine)
+      and dv.cards[1].value.text == "12m", dv.timeLine)
     -- with the window closed the ticker does nothing
     local calls, realRefresh = 0, dv.refresh
     dv.refresh = function() calls = calls + 1; return realRefresh() end

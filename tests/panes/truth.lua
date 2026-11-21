@@ -142,6 +142,24 @@ return function(P)
   eq("sourceOf: 90 s after the kill is the boss", (D.sourceOf(R.view(rec, false, false), { t = T0 + 1590, src = "Creature" })), "Highlord Omokk")
   eq("sourceOf: 91 s after it is not", (D.sourceOf(R.view(rec, false, false), { t = T0 + 1591, src = "Creature" })), "Trash")
   eq("sourceOf: a row before the kill is not his", (D.sourceOf(R.view(rec, false, false), { t = T0 + 1499, src = "Picked up" })), nil)
+  -- A record whose kills cannot be placed on the wall clock (0.9.50: no version, three visits, a ghost gap and an
+  -- outside gap, so Runs.visitClocks cannot say): a boss may have died right before the row, so nothing is claimed.
+  do
+    local old = { t = T0, inst = "Blackrock Spire", secs = { ghost = 100, outside = 200, inside = 3000 },
+      visits = { { i = 0, o = 1000, secs = 1000 }, { i = 1100, o = 2100, secs = 1000 }, { i = 2300, o = 3300, secs = 1000 } },
+      bosses = { { name = "Highlord Omokk", enc = 267, kill = 500 } } }
+    eq("sourceOf: the fixture is a record that cannot place its kills", R.wallOf(old, 500), nil)
+    local a, b = D.sourceOf({ rec = old }, { t = T0 + 510, src = "Creature" })
+    check("sourceOf: with a kill that cannot be placed an enemy row is neither a boss nor Trash", a == nil and b == "Not recorded", tostring(a) .. " | " .. tostring(b))
+    a, b = D.sourceOf({ rec = old }, { t = T0 + 3000, src = "an enemy" })
+    check("sourceOf: and so is every other enemy row of that run", a == nil and b == "Not recorded", tostring(a) .. " | " .. tostring(b))
+    eq("sourceOf: a stored name is still shown as stored there", (D.sourceOf({ rec = old }, { t = T0 + 510, src = "Scarshield Legionnaire" })), "Scarshield Legionnaire")
+    a, b = D.sourceOf({ rec = rec }, { src = "Creature" })
+    check("sourceOf: a row with no time of its own claims nothing", a == nil and b == "Not recorded", tostring(a))
+    local noName = copy(rec); noName.bosses[1].name = nil
+    a, b = D.sourceOf({ rec = noName }, { t = T0 + 1510, src = "Creature" })
+    check("sourceOf: a kill in range whose name is not stored is not called Trash", a == nil and b == "Not recorded", tostring(a))
+  end
   -- sections with nothing in them are not on the page
   check("Run: no Party, Pace or Pulls section when the save holds none of it", dv.sections.party.shown == false and dv.sections.pace.shown == false and dv.sections.pulls.shown == false)
   local lines = {}
@@ -199,12 +217,48 @@ return function(P)
   check("legacy: the rows never enter the statistics", c.dungeonStats["blackrock depths"] == nil and c.dungeonStats["maraudon"] == nil and c.dungeonStats["blackrock spire"].n == 1)
   eq("legacy: a session holds the runs that began in it, a record and a row alike", L.inSession({ startedEpoch = G0 + 131000, endedEpoch = T0 + 9000, dungeons = 22 }), 2)
   eq("legacy: a session with no stored run counts none, whatever its old entry counter says", L.inSession({ startedEpoch = G0 - 9000, endedEpoch = G0 - 100, dungeons = 22 }), 0)
+  -- A record covers every gold run that began inside its span. More than 20 minutes outside closes the gold run and
+  -- opens a second one for the same record; so do two records joined by hand. Neither second gold run is a row.
+  do
+    local gap = { dungeonRuns = { { id = "a", inst = "Blackrock Depths", t = 1000, endT = 6000, visits = { { i = 0, o = 1800, secs = 1800 }, { i = 3300, o = 5000, secs = 1700 } } } },
+      goldRuns = { { t = 1000, inst = "Blackrock Depths", secs = 1800, looted = 500, items = 3, lootValue = 100, quests = 0 },
+        { t = 4300, inst = "Blackrock Depths", secs = 1700, looted = 700, items = 5, lootValue = 100, quests = 0 } } }
+    eq("legacy: a record with 25 minutes outside owns both of its gold runs, no row", L.harvest(gap), 0)
+    local joined = { dungeonRuns = { { id = "a", inst = "Scholomance", t = 1000, visits = { { i = 0, o = 1800, secs = 1800 }, { i = 4000, o = 5000, secs = 1000 } } } },
+      goldRuns = { { t = 1000, inst = "Scholomance", secs = 1800, looted = 500, items = 3 }, { t = 5000, inst = "Scholomance", secs = 1000, looted = 700, items = 5 } } }
+    eq("legacy: a joined record (no stored end: its last visit ends it) owns both gold runs, no row", L.harvest(joined), 0)
+    local after = { dungeonRuns = { { id = "a", inst = "Scholomance", t = 1000, endT = 3000, visits = { { i = 0, o = 2000, secs = 2000 } } } },
+      goldRuns = { { t = 3000 + L.MATCH + 1, inst = "Scholomance", secs = 900, looted = 5 }, { t = 1000 - L.MATCH - 1, inst = "Scholomance", secs = 100, looted = 5 },
+        { t = 2000, inst = "Stratholme", secs = 900, looted = 5 } } }
+    eq("legacy: a gold run after the record's end, one before its start and one of another dungeon are rows", L.harvest(after), 3)
+    local open = { dungeonRuns = {}, dungeonRun = { id = "o", inst = "Stratholme", t = 1000, visits = { { i = 0, o = 600, secs = 600 }, { i = 2400 } } },
+      goldRuns = { { t = 1000, inst = "Stratholme", secs = 600, looted = 5 }, { t = 500, inst = "Stratholme", secs = 100, looted = 5 } } }
+    eq("legacy: the open record owns its gold run; one from before it is a row", L.harvest(open), 1)
+  end
   lv = T.dungeonList(); M.settle()
   rows = shown(lv.tbl)
   eq("Runs: the list holds the stored run and the five rebuilt rows", #rows, 6)
   local part, full = 0, 0
   for _, r in ipairs(rows) do if r.run.legacy then part = part + 1 else full = full + 1 end end
   check("Runs: five of them are partial", part == 5 and full == 1)
+  -- (the list is not the character's history: its header names the day of the oldest row, once, and nothing else does)
+  eq("Runs: the section header says where the list starts", lv.section.label.text, UI.upper("Runs since " .. UI.fmtSince(G0)))
+  eq("Runs: the start is the oldest listed row's", lv.since, G0)
+  check("Runs: the day has no \"Today\" in it", UI.fmtSince(now) == date("%a ", now) .. tostring(tonumber(date("%d", now))) .. date(" %b", now), UI.fmtSince(now))
+  do
+    local times = {}
+    for _, r in ipairs(rows) do times[#times + 1] = r.c.dur.text end
+    local short
+    for _, r in ipairs(rows) do if r.run.id == ("g%d"):format(G0 + 84491) then short = r end end
+    eq("Runs: a rebuilt row of 2,010 s reads in minutes like every other row, the seconds cut", short and short.c.dur.text, "33m")
+    check("Runs: no Time cell from 10 minutes on carries seconds", table.concat(times, "|"):find("%ds") == nil, table.concat(times, "|"))
+    eq("fmtLen: under 10 minutes the seconds stay", D.fmtLen(479), "7m 59s")
+    eq("fmtLen: from 10 minutes they are cut, not rounded", D.fmtLen(659), "10m")
+    eq("fmtLen: hours", D.fmtLen(4148), "1h 9m")
+    lv.st.inst = "Blackrock Depths"; T.dungeonList(); M.settle()
+    eq("Runs: filtered to one dungeon the header is that dungeon and its own oldest row", lv.sectionLabel, "Blackrock Depths since " .. UI.fmtSince(G0 + 48942))
+    lv.st.inst = nil; T.dungeonList(); M.settle()
+  end
   local brd
   for _, r in ipairs(rows) do if r.run.id == ("g%d"):format(G0 + 65059) then brd = r end end
   check("Runs: a rebuilt row is marked partial after its name", brd and strip(brd.c.name.text) == "Blackrock Depths partial", brd and brd.c.name.text)
@@ -312,6 +366,66 @@ return function(P)
   ns.DB.combat.fights = {}
   UI.Open("Home", "deaths"); M.settle()
   check("Deaths: two dungeon deaths with no killer recorded make no tab", home.ctl.hidden.deaths == true and home.ctl.active ~= "deaths", tostring(home.ctl.active))
+  -- Home > Now links to Deaths in three places (the DEATHS card, the "You died" rows, "N more deaths"). With the tab
+  -- gone none of them may be a dead click: a link opens a page that exists, or it is not a link.
+  do
+    eq("Open: a hidden sub-tab is reported, not silently skipped", UI.Open("Home", "deaths"), false)
+    eq("Open: and the host shows its first sub-tab, whatever was open before", home.ctl.active, "now")
+    UI.Open("Home", "sessions"); M.settle()
+    UI.Open("Home", "deaths"); M.settle()
+    eq("Open: the same from Sessions", home.ctl.active, "now")
+    eq("Open: a page that exists reports true", UI.Open("Home", "sessions"), true)
+    eq("SubVisible: Deaths has no page now", UI.SubVisible("Home", "deaths"), false)
+    eq("SubVisible: Now always has", UI.SubVisible("Home", "now"), true)
+    -- (three deaths of the session that is running, none with a killer: Now lists two and links the rest)
+    -- (the harness's running session has no stored record at this point: it gets one for these checks, as in game)
+    local curRec = ns.Recorder.current()
+    local cur = curRec.id
+    local keepRec, keepGuid = ns.DB.sessions[cur], curRec.guid
+    ns.DB.sessions[cur], curRec.guid = curRec, ns.charGuid()
+    local nBefore = #evs
+    for i = 1, 3 do evs[#evs + 1] = { kind = "DEATH", t = now - 300 + i, s = cur, zone = "Blackrock Spire", text = "You died  \194\183  Level 59", downtime = 50 } end
+    UI.Open("Home", "now"); M.settle()
+    local nv = T.journeyRefresh(); M.settle()
+    local card = nv.cards.cards[4]
+    check("Now: the DEATHS card has no chevron and opens nothing while Deaths has no page", nv.deathsOpen == false and card.ebNoClick == true and card.chev.shown == false)
+    card:GetScript("OnClick")(card); M.settle()
+    eq("Now: a click on it leaves the page where it is", home.ctl.active, "now")
+    local deathRows, dead = 0, 0
+    for _, it in ipairs(nv.lookList) do
+      if it.kind == "death" then
+        deathRows = deathRows + 1
+        if it.onClick then
+          UI.Open("Home", "now"); M.settle()
+          it.onClick(); M.settle()
+          local t = ns.DB.settings.lastTab
+          if t == "Home" and home.ctl.active == "now" then dead = dead + 1 end
+        end
+      end
+    end
+    check("Now: the death rows are listed, and none is a dead click", deathRows == 2 and dead == 0, deathRows .. " rows, " .. dead .. " dead")
+    UI.Open("Home", "now"); M.settle()
+    nv = T.journeyRefresh(); M.settle()
+    check("Now: the third death is behind the more link", nv.moreDeaths.shown ~= false and nv.moreDeaths.link.ebOnClick ~= nil)
+    nv.moreDeaths.link.ebOnClick(nv.moreDeaths.link); M.settle()
+    eq("Now: the more link opens Sessions (its Deaths column) while Deaths has no page", home.ctl.active, "sessions")
+    while #evs > nBefore do table.remove(evs) end
+    -- a death inside a stored run opens that run's page (it lists the run's deaths); one outside any run opens nothing
+    local rv
+    for _, v in ipairs(R.views(false)) do if not v.inProgress and v.rec and v.endT then rv = v end end
+    check("Now: a moment inside a stored run finds that run, one long before it finds none", rv ~= nil and ns.Now.runRecAt(rv.startT + 1) == rv.rec and ns.Now.runRecAt(rv.startT - 10000000) == nil and ns.Now.runRecAt(nil) == nil)
+    -- with a killer stored the tab is back, and so are the links
+    evs[#evs + 1] = { kind = "DEATH", t = now - 3400, s = ns.DB.active, zone = "Burning Steppes", text = "You died  \194\183  Level 59", foe = "Blackrock Slayer", downtime = 40 }
+    UI.Open("Home", "now"); M.settle()
+    nv = T.journeyRefresh(); M.settle()
+    card = nv.cards.cards[4]
+    check("Now: with a named killer stored the DEATHS card is a link again", nv.deathsOpen == true and card.ebNoClick == nil and card.chev.shown ~= false)
+    card:GetScript("OnClick")(card); M.settle()
+    eq("Now: and it opens Deaths", home.ctl.active, "deaths")
+    table.remove(evs)
+    ns.DB.sessions[cur], curRec.guid = keepRec, keepGuid
+    UI.Open("Home", "now"); M.settle()
+  end
   local dd = T.collectDeaths()
   check("Deaths: the two are still read from the events, with no killer and no coordinates", #dd == 2 and dd[1].killer == nil and dd[2].killer == nil and dd[1].x == nil and dd[1].level == 59 and dd[2].downtime == 73)
   evs[#evs + 1] = { kind = "DEATH", t = now - 3000, s = ns.DB.active, zone = "Burning Steppes", text = "You died  \194\183  Level 59", foe = "Blackrock Slayer", downtime = 40, x = 0.5, y = 0.5 }

@@ -8,7 +8,7 @@
 --
 -- Rules (founder: data accuracy is crucial):
 --   a row holds only what the gold run stored. No bosses, no deaths, no XP, no end time: they were not recorded.
---   a gold run that has a run record (same dungeon, begun within RunsLegacy.MATCH seconds) is that record, never a row.
+--   a gold run that began inside the span of a run record of the same dungeon is that record, never a row.
 --   nothing is rebuilt from timing, gaps between events or zone names.
 --   the rows never enter bests, averages or statistics (dungeonStats). They are listed, marked partial.
 --   the copy runs once per character (the list exists from then on, even when empty): after it every run has a
@@ -36,11 +36,31 @@ function L.valid(r)
   return type(r) == "table" and type(r.id) == "string" and type(r.inst) == "string" and r.inst ~= ""
     and type(r.t) == "number" and r.t > 0 and type(r.secs) == "number" and r.secs >= 0
 end
--- the run record (closed or open) a gold run belongs to, or nil
+-- Where a run record ends on the wall clock: its stored end, else the end of its last visit. Nil when neither is
+-- stored (the record then covers only its start).
+function L.recordEnd(r)
+  if type(r.endT) == "number" and r.endT >= num(r.t) then return r.endT end
+  local last
+  for _, x in ipairs(type(r.visits) == "table" and r.visits or {}) do
+    local o = type(x) == "table" and (type(x.o) == "number" and x.o or (type(x.i) == "number" and x.i)) or nil
+    if o and (not last or o > last) then last = o end
+  end
+  return last and (num(r.t) + last) or nil
+end
+-- The run record (closed or open) a gold run belongs to, or nil: same dungeon, and the gold run began inside the
+-- record's span (L.MATCH seconds of slack at both ends). A record covers more than one gold run when the character
+-- was outside for over 20 minutes (the gold run closes and a new one opens) and when two records were joined by
+-- hand; matching the start alone listed those later gold runs a second time, as partial rows. The open record has
+-- no end yet: every gold run of its dungeon after its start is its own.
 function L.recordOf(c, g)
-  local function hit(r) return type(r) == "table" and sameInst(r.inst, g.inst) and math.abs(num(r.t) - num(g.t)) <= L.MATCH end
+  local gt = num(g.t)
+  local function hit(r, open)
+    if type(r) ~= "table" or not sameInst(r.inst, g.inst) or num(r.t) <= 0 then return false end
+    local z = open and math.huge or (L.recordEnd(r) or num(r.t))
+    return gt >= num(r.t) - L.MATCH and gt <= z + L.MATCH
+  end
   for _, r in ipairs(type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do if hit(r) then return r end end
-  if hit(c.dungeonRun) then return c.dungeonRun end
+  if hit(c.dungeonRun, true) then return c.dungeonRun end
   return nil
 end
 -- Copy the gold runs with no run record into the character's legacy list. Runs once per character; returns the

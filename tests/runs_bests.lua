@@ -209,7 +209,7 @@ return function(P)
     local lv = T.dungeonList()
     local rows = {}
     for _, r in ipairs(lv.tbl.rows) do if r.shown ~= false and r.run then rows[r.run.id] = r end end
-    check("3: TIME reads the time inside, VS BEST the delta in words with its state dot", rows[r3.id] and rows[r3.id].c.dur.text == ns.UI.fmtDur(v3.inside)
+    check("3: TIME reads the time inside, VS BEST the delta in words with its state dot", rows[r3.id] and rows[r3.id].c.dur.text == ns.Dungeons.D.fmtLen(v3.inside)
       and rows[r3.id].c.vs.text:find("2m 20s slower$") ~= nil and rows[r3.id].c.vs.text:find("|T", 1, true) == 1 and rows[r2.id].c.vs.text == "1m 40s faster", rows[r3.id] and rows[r3.id].c.vs.text)
     check("3: the best run carries the BEST badge, the slower run none", rows[r2.id].ebBadge and rows[r2.id].ebBadge.shown ~= false and rows[r2.id].ebBadge.ebText == "BEST"
       and not (rows[r3.id].ebBadge and rows[r3.id].ebBadge.shown ~= false))

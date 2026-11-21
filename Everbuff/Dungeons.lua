@@ -75,6 +75,16 @@ function D.fmtSplit(s)
   local h, m, r = math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60
   return ("%dh %dm %ds"):format(h, m, r)
 end
+-- The length of a run, a sum or an average (docs/UX_PRAGMATIC.md 0.3): under 10 minutes with its seconds
+-- ("7m 59s"), from 10 minutes in whole minutes ("33m", "1h 9m"), the seconds cut and not rounded, as the hour
+-- sizes of UI.fmtDur already cut them. One formatter for full and rebuilt rows, so a column never mixes the two.
+function D.fmtLen(s)
+  s = tonumber(s)
+  if not s or s ~= s then return "" end
+  s = math.max(0, math.floor(s + 0.5))
+  if s >= 600 then s = s - s % 60 end
+  return UI.fmtDur(s)
+end
 -- the one way a pull-to-kill time is named, on the run page, on Runs and on By dungeon
 function D.pullMeta(m) return UI.fmtDur(m) .. " first pull to last kill" end
 
@@ -253,6 +263,14 @@ end
 -- the tooltip line.
 D.PLACEHOLDER = { ["Creature"] = "enemy", ["an enemy"] = "enemy", ["Picked up"] = "none", ["Unknown source"] = "none" }
 D.BOSS_WINDOW = 90
+-- The purse beside the looted coin, for the WORTH card's hover and only when the two differ: what the purse itself
+-- gained inside (less quest coin), a stored figure of the run's gold block. Exact amounts, as every hover has them.
+function D.purseTip(run)
+  local g = type(run) == "table" and type(run.gold) == "table" and run.gold or nil
+  local looted, purse = n0(g and g.looted), n0(g and g.purse)
+  if not g or purse <= 0 or purse == looted then return nil end
+  return ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(ns.fmtMoney(purse), ns.fmtMoney(looted))
+end
 function D.sourceOf(run, l)
   local src = type(l.src) == "string" and stripLink(l.src) or nil
   if src == "" then src = nil end
@@ -260,14 +278,24 @@ function D.sourceOf(run, l)
   if src and not kind then return src, nil end
   if not src then return nil, "Not recorded" end
   local rec, t = run.rec, tonumber(l.t)
-  local best, bestD
-  if type(rec) == "table" and t then
-    for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do
-      local w = b.kill and type(b.name) == "string" and Runs.wallOf(rec, b.kill) or nil
+  -- (without the record or the row's own time nothing can be said about the kills around it)
+  if type(rec) ~= "table" or not t then return nil, "Not recorded" end
+  local best, bestD, unknown
+  for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do
+    if b.kill then
+      local w = Runs.wallOf(rec, b.kill)
       local d = w and (t - w) or nil
-      if d and d >= 0 and d <= D.BOSS_WINDOW and (not bestD or d < bestD) then best, bestD = b, d end
+      -- A kill the record cannot place on the wall clock (Runs.visitClocks: a 0.9.50 record with three or more
+      -- visits and gaps of two kinds) may be the one before this row: neither a boss nor "Trash" can be claimed.
+      -- The same for a kill in range whose name is not stored.
+      if not w then unknown = true
+      elseif d >= 0 and d <= D.BOSS_WINDOW then
+        if type(b.name) ~= "string" then unknown = true
+        elseif not bestD or d < bestD then best, bestD = b, d end
+      end
     end
   end
+  if unknown then return nil, "Not recorded" end
   if best then
     return best.name, ("Looted %s after %s died. The game hides enemy names in dungeons."):format(UI.fmtDur(math.floor(bestD)), best.name)
   end
@@ -336,7 +364,7 @@ local function lockoutRun(l)
   return match
 end
 D.lockoutRun = lockoutRun
-local SAVED_BEFORE = "Saved before Everbuff recorded this dungeon on this character."
+local SAVED_BEFORE = "Saved before everbuff.gg captured this dungeon on this character."
 -- the bosses down in a lockout: the open run's kills while the character is inside that dungeon (the client's
 -- count lags a kill, and an earlier copy's number would contradict the run on screen), else the client's
 local function lockDown(l)
@@ -445,8 +473,8 @@ local function buildDetail(content, list)
     return r
   end
   v.sections, v.lines, v.tables, v.btns = {}, {}, {}, {}
-  local SECTION_KEYS = { "bosses", "loot", "deaths", "xp", "party", "pace", "visits", "pulls", "edit" }
-  local LABELS = { bosses = "Bosses", loot = "Loot", deaths = "Deaths", xp = "XP", party = "Party", pace = "Pace",
+  local SECTION_KEYS = { "bosses", "loot", "deaths", "party", "pace", "visits", "pulls", "edit" }
+  local LABELS = { bosses = "Bosses", loot = "Loot", deaths = "Deaths", party = "Party", pace = "Pace",
     visits = "Entered and left", pulls = "Pulls of this run", edit = "Edit this run" }
   for _, k in ipairs(SECTION_KEYS) do v.sections[k] = UI.Section(col, LABELS[k]) end
   v.SECTION_KEYS = SECTION_KEYS
@@ -599,7 +627,7 @@ local function buildDetail(content, list)
   -- what a second changes on the page of a run in progress: the TIME card and the two clock lines
   local live = {}
   local function clocks(run)
-    if live.time then live.time.value:SetText(UI.fmtDur(run.inside)) end
+    if live.time then live.time.value:SetText(D.fmtLen(run.inside)) end
     -- (a view built by hand can lack a clock: every missing one is 0)
     local cl = {}
     for _, k in ipairs({ "inside", "ghost", "outside", "offline", "active", "combat", "boss" }) do cl[k] = n0(run[k]) end
@@ -679,7 +707,7 @@ local function buildDetail(content, list)
     v.cards, v.card = cards, card
     live.time = card.time
     local away = n0(run.ghost) + n0(run.outside)
-    card.time:Set("Time", UI.fmtDur(run.inside), run.inProgress and "inside, so far" or (away > 0 and (UI.fmtDur(away) .. " dead or outside") or "inside"))
+    card.time:Set("Time", D.fmtLen(run.inside), run.inProgress and "inside, so far" or (away > 0 and (D.fmtLen(away) .. " dead or outside") or "inside"))
     UI.SetTip(card.time, function(tip)
       tip:AddLine("Time", 1, 1, 1)
       tip:AddLine("Time inside the dungeon. " .. (v.clockSentence or ""), 0.78, 0.79, 0.80, true)
@@ -703,11 +731,29 @@ local function buildDetail(content, list)
         tip:AddLine(("Compared with your fastest run that killed these %s: %s."):format(UI.plural(#routeNames, "boss"), fitNames(routeNames, 260)), 0.78, 0.79, 0.80, true)
       end
     end)
+    v.xpTip, v.purseTip = nil, nil
     if card.xp then
       -- (per hour of time inside, the TIME card's own clock; a rate needs Runs.RATE_WARM seconds)
       local rate = n0(run.inside) >= Runs.RATE_WARM and math.floor(n0(run.xpGain) * 3600 / run.inside + 0.5) or nil
       card.xp:Set("XP", UI.fmtNum(n0(run.xpGain)), rate and (UI.fmtNum(rate) .. " per hour") or "")
-      UI.SetTip(card.xp, { title = "XP", text = "XP earned inside, and per hour of the time inside." })
+      -- (the card is the page's whole answer on XP; the split, the levels and what the client hid are its hover.
+      -- Stored facts only: no kill count, which disagrees with the pulls, and no forecast of runs to a level.)
+      local xr = type(run.xp) == "table" and run.xp or {}
+      local tipLines = { "XP earned inside, and per hour of the time inside." }
+      local quest, kill = n0(xr.quest), math.max(0, n0(run.xpGain) - n0(xr.quest))
+      if quest > 0 and kill > 0 then tipLines[#tipLines + 1] = ("%s from kills, %s from quests."):format(UI.fmtNum(kill), UI.fmtNum(quest))
+      elseif quest > 0 then tipLines[#tipLines + 1] = "All from quests."
+      else tipLines[#tipLines + 1] = "All from kills." end
+      local lv = Runs.xpLine(run)
+      lv = lv and lv:match("(level [%d%.]+ to [%d%.]+)")
+      if lv then tipLines[#tipLines + 1] = "L" .. lv:sub(2) .. "." end
+      local _, _, hid = Runs.xpLine(run)
+      if hid then tipLines[#tipLines + 1] = hid end
+      v.xpTip = tipLines
+      UI.SetTip(card.xp, function(tip)
+        tip:AddLine("XP", 1, 1, 1)
+        for _, l in ipairs(tipLines) do tip:AddLine(l, 0.78, 0.79, 0.80, true) end
+      end)
     end
     if card.worth then
       local full = D.worthParts(run)
@@ -716,11 +762,14 @@ local function buildDetail(content, list)
       if UI.TextWidth("META", metaW) > (tonumber(card.worth:GetWidth()) or 0) - 2 * S.S3 then metaW = "coin and items" end
       card.worth:Set("Worth", UI.money(worth), metaW)
       local g0 = type(run.gold) == "table" and run.gold or {}
+      -- (the purse beside the looted coin, when the two differ, is a hover fact: the page has no line for it)
+      v.purseTip = D.purseTip(run)
       UI.SetTip(card.worth, function(tip)
         tip:AddLine("Worth", 1, 1, 1)
         tip:AddLine(full:sub(1, 1):upper() .. full:sub(2) .. ".", 0.78, 0.79, 0.80, true)
         if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
         if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+        if v.purseTip then tip:AddLine(v.purseTip, 0.78, 0.79, 0.80, true) end
       end)
     end
     v.worthText = card.worth and card.worth.value:GetText() or nil
@@ -877,10 +926,7 @@ local function buildDetail(content, list)
         v.lootFS = text(line("META", "fgMuted"), v.lootMore)
       end
     end
-    v.purseLine = run.gold and Runs.purseLine(run) or nil
-    v.purseFS = nil
-    if v.purseLine then v.purseFS = text(line("META", "fgMuted"), v.purseLine) end
-    if #shown > 0 or v.lootMore or v.purseLine then y = y + S.S5 - S.S1 end
+    if #shown > 0 or v.lootMore then y = y + S.S5 - S.S1 end
 
     -- 3 DEATHS: a table only when a row names the killer or the party member who died
     if named then
@@ -909,35 +955,7 @@ local function buildDetail(content, list)
       y = y + S.S5
     end
 
-    -- 4 XP: what the run paid, kills and quests apart, then the rate and the levels
-    local xa, xb, xc = nil, nil, nil
-    if run.xp then xa, xb, xc = Runs.xpLine(run) end
-    local xp = type(run.xp) == "table" and run.xp or nil
-    v.xpFS = {}
-    if xp and n0(run.xpGain) > 0 then
-      section("xp", nil)
-      local quest, kill = n0(xp.quest), math.max(0, n0(run.xpGain) - n0(xp.quest))
-      local main = UI.fmtNum(run.xpGain) .. " XP"
-      if quest > 0 and kill > 0 then main = main .. (": %s from kills, %s from quests"):format(UI.fmtNum(kill), UI.fmtNum(quest))
-      elseif quest > 0 then main = main .. ", all from quests" else main = main .. ", all from kills" end
-      v.xpLine = main
-      v.xpFS[1] = text(line("BODY", "fg"), main, UI.LINE_H.BODY + S.S1)
-      -- the rest of Runs.xpLine: the rate, the levels and the runs to the next level
-      local rest = {}
-      for part in tostring(xa or ""):gmatch("[^\194\183]+") do
-        part = part:gsub("^%s+", ""):gsub("%s+$", "")
-        -- (the rate is the XP card's, per hour of time inside: the line does not repeat it on another clock)
-        if part ~= "" and not part:find(" XP$") and not part:find(" per hour$") then rest[#rest + 1] = part end
-      end
-      -- (and the kills the client let the addon read: "at least 45 kills" when it hid XP lines)
-      local k = xb and xb:match("([%w ,]*kills?)$")
-      if k then rest[#rest + 1] = (k:gsub("^%s+", "")) end
-      v.xpMore = #rest > 0 and table.concat(rest, SEP) or nil
-      if v.xpMore then v.xpFS[#v.xpFS + 1] = text(line("META", "fgMuted"), v.xpMore) end
-      v.xpHidden = xc
-      if xc then v.xpFS[#v.xpFS + 1] = text(line("META", "fgMuted"), xc) end
-      y = y + S.S5
-    else v.xpLine, v.xpMore, v.xpHidden = nil, nil, nil end
+    -- (no XP section: the XP card is the answer, and its hover has the split and the levels)
 
     -- 5 PARTY: the largest group a pull of the run recorded, in class colours
     if grp > 1 then
@@ -1073,7 +1091,7 @@ local function buildDetail(content, list)
     for _, sec in pairs(v.sections) do sec:Hide() end
     for _, t in pairs(v.tables) do t.frame:Hide() end
     v.empties, v.bossRows, v.lootItems, v.lootAll, v.deathRows = {}, {}, {}, {}, {}
-    v.lootMore, v.lootFS, v.deathLine, v.deathFS, v.purseLine, v.xpLine, v.xpMore, v.paceLine, v.paceLine2, v.partyFS = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
+    v.lootMore, v.lootFS, v.deathLine, v.deathFS, v.xpTip, v.purseTip, v.paceLine, v.paceLine2, v.partyFS = nil, nil, nil, nil, nil, nil, nil, nil, nil
     v.deltaText, v.encounters, v.timeLine, v.timeLine2 = nil, 0, nil, nil
     live.time, live.line1, live.line2 = nil, nil, nil
     local title = run.name or "Dungeon"
@@ -1094,7 +1112,7 @@ local function buildDetail(content, list)
     row:ClearAllPoints(); row:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); row:SetWidth(W); row:SetHeight(H.STAT); pcall(row.layout)
     local cards = row.cards
     v.cards, v.card = cards, { time = cards[1], worth = cards[2] }
-    cards[1]:Set("Time", UI.fmtDur(run.inside), "in the dungeon")
+    cards[1]:Set("Time", D.fmtLen(run.inside), "in the dungeon")
     UI.SetTip(cards[1], { title = "Time", text = "Time in the dungeon and at its entrance, counted in steps of 10 seconds." })
     if cards[2] then
       local full = D.worthParts(run)
@@ -1460,7 +1478,7 @@ local function buildList(content)
     if run.inProgress then
       if kind == "live" and cmp.at then verdict, vkey = ("%s than your best at boss %d"):format(word, cmp.at), wkey
         if word == "same as best" then verdict, vkey = ("Same as your best at boss %d"):format(cmp.at), nil end
-      else verdict = UI.fmtDur(run.inside) .. " so far" end
+      else verdict = D.fmtLen(run.inside) .. " so far" end
       -- (META never repeats the HERO line: the start, then the bosses)
       h:SetMeta("Since " .. UI.fmtClock(run.startT) .. SEP .. bossLine(run, w - 200), nil)
       -- (the run in progress opens its page as every other run does, A10; a ghost: no primary while it runs)
@@ -1470,9 +1488,9 @@ local function buildList(content)
       local compared = (kind == "best" and word ~= "best" and word ~= "") or kind == "slower"
       if compared and word == "same as best" then verdict = "Same as your best"
       elseif compared then verdict, vkey = word .. " than your best", wkey
-      else verdict = ((n0(run.bossesDown) > 0 or totalOf(run)) and D.bossWord(run) or "No boss killed") .. " in " .. UI.fmtDur(run.inside) end
+      else verdict = ((n0(run.bossesDown) > 0 or totalOf(run)) and D.bossWord(run) or "No boss killed") .. " in " .. D.fmtLen(run.inside) end
       local m1 = { UI.fmtWhen(run.startT) }
-      if compared then m1[#m1 + 1] = UI.fmtDur(run.inside); m1[#m1 + 1] = bossLine(run, w - 200)
+      if compared then m1[#m1 + 1] = D.fmtLen(run.inside); m1[#m1 + 1] = bossLine(run, w - 200)
       else
         local missed = missedNames(run)
         if #missed > 0 then m1[#m1 + 1] = "missed " .. fitNames(missed, math.max(80, w - 260))
@@ -1541,9 +1559,11 @@ local function buildList(content)
     local newest
     for _, r in ipairs(rows) do if not r.legacy and (not newest or n0(r.startT) > n0(newest.startT)) then newest = r end end
     v.heroRefresh(newest)
-    -- (filtered to one dungeon, the section is named after it; the screen claims no count of runs: the runs from
-    -- before the run store are not all here)
-    v.section:SetLabel(st.inst or "Runs")
+    -- (filtered to one dungeon, the section is named after it; the screen claims no count of runs. The list is not
+    -- the character's history: it starts with the oldest run stored, and the header says that day, once, 0.2.3)
+    v.since = D.firstRunT(rows)
+    v.sectionLabel = (st.inst or "Runs") .. (v.since and (" since " .. UI.fmtSince(v.since)) or "")
+    v.section:SetLabel(v.sectionLabel)
     v.section:SetMeta(nil)
     -- A column is left out while no listed row has a value for it, or fewer than a third have one (0.3): Vs best,
     -- Bosses and Deaths are blank on the partial rows, and Vs best on a run with nothing to compare.
@@ -1576,7 +1596,7 @@ local function buildList(content)
         if not row.ebBadge then row.ebBadge = UI.Badge(row, b) end
         row.ebBadge:SetBadge(b); row.ebBadge:Show()
       elseif row.ebBadge then row.ebBadge:Hide() end
-      row.c.dur:SetText(UI.fmtDur(run.inside))
+      row.c.dur:SetText(D.fmtLen(run.inside))
       -- (a cell with nothing recorded is blank, never "-" and never 0)
       local word, wkey = words[run][1], words[run][2]
       if row.c.vs then
@@ -1616,6 +1636,16 @@ end
 
 -- the deaths per run of each dungeon, counted the way the Runs DEATHS column counts a run (yours and the party's),
 -- over the runs still stored; a dungeon with none stored keeps the statistics' own figure
+-- When the oldest of these runs started (full and rebuilt rows alike): where a list of runs begins. One function
+-- for the Runs header and the Leveling card, so the two never name different days. Nothing without a stored start.
+function D.firstRunT(runs)
+  local first
+  for _, r in ipairs(runs or D.allRuns()) do
+    local t = type(r) == "table" and tonumber(r.startT) or nil
+    if t and t > 0 and (not first or t < first) then first = t end
+  end
+  return first
+end
 function D.deathsPerRun()
   local c = ns.char and ns.char() or nil
   local sum, n = {}, {}

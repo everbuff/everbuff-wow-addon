@@ -173,7 +173,7 @@ flag:SetScript("OnEnter", function(self)
   elseif key == "BOTTOMRIGHT" then GameTooltip:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", 0, 6)
   else GameTooltip:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -6) end
   GameTooltip:AddLine("everbuff.gg")
-  GameTooltip:AddLine("Left-click  ·  open Everbuff", 0.8, 0.8, 0.8)
+  GameTooltip:AddLine("Left-click  ·  open everbuff.gg", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Drag  ·  move anywhere", 0.8, 0.8, 0.8)
   GameTooltip:AddLine("Right-click  ·  snap to a corner", 0.8, 0.8, 0.8)
   -- the gold block under the four help lines: built, and switched off in code (ns.Gold.FLAG_TIP) until the desktop

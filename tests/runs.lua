@@ -1100,7 +1100,7 @@ return function(P)
     expire()
     r = last()
     check("17: a level-up outside after leaving does not move the run's end level", r.xp.gain == 200 and r.xp.l0 == 12 and r.xp.l1 == 12 and r.xp.p1 == 0.3 and r.xp.need == 1000, r.xp.l1 .. " " .. r.xp.p1)
-    check("17: the page reads the levels inside, and how many such runs the level still takes", select(1, R.xpLine(R.views()[1])) == "200 XP" .. SEP .. "level 12.1 to 12.3", (R.xpLine(R.views()[1])))
+    check("17: the page reads the levels inside, and no forecast of runs to the level", select(1, R.xpLine(R.views()[1])) == "200 XP" .. SEP .. "level 12.1 to 12.3", (R.xpLine(R.views()[1])))
     M.xp, M.xpmax, M.level = 100, 1000, 12
     invariants("17 outside")
     -- no XP block when the maximum is not a plain positive number (level cap, or hidden)
@@ -1829,7 +1829,7 @@ return function(P)
     -- the XP lines of the page, with kills the client hid
     local xv = { inProgress = false, xpGain = 5000, xpPerHour = 23000.4, hidden = { xp = 2 }, xp = { gain = 5000, kill = 350, quest = 1200, n = 1450, l0 = 12, p0 = 0.1, l1 = 12, p1 = 0.3, need = 1000 } }
     local x1, x2, x3 = R.xpLine(xv)
-    check("21: the XP line reads gain, rate, levels and the runs the level still takes (from kill XP)", x1 == table.concat({ "5,000 XP", "23,000 per hour", "level 12.1 to 12.3", "about 2 more runs to level 13" }, SEP), x1)
+    check("21: the XP line reads gain, rate and levels, and forecasts no runs to a level", x1 == table.concat({ "5,000 XP", "23,000 per hour", "level 12.1 to 12.3" }, SEP) and R.runsToLevel == nil, x1)
     check("21: quest XP and the kills read are a line of their own, the count with its separator", x2 == "1,200 XP from quests" .. SEP .. "at least 1,450 kills", x2)
     check("21: a hidden line is called an XP line, never a kill line", x3 == "2 XP lines were hidden by the client.", x3)
     xv.hidden, xv.xp.n, xv.inProgress = { xp = 1 }, 1, true

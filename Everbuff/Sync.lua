@@ -121,6 +121,7 @@ local function dotRow(col)
     r:SetHeight(r.ebH)
   end
   function r.SetState(_, text, color, button)
+    r.plain = text
     r.label:SetText(UI.dot(color or "accent") .. text)
     r.label:SetTextColor(C.fg[1], C.fg[2], C.fg[3])
     if r.btn then if button then r.btn:Show() else r.btn:Hide() end end
@@ -168,7 +169,7 @@ local function buildGeneral(pane)
   local col = g.pg.col
   local E = ns.Emitter or {}
   -- RECORDING FLAG
-  local flag = { head = UI.Section(col, "Recording flag"), items = {} }
+  local flag = { head = UI.Section(col, "Capture flag"), items = {} }
   flag.items[1] = note(col, "The small square the desktop app reads to line up your video. It is always shown.")
   g.corner = UI.SettingRow(col, "Position")
   g.cornerSeg = UI.Segmented(g.corner, (function() local t = {}; for _, c in ipairs(CORNERS) do t[#t + 1] = { c[1], c[2] } end return t end)(),
@@ -269,10 +270,10 @@ end
 -- pulls ever recorded. The story events have no row here: the backend reads them and a count of them says nothing.)
 local STORED = {
   { "fights", "Pulls waiting", function(db) return #(db.combat.fights or {}) end, function(n) return UI.fmtNum(n) end,
-    function() if ns.DB then ns.DB.combat.fights = {} end end, "pull" },
+    function() if ns.DB then ns.DB.combat.fights = {} end end, "pull", "Clear the pulls waiting" },
   -- (the gold ledger is not the loot list: clearing it would break looted + ... = gained, 0.9.44)
   { "loot", "Loot", function(db) return #(db.loot.log or {}) end, function(n) return UI.plural(n, "pickup") end,
-    function() if ns.DB then ns.DB.loot.log = {} end end, "pickup" },
+    function() if ns.DB then ns.DB.loot.log = {} end end, "pickup", "Clear the loot list" },
 }
 local SAMPLES = { { 1, "Fine" }, { 3, "Normal" }, { 10, "Coarse" } }
 local function buildData(pane)
@@ -280,9 +281,11 @@ local function buildData(pane)
   SET.data = d
   d.pg = UI.Page(pane)
   local col = d.pg.col
-  -- DESKTOP SYNC
-  local sync = { head = UI.Section(col, "Desktop sync"), items = {} }
-  d.syncStatus = note(col, "", "fgSubtle")
+  -- The page is one answer, CAPTURE HEALTH (docs/UX_PRAGMATIC.md 5): is the addon capturing, did the desktop app
+  -- pick the data up, what is still waiting, what is stored. The paste code (a fallback: the pickup is automatic)
+  -- and the Clear buttons are under Advanced, collapsed.
+  d.syncStatus = dotRow(col)
+  d.syncStatus.text = d.syncStatus.label
   d.pasteRow = CreateFrame("Frame", nil, col); d.pasteRow.ebH = UI.H.CONTROL + S.S2; d.pasteRow:SetHeight(d.pasteRow.ebH)
   local box = CreateFrame("EditBox", nil, d.pasteRow, "BackdropTemplate")
   box:SetHeight(UI.H.CONTROL)
@@ -303,9 +306,8 @@ local function buildData(pane)
   box:SetPoint("RIGHT", d.ackBtn, "LEFT", -S.S2, 0)
   box:SetScript("OnEnterPressed", function(x) x:ClearFocus(); SET.applyCode() end)
   d.ackError = note(col, "", "bad"); d.ackError:Hide()   -- only after a paste attempt; gone when the page opens again
-  pane:HookScript("OnShow", function() d.ackError:Hide() end)
-  d.syncDesc = note(col, "After the desktop app saves your data it shows a code. Paste it here so the addon can free that space.")
-  sync.items = { d.syncStatus, d.pasteRow, d.ackError, d.syncDesc }
+  pane:HookScript("OnShow", function() d.ackErrorOn = nil; d.ackError:Hide() end)
+  d.syncDesc = note(col, "Only if the desktop app asks for it: the pickup is automatic.")
   -- CAPTURE HEALTH (the addon captures data; only the desktop app knows about video)
   local health = { head = UI.Section(col, "Capture health"), items = {} }
   d.rec = dotRow(col)
@@ -330,20 +332,24 @@ local function buildData(pane)
   sv:HookScript("OnLeave", function(s) UI.BoxColors(s, nil, "lineStrong"); svt:SetTextColor(C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3]) end)
   d.save:SetControl(sv)
   d.saveBtn = sv
-  health.items = { d.rec, d.combat, d.acl, d.remind, d.save }
-  -- STORED DATA
-  local stored = { head = UI.Section(col, "Stored data"), items = {} }
-  d.stored = {}
+  -- what is stored: one status row each in CAPTURE HEALTH ("Pulls waiting · 0"), and its Clear on a row of its own
+  -- under Advanced (d.clear), there only while the store holds something
+  d.stored, d.clear = {}, {}
+  local clearRows = {}
   for _, it in ipairs(STORED) do
-    local r = UI.SettingRow(col, it[2], "Cannot be undone.")
-    local db = function() return ns.DB or { combat = {}, loot = {}, story = {} } end
-    r.btn = twoStep(r, "Clear", function() return ("Click again to clear %s"):format(UI.plural(it[3](db()), it[6])) end, function() it[5](); SET.refreshData() end)
-    r.btn.ebRow = r
-    r:SetControl(r.btn)
+    local r = dotRow(col)
     r.key = it[1]
     d.stored[it[1]] = r
-    stored.items[#stored.items + 1] = r
+    local cr = UI.SettingRow(col, it[7], "Cannot be undone.")
+    local db = function() return ns.DB or { combat = {}, loot = {}, story = {} } end
+    cr.btn = twoStep(cr, "Clear", function() return ("Click again to clear %s"):format(UI.plural(it[3](db()), it[6])) end, function() it[5](); SET.refreshData() end)
+    cr.btn.ebRow = cr
+    cr:SetControl(cr.btn)
+    d.clear[it[1]] = cr
+    r.clear = cr.btn
+    clearRows[#clearRows + 1] = cr
   end
+  health.items = { d.rec, d.syncStatus, d.stored.fights, d.stored.loot, d.combat, d.acl, d.remind, d.save }
   -- ADVANCED (collapsed by default)
   local adv = { head = UI.Section(col, "Advanced \226\128\186"), items = {} }
   d.advHit = CreateFrame("Button", nil, adv.head); d.advHit:SetAllPoints(adv.head)
@@ -352,7 +358,7 @@ local function buildData(pane)
     if ns.DB and ns.DB.settings then ns.DB.settings.advancedOpen = not ns.DB.settings.advancedOpen end
     SET.refreshData()
   end)
-  UI.SetTip(d.advHit, { title = "Advanced", text = "Replay detail and what the addon can read in this client." })
+  UI.SetTip(d.advHit, { title = "Advanced", text = "Replay detail, the code from the desktop app, clearing stored data, and what the addon can read in this client." })
   d.sample = UI.SettingRow(col, "Replay detail", "Finer detail makes replays smoother and the save file larger. Applies from your next pull.")
   local segItems = {}
   for _, sm in ipairs(SAMPLES) do segItems[#segItems + 1] = { sm[1], sm[2], ("A stat snapshot every %s during a pull."):format(UI.fmtDur(sm[1])) } end
@@ -365,11 +371,13 @@ local function buildData(pane)
   d.errors = UI.SettingRow(col, "Errors the addon caught", "Prints them in chat so you can copy them into a bug report.")
   d.errorsBtn = UI.KitButton(d.errors, "Copy errors", "ghost", function() if SlashCmdList and SlashCmdList.EVERBUFF then pcall(SlashCmdList.EVERBUFF, "errors") end end)
   d.errors:SetControl(d.errorsBtn)
-  d.advItems = { d.sample, d.auras, d.client, d.ui, d.video, d.errors }
+  d.advItems = { d.sample, d.pasteRow, d.syncDesc, d.ackError }
+  for _, cr in ipairs(clearRows) do d.advItems[#d.advItems + 1] = cr end
+  for _, x in ipairs({ d.auras, d.client, d.ui, d.video, d.errors }) do d.advItems[#d.advItems + 1] = x end
   adv.items = d.advItems
   d.footer = CreateFrame("Frame", nil, col); d.footer:SetHeight(H.SECTION)
   d.footerText = UI.Text(d.footer, "META", "fgMuted"); d.footerText:SetPoint("TOPLEFT", d.footer, "TOPLEFT", S.S3, -S.S1)
-  d.sections = { sync, health, stored, adv }
+  d.sections = { health, adv }
   d.advHead = adv.head
   pane:HookScript("OnSizeChanged", function() SET.placeData() end)
   SET.refreshData()
@@ -391,10 +399,10 @@ function SET.applyCode()
   local d = SET.data; if not d then return end
   local ack = ns.parseAckCode and ns.parseAckCode(d.ackBox:GetText())
   if ack then
-    local marked = ns.applyAck(ack, "paste"); d.ackBox:SetText(""); d.ackError:Hide()
+    local marked = ns.applyAck(ack, "paste"); d.ackBox:SetText(""); d.ackErrorOn = nil; d.ackError:Hide()
     if ns.msg then ns.msg(("desktop sync applied: %s saved"):format(UI.plural(marked, "pull"))) end
   else
-    d.ackError:Set(UI.dot("bad") .. "That is not a code from the desktop app. It looks like EB-ACK- and a number."); d.ackError:Show()
+    d.ackError:Set(UI.dot("bad") .. "That is not a code from the desktop app. It looks like EB-ACK- and a number."); d.ackErrorOn = true
   end
   SET.refreshData()
 end
@@ -412,9 +420,12 @@ function SET.refreshData()
   if la then
     -- (the pickup as a fixed moment and what it took, both from combat.lastAck: "Sat 21 Nov 11:45, 142 pulls")
     local took = (sync.ackFights and sync.ackFights > 0) and (", " .. UI.plural(sync.ackFights, "pull")) or ""
-    d.syncStatus:Set("Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt or 0) .. took)
+    d.syncStatus:SetState("Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt or 0) .. took, "accent")
+    UI.SetTip(d.syncStatus, { title = "Saved to everbuff.gg", text = "When the desktop app last picked your data up, and how many pulls it took." })
   else
-    d.syncStatus:Set("Saved to everbuff.gg: not seen yet. Install the desktop app from everbuff.gg to keep your history and watch your recordings.")
+    -- (never seen: said plainly; what to do about it is the hover, not a sentence on the page)
+    d.syncStatus:SetState("Saved to everbuff.gg: not seen yet", "fgFaint")
+    UI.SetTip(d.syncStatus, { title = "Not seen yet", text = "The desktop app has not picked your data up. Install it from everbuff.gg to keep your history and watch your video." })
   end
   pcall(d.placeholderSync)
   -- recording health
@@ -432,22 +443,26 @@ function SET.refreshData()
   for _, it in ipairs(STORED) do
     local r = d.stored[it[1]]
     local n = it[3](db)
-    local extra = ""
+    local extra, near = "", false
     if it[1] == "fights" and ns.Fights and ns.Fights.capInfo then
       local nF, cap = ns.Fights.capInfo()
-      if nF >= cap - 25 then extra = (" \194\183 near the limit of %s: the oldest roll off"):format(UI.fmtNum(cap)) end
+      if nF >= cap - 25 then near = true; extra = (" \194\183 near the limit of %s: the oldest roll off"):format(UI.fmtNum(cap)) end
     end
-    r.label:SetText(it[2] .. " \194\183 " .. it[4](n) .. extra)
-    -- (nothing stored: nothing to clear, so no button)
-    if n > 0 then r.btn:Show() else r.btn:Hide() end
-    if it[1] == "fights" then r:SetDesc(n > 0 and "Not picked up by the desktop app yet. Clearing cannot be undone." or "Nothing is waiting for the desktop app.")
-    else r:SetDesc(n > 0 and "Clearing cannot be undone." or "") end
-    pcall(r.layout)
+    -- (a true stored count, 0 included; no sentence restates it)
+    r:SetState(it[2] .. " \194\183 " .. it[4](n) .. extra, near and "warn" or "accent")
+    r.count = n
   end
   -- advanced
   local open = st.advancedOpen == true
   d.advHead:SetLabel(open and "Advanced" or "Advanced \226\128\186")
   for _, it in ipairs(d.advItems) do if open then it:Show() else it:Hide() end end
+  -- (the paste error only after a paste attempt; a Clear only for a store with something in it)
+  if not (open and d.ackErrorOn) then d.ackError:Hide() end
+  for _, it in ipairs(STORED) do
+    local cr = d.clear[it[1]]
+    if open and (d.stored[it[1]].count or 0) > 0 then cr:Show(); cr.btn:Show() else cr:Hide(); cr.btn:Hide() end
+    pcall(cr.layout)
+  end
   local cur = tonumber(st.statSample) or (ns.Fights and ns.Fights.DEFAULT_SAMPLE) or 1
   local pick
   for _, sm in ipairs(SAMPLES) do if sm[1] == cur then pick = sm[1] end end
@@ -460,7 +475,7 @@ function SET.refreshData()
   if #errs == 0 then d.ui:SetState("Window: every page built cleanly", "accent")
   else d.ui:SetState("Window: " .. table.concat(errs, " \194\183 "), "warn") end
   d.video:SetState("Video: the desktop app records it; the game cannot see it", "fgFaint")
-  d.footerText:SetText(("everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)))
+  d.footerText:SetText(("everbuff.gg %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)))
   SET.placeData()
 end
 

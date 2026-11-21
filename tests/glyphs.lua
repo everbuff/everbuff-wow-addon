@@ -50,3 +50,28 @@ for _, ch in ipairs({ "\226\150\190", "\226\156\149", "\226\147\152" }) do
   local cp = FM.codepoints(ch)[1]
   check(("glyphs: U+%04X is never asked of a font"):format(cp), seen[cp] == nil, seen[cp])
 end
+-- The words of the window (docs/UX_PRAGMATIC.md 0.3, 0.4): the status is CAPTURING and the brand is everbuff.gg, in
+-- every string the addon shows. "Recording" as a status word, "RECORDING" and a capitalised "Everbuff" as the brand
+-- fail here. (A frame name such as "EverbuffFrame" is one word and is not the brand; the addon's own folder name is
+-- compared as the bare string "Everbuff" in Logging.lua.)
+do
+  local badWords = {}
+  for _, file in ipairs(FILES) do
+    local ln = 0
+    for line in io.lines("Everbuff/" .. file .. ".lua") do
+      ln = ln + 1
+      local code = line:gsub("%-%-[^\"]*$", "")
+      for str in code:gmatch('"([^"]*)"') do
+        local why
+        if str:find("%f[%a]Recording%f[%A]") or str:find("%f[%a]RECORDING%f[%A]") then why = "Recording"
+        elseif str ~= "Everbuff" and (str:find("%f[%a]Everbuff%f[%A]") or str:find("%f[%a]EVERBUFF%.GG")) then why = "Everbuff" end
+        if why then badWords[#badWords + 1] = ("%s in %s.lua:%d"):format(why, file, ln) end
+      end
+    end
+  end
+  check("words: no string says Recording (the status is CAPTURING) or Everbuff (the brand is everbuff.gg)", #badWords == 0, table.concat(badWords, "; "))
+  local ui = assert(io.open("Everbuff/UI.lua", "rb")):read("*a")
+  check("words: the title bar brand is everbuff.gg", ui:find('brand:SetText("everbuff.gg")', 1, true) ~= nil)
+  check("words: the status chip says CAPTURING", ui:find('st.textColor = "CAPTURING", "accent"', 1, true) ~= nil and ui:find('"CAPTURING, combat log off"', 1, true) ~= nil
+    and ui:find('"CAPTURING, desktop app not seen"', 1, true) ~= nil)
+end

@@ -792,7 +792,7 @@ The per-hour gold rate is `ns.Economy` session net divided by session hours (the
 - A third death adds a link row "3 more deaths ›" that opens Home > Deaths.
 - A run that set a new best gets a BEST badge after its title, a 3 px `good` left bar on the row, and the title "Wailing Caverns: 42s faster than your best".
 - Best drop picks the highest quality, then the highest vendor price (a missing price counts as 0). The meta omits "vendor price" when it is unknown.
-- Lockout link: the › opens the run whose dungeon matches and whose time falls within the lockout's life. With no matching run there is no chevron, and the tooltip reads "Saved before Everbuff recorded this dungeon on this character."
+- Lockout link: the › opens the run whose dungeon matches and whose time falls within the lockout's life. With no matching run there is no chevron, and the tooltip reads "Saved before everbuff.gg captured this dungeon on this character."
 - Icons (`UI.KIND_ICON`, Blizzard icon paths; tested that every row kind has one; the paths are an in-game check):
 
   | Kind | Icon |
@@ -1060,7 +1060,7 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 
    Tooltip: line 2 "Counted from your characters' dungeon entries this hour. A new copy within 20 minutes of the last is a guess.", then the `Runs.hourTip` rows, then "Last 24 hours: 4". Without a limit it adds "Set your own limit with /eb instances limit 5 (or 10)." The code fact behind this: the limit is the player's own (`Runs.limit()`), unset by default, so "of 5" never shows unless the player set it.
 
-2. **Lockouts.** One lockout: "Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m". It is a link to the matching run, or plain text with the "Saved before Everbuff recorded..." tooltip. Several lockouts: "2 lockouts, next reset in 1h 59m". None: "No lockouts". The tooltip lists every lockout plus the other characters' lockouts (existing `otherLockouts`).
+2. **Lockouts.** One lockout: "Ragefire Chasm: 2 of 4 bosses down, resets in 1h 59m". It is a link to the matching run, or plain text with the "Saved before everbuff.gg captured..." tooltip. Several lockouts: "2 lockouts, next reset in 1h 59m". None: "No lockouts". The tooltip lists every lockout plus the other characters' lockouts (existing `otherLockouts`).
 
 **Last run hero (text variant, no image)**
 - TITLE: LABEL "LAST RUN", then TITLE dungeon name, then badges (BEST, IN PROGRESS). A first run has no badge: META says "first run".
@@ -1441,7 +1441,7 @@ XP sources are two: quests and kills (dungeon XP is split into both). Dungeons i
 These controls are built from WHITE8x8 and text only, so the renderer shows them.
 
 **General** (tooltip "How the window and on-screen notifications behave")
-- `RECORDING FLAG`
+- `CAPTURE FLAG`
   - Description: "The small square the desktop app reads to line up your video. It is always shown."
   - Position: segmented "Top left | Top right | Bottom left | Bottom right" (4 x 100 = 400).
   - Size: slider.
@@ -1460,28 +1460,19 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
 
 **Data and sync** (tooltip "Whether your data reaches everbuff.gg, and what is stored")
 
-> Revised by `docs/UX_PRAGMATIC.md` 5 (built on the draft branch, in part): the status reads "Saved to everbuff.gg:
-> Sat 21 Nov 11:45, 142 pulls" (when the desktop app last picked data up and how many pulls it took), the section is
-> CAPTURE HEALTH with "CAPTURING in <zone>", and Stored data has "Pulls waiting · N" and "Loot · N pickups". Clear is
-> hidden for an empty store and never resets `combat.fightSeq`. The Events row is gone. The copy below that differs
-> from this is superseded; the move of the paste box and Clear under Advanced is not built yet.
+> Revised by `docs/UX_PRAGMATIC.md` 5 (built on the draft branch); the copy below replaces the 0.9.51 one.
 
-- `DESKTOP SYNC`
-  - Status: "Last picked up by the desktop app: 2m ago · 4 fights not yet saved by the desktop app". Both counts come from the one Sync function.
-  - Paste box: 400x24, placeholder "Paste the code from the desktop app". The error shows only after a paste attempt.
-  - Description: "After the desktop app saves your data it shows a code. Paste it here so the addon can free that space."
-  - Initial state: "Not seen yet: install the desktop app from everbuff.gg to watch your recordings."
-- `RECORDING HEALTH`
-  - Dot rows: "Recording: on in The Barrens", "Combat log: on", "Advanced combat logging: on". Each has a [Turn on] ghost button only when off.
-  - Setting row "Remind me to /reload before I log out", with "Saves your data even if the game disconnects you."
-- `STORED DATA`
-  - "Pulls · 78 stored", "Loot · 30 pickups", "Events · 2,345".
-  - Each row has a danger ghost "Clear" (two-step) and "Cannot be undone."
+- `CAPTURE HEALTH`, one block, the four facts first:
+  - Dot rows in this order: "CAPTURING in Orgrimmar" ("Standing by" with no session); "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls" (when the desktop app last picked data up and how many pulls it took; never seen: "Saved to everbuff.gg: not seen yet", and what to do about it is the row's tooltip); "Pulls waiting · 0"; "Loot · 1,539 pickups". No sentence under a row.
+  - Then "Combat log: on" and "Advanced combat logging: on", each with a [Turn on] ghost button only when off.
+  - Setting row "Remind me to /reload before I log out", with "Saves your data even if the game disconnects you.", and "Save now".
 - `ADVANCED` (collapsed by default via `advancedOpen`; header "ADVANCED ›")
   - "Replay detail": segmented `Fine · Normal · Coarse`, with "Finer detail makes replays smoother and the save file larger. Applies from your next pull."
+  - Paste box, placeholder "Paste the code from the desktop app", with "Only if the desktop app asks for it: the pickup is automatic." The error shows only after a paste attempt.
+  - "Clear the pulls waiting" and "Clear the loot list": a danger ghost "Clear" (two-step) and "Cannot be undone.", each there only while its store holds something. Clear never resets `combat.fightSeq`. The story events have no row.
   - Diagnostics (aura names, UI health, video note) as status lines.
   - [Copy errors] (`/eb errors`).
-- Footer: "Everbuff 0.9.51 · type /eb help for every command".
+- Footer: "everbuff.gg 0.9.51 · type /eb help for every command".
 
 ### 4.13 First run and What's new (phase 2)
 
@@ -1500,9 +1491,9 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
 | `CONTENT_BOTTOM - 28` | footer, right-aligned to `BOX_R`: Back (ghost, hidden on step 1), the "Skip" link, primary Next (Finish on step 3) |
 
 **Steps**
-1. **"Welcome to Everbuff"**
-   - Body: "Everbuff records your pulls, loot, deaths and leveling while you play, so you can see how you are doing here and watch it back on everbuff.gg. You can change everything later in Settings."
-   - Three dot rows: "Recording is on"; "Combat log: off" [Turn on]; "Desktop app: not seen yet" with "Install it from everbuff.gg to record video".
+1. **"Welcome to everbuff.gg"**
+   - Body: "The addon captures your pulls, loot, deaths and leveling while you play, so you can see how you are doing here and watch it back on everbuff.gg. You can change everything later in Settings."
+   - Three dot rows: "CAPTURING"; "Combat log: off" [Turn on]; "Desktop app: not seen yet" with "Install it from everbuff.gg to record video".
 2. **"Show your gold on screen?"**
    - Body: "A small line near the flag shows your gold and how much you made this session. It never covers your game."
    - A preview of the pill, then ghost [No thanks] and primary [Show it].

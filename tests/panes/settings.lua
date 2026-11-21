@@ -105,12 +105,25 @@ return function(P)
     if d then
       ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
       audit(tag .. " Data and sync (Advanced open)", d.pane, d.pg, d.sections)
-      ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
-      audit(tag .. " Data and sync", d.pane, d.pg, d.sections)
       local pb, ab, rb = P.box(d.ackBox), P.box(d.ackBtn), P.box(d.pasteRow)
       check(tag .. ": the paste box is 24 high and stretches: Apply S2 after it ends on the column's text edge", d.ackBox._h == 24 and pb and ab and rb
         and math.abs(pb.l + pb.w + UI.S.S2 - ab.l) < 0.5 and math.abs(ab.l + ab.w - (rb.l + rb.w - UI.S.S3)) < 0.5, pb and ab and rb and ("%s %s %s"):format(pb.l + pb.w, ab.l, rb.l + rb.w))
-      check(tag .. ": the footer names the version and /eb help", d.footerText.text == ("everbuff %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)) and P.visible(d.footer))
+      ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
+      audit(tag .. " Data and sync", d.pane, d.pg, d.sections)
+      -- one block, in the order of docs/UX_PRAGMATIC.md 5: the four facts first, nothing else before them
+      local heads = {}
+      for _, sec in ipairs(d.sections) do heads[#heads + 1] = tostring(sec.head.label.text) end
+      eq(tag .. ": the sections are CAPTURE HEALTH and Advanced, no Desktop sync and no Stored data", table.concat(heads, " | "), "CAPTURE HEALTH | ADVANCED \226\128\186")
+      local order = { d.rec, d.syncStatus, d.stored.fights, d.stored.loot }
+      local okOrder = true
+      for i, r in ipairs(order) do
+        if d.sections[1].items[i] ~= r or not P.visible(r) then okOrder = false end
+        if i > 1 and not (P.box(r).t > P.box(order[i - 1]).t) then okOrder = false end
+      end
+      check(tag .. ": the four facts lead the block in order: status, saved, pulls waiting, loot", okOrder)
+      check(tag .. ": the paste box and every Clear are out of sight while Advanced is collapsed", not P.visible(d.pasteRow) and not P.visible(d.ackBox) and not P.visible(d.syncDesc)
+        and not P.visible(d.clear.fights) and not P.visible(d.clear.loot) and not P.visible(d.stored.fights.clear) and not P.visible(d.stored.loot.clear))
+      check(tag .. ": the footer names the version and /eb help", d.footerText.text == ("everbuff.gg %s \194\183 type /eb help for every command"):format(tostring(ns.VERSION)) and P.visible(d.footer))
     end
   end
   UI.SetWindowSize(900, 580)
@@ -177,18 +190,25 @@ return function(P)
     local d = SET.data
     local keepAck = ns.DB.combat.lastAck
     ns.DB.combat.lastAck = nil; SET.refreshData()
-    check("Data: before any sync it says so", d.syncStatus.text.text:find("^Saved to everbuff.gg: not seen yet. Install the desktop app from everbuff.gg") ~= nil, d.syncStatus.text.text)
+    eq("Data: before any sync it says so, and nothing more on the page", d.syncStatus.plain, "Saved to everbuff.gg: not seen yet")
+    check("Data: what to do about it is the hover", type(d.syncStatus.ebTip) == "table" and d.syncStatus.ebTip.text:find("Install it from everbuff.gg", 1, true) ~= nil)
     ns.DB.combat.lastAck = { at = (GetServerTime and GetServerTime() or time()) - 120, fights = 2, source = "file" }
     SET.refreshData()
     local sync = ns.SyncState()
     -- (the pickup as a fixed moment and what it took, both from combat.lastAck; the pulls waiting have their own row)
-    check("Data: the status names the last pickup and the pulls it took, from the one Sync function", d.syncStatus.text.text == ("Saved to everbuff.gg: %s, 2 pulls"):format(UI.fmtStamp(sync.ackAt))
-      and sync.ackFights == 2 and sync.stored == #ns.DB.combat.fights, d.syncStatus.text.text)
+    check("Data: the status names the last pickup and the pulls it took, from the one Sync function", d.syncStatus.plain == ("Saved to everbuff.gg: %s, 2 pulls"):format(UI.fmtStamp(sync.ackAt))
+      and sync.ackFights == 2 and sync.stored == #ns.DB.combat.fights, d.syncStatus.plain)
     ns.DB.combat.lastAck = { at = sync.ackAt, source = "file" }; SET.refreshData()
-    eq("Data: a pickup with no count says only when", d.syncStatus.text.text, "Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt))
+    eq("Data: a pickup with no count says only when", d.syncStatus.plain, "Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt))
+    -- (the paste code is a fallback, under Advanced)
+    ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
+    check("Data: with Advanced open the paste box is there", P.visible(d.pasteRow) and P.visible(d.ackBox) and P.visible(d.ackBtn))
     check("Data: the error shows only after a paste attempt", not P.visible(d.ackError))
     d.ackBox:SetText("not a code"); click(d.ackBtn)
     check("Data: a bad code shows the error and changes nothing", P.visible(d.ackError) and d.ackError.text.text:find("EB-ACK-", 1, true) ~= nil and #M.errors == 0)
+    d.ackBox:SetText("")
+    ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
+    check("Data: collapsed again the error is out of sight with the box", not P.visible(d.ackError) and not P.visible(d.pasteRow))
     ns.DB.combat.lastAck = keepAck
     -- recording health
     local keepCombat = ns.Logging._combat
@@ -210,10 +230,13 @@ return function(P)
     local keepSeq = ns.DB.combat.fightSeq
     ns.DB.combat.fightSeq = 6879
     check("Data: the stored rows read Pulls waiting · 2 and Loot · 1 pickup; the events have no row",
-      d.stored.fights.label.text == "Pulls waiting \194\183 2" and d.stored.loot.label.text == "Loot \194\183 1 pickup" and d.stored.events == nil,
-      d.stored.fights.label.text .. " | " .. d.stored.loot.label.text)
-    check("Data: each clear says it cannot be undone", d.stored.fights.desc.text == "Not picked up by the desktop app yet. Clearing cannot be undone." and d.stored.loot.desc.text == "Clearing cannot be undone.")
-    local btn = d.stored.fights.btn
+      d.stored.fights.plain == "Pulls waiting \194\183 2" and d.stored.loot.plain == "Loot \194\183 1 pickup" and d.stored.events == nil,
+      d.stored.fights.plain .. " | " .. d.stored.loot.plain)
+    check("Data: the rows carry no sentence and no Clear of their own", d.stored.fights.desc == nil and d.stored.loot.desc == nil and d.stored.fights.btn == nil and not P.visible(d.clear.fights))
+    ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
+    check("Data: the Clears are under Advanced, each saying it cannot be undone", P.visible(d.clear.fights) and P.visible(d.clear.loot) and d.clear.fights.label.text == "Clear the pulls waiting"
+      and d.clear.loot.label.text == "Clear the loot list" and d.clear.fights.desc.text == "Cannot be undone." and d.clear.loot.desc.text == "Cannot be undone.")
+    local btn = d.stored.fights.clear
     click(btn)
     check("Data: the first click only asks", #ns.DB.combat.fights == 2 and btn.armed == true and btn.text.text == "Click again to clear 2 pulls", btn.text.text)
     M.runTimers(); M.settle()
@@ -221,8 +244,9 @@ return function(P)
     click(btn); click(btn)
     check("Data: the second click clears the pulls and nothing else", #ns.DB.combat.fights == 0 and #ns.DB.loot.log == 1 and #ns.DB.story.events == 3)
     eq("Data: the count of pulls ever recorded is not reset (the pull ids stay monotonic)", ns.DB.combat.fightSeq, 6879)
-    check("Data: with nothing stored there is no Clear, and the row says nothing is waiting", d.stored.fights.label.text == "Pulls waiting \194\183 0" and d.stored.fights.btn.shown == false
-      and d.stored.fights.desc.text == "Nothing is waiting for the desktop app.", d.stored.fights.label.text)
+    check("Data: with nothing stored the row reads a plain 0 and its Clear is gone, Advanced open or not", d.stored.fights.plain == "Pulls waiting \194\183 0" and not P.visible(d.clear.fights)
+      and not P.visible(btn) and P.visible(d.clear.loot), d.stored.fights.plain)
+    ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
     ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events = keepF, keepL, keepE
     ns.DB.combat.fightSeq = keepSeq
     -- advanced

@@ -3,7 +3,7 @@
 Status: proposal for approval issue #57. Nothing here is built before the founder's yes.
 
 Built on the draft branch `ux-overhaul` (not pushed to main, not installed), so the founder can judge it on real
-shots: sections 1.4, 1.5, 2.1 to 2.3 and the rows of section 5 about the pickup and the pulls, with gate A (the
+shots: the brand and status words of 0.4, sections 1.4, 1.5, 2.1 to 2.3 and section 5, with gate A (the
 rebuilt rows from the gold runs, `Everbuff/RunsLegacy.lua`) and gate B (loot source by boss kill timing). Both gates
 still need their own yes on #57 before a release; refusing B means one constant (`D.PLACEHOLDER` rows show blank).
 Not built: gates C, D, I and J (acked session records, party size, lifetime counters, the boss reference table), so

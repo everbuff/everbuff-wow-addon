@@ -223,6 +223,12 @@ function UI.fmtStamp(t, now)
   return dayNum(t) .. date(" %b %Y ", t) .. UI.fmtClock(t)
 end
 -- day rows: "TODAY", "YESTERDAY", "MONDAY 16 NOV" ("MONDAY 16 NOV 2025" before this year)
+-- "Wed 18 Nov" ("18 Nov 2025" before this year): the day a stored list starts, for its section header. Never "Today".
+function UI.fmtSince(t, now)
+  t = tonumber(t) or 0; now = now or nowT()
+  if date("%Y", t) == date("%Y", now) then return date("%a ", t) .. dayNum(t) .. date(" %b", t) end
+  return dayNum(t) .. date(" %b %Y", t)
+end
 function UI.fmtDay(t, now)
   t = tonumber(t) or 0; now = now or nowT()
   if sameDay(t, now) then return "TODAY" end
@@ -1694,9 +1700,14 @@ function UI.StatCard(parent, opts)
   c.meta:SetPoint("TOPLEFT", c, "TOPLEFT", S.S3, -58); c.meta:SetPoint("TOPRIGHT", c, "TOPRIGHT", -S.S3, -58)
   if click then
     c.chev = UI.Text(c, "META", "fgFaint"); c.chev:SetPoint("TOPLEFT", c, "TOPRIGHT", -20, -S.S3); c.chev:SetText("\226\128\186")
-    c:SetScript("OnClick", function(s) UI.Click(); opts.onClick(s) end)
-    c:SetScript("OnEnter", function() UI.BoxColors(c, "hover", "lineControl", 0.4); c.chev:SetTextColor(unpackc(C.fg)) end)
+    c:SetScript("OnClick", function(s) if c.ebNoClick then return end; UI.Click(); opts.onClick(s) end)
+    c:SetScript("OnEnter", function() if c.ebNoClick then return end; UI.BoxColors(c, "hover", "lineControl", 0.4); c.chev:SetTextColor(unpackc(C.fg)) end)
     c:SetScript("OnLeave", function() UI.BoxColors(c, "panel", "line"); c.chev:SetTextColor(unpackc(C.fgFaint)) end)
+    -- (a card whose page does not exist now opens nothing: no chevron, no hover, no click)
+    function c.SetClickable(_, on)
+      c.ebNoClick = (not on) or nil
+      if on then c.chev:Show() else c.chev:Hide(); UI.BoxColors(c, "panel", "line") end
+    end
   end
   if opts.tip then UI.SetTip(c, opts.tip) end
   function c.Set(_, label, value, meta, valueColor)
@@ -2889,9 +2900,9 @@ function UI.StatusState()
   local la = sync.lastAck
   local stale = la ~= nil and type(la.at) == "number" and (now - la.at) > 3 * 86400 and (sync.waiting or 0) >= 1
   local st = { sess = sess, acl = aclOn, combat = combatOn, waiting = sync.waiting or 0, lastAck = la, now = now }
-  if sess and not combatOn then st.text, st.dot, st.textColor = "Recording, combat log off", "warn", "warn"
-  elseif sess and stale then st.text, st.dot, st.textColor = "Recording, desktop app not seen", "warn", "warn"
-  elseif sess then st.text, st.dot, st.textColor = "Recording", "accent", "fgSubtle"
+  if sess and not combatOn then st.text, st.dot, st.textColor = "CAPTURING, combat log off", "warn", "warn"
+  elseif sess and stale then st.text, st.dot, st.textColor = "CAPTURING, desktop app not seen", "warn", "warn"
+  elseif sess then st.text, st.dot, st.textColor = "CAPTURING", "accent", "fgSubtle"
   elseif IsInInstance and IsInInstance() then st.text, st.dot, st.textColor = "Starting", "warn", "fgSubtle"
   else st.text, st.dot, st.textColor = "Standing by", "fgFaint", "fgSubtle" end
   return st
@@ -2902,7 +2913,7 @@ local function chipTip(tip)
   if st.sess then
     local zone = (GetRealZoneText and GetRealZoneText()) or st.sess.context
     local len = st.sess.startedEpoch and UI.fmtDur(st.now - st.sess.startedEpoch, { minutes = true }) or nil
-    first = "Recording" .. (zone and zone ~= "" and (" \194\183 " .. zone) or "") .. (len and (" \194\183 session " .. len) or "")
+    first = "CAPTURING" .. (zone and zone ~= "" and (" \194\183 " .. zone) or "") .. (len and (" \194\183 session " .. len) or "")
   end
   tip:AddLine(first, 1, 1, 1)
   if st.lastAck and st.lastAck.at then
@@ -2969,11 +2980,11 @@ local function buildFrame()
   mark:SetTexture("Interface\\AddOns\\EverbuffJournal\\media\\mark")
   local brand = UI.Text(bar, "WORDMARK", "fg")
   brand:SetPoint("LEFT", f, "TOPLEFT", 44, -20)
-  brand:SetText("everbuff")
+  brand:SetText("everbuff.gg")
   f.wordmark = brand
   local brandHit = CreateFrame("Frame", nil, bar)
-  brandHit:SetPoint("TOPLEFT", f, "TOPLEFT", S.S4, -S.S2); brandHit:SetSize(44 - S.S4 + UI.TextWidth("WORDMARK", "everbuff"), 24)
-  UI.SetTip(brandHit, { title = "Everbuff " .. tostring(ns.VERSION) .. " \194\183 type /eb help for every command" })
+  brandHit:SetPoint("TOPLEFT", f, "TOPLEFT", S.S4, -S.S2); brandHit:SetSize(44 - S.S4 + UI.TextWidth("WORDMARK", "everbuff.gg"), 24)
+  UI.SetTip(brandHit, { title = "everbuff.gg " .. tostring(ns.VERSION) .. " \194\183 type /eb help for every command" })
   f.brandHit = brandHit
 
   -- close: 24 x 24, its box edge on BOX_R
@@ -3150,6 +3161,21 @@ function UI.registerPane(hostName, order, label, build, onShow, desc, visible)
   if not h then h = UI.registerHost(50, hostName, nil); h.autoOrder = true end
   h.panes[#h.panes + 1] = { order = order, key = paneKey(label), label = label, build = build, onShow = onShow, desc = desc, visible = visible }
 end
+-- Whether a host's sub-tab has a page to show now (its pane's `visible` function; none: always). A link to a page
+-- asks this first, so no chevron points at a tab that is not there.
+function UI.SubVisible(hostName, sub)
+  local h = hosts[hostName]
+  local key = type(sub) == "string" and paneKey(sub) or nil
+  if not (h and key) then return false end
+  for _, pn in ipairs(h.panes) do
+    if pn.key == key then
+      if not pn.visible then return true end
+      local ok, vis = pcall(pn.visible)
+      return not (ok and vis == false)
+    end
+  end
+  return false
+end
 function UI.paneErrors()
   local out = {}
   for _, t in ipairs(tabs) do
@@ -3178,9 +3204,11 @@ function UI.SetWindowSize(w, h)
 end
 
 -- Open the window on a tab; `sub` selects a pane of a host ("Home", "fights"). Old keys pass through UI.ALIASES.
--- With no name the window opens where it was, or on the saved lastTab / lastSub.
+-- With no name the window opens where it was, or on the saved lastTab / lastSub. Returns true when the page asked
+-- for is the one on screen, false when it is not (an unknown tab, or a sub-tab hidden because it has nothing to show:
+-- the host then shows its first sub-tab, the same page whatever was open before).
 function UI.Open(name, sub)
-  if ns.blockedInCombat and ns.blockedInCombat() then return end
+  if ns.blockedInCombat and ns.blockedInCombat() then return false end
   buildFrame()
   frame:Show()
   if not name then
@@ -3194,15 +3222,23 @@ function UI.Open(name, sub)
   name, sub, after = UI.Resolve(name, sub)
   local known = false
   for _, t in ipairs(tabs) do if t.name == name then known = true end end
-  if not known then name, sub = tabs[1] and tabs[1].name, nil end
+  local found = true
+  if not known then name, sub, found = tabs[1] and tabs[1].name, nil, false end
   selectTab(name)
   local t
   for _, x in ipairs(tabs) do if x.name == name then t = x end end
   local ctl = t and hostCtl(t)
-  -- (a page whose sub-tab is hidden now has nothing to show: the host stays on the page it has)
   if t and t.refreshTabs then t.refreshTabs() end
-  if sub and ctl and ctl.select and ctl.panes and ctl.panes[sub] and not (ctl.hidden and ctl.hidden[sub]) then ctl.select(sub) end
+  if sub and ctl and ctl.select and ctl.panes and ctl.panes[sub] then
+    if not (ctl.hidden and ctl.hidden[sub]) then ctl.select(sub)
+    else
+      -- (a page whose sub-tab is hidden now has nothing to show: the host's first sub-tab, never whatever was open)
+      found = false
+      for _, b in ipairs(ctl.tabs or {}) do if b.key and not ctl.hidden[b.key] then ctl.select(b.key); break end end
+    end
+  elseif sub and ctl then found = false end
   if after then pcall(after) end
+  return found
 end
 
 -- ── UI.Tabs: with no `top` (a host's or Settings' own sub-tabs) it is UI.SubTabs, the control row. With a `top`

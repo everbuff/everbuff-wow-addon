@@ -2437,17 +2437,9 @@ function Runs.timeLine(v)
   end
   return table.concat(a, SEP), table.concat(b, SEP)
 end
--- How many more runs like this one reach the next level, from the XP of its kills alone (a quest is handed in
--- once). Only for a run that is over, and only when the bar it ended on is known.
-function Runs.runsToLevel(v)
-  local x = v.xp
-  if v.inProgress or type(x) ~= "table" or num(x.kill) <= 0 or not (plainNum(x.need) and plainNum(x.p1) and plainNum(x.l1)) then return nil end
-  local n = math.ceil(x.need * (1 - x.p1) / x.kill)
-  if n < 1 or n > 999 then return nil end
-  return n, x.l1 + 1
-end
--- "12,300 XP · 23,000 per hour · level 23.4 to 24.1 · about 6 more runs to level 25", then on a line of their own
--- the quest XP and the kills the client let the addon read, then what it hid. Returns the three (the last two or nil).
+-- "12,300 XP · 23,000 per hour · level 23.4 to 24.1", then on a line of their own the quest XP and the kills the
+-- client let the addon read, then what it hid. Returns the three (the last two or nil). Stored facts only: there is
+-- no "about N more runs to level L" (a forecast from kill XP, false the moment the character levels another way).
 function Runs.xpLine(v)
   local x = v.xp
   if type(x) ~= "table" or v.xpGain <= 0 then return nil end
@@ -2462,8 +2454,6 @@ function Runs.xpLine(v)
     if x.l0 ~= x.l1 or a1 ~= b1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + a1 / 10, x.l1 + b1 / 10)
     elseif a2 ~= b2 then parts[#parts + 1] = ("level %.2f to %.2f"):format(x.l0 + a2 / 100, x.l1 + b2 / 100) end
   end
-  local more, lvl = Runs.runsToLevel(v)
-  if more then parts[#parts + 1] = ("about %d more run%s to level %d"):format(more, more == 1 and "" or "s", lvl) end
   local second = {}
   if num(x.quest) > 0 then second[#second + 1] = Runs.commas(x.quest) .. " XP from quests" end
   local hid = num(v.hidden and v.hidden.xp)

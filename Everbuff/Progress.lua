@@ -334,7 +334,7 @@ local function buildLeveling(content)
     { key = "vs", label = "Vs previous", kind = "tag", min = 104, justify = "RIGHT" },
   }, { tooltip = function(row, item, tip)
       tip:AddLine(("Level %d"):format(item.level), 1, 1, 1)
-      tip:AddLine(item.t and ("Reached " .. UI.fmtWhen(item.t)) or "Reached before Everbuff recorded this character.", 0.78, 0.79, 0.80, true)
+      tip:AddLine(item.t and ("Reached " .. UI.fmtWhen(item.t)) or "Reached before everbuff.gg captured this character.", 0.78, 0.79, 0.80, true)
     end })
   v.quests = block(col, "Quests turned in", {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
@@ -465,9 +465,9 @@ function V.renderLeveling()
       cards[3]:Set("Quest XP share", "-", "after your first XP")
       cards[4]:Set("XP in dungeons", "-", "after your first XP")
     end
-    UI.SetTip(cards[3], { title = "Quest XP share", text = "Of all the XP Everbuff recorded on this character, the part quests gave. Kills give the rest; dungeon XP counts in both.",
+    UI.SetTip(cards[3], { title = "Quest XP share", text = "Of all the XP everbuff.gg captured on this character, the part quests gave. Kills give the rest; dungeon XP counts in both.",
       pairs = { { "From quests", UI.fmtNum(qsum.xp) .. " XP" }, { "From kills", UI.fmtNum(qsum.kills) .. " XP" } } })
-    UI.SetTip(cards[4], { title = "XP in dungeons", text = "The XP your recorded dungeon runs gave, of all the XP Everbuff recorded on this character.",
+    UI.SetTip(cards[4], { title = "XP in dungeons", text = "The XP your recorded dungeon runs gave, of all the XP everbuff.gg captured on this character.",
       pairs = { { "In dungeons", UI.fmtNum(runXP) .. " XP" }, { "Runs", UI.fmtNum(nRuns) } } })
   end
 

@@ -206,7 +206,7 @@ return function(P)
 
   -- ── the status chip ──
   local st = UI.StatusState()
-  check("chip: a known state sentence", ({ ["Recording"] = 1, ["Recording, combat log off"] = 1, ["Recording, desktop app not seen"] = 1, ["Starting"] = 1, ["Standing by"] = 1 })[st.text] ~= nil, st.text)
+  check("chip: a known state sentence", ({ ["CAPTURING"] = 1, ["CAPTURING, combat log off"] = 1, ["CAPTURING, desktop app not seen"] = 1, ["Starting"] = 1, ["Standing by"] = 1 })[st.text] ~= nil, st.text)
   check("chip: the sync count comes from the one Sync read", type(ns.SyncState().waiting) == "number")
   ns.UI.Open("Home", "now"); M.settle()
 end

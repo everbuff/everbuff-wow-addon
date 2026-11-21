@@ -45,6 +45,14 @@ local rows = shown(lv.tbl)
 eq("Runs: six rows", #rows, 6)
 eq("Runs: the hero", lv.heroVerdict, "7 bosses in 1h 9m")
 check("Runs: no summary line (0 instances this hour, no lockout)", lv.summaryN == 0)
+-- (the oldest stored run is the rebuilt Maraudon row, t = 1795033978, Wed 18 Nov 21:32; the header says so once)
+eq("Runs: the section header says where the list starts", lv.section.label.text, "RUNS SINCE WED 18 NOV")
+eq("Runs: from the oldest listed row", lv.since, 1795033978)
+do
+  local cells = {}
+  for _, r in ipairs(rows) do cells[#cells + 1] = r.c.dur.text end
+  eq("Runs: the Time column, every cell in minutes (2,010 s is 33m, never 33m 30s)", table.concat(cells, " | "), "1h 9m | 1h 14m | 33m | 2h 33m | 2h 20m | 1h 10m")
+end
 local top = rows[1]
 check("Runs: the stored run: Blackrock Spire, 1h 9m, worth 19g 20s 11c (11,612 + 180,399 copper)", top and top.run.name == "Blackrock Spire" and not top.run.legacy and top.c.dur.text == "1h 9m"
   and top.c.worth.text == UI.money(192011), top and top.c.worth.text)
@@ -70,6 +78,22 @@ eq("Run: BOSSES meta", dv.card.bosses.meta.text, "boss clock 1h 3m")
 eq("Run: XP", dv.card.xp.value.text, "62,388")
 eq("Run: XP meta", dv.card.xp.meta.text, "54,146 per hour")
 eq("Run: WORTH", dv.card.worth.value.text, UI.money(192011))
+-- The page under the cards: no XP section, no purse line. The character is level 60 on this save: "about 7 more runs
+-- to level 60" was a forecast from the kill XP (ceil(209,800 x (1 - 0.029) / 30,716) = 7), false since 20 Nov 22:49.
+do
+  local words = {}
+  for _, fs in ipairs(dv.lines) do if fs.shown ~= false and type(fs.text) == "string" then words[#words + 1] = strip(fs.text) end end
+  for _, k in ipairs({ "time", "bosses", "xp", "worth" }) do words[#words + 1] = tostring(dv.card[k].value.text) .. " " .. tostring(dv.card[k].meta.text) end
+  for k, sec in pairs(dv.sections) do if sec.shown ~= false then words[#words + 1] = "[" .. k .. "]" end end
+  local page = table.concat(words, "\n")
+  check("Run: the page forecasts no runs to a level", page:find("more run", 1, true) == nil, page)
+  check("Run: no XP section, no kill count, no second XP figure", dv.sections.xp == nil and page:find("[xp]", 1, true) == nil and page:find("243", 1, true) == nil
+    and page:find("from kills", 1, true) == nil and select(2, page:gsub("62,388", "")) == 1, page)
+  check("Run: no purse line under the loot (the WORTH card has the coin)", dv.purseLine == nil and page:find("gained inside", 1, true) == nil and page:find("1g 88s", 1, true) == nil, page)
+  eq("Run: the XP hover has the split and the levels (30,716 + 31,672 = 62,388; 58.7 to 59.0)", table.concat(dv.xpTip, " | "),
+    "XP earned inside, and per hour of the time inside. | 30,716 from kills, 31,672 from quests. | Level 58.7 to 59.0.")
+  eq("Run: the WORTH hover has the purse (18,835 copper) beside the looted coin (11,612)", dv.purseTip, "Your purse grew by " .. ns.fmtMoney(18835) .. " inside, quest rewards aside. Looted coin was " .. ns.fmtMoney(11612) .. ".")
+end
 local br = shown(dv.tables.bosses)
 local BOSS = { { "Highlord Omokk", "19m 39s", "19m 39s", "43s" }, { "War Master Voone", "23m 50s", "4m 11s", "28s" }, { "Shadow Hunter Vosh'gajin", "28m 36s", "4m 46s", "1m 26s" },
   { "Mother Smolderweb", "42m 52s", "14m 16s", "35s" }, { "Halycon", "1h 4m 44s", "21m 52s", "27s" }, { "Gizrul the Slavener", "1h 5m 35s", "51s", "42s" },
@@ -97,6 +121,22 @@ local home = hostOf("Home")
 check("Home: no Fights tab while no pull is stored", home.ctl.hidden.fights == true and home.ctl.active ~= "fights", tostring(home.ctl.active))
 UI.Open("Home", "deaths"); M.settle()
 check("Home: no Deaths tab while no stored death names its killer", home.ctl.hidden.deaths == true and home.ctl.active ~= "deaths", tostring(home.ctl.active))
+eq("Home: a hidden tab falls back to Now, whatever was open", home.ctl.active, "now")
+UI.Open("Home", "sessions"); M.settle()
+eq("Home: Open on the hidden Deaths tab reports false", UI.Open("Home", "deaths"), false); M.settle()
+eq("Home: and lands on Now from Sessions too", home.ctl.active, "now")
+do
+  local nv = T.journeyRefresh(); M.settle()
+  local card = nv.cards.cards[4]
+  check("Now: the DEATHS card is not a link while Deaths has no page", card.ebNoClick == true and card.chev.shown == false)
+end
+-- ── the window chrome: the brand and the status word ──
+do
+  local f = _G.EverbuffFrame
+  eq("Chrome: the brand", f.wordmark.text, "everbuff.gg")
+  local st = UI.StatusState()
+  check("Chrome: the status is CAPTURING (with its warning when there is one), never Recording", st.text:find("^CAPTURING") ~= nil or st.text == "Starting" or st.text == "Standing by", st.text)
+end
 local dd = T.collectDeaths()
 check("Deaths: the save holds exactly the two Blackrock Spire deaths, level 59, 2m 45s and 1m 13s down, no killer", #dd == 2 and dd[1].t == 1795187574 and dd[2].t == 1795188618
   and dd[1].zone == "Blackrock Spire" and dd[1].level == 59 and dd[1].downtime == 165 and dd[2].downtime == 73 and dd[1].killer == nil and dd[2].killer == nil, #dd)
@@ -113,10 +153,21 @@ UI.Open("Settings"); M.settle()
 local d = ns.SettingsView and ns.SettingsView.data
 if d then
   ns.SettingsView.refreshData()
-  eq("Data: the pickup", d.syncStatus.text.text, "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls")
-  eq("Data: pulls waiting", d.stored.fights.label.text, "Pulls waiting \194\183 0")
-  eq("Data: loot", d.stored.loot.label.text, "Loot \194\183 1,539 pickups")
-  check("Data: no Clear on an empty store, no Events row", d.stored.fights.btn.shown == false and d.stored.events == nil)
+  -- one CAPTURE HEALTH block, the four facts first and in this order (docs/UX_PRAGMATIC.md 5)
+  local items = ns.SettingsView.data.sections[1].items
+  eq("Data: the first section", ns.SettingsView.data.sections[1].head.label.text, "CAPTURE HEALTH")
+  check("Data: row 1 is the status, CAPTURING with its place", items[1] == d.rec and tostring(d.rec.plain):find("^CAPTURING") ~= nil, d.rec.plain)
+  check("Data: row 2 is the pickup", items[2] == d.syncStatus)
+  eq("Data: the pickup", d.syncStatus.plain, "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls")
+  check("Data: row 3 is the pulls waiting", items[3] == d.stored.fights)
+  eq("Data: pulls waiting", d.stored.fights.plain, "Pulls waiting \194\183 0")
+  check("Data: row 4 is the loot", items[4] == d.stored.loot)
+  eq("Data: loot", d.stored.loot.plain, "Loot \194\183 1,539 pickups")
+  check("Data: no Events row; the paste box and the Clears are under Advanced, collapsed", d.stored.events == nil and #ns.SettingsView.data.sections == 2
+    and d.pasteRow.shown == false and d.clear.fights.shown == false and d.clear.loot.shown == false and d.stored.fights.btn == nil)
+  ns.DB.settings.advancedOpen = true; ns.SettingsView.refreshData(); M.settle()
+  check("Data: Advanced open: the paste box, a Clear for the loot (1,539 rows), none for the empty pull store", d.pasteRow.shown ~= false and d.clear.loot.shown ~= false and d.clear.fights.shown == false)
+  ns.DB.settings.advancedOpen = nil; ns.SettingsView.refreshData(); M.settle()
   eq("Data: the count of pulls ever recorded is untouched", ns.DB.combat.fightSeq, 6879)
 else check("Data: the settings page was built", false) end
 
