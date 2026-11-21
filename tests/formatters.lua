@@ -6,6 +6,11 @@ return function(ctx)
   local function eq(name, got, want) check(name, got == want, ("got %s, want %s"):format(tostring(got), tostring(want))) end
   local now = os.time({ year = 2026, month = 11, day = 18, hour = 21, min = 35, sec = 0 })   -- a Wednesday
 
+  -- a label drawn in capitals keeps the brand in lower case: "SAVED TO everbuff.gg" (docs/UX_PRAGMATIC.md 0.3)
+  eq("upper: the brand stays lower case inside capitals", UI.upper("Saved to everbuff.gg"), "SAVED TO everbuff.gg")
+  eq("upper: at the start of a label too", UI.upper("everbuff.gg gold"), "everbuff.gg GOLD")
+  eq("upper: any other text is capitals", UI.upper("Last run"), "LAST RUN")
+
   -- clock and dates
   eq("fmtClock", UI.fmtClock(now), "21:35")
   eq("fmtDate: today", UI.fmtDate(now - 3600, now), "Today")

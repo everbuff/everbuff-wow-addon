@@ -360,7 +360,7 @@ return function(P)
     check("Gold Auction house: the old Loot / Auctions key opens Gold on Auction house, all time", c.st.view == "auctions" and c.st.scope == "all" and c.viewSeg.value == "auctions" and P.visible(at.frame))
     -- (All time is the cards' word; the list says where its own rows start, in its header, once)
     check("Gold Auction house: all time says where its rows start, once, in the header", c.section.label:GetText():find("^AUCTIONS SINCE ") ~= nil
-      and (not P.visible(c.section.meta) or c.section.meta:GetText() == "not every row is kept"), c.section.label:GetText() .. " / " .. tostring(c.section.meta:GetText()))
+      and (not P.visible(c.section.meta) or c.section.meta:GetText() == "not every row is listed"), c.section.label:GetText() .. " / " .. tostring(c.section.meta:GetText()))
     local g = c.scopeData.ledger
     local ans = strip(c.answer.Text())
     check("Gold Auction house: the answer is Spent, received, net, from the ledger, and adds up", P.visible(c.answer) and c.answerData.spent == (g.auctions or 0) and c.answerData.received == (g.auctionSales or 0)
@@ -372,13 +372,13 @@ return function(P)
       local it = r.item
       results[it.what] = true
       for k, cell in pairs(r.c) do if cell.GetText and cell:GetText() == "-" then abad[#abad + 1] = i .. " a dash in " .. k end end
-      local want = it.what .. ((it.what == "Posted" and it.hours) and (", " .. UI.fmtDur(it.hours * 3600)) or "")
-      if r.c.result:GetText() ~= want then abad[#abad + 1] = i .. " result " .. tostring(r.c.result:GetText()) end
+      if r.c.result:GetText() ~= it.what and not (it.what == "Posted" and it.hours and r.c.result:GetText() == it.what .. ", " .. UI.fmtDur(it.hours * 3600)) then abad[#abad + 1] = i .. " result " .. tostring(r.c.result:GetText()) end
+      if not it.item or r.c.item:GetText() == "" then abad[#abad + 1] = i .. " a row with no item" end
       if r.c.price:GetText() ~= (it.price and money(it.price) or "") then abad[#abad + 1] = i .. " price" end
       if not it.item and r.c.item:GetText() ~= "" then abad[#abad + 1] = i .. " an item with no name shows text" end
     end
     check("Gold Auction house: sold, posted and bought rows show", results.Sold and results.Posted and results.Bought)
-    check("Gold Auction house: Result folds the duration, a missing price or item is blank, never a dash", #abad == 0, table.concat(abad, "; "):sub(1, 300))
+    check("Gold Auction house: Result is the word of the row (a posting may add its duration), a missing price is blank, never a dash, and every row has its item", #abad == 0, table.concat(abad, "; "):sub(1, 300))
     check("Gold Auction house: day rows carry no entry count", #at.sections() >= 1 and at.sections()[1]:GetText():find("ENTR", 1, true) == nil, at.sections()[1]:GetText())
     tableChecks("Gold Auction house", at, c)
     -- a purchase and its delivery mails are one row; a delivery with no purchase is Won with no price
@@ -397,10 +397,40 @@ return function(P)
       local rows = dataRows(at)
       local texts = {}
       for i, r in ipairs(rows) do texts[i] = strip(r.c.item:GetText()) .. "|" .. r.c.result:GetText() .. "|" .. r.c.price:GetText() end
-      eq("Gold Auction house: one purchase is one row, a lone delivery is Collected with a blank price, a guessed name is blank",
-        table.concat(texts, " ; "), ("|Bought|%s ; Wool Cloth x20|Collected| ; Mageweave Cloth x120|Bought|%s"):format(money(16046), money(53300)))
-      check("Gold Auction house: the blank item says Not recorded on hover, the Collected row that its price is not", tipOf(rows[1]):find("Item: Not recorded", 1, true) ~= nil and tipOf(rows[2]):find("Price: Not recorded", 1, true) ~= nil)
-      eq("Gold Auction house: 2 purchases with a price, 1 delivery with none", c.auctionSum.bought .. "/" .. c.auctionSum.won, "2/1")
+      eq("Gold Auction house: one purchase is one row, a lone delivery is Collected with a blank price, a bid with a guessed name is not a row",
+        table.concat(texts, " ; "), ("Wool Cloth x20|Collected| ; Mageweave Cloth x120|Bought|%s"):format(money(53300)))
+      check("Gold Auction house: the Collected row says on hover that its price is not recorded", tipOf(rows[1]):find("Price: Not recorded", 1, true) ~= nil)
+      eq("Gold Auction house: 1 purchase with an item, 1 delivery with no price, 1 bid nothing names", c.auctionSum.bought .. "/" .. c.auctionSum.won .. "/" .. c.auctionSum.bids, "1/1/1")
+      check("Gold Auction house: the header says the list leaves a row out, and its hover which", c.section.meta:GetText() == "not every row is listed" and tipOf(c.section.metaHit):find("1 bid with no item recorded", 1, true) ~= nil,
+        tostring(c.section.meta:GetText()))
+      -- the same bid with the won mail of its price in the loot log: named by the invoice, a row again
+      local log = ns.DB.loot.log
+      log[#log + 1] = { s = sid, t = now - 20, item = "Red Mageweave Bag", id = 10051, count = 1, src = "Auction won", mail = { bid = 16046, buyout = 16046, seller = "Bagmaker" } }
+      Gold.open("session", "auctions"); M.settle()
+      rows = dataRows(at)
+      eq("Gold Auction house: an auction mail of exactly the bid's price names it", strip(rows[1].c.item:GetText()) .. "|" .. rows[1].c.result:GetText() .. "|" .. rows[1].c.price:GetText(), "Red Mageweave Bag|Bought|" .. money(16046))
+      check("Gold Auction house: then nothing is left out and the header says nothing", not P.visible(c.section.meta) or (c.section.meta:GetText() or "") == "", tostring(c.section.meta:GetText()))
+      log[#log] = nil
+      -- one row per auction: a sold posting is its Sold row; the duration shows only when the listed postings differ
+      ns.DB.loot.ah.posted = {
+        { s = sid, t = now - 300, item = "Stag Meat", id = 5471, count = 7, buyout = 1043, hours = 24, kind = "commodity" },
+        { s = sid, t = now - 290, item = "Wicked Claw", id = 2140, count = 1, buyout = 499, hours = 24, kind = "commodity" },
+        { s = sid, t = now - 280, item = "Ironfeather", id = 15420, count = 3, buyout = 300, hours = 24, kind = "commodity" },
+      }
+      ns.DB.loot.ah.sold = { { s = sid, t = now - 100, item = "Stag Meat", bid = 1043, buyout = 7, cut = 52, deposit = 156, net = 1147 } }
+      Gold.open("session", "auctions"); M.settle()
+      texts = {}
+      for i, r in ipairs(dataRows(at)) do if r.item.what == "Posted" or r.item.what == "Sold" then texts[#texts + 1] = strip(r.c.item:GetText()) .. "|" .. r.c.result:GetText() end end
+      eq("Gold Auction house: a sold auction is one row, and one duration on every posting is not said", table.concat(texts, " ; "), "Stag Meat x7|Sold ; Ironfeather x3|Posted ; Wicked Claw|Posted")
+      for _, r in ipairs(dataRows(at)) do
+        if r.item.what == "Sold" then check("Gold Auction house: the Sold row says on hover when it was posted", tipOf(r):find("Posted", 1, true) ~= nil, tipOf(r)) end
+        if r.item.item == "Wicked Claw" then check("Gold Auction house: the duration is on the posting's hover", tipOf(r):find("Posted for", 1, true) ~= nil, tipOf(r)) end
+      end
+      ns.DB.loot.ah.posted[3].hours = 48
+      Gold.open("session", "auctions"); M.settle()
+      texts = {}
+      for i, r in ipairs(dataRows(at)) do if r.item.what == "Posted" then texts[#texts + 1] = r.c.result:GetText() end end
+      eq("Gold Auction house: postings that differ in their duration say it", table.concat(texts, " ; "), "Posted, 2d ; Posted, 1d")
       ns.DB.loot.ah = keep
     end
     Gold.open("session"); M.settle()
@@ -566,12 +596,16 @@ return function(P)
     local okSrc = src.inTotal == today.g and src.outTotal == today.s
     for _, r in ipairs(src.rows) do if r.dir ~= 0 and r.amount ~= (today[r.key] or 0) then okSrc = false end end
     check(tag .. ": the sources of Today are the day row's keys", okSrc and #src.rows >= 10)
-    -- the Journal's day rows are gold days and carry the day's net from the day row
+    -- the Journal's day rows are calendar days and carry the day's net from the day row of that date
     Gold.open("today", "journal"); M.settle()
     local jt = c.tbl.journal
     local head = jt.sections()[1]:GetText()
-    eq(tag .. ": a Journal day row carries the day's net", head, UI.upper(GP.dayHead(kT, base, now, true)))
-    check(tag .. ": it is the day row's earned minus spent", head:find(UI.upper(money(today.g - today.s, true)), 1, true) ~= nil and head:find("^TODAY") ~= nil, head)
+    -- (the day row's net stands on the day row only when the gold day is exactly the calendar day: the data in use
+    -- has a session between midnight and the daily reset of today, where that holds no net is shown; the cases
+    -- with a net are in the review round 2 block below)
+    local dFrom, dNet = GP.dayFacts(c.entries, true)(now)
+    eq(tag .. ": a Journal day row is the calendar day, with what GP.dayFacts allows", head, UI.upper(GP.dayHead(now, now, dFrom, dNet)))
+    check(tag .. ": a net on it is the day row's earned minus spent", head:find("^TODAY") ~= nil and (dNet == nil or dNet == today.g - today.s), head)
     typeIn(c.search, "a")
     check(tag .. ": while a search narrows the rows the day row shows no net", #jt.sections() >= 1 and jt.sections()[1]:GetText():find(UI.upper(money(today.g - today.s, true)), 1, true) == nil, jt.sections()[1]:GetText())
     typeIn(c.search, "")
@@ -581,7 +615,7 @@ return function(P)
     local keepSince = me.goldSince
     local d0 = Gold.keyStart(kT, base)
     me.goldSince = d0 + 60
-    check(tag .. ": a day the history starts in says from when", GP.dayHead(kT, base, now, false) == "TODAY, FROM " .. UI.fmtClock(d0 + 60), GP.dayHead(kT, base, now, false))
+    eq(tag .. ": a day the history starts in says from when", GP.dayHead(now, now, d0 + 60, nil), "TODAY, FROM " .. UI.fmtClock(d0 + 60))
     -- the history starts inside the period: the header says the real range, not the period word
     Gold.open("today"); M.settle()
     eq(tag .. ": Today counted from where the history starts", c.section.label:GetText(), UI.upper("Since " .. UI.fmtStamp(d0 + 60)))
@@ -619,6 +653,96 @@ return function(P)
     check(tag .. ": All time holds it, so it opens on Journal", c.srcOff ~= nil and c.view == "journal")
     me.goldRuns = nil
   end
+  -- ── review round 2: the Journal's day rows are calendar days (docs/UX_PRAGMATIC.md 4.2). A gold day turns over at
+  --    the daily reset, so a row between midnight and the reset belongs to the gold day before: it stands under the
+  --    calendar day it happened on, and a day row carries a net only when the gold day row counts exactly that day.
+  --    Shaped like the founder's 18 Nov 2026: a short session at 01:14 with a repair at 01:29, rows at 12:18 from
+  --    before the gold history starts (20:35), and a row after it. ──
+  do
+    local c = open(1104, 697, "gold", "all", "journal")
+    local me = ns.char()
+    local base = Gold.baseStored()
+    local now = GetServerTime()
+    local keep = { days = me.goldDays, since = me.goldSince, sessions = ns.DB.sessions, active = ns.DB.active, runs = me.goldRuns }
+    me.goldRuns = nil
+    -- midnight of the calendar day three days ago, and of the two days after it
+    local d = date("*t", now - 3 * DAY)
+    local m0 = (now - 3 * DAY) - (d.hour * 3600 + d.min * 60 + d.sec)
+    local calA, calB = date("%Y%m%d", m0 + 43200), date("%Y%m%d", m0 + DAY + 43200)
+    local reset = Gold.keyStart(calA, base) - m0   -- seconds from midnight to the daily reset
+    local guid = ns.charGuid()
+    local function sess(id, t0, len, rows)
+      local s = { id = id, guid = guid, startedEpoch = t0, startedMono = 1000, endedEpoch = t0 + len, gained = 0, spent = 0, gold = {}, goldLog = {} }
+      local bal = 100000
+      for _, r in ipairs(rows) do
+        bal = bal + r[2]
+        s.goldLog[#s.goldLog + 1] = ("%d\t%d\t%s\t%d\t%s"):format(1000 + r[1], r[2], r[3], bal, r[4] or "")
+      end
+      return s
+    end
+    if reset >= 2 * 3600 and reset <= 12 * 3600 then
+      ns.DB.sessions = {
+        -- day A: 01:14 to 01:36 (before the reset), then 12:00 to 12:30, then 21:00 to 21:30
+        ["t-day-1"] = sess("t-day-1", m0 + 4440, 1320, { { 900, -14939, "repairs", "npc=Kaja" } }),
+        ["t-day-2"] = sess("t-day-2", m0 + 43200, 1800, { { 1080, 262, "sold", "item=1;n=1;npc=Kaja" } }),
+        ["t-day-3"] = sess("t-day-3", m0 + 75600, 1800, { { 60, 500, "quests", "" } }),
+        -- day B: 14:00 to 15:00, nothing near midnight on either side
+        ["t-day-4"] = sess("t-day-4", m0 + DAY + 50400, 3600, { { 60, 700, "quests", "" }, { 120, -200, "repairs", "npc=Kaja" } }),
+      }
+      ns.DB.active = nil
+      me.goldSince = m0 + 74100   -- the gold history starts at 20:35 of day A
+      me.goldDays = { [calA] = { g = 500, s = 0, n = 1 }, [calB] = { g = 700, s = 200, n = 2 } }
+      Gold.open("all", "journal"); M.settle()
+      local jt = c.tbl.journal
+      local head, under = nil, {}
+      for _, r in ipairs(shown(jt.rows)) do
+        if r.item and r.item.ebSection then head = r.item.ebSection
+        elseif r.item then under[#under + 1] = head .. " > " .. r.c.time:GetText() .. " " .. r.item.delta end
+      end
+      local dayA, dayB = UI.fmtDay(m0 + 5340, now), UI.fmtDay(m0 + DAY + 50460, now)
+      eq("Gold day rows: every row stands under the calendar day it happened on; the 01:29 repair is not under the day before", table.concat(under, " ; "), table.concat({
+        dayB .. " \194\183 " .. money(500, true) .. " > " .. UI.fmtClock(m0 + DAY + 50520) .. " -200", dayB .. " \194\183 " .. money(500, true) .. " > " .. UI.fmtClock(m0 + DAY + 50460) .. " 700",
+        dayA .. " > " .. UI.fmtClock(m0 + 75660) .. " 500", dayA .. " > " .. UI.fmtClock(m0 + 44280) .. " 262", dayA .. " > " .. UI.fmtClock(m0 + 5340) .. " -14939" }, " ; "))
+      check("Gold day rows: the repair reads 01:29 and belongs to the gold day before", UI.fmtClock(m0 + 5340) == "01:29" and Gold.dayKey(m0 + 5340, base) ~= calA)
+      local facts = GP.dayFacts(c.entries, true)
+      local fromA, netA = facts(m0 + 5340)
+      check("Gold day rows: a day with rows from before the gold history has no FROM and no net", fromA == nil and netA == nil, tostring(fromA) .. " " .. tostring(netA))
+      local fromB, netB = facts(m0 + DAY + 50460)
+      check("Gold day rows: a day whose gold day row counts exactly that day carries the row's net", fromB == nil and netB == 500, tostring(netB))
+      -- without the rows from before the history, day A lists only its row of 21:01 and says FROM; the session of
+      -- 01:14 (its rows gone) still touches the hours before the reset, so the day row's net is not shown
+      ns.DB.sessions["t-day-2"] = nil
+      ns.DB.sessions["t-day-1"].goldLog = {}
+      Gold.open("today", "journal"); Gold.open("all", "journal"); M.settle()
+      local heads = {}
+      for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
+      eq("Gold day rows: the day the history starts in says from when once no listed row is older; no net while a session touches the hours before the reset",
+        heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100)))
+      -- with that night session gone the day row of A counts the calendar day from 20:35 on: FROM and the net
+      ns.DB.sessions["t-day-1"] = nil
+      Gold.open("today", "journal"); Gold.open("all", "journal"); M.settle()
+      heads = {}
+      for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
+      eq("Gold day rows: no row and no session between midnight and the reset: FROM and the day row's net", heads[#heads], UI.upper(dayA .. ", FROM " .. UI.fmtClock(m0 + 74100) .. " \194\183 " .. money(500, true)))
+      -- a session that plays past midnight into day B+1 takes the net off day B (its gold day runs on to the reset)
+      ns.DB.sessions["t-day-5"] = sess("t-day-5", m0 + 2 * DAY - 600, 1800, {})
+      local _, netB2 = GP.dayFacts(Gold.scopeEntries(Gold.scope("all")), true)(m0 + DAY + 50460)
+      eq("Gold day rows: a session past midnight takes the net off the day before", netB2, nil)
+      -- a search never shows a net
+      Gold.open("all", "journal"); M.settle()
+      ns.DB.sessions["t-day-5"] = nil
+      typeIn(c.search, "kaja")
+      heads = {}
+      for _, s in ipairs(jt.sections()) do heads[#heads + 1] = s:GetText() end
+      eq("Gold day rows: a search lists its rows under their own days, with no net", table.concat(heads, " | "), UI.upper(dayB))
+      typeIn(c.search, "")
+    else
+      check("Gold day rows: (not run: the daily reset of this clock is not between 02:00 and 12:00 local)", true)
+    end
+    ns.DB.sessions, ns.DB.active = keep.sessions, keep.active
+    me.goldDays, me.goldSince, me.goldRuns = keep.days, keep.since, keep.runs
+    Gold.open("session"); M.settle()
+  end
   -- the first run: no day row yet, one character
   do
     local c = open(900, 580, "gold", "today")
@@ -640,6 +764,95 @@ return function(P)
     check("Gold live: a change is not drawn in the same call (coalesced)", c.shownCards[2].value:GetText() == before)
     M.runTimers(); M.settle()
     check("Gold live: the open pane shows the change after its 0.1 s refresh", c.shownCards[2].value:GetText() == money(1234, true) and me.goldDays ~= nil, c.shownCards[2].value:GetText())
+  end
+  -- ── review round 2: what a journal row says in Detail. Never a raw id, never a placeholder word, a count only
+  --    above 1 (the founder's save: "Quest 98325", "item 270119 x1 to Kaja", "Group share, Creature"). ──
+  do
+    local c = open(1104, 697, "gold", "session")
+    local guid, now = ns.charGuid(), GetServerTime()
+    local log = ns.DB.loot.log
+    local n0 = #log
+    local t0 = now - 5000
+    local s = { id = "t-detail", guid = guid, startedEpoch = t0, startedMono = 1000, endedEpoch = t0 + 600, gained = 0, spent = 0, gold = {}, goldLog = {
+      "1010\t900\tquests\t1900\tquest=98325",
+      "1020\t12400\tsold\t14300\titem=270119;n=1;unit=12400;npc=Kaja",
+      "1030\t36200\tsold\t50500\titem=77;n=1;unit=36200;npc=Kaja",
+      "1040\t300\tsold\t50800\titem=78;n=3;unit=100;npc=Kaja",
+      "1050\t-432\tvendor\t50368\titem=270120;n=1;npc=Bronk",
+      "1060\t139\tlooted\t50507\tshare=1",
+      "1070\t137\tlooted\t50644\t",
+      "1080\t55\tsold\t50699\titem=270121;n=1",
+      "1090\t-65\tsold\t50634\titem=270119;n=1;npc=Kaja;kind=buyback",
+    } }
+    ns.DB.sessions[s.id] = s
+    log[#log + 1] = { t = t0 + 60, money = 139, src = "Creature", s = s.id, zone = "Blackrock Spire" }
+    log[#log + 1] = { t = t0 + 70, money = 137, src = "Creature", s = s.id, zone = "Blackrock Spire" }
+    -- the client names items 77 and 78 and no other
+    local keepInfo, keepName = _G.GetItemInfo, _G.C_Item.GetItemNameByID
+    _G.GetItemInfo = function(id) if id == 77 then return "Acolyte Blade" elseif id == 78 then return "Linen Cloth" end return nil end
+    _G.C_Item.GetItemNameByID = function() return nil end
+    local e = Gold.entries(s)
+    local got = {}
+    for i, r in ipairs(e) do got[i] = GP.srcWord(r) .. "|" .. GP.detailOf(r) end
+    eq("Gold detail: no raw id, no placeholder word, a count only above 1", table.concat(got, " ; "), table.concat({
+      "Quest|", "Vendor sale|to Kaja", "Vendor sale|Acolyte Blade to Kaja", "Vendor sale|Linen Cloth x3 to Kaja", "Vendor buy|from Bronk", "Loot|Group share", "Loot|Coin", "Vendor sale|", "Vendor sale|Bought back from Kaja" }, " ; "))
+    local function tipOf(r) local t = _G.GameTooltip; t:ClearLines(); GP.journalTip(nil, r, t); return table.concat(t.lines or {}, "\n") end
+    check("Gold detail: the hover says what is not recorded", tipOf(e[1]):find("Quest: Not recorded", 1, true) ~= nil and tipOf(e[2]):find("Item: Not recorded", 1, true) ~= nil
+      and tipOf(e[8]):find("Item: Not recorded", 1, true) ~= nil and tipOf(e[3]):find("Item: Not recorded", 1, true) == nil, tipOf(e[2]))
+    local all = {}
+    for _, r in ipairs(e) do all[#all + 1] = GP.detailOf(r) .. " " .. tostring(r.group) .. " " .. GP.hay(r) end
+    local text = table.concat(all, "\n")
+    check("Gold detail: nothing a row shows, groups by or is searched by carries a number for a name or the word Creature", text:find("98325", 1, true) == nil and text:find("270119", 1, true) == nil
+      and text:lower():find("item 2", 1, true) == nil and text:find("Creature", 1, true) == nil and text:find(" x1", 1, true) == nil, text)
+    eq("Gold detail: the unnamed sales to one merchant are one group, the named ones their own", e[2].group .. " / " .. e[3].group .. " / " .. e[1].group, "Kaja / Acolyte Blade / not recorded")
+    _G.GetItemInfo, _G.C_Item.GetItemNameByID = keepInfo, keepName
+    ns.DB.sessions[s.id] = nil
+    for i = #log, n0 + 1, -1 do log[i] = nil end
+  end
+
+  -- ── review round 2: "this session" is every login less than 5 minutes after the one before it (docs 0.2.4), in
+  --    one definition, Gold.joined. Shaped like the founder's 21 Nov: 11:45:25 to 11:46:31, then 11:47:01 on. ──
+  do
+    local c = open(1104, 697, "gold", "session")
+    local cur = ns.Recorder.current()
+    local guid, now = ns.charGuid(), GetServerTime()
+    local keepJoin = Gold.JOIN_S
+    local t0 = cur.startedEpoch
+    local function rec(id, a, b, gained, log, g)
+      local s = { id = id, guid = g or guid, startedEpoch = a, startedMono = 1000, endedEpoch = b, gained = gained, spent = 0, deaths = 1, gold = { gained = gained, spent = 0, auctionSales = gained }, goldLog = log or {} }
+      ns.DB.sessions[id] = s
+      return s
+    end
+    local a = rec("t-join-a", t0 - 96, t0 - 30, 84773, { "1010\t59773\tauctionSales\t59773\t", "1011\t25000\tauctionSales\t84773\t" })
+    local b = rec("t-join-b", t0 - 96 - 400 - 600, t0 - 96 - 400, 111)                  -- ended 400 s before a started
+    local other = rec("t-join-o", t0 - 80, t0 - 20, 5000, nil, "Player-1-0000FFFF")      -- another character's
+    local crash = rec("t-join-c", t0 - 28, nil, 7000)                                     -- no stored end
+    Gold.JOIN_S = 0
+    local one = Gold.scope("session")
+    eq("Session join: off, this session is the running record", #Gold.joined() .. " " .. #one.sessions, "1 1")
+    Gold.JOIN_S = 5 * 60
+    local parts = Gold.joined()
+    eq("Session join: a login that ended 30 s before this one started is the same session; one 400 s earlier, another character's and one with no stored end are not",
+      #parts .. " " .. tostring(parts[1] == cur) .. " " .. tostring(parts[2] == a), "2 true true")
+    local sc = Gold.scope("session")
+    check("Session join: the ledger is the sum of the logins", sc.ledger.gained == one.ledger.gained + 84773 and sc.ledger.spent == one.ledger.spent and (sc.ledger.auctionSales or 0) == (one.ledger.auctionSales or 0) + 84773
+      and sc.logins == 2, sc.ledger.gained)
+    eq("Session join: played counts from the first login", sc.elapsed, now - (t0 - 96))
+    eq("Session join: the journal is every login's rows, oldest first", #Gold.scopeEntries(sc) .. " " .. Gold.scopeEntries(sc)[1].delta, (#Gold.scopeEntries(one) + 2) .. " 59773")
+    eq("Session join: every figure of the session goes through it", Gold.metric("gained", "char", "session") .. " " .. Gold.metric("played", "char", "session"), sc.ledger.gained .. " " .. sc.elapsed)
+    local sg = ns.Now.sessionGold()
+    check("Session join: Home > Now reads the same session", sg.gained == sc.ledger.gained and sg.net == sc.ledger.gained - sc.ledger.spent and sg.played == sc.elapsed and #ns.Now.sessionParts(cur) == 2)
+    Gold.open("today"); Gold.open("session"); M.settle()
+    eq("Session join: the EARNED card of the Session period", c.shownCards[2].value:GetText(), money(sc.ledger.gained, true))
+    eq("Session join: the previous session is the one before the first login, not a part of this one", Gold.scope("previous").sessions[1], b)
+    -- three logins in a row: each less than 5 minutes after the one before
+    b.endedEpoch = t0 - 96 - 299
+    eq("Session join: a chain of three logins", #Gold.joined(), 3)
+    b.endedEpoch = t0 - 96 - 300
+    eq("Session join: 5 minutes apart is not joined", #Gold.joined(), 2)
+    Gold.JOIN_S = keepJoin
+    for _, id in ipairs({ "t-join-a", "t-join-b", "t-join-o", "t-join-c" }) do ns.DB.sessions[id] = nil end
+    Gold.open("today"); Gold.open("session"); M.settle()
   end
   ns.Recorder.current = savedCurrent
   check("Gold: no errors from the panes' resize or events", #UI.paneErrors() == 0, table.concat(UI.paneErrors(), " || "))

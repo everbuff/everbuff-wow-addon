@@ -320,7 +320,15 @@ end)
 --            it is the invoice's own sum (bid - cut + deposit): on rows written before 0.9.46 it was the purse
 --            change of several mails. count is the posted row's only when that posting is one lot sold whole at
 --            this price (a commodity posting whose total is the price, or a posting of one); else there is none.
---   Bought   a purchase with its price. The won mails of a purchase are not rows: a mail is taken up by the earliest
+--            A posting that has its outcome is not a row of its own: the Sold row of a sale at its buyout (a commodity
+--            posting: at its total) or the Expired or Cancelled row of the same item and count stands for it, and
+--            carries when it was posted (row.postedAt). A posting with no outcome is a row only while its time has
+--            not run out: after that its outcome is not recorded, and the auction is not open (sum.ended counts
+--            them; Market.OPEN_H hours when the posting stored no duration).
+--   Bought   a purchase with its price and its item. A row that has no item of its own (C_AuctionHouse.PlaceBid
+--            knows only the auction; before 0.9.52 the name was a guess) takes it from the invoice of an "Auction
+--            won" mail of the same session that names exactly its price (Market.invoiceNames). With no such mail it
+--            is a bid nothing confirms: not a row, not counted as bought (sum.bids, sum.bidRows). The won mails of a purchase are not rows: a mail is taken up by the earliest
 --            priced row of the same item id, bought in the same session or at most an hour before it, with that many
 --            units still to come (rows written before 0.9.52 keep their mails in the list; from 0.9.52
 --            Market.mailItem counts them on the priced row as `delivered`).
@@ -329,6 +337,44 @@ end)
 --   Expired, Cancelled   a returned item.
 -- row.guessed: a PlaceBid row named by the old "newest row without a name" rule; the pane shows no item for it.
 function Market.guessed(r) return r.kind == "item" and r.auctionId ~= nil and r.item ~= nil and r.named == nil end
+Market.OPEN_H = 48
+-- The item of each purchase row that has none of its own (no item, or a guessed one), by a stored fact: the loot row
+-- of an "Auction won" mail of the same session whose invoice names exactly the row's price, taken at or after the
+-- bid. One mail names one row, the newest such bid before it. A mail that a named purchase of the same item and
+-- price accounts for names nothing. Returns { [bought row] = { item, id, icon, seller } }; nothing is written.
+function Market.invoiceNames(bought)
+  local by, any = {}, false
+  for _, r in ipairs(bought) do
+    if type(r) == "table" and r.kind ~= "mail" and plainNum(r.price) and r.s ~= nil then
+      local b = by[r.s]
+      if not b then b = { need = {}, named = {} }; by[r.s] = b end
+      if r.item == nil or Market.guessed(r) then b.need[#b.need + 1] = r; any = true else b.named[#b.named + 1] = r end
+    end
+  end
+  local out = {}
+  if not any then return out end
+  local used = {}
+  for _, e in ipairs(ns.mine(ns.DB and ns.DB.loot and ns.DB.loot.log) or {}) do
+    local b = type(e) == "table" and e.src == "Auction won" and e.s ~= nil and by[e.s] or nil
+    local paid = b and type(e.mail) == "table" and plainNum(e.mail.bid) or nil
+    if b and #b.need > 0 and paid and paid > 0 and type(e.item) == "string" and e.item ~= "" then
+      local own = false
+      for _, n in ipairs(b.named) do
+        if not used[n] and plainNum(n.price) == paid and ((n.id ~= nil and n.id == e.id) or n.item == e.item) then used[n] = true; own = true; break end
+      end
+      if not own then
+        for i = #b.need, 1, -1 do
+          local r = b.need[i]
+          if not out[r] and plainNum(r.price) == paid and (r.t or 0) <= (e.t or 0) then
+            out[r] = { item = e.item, id = plainNum(e.id), icon = e.icon, seller = type(e.mail.seller) == "string" and e.mail.seller ~= "" and e.mail.seller or nil }
+            break
+          end
+        end
+      end
+    end
+  end
+  return out
+end
 function Market.buildAuctions()
   if not ns.DB then return {}, {} end
   local all = ah(); local rows = {}
@@ -347,28 +393,58 @@ function Market.buildAuctions()
     end
   end
   -- (a row keeps its session id `s`, so Loot > Gold can list the auctions of a period)
-  local byItem = {}   -- item name -> its postings, oldest first, for the count of a sale
+  sum.bids, sum.bidRows, sum.ended, sum.endedRows = 0, {}, 0, {}
+  local now = nowEpoch()
+  local byItem = {}   -- item name -> its postings, oldest first, for the outcome of each
+  local posts = {}
   for _, r in ipairs(a.posted) do
     local lots = (r.kind ~= "commodity" and (plainNum(r.count) or 1) > 1) or nil
-    rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = r.buyout or r.bid, what = "Posted", hours = plainNum(r.hours), note = "", lots = lots }
-    -- (only a posting that is one lot names the count of its sale)
-    if r.item and not lots then byItem[r.item] = byItem[r.item] or {}; table.insert(byItem[r.item], { r = r }) end
+    local row = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = r.buyout or r.bid, what = "Posted", hours = plainNum(r.hours), note = "", lots = lots }
+    -- (left: the auctions of the posting with no outcome yet; several auctions posted in one call end one by one)
+    local p = { r = r, row = row, left = lots and (plainNum(r.count) or 1) or 1, lots = lots }
+    posts[#posts + 1] = p
+    if r.item then byItem[r.item] = byItem[r.item] or {}; table.insert(byItem[r.item], p) end
   end
   for _, r in ipairs(a.sold) do
     local bid = plainNum(r.bid)
     sum.net = sum.net + (plainNum(r.net) or 0); sum.cut = sum.cut + (plainNum(r.cut) or 0)
     sum.sales = sum.sales + (bid or 0); sum.deposit = sum.deposit + (plainNum(r.deposit) or 0)
-    local count
+    local count, postedAt
     if bid then
       for _, p in ipairs(byItem[r.item or ""] or {}) do
-        if not p.used and (p.r.t or 0) <= (r.t or 0) and plainNum(p.r.buyout) == bid then p.used = true; count = plainNum(p.r.count); break end
+        if p.left > 0 and (p.r.t or 0) <= (r.t or 0) and plainNum(p.r.buyout) == bid then
+          p.left = p.left - 1; postedAt = p.r.t
+          -- (only a posting that is one lot names the count of its sale)
+          if not p.lots then count = plainNum(p.r.count) end
+          break
+        end
       end
     end
     local cut, deposit, net = plainNum(r.cut), plainNum(r.deposit), plainNum(r.net)
     if not (bid and net and net == bid - (cut or 0) + (deposit or 0)) then net = nil end
     rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, count = count, price = bid, cut = cut, deposit = deposit, net = net,
-      what = "Sold", note = r.buyer or "" }
+      what = "Sold", note = r.buyer or "", postedAt = postedAt }
   end
+  -- a returned item ends the oldest posting of that item still without an outcome (one lot: of that count too)
+  local returned = {}
+  for _, r in ipairs(a.returned) do
+    local row = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "" }
+    for _, p in ipairs(byItem[r.item or ""] or {}) do
+      if p.left > 0 and (p.r.t or 0) <= (r.t or 0) and (p.lots or (plainNum(p.r.count) or 1) == (plainNum(r.count) or 1)) then
+        p.left = p.left - 1; row.postedAt = p.r.t
+        break
+      end
+    end
+    returned[#returned + 1] = row
+  end
+  -- (sum.posted: the postings that are rows)
+  for _, p in ipairs(posts) do
+    local over = now > (p.r.t or 0) + (plainNum(p.r.hours) or Market.OPEN_H) * 3600
+    if p.left <= 0 then sum.posted = sum.posted - 1
+    elseif over then sum.posted = sum.posted - 1; sum.ended = sum.ended + 1; sum.endedRows[#sum.endedRows + 1] = { t = plainNum(p.r.t) or 0, s = p.r.s }
+    else rows[#rows + 1] = p.row end
+  end
+  local invoice = Market.invoiceNames(a.bought)
   local open = {}   -- item id (else name) -> priced rows with units still to come, oldest first
   local loose = {}  -- item id (else name) -> the newest Collected row of it
   for _, r in ipairs(a.bought) do
@@ -399,18 +475,24 @@ function Market.buildAuctions()
         rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = nil, what = "Bought", note = r.seller or "" }
       end
     else
-      sum.bought = sum.bought + 1; sum.spent = sum.spent + r.price
-      local guessed = Market.guessed(r)
-      local row = { s = r.s, t = r.t, item = (not guessed) and r.item or nil, id = (not guessed) and r.id or nil, count = r.count, price = r.price, what = "Bought",
-        note = (not guessed) and r.seller or "", guessed = guessed or nil }
-      rows[#rows + 1] = row
-      if key and not guessed then
-        open[key] = open[key] or {}
-        table.insert(open[key], { r = r, row = row, rem = n - (plainNum(r.delivered) or 0) })
+      local inv = invoice[r]
+      if not inv and (r.item == nil or Market.guessed(r)) then
+        -- a bid with no item, and no auction mail of its session names its price: nothing says what it bought, or
+        -- that it bought at all. It is not a row; what was paid is in the ledger's Spent.
+        sum.bids = sum.bids + 1; sum.bidRows[#sum.bidRows + 1] = { t = plainNum(r.t) or 0, s = r.s }
+      else
+        sum.bought = sum.bought + 1; sum.spent = sum.spent + r.price
+        local row = { s = r.s, t = r.t, item = inv and inv.item or r.item, id = inv and inv.id or r.id, icon = inv and inv.icon or nil, count = r.count, price = r.price, what = "Bought",
+          note = (inv and inv.seller) or ((not inv) and r.seller) or "", byInvoice = inv and true or nil }
+        rows[#rows + 1] = row
+        if key and not inv then
+          open[key] = open[key] or {}
+          table.insert(open[key], { r = r, row = row, rem = n - (plainNum(r.delivered) or 0) })
+        end
       end
     end
   end
-  for _, r in ipairs(a.returned) do rows[#rows + 1] = { s = r.s, t = r.t, item = r.item, id = r.id, count = r.count, price = nil, what = r.reason == "cancelled" and "Cancelled" or "Expired", note = "" } end
+  for _, row in ipairs(returned) do rows[#rows + 1] = row end
   local order = {}
   for i, r in ipairs(rows) do order[r] = i end
   table.sort(rows, function(x, y) if (x.t or 0) ~= (y.t or 0) then return (x.t or 0) > (y.t or 0) end return order[x] > order[y] end)

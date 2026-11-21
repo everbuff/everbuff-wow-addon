@@ -777,13 +777,26 @@ return function(P)
     check("#43 sources: journal: a group share says so", find("looted", "Group share") ~= nil)
     check("#43 sources: journal: a repair of one item, a repair", find("repairs", "Repair, one item at Smith Sam") ~= nil and find("repairs", "Repair at Smith Sam") ~= nil)
     check("#43 sources: journal: deposit, bid or buyout, buyout, cancelled", find("auctions", "Deposit") and find("auctions", "Bid or buyout") and find("auctions", "Buyout") and find("auctions", "Auction cancelled") and find("auctions", "bid, buyout or deposit") and true)
-    local back = find("sold", "Bought back: ")
+    local back = find("sold", "Bought back")
     check("#43 sources: journal: a buyback says bought back, with no price flag", back ~= nil and back.delta == -65 and back.flag == nil, back and back.detail)
-    local cloth = 0
-    for _, top in ipairs(G.contributors((function() local t = {} for _, e in ipairs(entries) do if e.src == "sold" then t[#t + 1] = e end end return t end)())) do
-      if top.name:lower() == "item 2589" then cloth = top.amount end
+    -- (the client of the suite names no item: a row never says "item 2589", it says who bought it, and the rows
+    -- of one merchant are one group, the buyback counted against it)
+    local raw, want, n2589 = 0, 0, 0
+    for _, e in ipairs(entries) do
+      if e.src == "sold" then
+        if e.detail:find("item %d") or (e.group or ""):find("^item %d") then raw = raw + 1 end
+        if e.group == back.group then want = want + (e.ref.kind == "buyback" and -1 or 1) * math.abs(e.delta) end
+        if e.ref.item == "2589" and e.group == back.group then n2589 = n2589 + 1 end
+      end
     end
-    check("#43 sources: journal: the buyback counts against the item's sales (sold 5 times for 65, bought back once)", cloth == 65 * 4, cloth)
+    -- (a client that names the item: "Bought back: <name> x5 from Merchant Bob", grouped by the item)
+    local named = back.detail:find("^Bought back: %u") ~= nil
+    check("#43 sources: journal: no row names an item by its number", raw == 0 and (named or (back.detail == "Bought back from Merchant Bob" and back.group == "Merchant Bob" and back.miss == "Item: Not recorded")), back.detail)
+    local cloth
+    for _, top in ipairs(G.contributors((function() local t = {} for _, e in ipairs(entries) do if e.src == "sold" then t[#t + 1] = e end end return t end)())) do
+      if top.name == back.group then cloth = top.amount end
+    end
+    check("#43 sources: journal: the buyback counts against the sales of its group (the item was sold 5 times for 65 and bought back once)", cloth == want and want > 0, tostring(cloth) .. " " .. want)
     check("#43 sources: journal: a talent reset", find("training", "Talent reset") ~= nil)
     local dr = find("unexplained", "the client sent no event")
     check("#43 sources: journal: drift is flagged unexplained", dr ~= nil and dr.flag == "unexplained" and find("other", "the client sent no event") ~= nil)

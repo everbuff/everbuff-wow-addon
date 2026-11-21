@@ -1233,7 +1233,7 @@ At WIDE (tonight too, since it only adds cards): 6 cards, adding XP ("4,210" / "
 |---|---|---|
 | When | 40 | |
 | Item | flex | icon 20, quality name, muted "x2", the QUEST badge |
-| From | 160 (max 240) | a named source as stored; "Quest: <name>" ("Quest" when the turn-in is no longer stored); "Container" (stored loot GUID starts with `Item-`); "Enemy" for the stored words `Creature` and `an enemy`, hover "Enemy: Name not recorded"; blank for `Picked up` and `Unknown source`, hover "From: Not recorded" |
+| From | 160 (max 240) | a named source as stored; "Quest: <name>" ("Quest" when the turn-in is no longer stored); "Container" (stored loot GUID starts with `Item-`); blank for the stored words `Creature` and `an enemy` and for a name that is only a kill by timing, hover "From: Name not recorded"; blank for `Picked up` and `Unknown source`, hover "From: Not recorded"; blank for a source that repeats the item's name |
 | Place | 120 | the zone stamped with the row. Blank, hover "Place: Not recorded", for a row that came with no loot window before the capture of 0.9.52 (`Picked up`, `an enemy`, `Quest reward` without `pushed`): its stored place is the last loot window's and can be another zone |
 | Coords | 72, WIDE only | blank whenever Place is |
 
@@ -1282,14 +1282,14 @@ At WIDE (tonight too, since it only adds cards): 6 cards, adding XP ("4,210" / "
 **Journal view:**
 - Columns When, Source, Detail, Place, Coords (WIDE), Amount, Balance (WIDE). A missing place is blank (hover "Place: Not recorded").
 - Auction rows name their item when the purchase or posting is stored: "Bought Black Lotus x3", "Deposit: Iron Bar x17". A purchase is found by its exact price within 5 s; a deposit only when one posting and one deposit are that near (postings a few seconds apart keep "Deposit").
-- Day rows are gold days (they turn at the daily reset, as Today does). On a day period or all time they carry the day's net from the day row: "YESTERDAY · -114g 54s". A day the history starts in says from when: "WEDNESDAY 18 NOV, FROM 20:35".
+- Day rows are calendar days. On a day period or all time they carry the day's net from the gold day row of that date, "YESTERDAY · -114g 54s", only when that row counts exactly the calendar day (no kept entry and no stored session between midnight and the daily reset on either end). A day the history starts in says from when, "WEDNESDAY 18 NOV, FROM 20:35", when no listed entry of the day is older.
 
 **Auction house view:**
 - Answer line under the section header, three segments: "Spent 30g 98s · Received 5g 97s · Net -25g 0s". Spent is `ledger.auctions`, Received `ledger.auctionSales`, Net the difference; the hover has sold, house cut and deposits returned when the kept sale rows add up to Received.
-- Columns When · Item (icon, name, "x3") · Result (folds the duration: "Posted, 1d") · Price. Player (the buyer of a sale, the seller of a purchase) only while a third of the rows name one.
+- Columns When · Item (icon, name, "x3") · Result · Price. One auction is one row: a posting with a stored outcome is its Sold, Expired or Cancelled row; "Posted" only while its time has not run out (the duration is in the hover). Player (the buyer of a sale, the seller of a purchase) only while a third of the rows name one.
 - One purchase is one row: a delivery mail is taken up by the priced row of the same item id bought at most an hour before it with that many units still to come. A delivery with no purchase reads "Won" with a blank Price.
 - A sale's Price is what the buyer paid (the invoice's bid), its count the posting's (same item, buyout equal to the bid).
-- A purchase whose item was named by the old "newest row without a name" rule shows a blank Item (hover "Item: Not recorded").
+- A purchase with no item of its own (or one named by the old "newest row without a name" rule) takes the item of the auction mail of its session whose invoice names exactly its price; with none it is not listed. No row has a blank Item.
 
 **Empty:** "No gold has moved in this period." Auction house: "No auction in this period."
 

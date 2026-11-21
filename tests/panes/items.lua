@@ -243,8 +243,8 @@ return function(P)
       "Lichbane|Quest|",
       "Star Ruby||",
       "Lesser Moonstone||",
-      "Hibernal Armor|Enemy|",
-      "Slashclaw Bracers|Enemy|Blackrock Spire",
+      "Hibernal Armor||",
+      "Slashclaw Bracers||Blackrock Spire",
       "Formula: Enchant Bracer|Forgotten Soldier|Mount Hyjal",
     }, " ; "))
     check("Items real shapes: an auction purchase, a mail and a returned auction are not listed", #rows == 11)
@@ -252,7 +252,8 @@ return function(P)
     eq("Items real shapes: the meta counts the pickups in the filter's words", content.lootSection.meta:GetText(), "11 pickups green or better")
     local function rowOf(name) for _, r in ipairs(dataRows(tbl)) do if strip(r.c.item:GetText()) == name then return r end end end
     local function tipOf(r) tip:ClearLines(); r.scripts.OnEnter(r); local t = table.concat(tip.lines or {}, "\n"); r.scripts.OnLeave(r); return t end
-    check("Items real shapes: Enemy says Name not recorded on hover", tipOf(rowOf("Hibernal Armor")):find("Enemy: Name not recorded", 1, true) ~= nil, tipOf(rowOf("Hibernal Armor")))
+    check("Items real shapes: a hidden name is a blank cell that says Name not recorded on hover, never Enemy", rowOf("Hibernal Armor").c.from:GetText() == "" and tipOf(rowOf("Hibernal Armor")):find("From: Name not recorded", 1, true) ~= nil
+      and tipOf(rowOf("Hibernal Armor")):find("Enemy", 1, true) == nil, tipOf(rowOf("Hibernal Armor")))
     check("Items real shapes: a blank From says Not recorded on hover", tipOf(rowOf("Star Ruby")):find("From: Not recorded", 1, true) ~= nil)
     check("Items real shapes: a place taken from an earlier loot window is not shown, on the row or in its hover", rowOf("Hibernal Armor").c.loc:GetText() == "" and tipOf(rowOf("Hibernal Armor")):find("Orgrimmar", 1, true) == nil
       and tipOf(rowOf("Hibernal Armor")):find("Place: Not recorded", 1, true) ~= nil)
@@ -261,10 +262,13 @@ return function(P)
     eq("Items real shapes: the helpers the pane reads", table.concat({ tostring(ns._test.lootFrom({ src = "Creature" })), tostring(ns._test.lootFrom({ src = "Picked up" })), tostring(ns._test.lootFrom({ src = "Quest reward" })),
       tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar" })), tostring(ns._test.lootPlace({ src = "Quest reward", zone = "Durotar", pushed = true })), tostring(ns._test.lootPlace({ src = "Kobold", zone = "Durotar" })),
       tostring(ns._test.lootPlace({ src = "Kobold", zone = "Durotar", guid = "Creature-0-1-1-1-6-00AA" })), tostring(ns._test.lootFrom({ src = "Kobold" })), tostring(ns._test.lootFrom({ src = "Kobold", guid = "Creature-0-1-1-1-6-00AA" })) }, ","),
-      "Enemy,nil,Quest,nil,Durotar,nil,Durotar,nil,Kobold")
+      "nil,nil,Quest,nil,Durotar,nil,Durotar,nil,Kobold")
+    eq("Items real shapes: a source that repeats the item's name (a gathered node) is blank, with nothing to add on hover",
+      table.concat({ tostring((ns._test.lootFrom({ item = "Hyjal Silphium", src = "Hyjal Silphium", guid = "GameObject-0-1-1-1-6-00AA" }))), tostring(select(2, ns._test.lootFrom({ item = "Hyjal Silphium", src = "Hyjal Silphium", guid = "GameObject-0-1-1-1-6-00AA" }))),
+        tostring((ns._test.lootFrom({ item = "Iron Ore", src = "Iron Deposit", guid = "GameObject-0-1-1-1-6-00AB" }))) }, ","), "nil,nil,Iron Deposit")
     -- search reads what the row shows
     typeIn(content.search, "enemy")
-    eq("Items real shapes: a search for Enemy finds the two rows that say so", #dataRows(tbl), 2)
+    eq("Items real shapes: a search for Enemy finds nothing: no row says so", #dataRows(tbl), 0)
     typeIn(content.search, "orgrimmar")
     eq("Items real shapes: a place that is not shown is not found", #dataRows(tbl), 0)
     typeIn(content.search, "")
@@ -299,7 +303,7 @@ return function(P)
     M.fire("CHAT_MSG_LOOT", "You receive loot: |cff1eff00|Hitem:9004::::::::12:::::|h[Head of Someone]|h|r.")
     e = log[#log]
     check("Items capture: an item pushed after a kill is marked as named by that kill", e.item == "Head of Someone" and e.src == "Pebbles" and e.pushed == true and e.srcBy == "kill", tostring(e.src) .. " " .. tostring(e.srcBy))
-    eq("Items capture: the pane shows no name for it, Enemy with Name not recorded", table.concat({ ns._test.lootFrom(e) }, "|"), "Enemy|Name not recorded")
+    eq("Items capture: the pane shows no name for it: blank, with Name not recorded", tostring((ns._test.lootFrom(e))) .. "|" .. tostring(select(2, ns._test.lootFrom(e))), "nil|Name not recorded")
     M.now = M.now + 30
     -- a kill whose name the client hid, then a pushed item: Creature, as a loot window stores it
     ns.Emitter.event("KILL", { name = "an enemy" }, true)
@@ -377,10 +381,10 @@ return function(P)
     local function row(name) for _, e in ipairs(log) do if e.item == name then return e end end end
     local function says(name) local e = row(name); local f, why = F(e); return tostring(f) .. "/" .. tostring(why) .. "/" .. tostring(Pl(e)) .. "/" .. tostring(XY(e)) end
     eq("Items truth: the loot window's own rows keep their place and coordinates", says("Hyjal Herb") .. " ; " .. says("Hyjal Herb Seed"), "Herb node/nil/Mount Hyjal/69.0, 69.8 ; Herb node/nil/Mount Hyjal/69.0, 69.8")
-    eq("Items truth: a row named by the last kill shows Enemy, and neither the stale place nor its coordinates", says("Formula: Enchant Bracer"), "Enemy/Name not recorded/nil/nil")
-    eq("Items truth: a party member's name is never the source", says("Head of Jammal'an"), "Enemy/Name not recorded/nil/nil")
-    eq("Items truth: nor a totem's", says("Deadwood Tribal Beads"), "Enemy/Name not recorded/nil/nil")
-    eq("Items truth: an opened world object keeps its name; its stamp is still the old loot window's, so no place", says("Bear Berries"), "Bear Berries/nil/nil/nil")
+    eq("Items truth: a row named by the last kill shows no source, and neither the stale place nor its coordinates", says("Formula: Enchant Bracer"), "nil/Name not recorded/nil/nil")
+    eq("Items truth: a party member's name is never the source", says("Head of Jammal'an"), "nil/Name not recorded/nil/nil")
+    eq("Items truth: nor a totem's", says("Deadwood Tribal Beads"), "nil/Name not recorded/nil/nil")
+    eq("Items truth: an opened world object that has the item's own name says nothing twice; its stamp is still the old loot window's, so no place", says("Bear Berries"), "nil/nil/nil/nil")
     eq("Items truth: a name with the loot window's GUID is shown, with its place", says("Battlefield Destroyer"), "Vilebranch Warrior/nil/The Hinterlands/67.8, 63.8")
     eq("Items truth: a name with no kill of that name in the 20 s before it is not a kill guess (the capture counts 15 s): it stays, with no place", says("Scalper Loot"), "Vilebranch Scalper/nil/nil/nil")
     eq("Items truth: two turn-ins within 5 s: neither reward names a quest", says("Lichbane") .. " ; " .. says("Plaguecrusher Greaves"), "Quest/Quest not recorded/nil/nil ; Quest/Quest not recorded/nil/nil")
@@ -432,12 +436,97 @@ return function(P)
     c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 400, items = 2 } }
     content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
     eq("Items truth: a run whose 2 items are both in the list leaves no remark", content.lootSection.meta:GetText(), "12 pickups")
+    -- review round 2: a run's `secs` are active seconds (time away is not counted), not a clock. A run with a long
+    -- break whose rows are all still stored makes no remark, however far after start + secs its last pickup is
+    -- (the founder's Blackrock Depths of 19 Nov: secs 9,220, last pickup 9,534 s in).
+    do
+      local times = {}
+      for _, e in ipairs(log) do if e.item and not e.money and e.t >= now - 1600 then times[#times + 1] = e.t end end
+      table.sort(times)
+      c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 30, items = #times } }
+      content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+      check("Items truth: the fixture has rows well after the run's active seconds", #times >= 3 and times[#times] > now - 1600 + 30 + 60, #times)
+      eq("Items truth: a run with a break in it (active seconds far below its span) whose rows are all stored leaves no remark", content.lootSection.meta:GetText(), "12 pickups")
+      -- the next run bounds the span: rows from its start on are not the first run's, so the first run misses one
+      c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 30, items = #times }, { inst = "Maraudon", t = times[#times], secs = 5, items = 1 } }
+      content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+      eq("Items truth: a run that counted more items than the rows kept up to the next run's start still says so", content.lootSection.meta:GetText(), "12 pickups, not every item is kept")
+      c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 30, items = #times - 1 }, { inst = "Maraudon", t = times[#times], secs = 5, items = 1 } }
+      content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+      eq("Items truth: two runs, each with its rows, leave no remark", content.lootSection.meta:GetText(), "12 pickups")
+      -- the open run bounds it too
+      c0.goldRuns = { { inst = "Maraudon", t = now - 1600, secs = 30, items = #times } }
+      local keepOpen = c0.goldRun
+      c0.goldRun = { inst = "Maraudon", t = times[#times], secs = 0, items = 1 }
+      content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+      eq("Items truth: the open run's start ends the span of the run before it", content.lootSection.meta:GetText(), "12 pickups, not every item is kept")
+      c0.goldRun = keepOpen
+    end
     content.setLootMode("byitem"); M.settle()
     eq("Items truth: By item counts items", content.lootSection.meta:GetText(), "12 items")
     content.setLootMode("newest"); M.settle()
     c0.goldRuns = keepRuns
     for i = #sess.segments, nSeg + 1, -1 do sess.segments[i] = nil end
     for i = #events, nEv + 1, -1 do events[i] = nil end
+    for i = #log, 1, -1 do log[i] = nil end
+    for i, x in pairs(keep) do log[i] = x end
+    content.setLootQuality("green")
+  end
+
+  -- ── review round 2: the pickups of one item in one minute are one row (display only), shaped like the founder's
+  --    20 Nov 23:33 (Iron Ore, a Lesser Moonstone between) and 22:43 to 22:44 (Hyjal Silphium from its own node) ──
+  do
+    local content = open(1104, 697, "normal", "newest", "all")
+    local log = ns.DB.loot.log
+    local keep = {}
+    for i = #log, 1, -1 do keep[i] = log[i]; log[i] = nil end
+    local sid, now = ns.DB.active, GetServerTime()
+    local c0 = ns.char()
+    local keepRuns = c0.goldRuns
+    c0.goldRuns = nil
+    local m = math.floor((now - 600) / 60) * 60   -- the start of a minute, ten minutes ago
+    local W = "ffffffff"
+    local function add(t, item, id, count, src, more)
+      local e = { t = t, item = item, id = id, count = count, q = W, src = src, s = sid }
+      for k, v in pairs(more or {}) do e[k] = v end
+      log[#log + 1] = e
+      return e
+    end
+    local node = "GameObject-0-1-1-1-6-00AA"
+    add(m - 62, "Hyjal Silphium", 501, 2, "Hyjal Silphium", { guid = node })
+    add(m - 61, "Hyjal Silphium", 501, 2, "Hyjal Silphium", { guid = node })
+    add(m + 12, "Hyjal Silphium", 501, 3, "Hyjal Silphium", { guid = node })
+    add(m + 13, "Hyjal Silphium", 501, 3, "Hyjal Silphium", { guid = node })
+    add(m + 14, "Hyjal Silphium", 501, 2, "Hyjal Silphium", { guid = node })
+    add(m + 122, "Iron Ore", 502, 1, "Iron Deposit", { guid = "GameObject-0-1-1-1-6-00AB" })
+    add(m + 123, "Lesser Moonstone", 503, 1, "Iron Deposit", { guid = "GameObject-0-1-1-1-6-00AB" })
+    add(m + 127, "Iron Ore", 502, 1, "Iron Deposit", { guid = "GameObject-0-1-1-1-6-00AB" })
+    add(m + 128, "Iron Ore", 502, 1, "Iron Deposit", { guid = "GameObject-0-1-1-1-6-00AB" })
+    -- the same item in the same minute from another source is another row
+    add(m + 130, "Iron Ore", 502, 4, "Quest reward")
+    local stored = #log
+    content.setLootQuality("green"); content.setLootQuality("all"); M.settle()
+    local tbl = content.lootTables.newest
+    local got = {}
+    for _, r in ipairs(dataRows(tbl)) do
+      got[#got + 1] = r.c.time:GetText() .. " " .. strip(r.c.item:GetText()) .. ((r.ebCount and r.ebCount:IsShown()) and (" " .. r.ebCount:GetText()) or "") .. "|" .. (r.c.from and r.c.from:GetText() or "(no From)")
+    end
+    local c1, c2, c3 = UI.fmtClock(m + 120), UI.fmtClock(m), UI.fmtClock(m - 62)
+    eq("Items merge: one row per item, source and minute, with the summed count, newest first", table.concat(got, " ; "), table.concat({
+      c1 .. " Iron Ore x4|Quest", c1 .. " Iron Ore x3|Iron Deposit", c1 .. " Lesser Moonstone|Iron Deposit", c2 .. " Hyjal Silphium x8|", c3 .. " Hyjal Silphium x4|" }, " ; "))
+    eq("Items merge: the header counts the pickups, not the rows", content.lootSection.meta:GetText(), "10 pickups")
+    eq("Items merge: the stored rows stay as written", #log .. " " .. log[6].count .. " " .. log[3].count, stored .. " 1 3")
+    local function rowOf(name, clock) for _, r in ipairs(dataRows(tbl)) do if strip(r.c.item:GetText()) == name and r.c.time:GetText() == clock and r.item.ebMerged then return r end end end
+    local function tipOf(r) tip:ClearLines(); r.scripts.OnEnter(r); local t = table.concat(tip.lines or {}, "\n"); r.scripts.OnLeave(r); return t end
+    check("Items merge: the hover says how many pickups the row holds", tipOf(rowOf("Iron Ore", c1)):find("3 pickups in this minute, 3 in all", 1, true) ~= nil and tipOf(rowOf("Hyjal Silphium", c2)):find("3 pickups in this minute, 8 in all", 1, true) ~= nil,
+      tipOf(rowOf("Iron Ore", c1)))
+    check("Items merge: a source that only repeats the item's name is a blank cell", rowOf("Hyjal Silphium", c2).c.from:GetText() == "")
+    content.setLootMode("byitem"); M.settle()
+    local by = {}
+    for _, r in ipairs(dataRows(content.lootTables.byitem)) do by[strip(r.c.item:GetText())] = r.c.qty:GetText() end
+    eq("Items merge: By item still counts every unit", tostring(by["Iron Ore"]) .. " " .. tostring(by["Hyjal Silphium"]) .. " " .. tostring(by["Lesser Moonstone"]), "7 12 1")
+    content.setLootMode("newest"); M.settle()
+    c0.goldRuns = keepRuns
     for i = #log, 1, -1 do log[i] = nil end
     for i, x in pairs(keep) do log[i] = x end
     content.setLootQuality("green")

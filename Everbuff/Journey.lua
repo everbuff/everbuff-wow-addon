@@ -264,13 +264,30 @@ function Now.nextItems(width, now)
   return out
 end
 
--- the story events of the live session that are the logged-in character's, oldest first
+-- The stored records of "this session", newest first: logins less than 5 minutes apart are one session
+-- (docs/UX_PRAGMATIC.md 0.2.4; Gold.joined is the one definition, the Session period of Loot > Gold reads it too).
+local function sessionParts(ses)
+  if not ses then return {} end
+  if ns.Gold and ns.Gold.joined then
+    local ok, j = pcall(ns.Gold.joined, ses)
+    if ok and type(j) == "table" and #j > 0 then return j end
+  end
+  return { ses }
+end
+Now.sessionParts = sessionParts
+-- when this session started: the first of its logins
+local function sessionStart(ses)
+  local p = sessionParts(ses)
+  return p[#p] and plain(p[#p].startedEpoch) or nil
+end
+-- the story events of this session that are the logged-in character's, oldest first
 local function sessionEvents(ses)
   local out = {}
-  local sid = ses and ses.id
-  if not sid then return out end
+  if not (ses and ses.id) then return out end
+  local ids = {}
+  for _, s in ipairs(sessionParts(ses)) do if s.id then ids[s.id] = true end end
   for _, e in ipairs((ns.DB and ns.DB.story and ns.DB.story.events) or {}) do
-    if type(e) == "table" and e.s == sid and ns.isMine(e) then out[#out + 1] = e end
+    if type(e) == "table" and e.s ~= nil and ids[e.s] and ns.isMine(e) then out[#out + 1] = e end
   end
   return out
 end
@@ -321,7 +338,7 @@ end
 function Now.lookItems(now)
   now = now or nowT()
   local ses = curSession()
-  local start = ses and plain(ses.startedEpoch) or now
+  local start = sessionStart(ses) or now
   local ev = sessionEvents(ses)
   local out, extra = {}, {}
   -- 1 deaths, at most 2, then a link row for the rest
@@ -538,8 +555,9 @@ end
 Now.GOLD_LINES = 3
 function Now.goldLines()
   local ses = curSession()
-  if not (ses and ns.Gold and ns.Gold.entries) then return {} end
-  local ok, rows = pcall(ns.Gold.entries, ses)
+  if not (ses and ns.Gold and ns.Gold.scope and ns.Gold.scopeEntries) then return {} end
+  -- (the rows of every login of this session: the same list the Session period of Loot > Gold shows)
+  local ok, rows = pcall(function() return ns.Gold.scopeEntries(ns.Gold.scope("session")) end)
   if not (ok and type(rows) == "table") then return {} end
   local list = {}
   for _, r in ipairs(rows) do if type(r.delta) == "number" and r.delta ~= 0 then list[#list + 1] = r end end
@@ -803,7 +821,8 @@ function Now.refresh(content)
   local now = nowT()
   local db = (ns.DB and ns.char()) or {}
   local ses = curSession()
-  local start = ses and plain(ses.startedEpoch)
+  local parts = sessionParts(ses)
+  local start = sessionStart(ses)
   local w = G.mainW(G.winW())
 
   -- the combat-log notice (Now has no other primary, so its button is the primary)
@@ -888,7 +907,9 @@ function Now.refresh(content)
   end
 
   local elapsed = start and math.max(0, now - start) or 0
-  local sdeaths = num(ses and ses.deaths)
+  local sdeaths = 0
+  for _, s in ipairs(parts) do sdeaths = sdeaths + num(s.deaths) end
+  local playedTip = #parts > 1 and ("How long this session has run, from the first of its %d logins. Opens your sessions."):format(#parts) or "How long this session has run. Opens your sessions."
   local deathsOpen = Now.deathsOpen()
   content.deathsOpen = deathsOpen
   if atMax then
@@ -908,7 +929,7 @@ function Now.refresh(content)
     end
     if start then
       defs[#defs + 1] = { key = "played", label = "Played", value = (elapsed < 30 and UI.fmtDur(elapsed) or UI.fmtPlayed(elapsed)), meta = "",
-        tip = { title = "Played", text = "How long this session has run. Opens your sessions." }, click = function() UI.Open("Home", "sessions") end }
+        tip = { title = "Played", text = playedTip }, click = function() UI.Open("Home", "sessions") end }
     end
     local lr = Now.lastRun(now, metaW)
     if lr then
@@ -951,7 +972,7 @@ function Now.refresh(content)
   content.sesHead:SetMeta(nil)   -- (the PLAYED card says when the session started: no second "since")
   local cards = content.cards.cards
   cards[1]:Set("Played", start and (elapsed < 30 and UI.fmtDur(elapsed) or UI.fmtPlayed(elapsed)) or "Not known yet", start and (UI.fmtClock(start) .. " to now") or "")
-  UI.SetTip(cards[1], { title = "Played", text = "How long this session has run. Opens your sessions." })
+  UI.SetTip(cards[1], { title = "Played", text = playedTip })
   if pace.rate then
     cards[2]:Set("XP per hour", UI.fmtNum(pace.rate), ("last %dm of play"):format(pace.used))
     UI.SetTip(cards[2], { title = "XP per hour", text = ("+%s XP this session"):format(UI.fmtNum(pace.xp)) })

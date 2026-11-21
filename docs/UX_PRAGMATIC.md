@@ -10,9 +10,9 @@ Not built: gates C, D, I and J (acked session records, party size, lifetime coun
 the 13 older clears and the party of a run are not shown. The expected values of this document for those screens are
 asserted by `tests/real_truth.lua` on the save of 21 Nov 2026.
 
-Review round 2 (21 Nov) also built, on the same draft branch: the coin rule of 2.1, the run page without Entered and left (2.2), Leveling as 3.1 has it with exact dates only (a level bound to a day or a range of days by its session records is not built), Home > Now at the level cap as 1.1 has it, the Activity tab hidden with every link to it gone (1.3; its code is deleted with the Activity work), and the two column CAPTURE HEALTH list (5). Not built on Now: the 5 minute join of logins into one session (1.2), so "this session" is the stored session record, -30g 99s on the save and not -22g 51s; the item name on an auction line ("Bought Black Lotus x3"), which needs the auction join of 4.2; and the card list for a leveling character, who keeps the four THIS SESSION cards.
+Review round 2 (21 Nov) also built, on the same draft branch: the coin rule of 2.1, the run page without Entered and left (2.2), Leveling as 3.1 has it with exact dates only (a level bound to a day or a range of days by its session records is not built), Home > Now at the level cap as 1.1 has it, the Activity tab hidden with every link to it gone (1.3; its code is deleted with the Activity work), and the two column CAPTURE HEALTH list (5). Not built on Now then (built in Gold and Items review round 2, below): the 5 minute join of logins into one session; the item name on an auction line ("Bought Black Lotus x3"), which needs the auction join of 4.2; and the card list for a leveling character, who keeps the four THIS SESSION cards.
 
-Gold and Items round (21 Nov) also built, on the same draft branch: section 4.1 and section 4.2 whole, with gates G (loot rows: place at pickup, `map`, `pushed`, no placeholder source stored, "Container") and H (#52: the mailbox flag is cleared by a loading screen and never used inside an instance; one group share paid in two to four purse changes is matched to its coin line by the exact sum). Both gates still need their own yes before a release; rows already stored are not rewritten. With the join of 4.2 Home > Now reads "Bought Black Lotus x3". The expected values of both sections are asserted by `tests/real_truth.lua`. Where the build differs from the text below: the Items header meta is "89 green or better" on the save, not 91 (2 of the 91 are auction purchases, which 4.1 cuts); the Auction house answer is three segments, "Spent 30g 98s · Received 5g 97s · Net -25g 0s", because a comma after a coin icon reads badly; a deposit names its item only when one posting and one deposit are within 5 s of each other (the two clocks differ, and on the save a nearest-in-time join named the wrong formula); the Journal header may carry one remark ("newest 500 of 767", "entries since <day>", "not every entry is kept"); the BALANCE card says "records do not add up" when the audit finds a break. The two unit money rule of 0.3 ("12g 0s", never "12g 78c") is now in the one formatter, so it holds on every screen. Not built: the 5 minute session join (1.2), so "this session" is still the stored session record; the durable owner mark on auction rows, so auction rows of sessions the desktop picked up stay hidden (the answer line is the ledger's and is not affected); naming the dungeon on gold places (`goldZones[0]`), since the Zones view is cut.
+Gold and Items round (21 Nov) also built, on the same draft branch: section 4.1 and section 4.2 whole, with gates G (loot rows: place at pickup, `map`, `pushed`, no placeholder source stored, "Container") and H (#52: the mailbox flag is cleared by a loading screen and never used inside an instance; one group share paid in two to four purse changes is matched to its coin line by the exact sum). Both gates still need their own yes before a release; rows already stored are not rewritten. With the join of 4.2 Home > Now reads "Bought Black Lotus x3". The expected values of both sections are asserted by `tests/real_truth.lua`. Where the build differs from the text below: the Items header meta is "89 green or better" on the save, not 91 (2 of the 91 are auction purchases, which 4.1 cuts); the Auction house answer is three segments, "Spent 30g 98s · Received 5g 97s · Net -25g 0s", because a comma after a coin icon reads badly; a deposit names its item only when one posting and one deposit are within 5 s of each other (the two clocks differ, and on the save a nearest-in-time join named the wrong formula); the Journal header may carry one remark ("newest 500 of 767", "entries since <day>", "not every entry is kept"); the BALANCE card says "records do not add up" when the audit finds a break. The two unit money rule of 0.3 ("12g 0s", never "12g 78c") is now in the one formatter, so it holds on every screen. Not built: the durable owner mark on auction rows, so auction rows of sessions the desktop picked up stay hidden (the answer line is the ledger's and is not affected); naming the dungeon on gold places (`goldZones[0]`), since the Zones view is cut.
 
 Gold and Items review round 1 (21 Nov), on the same draft branch. Everything here is display unless marked; the marked points extend gate G or change the 4.2 rule and need the founder's yes on #57 with the rest:
 
@@ -27,7 +27,20 @@ Gold and Items review round 1 (21 Nov), on the same draft branch. Everything her
 - **[changes the 4.2 rule]** a delivery mail is absorbed by a priced row of the same item bought in the same session, whatever the delay, or within the hour (Tender Wolf Meat x40, mails 96 minutes later). Deliveries with no purchase read "Collected" (was "Won"), and the mails of one item taken within 60 s are one row ("Wool Cloth x60"). A bid named at bid time takes up its won mail by the invoice's amount, with the mail's count.
 - The Auction house answer's dots are centred glyphs; the Home > Now hero centres its two lines on the portrait when no rate line stands under them.
 
-Not solved, raised: inside dungeons the KILL row can carry a party member's name (session of 17 Nov, "KILL Pebbles" at 23:00:22 where the combat log has Deep Lurker). "Enemy" on a row with no loot window is still an inference by timing that some enemy died just before; refusing it means those cells are blank.
+Not solved, raised: inside dungeons the KILL row can carry a party member's name (session of 17 Nov, "KILL Pebbles" at 23:00:22 where the combat log has Deep Lurker).
+
+Gold and Items review round 2 (21 Nov), on the same draft branch. Display only, no stored row is rewritten. Where it changes a rule of this document the section below is changed with it:
+
+- "This session" is built as 0.2.4 has it: logins of the character less than 5 minutes apart are one session (`Gold.joined`, the one definition). The hero and PLAYED of Home > Now, WORTH A LOOK, and the Session period of Loot > Gold (cards, Sources, Journal, Auction house) read it. On the save the logins of 11:45:25 and 11:47:01 are one session: +8g 47s, -30g 99s, net -22g 51s, as Today. PLAYED counts from the first login: 10m 57s at the save's last second, which reads "11m" (a played time is said to the nearest minute everywhere). Not built: the Sessions list still has one row per stored record (1.2: 45 rows, not 41).
+- The brand stays lower case inside a label drawn in capitals: "SAVED TO everbuff.gg" (`UI.upper` keeps it, on every screen).
+- Journal day rows are calendar days, as on Items and Auction house, so a row at 01:29 stands under the day it happened on (before: under the gold day, one day early for every row between midnight and the daily reset). A day row carries the day's net only when the gold day row of that date counts exactly that calendar day: no kept entry and no stored session of the character lies between midnight and the reset on either end, and no entry of the day is older than the start of the gold history. "FROM 20:35" only when no listed entry of that day is older. On the save: Thu 19, Fri 20 and Sat 21 Nov carry their net; Wed 18 Nov (rows at 01:14 to 01:36 and from before 20:35) is the bare day.
+- Journal Detail never prints a number or a placeholder for a name: a quest with no stored name is blank (hover "Quest: Not recorded"), a vendor sale of an item the client does not name reads "to Kaja", "Creature" is "Coin" or "Group share", and a count shows only above 1 ("Acolyte Blade to Kaja").
+- Auction house, one row per auction: a posting whose outcome is stored (sold at its buyout, expired, cancelled) is only its outcome row, which carries when it was posted in the hover. A posting with no outcome is a row only while its time has not run out; after that its outcome is not recorded and it is not listed (56 of the 98 kept postings on the save; no posting is open on 21 Nov, so the list has no Posted row). The duration is in the hover, and in the Result cell only when the listed postings differ in it.
+- Auction house, no row without an item: a purchase row with no item of its own (`C_AuctionHouse.PlaceBid` knows the auction, not the item; older rows carry a guessed name) is named by the invoice of an "Auction won" mail of the same session with exactly its price. On the save the session of 17 Nov has 5 such mails for Red Mageweave Bag (16,046 and 4 times 16,499) and bids of 16,046 (3), 16,047 (2) and 16,499 (3): four rows read Red Mageweave Bag. A bid nothing names is not a row and not counted as bought (8 on the save, two of them on the same auction id): nothing says it completed. The session's own ledger (auctions 67,391 copper) is below the 82,042 of the five invoices, so it could not settle which bids completed. Raised: the fifth bag mail (a fourth 16,499) has no bid row left and is not listed.
+- The Auction house remark is "not every row is listed"; its hover names each reason that applies with its count (sessions the desktop saved, bids with no item, postings with no recorded outcome).
+- Items, From: "Enemy" is no value. A row whose source is hidden or only a kill by timing has a blank cell, hover "From: Name not recorded". A source that repeats the item's name (a gathered node) is blank. With that, 14 of 86 rows have a value in the default view, so From is left out by rule 0.3; the hover of a row has what the column would say.
+- Items, one row for the pickups of one item in one minute that read the same: "Iron Ore x3", "Hyjal Silphium x8" (22:44) and "x4" (22:43). The header still counts pickups (89, 929); the hover says how many pickups a row holds.
+- Items, "not every item is kept" no longer uses a run's active seconds as a clock (they leave out time away): a run's span is from its start to the start of the next run. On the save the remark is unchanged (three runs have no row left).
 
 Revision 2 answers the founder review of revision 1. The short version: fewer screens, fewer columns, no sentences about why data is missing, and the fix for missing history (gates C and I) is built before anything is worded around it. Section 7 lists the few points where this document does not follow the review, and why.
 
@@ -133,15 +146,15 @@ On the save: session of 21 Nov 11:45 (two logins, 11:45 and 11:47, joined): +8g 
 | Card | Value | Meta | Source |
 |---|---|---|---|
 | BALANCE | "12s 19c" | "all characters 12g 0s" | `characters[guid].gold.balance` (1,219 and 118,859 copper on the save). Not shown when the hero already is the balance; then only the meta moves to the hero. |
-| PLAYED | "10m" | none | session start to now |
+| PLAYED | "11m" | none | first login of the session to now (10m 57s at the save's last second; a played time is said to the nearest minute) |
 | LAST RUN | "Blackrock Spire" | "Fri 20 Nov · 1h 9m · 7 bosses · 2 deaths" | newest `dungeonRuns` record; click opens the run page |
-| SAVED TO EVERBUFF.GG | "142 pulls" | "confirmed Sat 21 Nov 11:45" | `combat.lastAck.fights`, `.at` |
+| SAVED TO everbuff.gg | "142 pulls" | "confirmed Sat 21 Nov 11:45" | `combat.lastAck.fights`, `.at` |
 | DEATHS | count | none | `sessions[id].deaths`; only when above 0 |
 | XP PER HOUR | leveling only | "last 30m of play" | `ns.Pace` |
 
 `combat.lastAck.at` is when the addon applied the desktop app's confirmation (at the next login, or when a code was pasted), never when the app saved the data: the confirmation file carries no time. On the save it is 21 Nov 11:45:11, 14 s before the session starts; the desktop's copy with those 142 pulls is from 20 Nov 23:54. So the count leads, the time is always worded "confirmed", and the hover says "The desktop app saved this data earlier. The time is when the addon saw its confirmation, not when it was saved." The real time of the save needs the desktop to write it into the confirmation (a contract change, not made).
 
-At most 4 cards, in this order of priority. SAVED TO EVERBUFF.GG with no pickup ever seen reads "Not seen yet", tooltip "Install the desktop app from everbuff.gg to keep your history and watch your recordings."
+At most 4 cards, in this order of priority. SAVED TO everbuff.gg with no pickup ever seen reads "Not seen yet", tooltip "Install the desktop app from everbuff.gg to keep your history and watch your recordings."
 
 **NEXT.** Bags, repair, instance limit, quests ready. Hidden when nothing needs attention.
 
@@ -178,7 +191,7 @@ When history starts inside the 7 days the line says the real range: "Since Wed 1
 The old per-session run counter is never printed (it counted door entries: 22 on 17 Nov for a night with 2 runs). A session from before the run store whose runs were not rebuilt has a blank Runs cell, and rule 0.3 hides the column while most rows are blank.
 
 **Grouping.**
-- A session that starts within 5 minutes of the previous one ending (same character) is the same row. Tooltip "2 logins". On the save: 45 records become 41 rows; 21 Nov 11:45 reads 10m, -22g 51s.
+- A session that starts within 5 minutes of the previous one ending (same character) is the same row. Tooltip "2 logins". On the save: 45 records become 41 rows; 21 Nov 11:45 reads 11m, -22g 51s.
 - A row under 5 minutes with nothing in it (no XP, gold, death, loot) is not listed. No line, no link, no setting.
 - Day rows carry the day's net gold and played time once gate C keeps the session counters. Before C lands day rows carry no totals (a day total over deleted sessions would be wrong).
 
@@ -368,14 +381,15 @@ One row per batch: consecutive crafts of the same item, profession and session a
 
 **Controls.** Quality filter (default green and better), search, and List / By item. By item stays: one row per item with Item, Count and Last looted, for "how many of these did I farm".
 
-**Columns.** When, Item (with "x3"), From, Place, Coords (WIDE).
+**Columns.** When, Item (with "x3"), From, Place, Coords (WIDE). The pickups of one item in one minute that read the same are one row with the counts summed (display only).
 
 | Cell | Rule |
 |---|---|
 | From, named | as stored |
 | From, quest | "Quest: <name>" |
 | From, container | "Container" (stored guid starts with `Item-`; 9 rows on the save, all opened containers such as Linken's Training Sword and the Hakkari pieces, no ore or herb) |
-| From, Creature or an enemy | "Enemy", tooltip "Name not recorded" |
+| From, Creature or an enemy | blank, tooltip "From: Name not recorded" (review round 2; was "Enemy") |
+| From, the item's own name (a gathered node) | blank |
 | From, Picked up or Unknown source | blank |
 | Place | the zone stamped with the row. Blank for a row that arrived without a loot window before the capture fix: its stored place came from the previous loot window and can be wrong, so it is not shown at all. |
 
@@ -410,7 +424,7 @@ When gold history starts inside the chosen period, the section header carries th
 
 Until gate H is built, group coin in dungeons can be booked as mail or with no source. So a period that contains time inside a dungeon from before the H fix does not offer Sources: the view opens on Journal and the Sources button is disabled with the tooltip "Sources are not reliable for dungeon time before <date>". This is the screen's one history line. It is the reason H is recommended for the first batch (section 6).
 
-**Journal view.** Auction rows read "Bought Black Lotus x3" / "Deposit: Iron Bar x17". Day headers carry the day's net ("YESTERDAY · -126g 58s", illustrative). A first day that starts mid-day says "WED 18 NOV, FROM 20:35".
+**Journal view.** Auction rows read "Bought Black Lotus x3" / "Deposit: Iron Bar x17". Day headers are calendar days and carry the day's net ("YESTERDAY · -114g 54s") only when the gold day row of that date counts exactly that day (review round 2, above). A first day that starts mid-day says "WED 18 NOV, FROM 20:35" when no listed row of the day is older. Detail never shows a raw id or a placeholder word.
 
 **Auction house view.**
 - Answer: "Spent 30g 98s, received 5g 97s, net -25g 0s".
@@ -422,7 +436,9 @@ Until gate H is built, group coin in dungeons can be booked as mail or with no s
   | Net | Received minus Spent | -250,092 copper |
 
   The line uses Received and not the gross "sold 5g 87s", so the three figures add up on sight. The tooltip has sold, cut and deposits. `tests/real_save.lua` asserts both identities in copper.
-- Columns When, Item (with "x3"), Result, Price. Result folds the duration: "Posted, 1d". Player appears only by rule 0.3.
+- Columns When, Item (with "x3"), Result, Price. Player appears only by rule 0.3.
+- One auction is one row: Sold, Expired or Cancelled stands for its posting. "Posted" only while the auction can still be open; the duration is in the hover (review round 2).
+- No row without an item: a purchase with no item of its own is named by the invoice of an auction mail of its session with exactly its price, else it is not listed (review round 2).
 - One purchase is one row. A delivery mail is absorbed by the priced row of the same item (earlier, in the same session or within 1 hour, enough count left). A delivery with no priced row reads "Collected" with a blank Price, the mails of one item taken together as one row (review round 1; was "within 1 hour" and "Won").
 - Sold rows: Price is what the buyer paid. A sold row is named by its invoice. A stored row whose item was guessed the old way ("the newest unnamed row") shows a blank Item cell, tooltip "Not recorded": a guess is not shown as a fact.
 

@@ -41,6 +41,9 @@ for line in io.lines("Everbuff/EverbuffJournal.toc") do
     if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
   end
 end
+-- (the logins of this suite follow each other with no time between; each test means the one session record it made,
+-- so the 5 minute join of "this session" is off here as in tests/run_tests.lua)
+ns.Gold.JOIN_S = 0
 M.fire("ADDON_LOADED", ADDON)
 M.money, M.xp = 5000, 100
 M.fire("PLAYER_ENTERING_WORLD", true, false)

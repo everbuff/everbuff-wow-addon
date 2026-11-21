@@ -3192,24 +3192,27 @@ if ns.UI and ns.UI.registerTab then
     end
     -- Where it came from, and what the hover says when the cell is short of a name:
     --   a source the loot window or an opened object named, as stored (the legacy " at (x, y)" split off),
-    --   "Quest: <name>", "Container" (an opened bag item: the stored loot GUID starts with Item-), "Enemy" with the
+    --   "Quest: <name>", "Container" (an opened bag item: the stored loot GUID starts with Item-), nothing with the
     --   tip "Name not recorded" (the client hid the name, or the stored name is only the last kill before the
-    --   pickup), and nothing at all, tip "Not recorded", for a row with no recorded source.
+    --   pickup: "an enemy" names nobody, so it is not a value), nothing with the tip "Not recorded" for a row with
+    --   no recorded source, and nothing with no tip for a source that only repeats the item's name.
     -- Returns text or nil, tip or nil, the legacy coordinates.
     function IT.from(e)
       local srcName, legacy = (e.src or ""):match("^(.-) at (%(.-%))$")
       srcName = srcName or e.src
       if srcName == "Quest reward" then
-        local qn = IT.questNames and IT.questNames[e]
+        local qn = IT.questNames and IT.questNames[e.ebFirst or e]
         return qn and ("Quest: " .. qn) or "Quest", (not qn) and "Quest not recorded" or nil, legacy
       end
       if srcName == "Container" or (srcName == "Unknown source" and type(e.guid) == "string" and e.guid:sub(1, 5) == "Item-") then return "Container", nil, legacy end
-      if IT.ENEMY[srcName] then return "Enemy", "Name not recorded", legacy end
+      if IT.ENEMY[srcName] then return nil, "Name not recorded", legacy end
       if srcName == nil or srcName == "" or IT.NONE[srcName] then return nil, "Not recorded", legacy end
       if IT.LABEL[srcName] then return srcName, nil, legacy end
       local by = IT.namedBy(e, srcName)
-      if by == "kill" then return "Enemy", "Name not recorded", legacy end
+      if by == "kill" then return nil, "Name not recorded", legacy end
       if by == nil then return nil, "Not recorded", legacy end
+      -- (a gathered item names its node, which has the item's own name: the cell would say the Item cell twice)
+      if srcName == IT.name(e) then return nil, nil, legacy end
       return srcName, nil, legacy
     end
     -- Whether the stored place is where this row was picked up. From 0.9.52 every row is stamped as the item arrives
@@ -3403,8 +3406,11 @@ if ns.UI and ns.UI.registerTab then
           elseif e.t then
             tip:AddLine(UI.fmtWhen(e.t), 0.78, 0.79, 0.80)
             -- (what a short or blank cell stands for; the reason is never on the screen itself)
+            -- (the From column hides while few rows have a value: what it would say is here)
             local from, why = IT.from(e)
-            if why then tip:AddLine((from == "Enemy" and "Enemy: " or from == "Quest" and "" or "From: ") .. why, 0.78, 0.79, 0.80) end
+            if from == "Quest" and why then tip:AddLine(why, 0.78, 0.79, 0.80)
+            elseif from or why then tip:AddLine("From: " .. (from or why), 0.78, 0.79, 0.80) end
+            if e.ebMerged then tip:AddLine(("%d pickups in this minute, %s in all"):format(e.ebMerged, UI.fmtNum(e.count)), 0.78, 0.79, 0.80) end
             local place, xy = IT.place(e), IT.coords(e)
             if place then tip:AddLine("Place: " .. place .. (xy and ("  " .. xy) or ""), 0.78, 0.79, 0.80) else tip:AddLine("Place: Not recorded", 0.78, 0.79, 0.80) end
           end
@@ -3476,18 +3482,53 @@ if ns.UI and ns.UI.registerTab then
         end
       end
     end
+    -- One row for the pickups of one item in one minute (display only; the stored rows stay as written): rows of
+    -- the same minute that read the same (item, quality, quest badge, what From and Place say) are one
+    -- row with the counts summed ("Iron Ore x3"), at the place of the first of them in the list. The row is a view
+    -- of that first one (ebFirst) with its own count and ebMerged, the number of pickups in it.
+    function IT.mergeKey(e)
+      return table.concat({ tostring(e.id or e.item), tostring(e.q), tostring(e.quest and 1 or 0), tostring((IT.from(e))), tostring(IT.place(e)),
+        tostring(math.floor((tonumber(e.t) or 0) / 60)) }, "|")
+    end
+    function IT.merge(list)
+      local out, at = {}, {}
+      for _, e in ipairs(list) do
+        local k = IT.mergeKey(e)
+        local i = at[k]
+        if i then
+          local row = out[i]
+          if not row.ebMerged then
+            row = setmetatable({ ebFirst = row, ebMerged = 1, count = tonumber(row.count) or 1 }, { __index = row })
+            out[i] = row
+          end
+          row.ebMerged = row.ebMerged + 1
+          row.count = row.count + (tonumber(e.count) or 1)
+        else out[#out + 1] = e; at[k] = #out end
+      end
+      return out
+    end
     -- Whether the list has a hole after its start: a dungeon run of the character whose stored item count is larger
     -- than the loot rows the save still holds for its span (the rows of a session the desktop app picked up are
     -- deleted, the run's own counters stay).
+    -- The run's span is bounded by facts only: from its start to the start of the next run (the open one included),
+    -- else to now. Its stored `secs` are active seconds (time away is not counted), so they are no clock: a run
+    -- with a break in it has loot after start + secs. The span may hold rows from after the run, so a hole can go
+    -- unseen, but the remark is never made while every row of the run is still stored.
     function IT.partial(loot, since)
       local c = ns.DB and ns.charGuid and ns.charGuid() and ns.char and ns.char() or nil
       if not (c and since and type(c.goldRuns) == "table") then return false end
+      local open = type(c.goldRun) == "table" and tonumber(c.goldRun.t) or nil
       for _, r in ipairs(c.goldRuns) do
         local t0, n = tonumber(r.t), tonumber(r.items)
         if t0 and n and n > 0 and t0 >= since then
-          local t1, have = t0 + (tonumber(r.secs) or 0) + 60, 0
+          local t1 = (open and open > t0) and open or math.huge
+          for _, o in ipairs(c.goldRuns) do
+            local ot = tonumber(o.t)
+            if ot and ot > t0 and ot < t1 then t1 = ot end
+          end
+          local have = 0
           for _, e in ipairs(loot) do
-            if e.item and not e.money and tonumber(e.t) and e.t >= t0 and e.t <= t1 then have = have + 1 end
+            if e.item and not e.money and tonumber(e.t) and e.t >= t0 and e.t < t1 then have = have + 1 end
           end
           if have < n then return true end
         end
@@ -3526,6 +3567,8 @@ if ns.UI and ns.UI.registerTab then
         list = {}
         for i = #loot, 1, -1 do if loot[i].item and IT.matches(loot[i], q) then list[#list + 1] = loot[i] end end
         list = IT.sortRows(list, st.sortKey, st.sortAsc)
+        IT.nPickups = #list
+        list = IT.merge(list)
         if st.sortKey == "time" and not st.sortAsc then
           -- newest first: a day row over each day
           rows = {}
@@ -3562,7 +3605,7 @@ if ns.UI and ns.UI.registerTab then
       tbl.setRows(rows, IT.fill)
       for i = 1, tbl.shownN do pcall(IT.placeBadge, tbl, tbl.rows[i]) end
       -- (the header counts the rows the mode shows: pickups in the list, items in By item)
-      IT.nShown = #list
+      IT.nShown = st.mode == "byitem" and #list or IT.nPickups
       IT.head(loot, IT.nShown, q)
       if #rows == 0 then
         if q ~= "" then tbl.setState(('No item matches "%s". '):format(q), "Clear search", function() search:SetText("") end)

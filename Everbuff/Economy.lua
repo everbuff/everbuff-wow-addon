@@ -57,6 +57,8 @@ Gold.WORD = { looted = "Loot", quests = "Quest", sold = "Vendor sale", auctionSa
 -- (a `bid` claim comes from C_AuctionHouse.PlaceBid, which is also how an item is bought out)
 Gold.AUCTION_KIND = { deposit = "Deposit", bid = "Bid or buyout", buyout = "Buyout", cancel = "Auction cancelled" }
 Gold.CRASH_LABEL = "Unattributed (game closed without saving)"
+-- stored source words that name nothing (the client hid the name, or none was seen)
+Gold.NO_SOURCE = { ["Creature"] = true, ["an enemy"] = true, ["Unknown source"] = true, ["Picked up"] = true }
 local IS_IN, IS_OUT = {}, {}
 for _, k in ipairs(Gold.IN) do IS_IN[k] = true end
 for _, k in ipairs(Gold.OUT) do IS_OUT[k] = true end
@@ -153,25 +155,35 @@ local function describe(e)
   local r, src = e.ref, e.src
   local npc = r.npc
   if src == "quests" then
-    e.detail = e.quest or (r.quest and ("Quest " .. r.quest)) or "a quest"
-    e.group = e.detail
+    -- (a quest the client does not name: no number and no placeholder word, the Source cell already says Quest)
+    e.detail = e.quest or ""
+    if not e.quest then e.blank = "Quest: Not recorded" end
+    e.group = e.quest or "not recorded"
   elseif src == "looted" then
     -- (0.9.46: a share of coin a group member looted, said by the client's own coin line)
     local from = e.loot and e.loot.src or ""
+    -- (a placeholder is not a name: "Creature" says no more than "Coin")
+    if Gold.NO_SOURCE[from] then from = r.share and "" or "Coin" end
     if r.share then from = (from ~= "" and from ~= "Group share") and ("Group share, " .. from) or "Group share" end
     e.detail = from
     if r.x then e.detail = (e.detail ~= "" and (e.detail .. ", ") or "") .. r.x .. " pickups in one row" end
-    e.group = r.share and "Group share" or (e.loot and e.loot.src) or "source not recorded"
+    e.group = r.share and "Group share" or (e.loot and not Gold.NO_SOURCE[e.loot.src or ""] and e.loot.src) or "source not recorded"
   elseif src == "sold" or src == "vendor" then
+    -- (an item the client does not name is not named by its number; the count only when above 1)
     local name = itemName(r.item)
-    local what = name and (name .. " x" .. (r.n or 1)) or nil
-    local word = src == "sold" and " to " or " from "
+    if name and name:find("^item %d+$") then name = nil end
+    local n = tonumber(r.n) or 1
+    local what = name and (name .. (n > 1 and (" x" .. n) or "")) or nil
+    local word = src == "sold" and "to " or "from "
     if r.kind == "buyback" then
       -- a sale taken back (0.9.46): a sold row with a negative amount
-      e.detail = "Bought back: " .. (what or "an item") .. (npc and (" from " .. npc) or "")
+      e.detail = "Bought back" .. (what and (": " .. what) or "") .. (npc and (" from " .. npc) or "")
     else
-      e.detail = (what or (src == "sold" and "items" or "an item")) .. (npc and (word .. npc) or "")
-      if r.x == "unmatched" then e.detail = e.detail .. ", no item asked for has this amount"; e.flag = "amount not matched" end
+      e.detail = (what and npc) and (what .. " " .. word .. npc) or what or (npc and (word .. npc)) or ""
+      if r.x == "unmatched" then e.detail = (e.detail ~= "" and (e.detail .. ", ") or "") .. "no item asked for has this amount"; e.flag = "amount not matched" end
+    end
+    if not what then
+      if e.detail == "" then e.blank = "Item: Not recorded" else e.miss = "Item: Not recorded" end
     end
     e.group = name or npc or "not recorded"
     local unit, n = tonumber(r.unit), tonumber(r.n)
@@ -353,6 +365,40 @@ function Gold.sessions()
   return out
 end
 local function current() return ns.Recorder and ns.Recorder.current and ns.Recorder.current() or nil end
+-- "This session" (docs/UX_PRAGMATIC.md 0.2.4, 1.2): logins of the character less than Gold.JOIN_S apart are one
+-- session. Gold.joined(sess) is the stored session records that make up the session `sess` (default: the running
+-- one) belongs to, newest first: `sess`, then each record before it that ended less than Gold.JOIN_S before the
+-- next one started. A record with no stored end (the client closed without saving) joins nothing. Every screen
+-- that says "this session" reads this one list: Home > Now and the Session period of Loot > Gold.
+Gold.JOIN_S = 5 * 60
+function Gold.joined(sess)
+  sess = sess or current()
+  if type(sess) ~= "table" then return {} end
+  local out = { sess }
+  local all = {}
+  for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do
+    if type(s) == "table" and s ~= sess and ns.isMySession(s) and tonumber(s.endedEpoch) and tonumber(s.startedEpoch) then all[#all + 1] = s end
+  end
+  table.sort(all, function(a, b)
+    if a.endedEpoch ~= b.endedEpoch then return a.endedEpoch > b.endedEpoch end
+    return tostring(a.id) > tostring(b.id)
+  end)
+  local head = tonumber(sess.startedEpoch)
+  for _, s in ipairs(all) do
+    if not head then break end
+    if s.endedEpoch <= head and s.startedEpoch <= head then
+      if head - s.endedEpoch >= Gold.JOIN_S then break end
+      out[#out + 1] = s
+      head = s.startedEpoch
+    end
+  end
+  return out
+end
+-- when the session `sess` belongs to started: the start of its oldest joined record
+function Gold.joinedStart(sess)
+  local j = Gold.joined(sess)
+  return j[#j] and tonumber(j[#j].startedEpoch) or nil
+end
 local function sessionLedger(sess)
   local g = {}
   if type(sess.gold) == "table" then for k, v in pairs(sess.gold) do g[k] = num(v) end end
@@ -418,10 +464,13 @@ function Gold.scope(key, who, withStale)
     for k, v in pairs(charGold) do sc.ledger[k] = num(v) end
     sc.balance = num(charGold.balance)
   else
-    local sess
-    if key == "session" then sess = cur; sc.label = "This session"
+    local sess, parts
+    if key == "session" then sess = cur; sc.label = "This session"; parts = Gold.joined(cur)
     elseif key == "previous" then
-      for _, s in ipairs(all) do if s ~= cur and s.endedEpoch then sess = s; break end end
+      -- (the newest closed record that is not a part of this session)
+      local mine = {}
+      for _, s in ipairs(Gold.joined(cur)) do mine[s] = true end
+      for _, s in ipairs(all) do if not mine[s] and s.endedEpoch then sess = s; break end end
       sc.label = "Previous session"
     else
       sess = ns.DB and ns.DB.sessions and ns.DB.sessions[key]
@@ -434,6 +483,17 @@ function Gold.scope(key, who, withStale)
       sc.live = sess == cur
       sc.when = sessionLabel(sess)
       if sess == cur then sc.balance = num(charGold.balance) end
+      -- this session of several logins: every record's ledger, and the time from the first login to now
+      if parts and #parts > 1 then
+        local first = parts[#parts]
+        for i = 2, #parts do
+          sc.sessions[i] = parts[i]
+          for k, v in pairs(sessionLedger(parts[i])) do sc.ledger[k] = num(sc.ledger[k]) + v end
+        end
+        sc.elapsed = math.max(0, nowT() - num(first.startedEpoch))
+        sc.when = sessionLabel(first)
+        sc.logins = #parts
+      end
     end
     sc.who = "char"
   end
@@ -2714,7 +2774,20 @@ Gold.RATE_MIN_S = 1800    -- a per hour figure needs this much play in the perio
 GP.UNTRACED_TIP = "Gold that moved while you played and the addon saw no source for it."
 -- the hover of the header's one remark (the reason is never screen text, docs/UX_PRAGMATIC.md 0.2.2)
 GP.PARTIAL_TIP = { title = "Not every entry is kept", text = "The cards and the day rows count every copper of the period. The list holds the entries still stored in the game: the entries of play sessions the desktop app has already saved are no longer stored here." }
-GP.PARTIAL_AH_TIP = { title = "Not every row is kept", text = "The answer line counts every copper of the period. The list holds the auction rows the game still knows this character made: the rows of play sessions the desktop app has already saved are not listed." }
+GP.PARTIAL_AH_TIP = { title = "Not every row is listed", text = "The answer line counts every copper of the period." }
+GP.PARTIAL_AH_WHY = {
+  unowned = "The rows of play sessions the desktop app has already saved are not listed.",
+  bids = "%s with no item recorded, which no auction mail names: not listed. What was paid is in Spent.",
+  ended = "%s whose time ran out with no sale or return recorded: not listed.",
+}
+-- the hover of the Auction house remark: what the list leaves out, each reason only when it applies
+function GP.partialAhTip(sum)
+  local lines = { GP.PARTIAL_AH_TIP.text }
+  if num(sum.unowned) > 0 then lines[#lines + 1] = GP.PARTIAL_AH_WHY.unowned end
+  if num(sum.bids) > 0 then lines[#lines + 1] = GP.PARTIAL_AH_WHY.bids:format(UI.plural(sum.bids, "bid")) end
+  if num(sum.ended) > 0 then lines[#lines + 1] = GP.PARTIAL_AH_WHY.ended:format(UI.plural(sum.ended, "posting")) end
+  return { title = GP.PARTIAL_AH_TIP.title, text = table.concat(lines, " ") }
+end
 GP.AWAY_TIP = "Your balance changed by this much while the addon was not running."
 GP.MOVED_TIP = "Gold that moved between your own characters or the bank. It is not earned or spent."
 GP.EMPTY = "No gold has moved in this period."
@@ -2826,7 +2899,7 @@ function GP.journalTip(row, e, tip)
   tip:AddLine(("%s  %s"):format(e.unseen and GP.UNTRACED.unexplained or GP.srcLabel(e.src), signed(e.delta)), 1, 1, 1)
   if GP.detailOf(e) ~= "" and (e.detail or "") ~= "" then line(tip, e.detail) end
   if e.unseen then line(tip, "Booked as mail, but no mailbox was open where this coin arrived.")
-  elseif e.blank then line(tip, e.blank) end
+  elseif e.blank or e.miss then line(tip, e.blank or e.miss) end
   if e.vendorPrice then line(tip, ("Vendor price %s, paid %s"):format(fmtMoney(e.vendorPrice), fmtMoney(e.delta))) end
   local tr = e.tradeRec
   if tr then GP.tradeSide(tip, "You gave", tr.gave, tr.gaveMoney); GP.tradeSide(tip, "You got", tr.got, tr.gotMoney) end
@@ -2873,6 +2946,8 @@ function GP.auctionTip(row, r, tip)
     line(tip, "Taken from the mailbox. Price: Not recorded")
     if num(r.mails) > 1 then pair(tip, "Mails", tostring(r.mails)) end
   elseif r.what == "Posted" and r.hours then pair(tip, "Posted for", UI.fmtDur(r.hours * 3600)) end
+  if r.postedAt then pair(tip, "Posted", UI.fmtWhen(r.postedAt)) end
+  if r.byInvoice then line(tip, "The item is the one the auction mail of this price names.") end
   if (r.note or "") ~= "" then pair(tip, r.what == "Sold" and "Buyer" or "Seller", r.note) end
 end
 
@@ -2888,7 +2963,7 @@ end
 
 -- The auction rows of a period, newest first, and their sums (Market.buildAuctions is every trade of the character).
 -- sum: posted, sold, bought (purchases with a price), won (delivery mails with none; folded into Collected rows),
--- expired, cancelled, and in copper spent (the prices of the purchases), sales (what the buyers paid), cut, deposit
+-- expired, cancelled, bids and ended (stored rows that are not listed), and in copper spent (the prices of the purchases), sales (what the buyers paid), cut, deposit
 -- (returned), mail (what the sale mails paid by their invoices: sales - cut + deposit). sum.unowned: stored auction
 -- rows of the period that no list shows because their session record is gone (in a period of sessions: not known, 0).
 function GP.auctions(sc)
@@ -2900,6 +2975,16 @@ function GP.auctions(sc)
   for _, t in ipairs(type(all) == "table" and all.unownedAt or {}) do
     if sc.lifetime or (sc.from and sc.to and t >= sc.from and t < sc.to) then sum.unowned = sum.unowned + 1 end
   end
+  -- (sum.bids: bids of the period with no item and no auction mail that names their price; sum.ended: postings of
+  -- the period whose time ran out with no sale or return recorded. Neither is a row, Market.buildAuctions.)
+  local function inScope(r)
+    if sc.lifetime then return true end
+    if sc.from and sc.to then return r.t >= sc.from and r.t < sc.to end
+    return r.s ~= nil and inSess[r.s] == true
+  end
+  sum.bids, sum.ended = 0, 0
+  for _, r in ipairs(type(all) == "table" and all.bidRows or {}) do if inScope(r) then sum.bids = sum.bids + 1 end end
+  for _, r in ipairs(type(all) == "table" and all.endedRows or {}) do if inScope(r) then sum.ended = sum.ended + 1 end end
   for _, r in ipairs(rows) do
     local keep
     if sc.lifetime then keep = true
@@ -2984,23 +3069,58 @@ function GP.itemLook(name)
   end
   return nil
 end
--- A day row of the Journal: the gold day (it turns over at the daily reset, as Today does), and its net from the day
--- row when `withNet`. A first day that starts mid-day says from when: "WEDNESDAY 18 NOV, FROM 20:35".
-function GP.dayHead(key, base, now, withNet)
-  local start = Gold.keyStart(key, base)
-  local label
-  if key == Gold.dayKey(now, base) then label = "TODAY"
-  elseif key == Gold.dayKey(now - DAY, base) then label = "YESTERDAY"
-  else
-    label = (date("%A ", start) .. tostring(tonumber(date("%d", start)) or date("%d", start)) .. date(" %b", start)):upper()
-    if date("%Y", start) ~= date("%Y", now) then label = label .. date(" %Y", start) end
-  end
+-- A day row of the Journal: the calendar day of the rows under it, as on Items and Auction house ("TODAY",
+-- "WEDNESDAY 18 NOV"), so a row at 01:29 stands under the day it happened on. `from`: the gold history starts
+-- inside this day ("WEDNESDAY 18 NOV, FROM 20:35"); `net`: the day's net in copper. Both come from GP.dayFacts.
+function GP.dayHead(t, now, from, net)
+  local label = UI.fmtDay(t, now)
+  if from then label = label .. ", FROM " .. UI.fmtClock(from) end
+  if net then label = label .. " \194\183 " .. money(net, true) end
+  return label
+end
+-- What a day row may say beside its day. Returns facts(t) -> from, net for the calendar day of `t`.
+--   from  goldSince, when it lies inside the day and no kept row of the day is older than it.
+--   net   earned minus spent of the gold day row of the same date (goldDays), only with `withNet` and only when
+--         that row counts exactly this calendar day. A gold day turns over at the daily reset, not at midnight, so
+--         the two differ by the hours between midnight and the reset, on both ends: the net shows only when no
+--         kept row lies in those hours and no stored session of the character touches them. A day with a row from
+--         before goldSince has no net either (the day row starts at goldSince).
+function GP.dayFacts(entries, withNet)
+  local base = Gold.baseStored()
   local c = ns.DB and ns.charGuid() and ns.char() or {}
   local since = num(c.goldSince)
-  if since > start and since < start + DAY then label = label .. ", FROM " .. UI.fmtClock(since) end
-  local r = withNet and type(c.goldDays) == "table" and c.goldDays[key] or nil
-  if type(r) == "table" then label = label .. " \194\183 " .. money(num(r.g) - num(r.s), true) end
-  return label
+  local first, mixed = {}, {}
+  for _, e in ipairs(entries or {}) do
+    local t = num(e.t)
+    local cal = date("%Y%m%d", t)
+    if not first[cal] or t < first[cal] then first[cal] = t end
+    if base then
+      local k = Gold.dayKey(t, base)
+      if k ~= cal then mixed[cal], mixed[k] = true, true end
+    end
+  end
+  local sessions = withNet and base and Gold.sessions() or {}
+  local cur, now = current(), nowT()
+  return function(t)
+    t = num(t)
+    local cal = date("%Y%m%d", t)
+    local d = date("*t", t)
+    local cs = t - (num(d.hour) * 3600 + num(d.min) * 60 + num(d.sec))   -- the day's midnight
+    local before = since > 0 and first[cal] ~= nil and first[cal] < since - 2
+    local from = (since > cs and since < cs + DAY and not before) and since or nil
+    local r = withNet and base and not before and not mixed[cal] and type(c.goldDays) == "table" and c.goldDays[cal] or nil
+    if type(r) ~= "table" then return from, nil end
+    local ks = Gold.keyStart(cal, base)
+    local a, b = math.min(cs, ks), math.max(cs, ks)
+    if b > a then
+      for _, s in ipairs(sessions) do
+        local s0 = num(s.startedEpoch)
+        local s1 = s.endedEpoch or (s == cur and now) or s0
+        if (s0 < b and s1 >= a) or (s0 < b + DAY and s1 >= a + DAY) then return from, nil end
+      end
+    end
+    return from, num(r.g) - num(r.s)
+  end
 end
 
 -- ── the list ──
@@ -3066,14 +3186,15 @@ function GP.paintList(c)
       end)
     end
     if #rows > Gold.MAX_ROWS then for i = #rows, Gold.MAX_ROWS + 1, -1 do rows[i] = nil end end
-    -- newest first: a day row over each day, with the day's net when the list is the whole of a day period
+    -- newest first: a day row over each calendar day, with the day's net when the list is the whole of a day period
     if key == "time" and not asc then
-      local base, now = Gold.baseStored(), nowT()
+      local now = nowT()
       local withNet = q == "" and (sc.days or sc.lifetime) and true or false
+      local facts = GP.dayFacts(entries, withNet)
       local out, last = {}, nil
       for _, e in ipairs(rows) do
-        local k = base and Gold.dayKey(e.t or 0, base) or date("%Y-%m-%d", e.t or 0)
-        if k ~= last then last = k; out[#out + 1] = { ebSection = base and GP.dayHead(k, base, now, withNet) or UI.fmtDay(e.t or 0) } end
+        local k = date("%Y-%m-%d", e.t or 0)
+        if k ~= last then last = k; out[#out + 1] = { ebSection = GP.dayHead(e.t or 0, now, facts(e.t or 0)) } end
         out[#out + 1] = e
       end
       rows = out
@@ -3136,24 +3257,33 @@ function GP.paintList(c)
       if k ~= last then last = k; rows[#rows + 1] = { ebSection = UI.fmtDay(r.t or 0) } end
       rows[#rows + 1] = r
     end
+    -- (the duration of a posting is said only while the listed postings differ in it; the hover always has it)
+    local hrs, varied = nil, false
+    for _, r in ipairs(list) do
+      if r.what == "Posted" and r.hours then
+        if hrs and hrs ~= r.hours then varied = true end
+        hrs = hrs or r.hours
+      end
+    end
     tbl.setRows(rows, function(row, r)
       local cc = row.c
       cc.when:SetText(UI.fmtClock(r.t or 0))
       local look = r.item and GP.itemLook(r.item) or nil
-      if cc.icon then cc.icon:SetTexture((look and look.icon) or "Interface\\Icons\\INV_Misc_QuestionMark") end
+      if cc.icon then cc.icon:SetTexture((look and look.icon) or r.icon or "Interface\\Icons\\INV_Misc_QuestionMark") end
       if r.item then
         cc.item:SetText(r.item .. (num(r.count) > 1 and ("|cff8c9197 x" .. r.count .. "|r") or ""))
         if look and look.q then local lq = look.q; cc.item:SetTextColor(tonumber(lq:sub(3, 4), 16) / 255, tonumber(lq:sub(5, 6), 16) / 255, tonumber(lq:sub(7, 8), 16) / 255) end
       else cc.item:SetText("") end
-      cc.result:SetText((r.what or "") .. ((r.what == "Posted" and r.hours) and (", " .. UI.fmtDur(r.hours * 3600)) or ""))
+      cc.result:SetText((r.what or "") .. ((varied and r.what == "Posted" and r.hours) and (", " .. UI.fmtDur(r.hours * 3600)) or ""))
       if cc.player then cc.player:SetText(r.note or "") end
       cc.price:SetText(r.price and money(r.price) or "")
     end)
     -- (all time is the rows the save still holds for this character: the header says where they start, once, and
     -- the one remark says so when stored rows are left out)
     if sc.lifetime and #list > 0 then c.section:SetLabel("Auctions since " .. UI.fmtSince(num(list[#list].t))) end
-    if sum.unowned > 0 and #list > 0 then c.section:SetMeta("not every row is kept", GP.PARTIAL_AH_TIP) end
-    if #list == 0 then tbl.setState(ans and "No auction row of this period is kept." or GP.NO_AUCTION) end
+    local left = sum.unowned + sum.bids + sum.ended
+    if left > 0 and #list > 0 then c.section:SetMeta("not every row is listed", GP.partialAhTip(sum)) end
+    if #list == 0 then tbl.setState((ans or left > 0) and "No auction row of this period is listed." or GP.NO_AUCTION) end
   end
   -- the section header's right side, right to left: the view, then search (Journal only)
   local right = c.section.right

@@ -19,6 +19,10 @@ for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "R
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
 end
 local T = ns._test or {}
+-- "This session" joins logins less than 5 minutes apart (Gold.joined, docs/UX_PRAGMATIC.md 0.2.4). The suite's
+-- sessions follow each other with no time between them and each test means the one record it made, so the join is
+-- off here; its own tests switch it on (tests/panes/gold.lua) and tests/real_truth.lua runs with it.
+ns.Gold.JOIN_S = 0
 -- Home > Activity is removed (docs/UX_PRAGMATIC.md 0.5, 1.3): its tab is not shown and nothing links to it. The page's
 -- code is still loaded until the Activity work deletes it, and its own tests below open it behind this switch.
 check("Activity: the tab is off unless switched on", ns.ACTIVITY_TAB == nil and ns.UI.SubVisible("Home", "activity") == false)
@@ -1778,7 +1782,8 @@ check("won mail whose invoice fits no purchase is its own row, with the item and
 check("the bid placed earlier keeps no guessed name", (function() for _, b in ipairs(ns.DB.loot.ah.bought) do if b.auctionId == 9001 and b.item ~= nil then return false end end return true end)())
 M.fire("MAIL_CLOSED")
 local arows, asum = ns.Market.buildAuctions()
-check("auctions pane rows and sums", #arows >= 5 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 12345 + 240, asum.spent)
+-- (the bid of 12,345 has no item and no auction mail names its price: it is counted as a bid, not as bought)
+check("auctions pane rows and sums", #arows >= 4 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 240 and asum.bids == 1, asum.spent)
 local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
 check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.char().crafts, ns.char().recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())

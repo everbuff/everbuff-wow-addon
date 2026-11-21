@@ -161,10 +161,11 @@ function UI.Text(parent, role, color, opts)
   return fs
 end
 -- capitals, with the escapes left as they are (a money icon's "|T...|t", a colour's "|c...", "|r", a link's "|H...|h")
+-- (the brand is everbuff.gg in lower case wherever it stands, also inside a label drawn in capitals)
 function UI.upper(text)
   local esc = {}
   local function keep(m) esc[#esc + 1] = m; return "\001" .. #esc .. "\002" end
-  local t = tostring(text):gsub("|T.-|t", keep):gsub("|H.-|h", keep):gsub("|c%x%x%x%x%x%x%x%x", keep):gsub("|r", keep)
+  local t = tostring(text):gsub("|T.-|t", keep):gsub("|H.-|h", keep):gsub("|c%x%x%x%x%x%x%x%x", keep):gsub("|r", keep):gsub("everbuff%.gg", keep)
   t = t:upper():gsub("\001(%d+)\002", function(i) return esc[tonumber(i)] end)
   return t
 end

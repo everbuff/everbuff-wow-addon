@@ -7,7 +7,9 @@
 --             hour, units still to come); deliveries with no purchase are "Collected" with no price, the mails of
 --             one item taken together folded into one row; a sale's price is what the buyer paid and its count the
 --             posting's only when that posting is one lot; a stored net that is not the invoice's sum is dropped; a
---             bid named by the old "newest row without a name" rule shows no item
+--             bid with no item of its own (or one named by the old "newest row without a name" rule) is a row only
+--             when an auction mail of its session names its price (Market.invoiceNames); a posting with a stored
+--             outcome is only its Sold, Expired or Cancelled row, and one with none is a row while its time runs
 --   capture   Market.mailItem names a bid by the invoice's amount only, counts commodity deliveries on the priced
 --             row, and never renames a row
 --   journal   an auction row of the journal is joined to its purchase by the exact price, and to a posting only
@@ -33,6 +35,7 @@ return function(P)
   local function find(rows, what, item) local out = {}; for _, r in ipairs(rows) do if r.what == what and (item == nil or r.item == item) then out[#out + 1] = r end end return out end
 
   -- ── rows: one purchase is one row ───────────────────────────────────────────────────────────────────────────
+  M.epoch = T + 900   -- (the rows below are looked at 15 minutes into the session: every posting can still be open)
   ahRows({
     bought = {
       -- a commodity purchase of 120 and the six mails that deliver it
@@ -103,20 +106,24 @@ return function(P)
       if r.price == 16046 or r.price == 16047 then unnamed[#unnamed + 1] = r end
       if r.price == 16499 then bag = r end
     end
-    check("auctions: a bid named by the old rule shows no item (a guess is not a fact); its price stays", #unnamed == 2 and unnamed[1].item == nil and unnamed[2].item == nil and (unnamed[1].guessed or unnamed[2].guessed) == true)
-    check("auctions: a bid named by its invoice shows the item and the seller", bag and bag.item == "Red Mageweave Bag" and bag.note == "Bagmaker" and not bag.guessed)
+    check("auctions: a bid named by the old rule (a guess is not a fact) and a bid never named are not rows: nothing says what they bought", #unnamed == 0 and sum.bids >= 2, #unnamed)
+    check("auctions: a bid named by its invoice shows the item and the seller", bag and bag.item == "Red Mageweave Bag" and bag.note == "Bagmaker" and not bag.byInvoice)
+    local blank = 0
+    for _, r in ipairs(mine) do if r.item == nil or r.item == "" then blank = blank + 1 end end
+    eq("auctions: no row is without an item", blank, 0)
     check("auctions: Market.guessed tells the three apart", Market.guessed(ns.DB.loot.ah.bought[18]) == true and Market.guessed(ns.DB.loot.ah.bought[19]) == false and Market.guessed(ns.DB.loot.ah.bought[20]) == false)
     -- sales
     local stag, sansam, boots, wolf = find(mine, "Sold", "Stag Meat")[1], find(mine, "Sold", "Golden Sansam")[1], find(mine, "Sold", "Formula: Enchant Boots - Greater Stamina")[1], find(mine, "Sold", "Red Wolf Meat")[1]
     check("auctions: a sale's price is what the buyer paid, never the mail money", stag.price == 1043 and stag.net == 1147 and boots.price == 29000 and boots.net == 28150, stag.price)
     check("auctions: a sale's count is its posting's (same item, buyout == bid)", stag.count == 7 and sansam.count == 1 and boots.count == 1, stag.count)
-    check("auctions: a sale with no posting stored has no count, never the invoice's slot", wolf.count == nil and wolf.price == 759)
+    check("auctions: a sale with no posting stored has no count, never the invoice's slot", wolf.count == nil and wolf.price == 759 and wolf.postedAt == nil)
+    check("auctions: a posting that sold is only its Sold row, which knows when it was posted", #find(mine, "Posted") == 0 and stag.postedAt == T + 500 and sansam.postedAt == T + 504 and boots.postedAt == T + 600, #find(mine, "Posted"))
     check("auctions: cut and deposit ride along for the tooltip", stag.cut == 52 and stag.deposit == 156)
     -- the sums: purchases with a price only
     local n, spent = 0, 0
     for _, r in ipairs(find(mine, "Bought")) do n = n + 1; spent = spent + (r.price or 0) end
-    check("auctions: the purchases are the priced rows", n == 8 and spent == 53300 + 22780 + 22780 + 22763 + 281985 + 16046 + 16499 + 16047, n .. " " .. spent)
-    check("auctions: the sum counts purchases and deliveries apart", sum.bought >= 8 and sum.won >= 3)
+    check("auctions: the purchases are the priced rows that have an item", n == 6 and spent == 53300 + 22780 + 22780 + 22763 + 281985 + 16499, n .. " " .. spent)
+    check("auctions: the sum counts purchases and deliveries apart", sum.bought >= 6 and sum.won >= 3)
     -- newest first
     local sorted = true
     for i = 2, #rows do if (rows[i].t or 0) > (rows[i - 1].t or 0) then sorted = false end end
@@ -131,7 +138,8 @@ return function(P)
     check("auctions of a session: sold 4, what the buyers paid, the cut, the deposits, the mail money", sum.sold == 4 and sum.sales == 1043 + 1211 + 29000 + 759 and sum.cut == 52 + 60 + 1450 + 37
       and sum.deposit == 156 + 20 + 600 + 52 and sum.mail == 1147 + 1171 + 28150 + 774, sum.sales)
     eq("auctions of a session: the mail money is sales minus cut plus deposits", sum.mail, sum.sales - sum.cut + sum.deposit)
-    check("auctions of a session: bought 8, 2 deliveries with no purchase (the third is another session's), posted 3, expired 1", sum.bought == 8 and sum.won == 2 and sum.posted == 3 and sum.expired == 1, ("%d %d %d %d"):format(sum.bought, sum.won, sum.posted, sum.expired))
+    check("auctions of a session: bought 6, 2 deliveries with no purchase (the third is another session's), no open posting (the 3 sold), expired 1; 2 bids are not rows",
+      sum.bought == 6 and sum.won == 2 and sum.posted == 0 and sum.expired == 1 and sum.bids == 2 and sum.ended == 0, ("%d %d %d %d %d %d"):format(sum.bought, sum.won, sum.posted, sum.expired, sum.bids, sum.ended))
     local a = GP.auctionAnswer(sc.ledger)
     check("answer: Spent and Received are the ledger's, Net is Received minus Spent", a.spent == 453000 and a.received == 31242 and a.net == 31242 - 453000)
     local plain = table.concat(a.segs, " | "):gsub("|T.-|t", ""):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " ")
@@ -218,7 +226,7 @@ return function(P)
     local rows = Market.buildAuctions()
     local won, bought = 0, 0
     for _, r in ipairs(rows) do if r.s == SID then if r.what == "Collected" then won = won + 1 elseif r.what == "Bought" then bought = bought + 1 end end end
-    check("capture: the pane then lists 4 purchases and 5 deliveries with no purchase", bought == 4 and won == 5, bought .. " " .. won)
+    check("capture: the pane then lists 3 purchases (the bid nothing named is not a row) and 5 deliveries with no purchase", bought == 3 and won == 5, bought .. " " .. won)
     ns.DB.active = active
   end
 
@@ -272,7 +280,8 @@ return function(P)
     local plate = find(mine, "Sold", "Runed Copper Breastplate")
     check("round 1: a sale of one of them takes no count from the posting of ten", #plate == 2 and plate[1].count == nil and plate[2].count == nil, tostring(plate[1].count) .. " " .. tostring(plate[2].count))
     local silk = find(mine, "Sold", "Ironweb Spider Silk")[1]
-    check("round 1: a commodity lot sold whole still gives its count", silk.count == 3 and find(mine, "Posted", "Ironweb Spider Silk")[1].lots == nil)
+    check("round 1: a commodity lot sold whole still gives its count, and is one row", silk.count == 3 and silk.postedAt == T + 101 and #find(mine, "Posted", "Ironweb Spider Silk") == 0)
+    check("round 1: ten auctions of which two sold: the posting stays a row while eight can still be open", #find(mine, "Posted", "Runed Copper Breastplate") == 1 and plate[1].postedAt == T + 100)
     local az, moc = find(mine, "Sold", "Azora's Will")[1], find(mine, "Sold", "Moccasins of the White Hare")[1]
     check("round 1: a stored net that is not bid - cut + deposit is dropped, the invoice's figures stay", az.net == nil and az.price == 4400 and az.cut == 220 and az.deposit == 210 and moc.net == nil)
     check("round 1: a net that is the invoice's sum is kept", plate[1].net == 980 and silk.net == 15825)
@@ -290,6 +299,106 @@ return function(P)
     eq("round 1: the mail money of a period is the invoices' (sales - cut + deposits), never a stored net", sumS.mail, sumS.sales - sumS.cut + sumS.deposit)
     eq("round 1: a period of sessions cannot count the rows of sessions that are gone", sumS.unowned, 0)
     eq("round 1: four delivery mails with no purchase in the session", sumS.won, 4)
+  end
+
+  -- ── review round 2: one row per auction, and no row without an item ────────────────────────────────────────
+  do
+    local log = ns.DB.loot.log
+    local n0 = #log
+    local keepEpoch = M.epoch
+    local function won(dt, item, id, bid, seller) log[#log + 1] = { s = SID, t = T + dt, item = item, id = id, count = 1, src = "Auction won", mail = { bid = bid, buyout = bid, seller = seller, subject = "Auction won: " .. item } } end
+    ahRows({
+      bought = {
+        -- the founder's 17 Nov: eight PlaceBid rows with guessed names, two of them on one auction; five won mails
+        -- of Red Mageweave Bag, 16,046 and 4 x 16,499
+        { s = SID, t = T + 57, auctionId = 142300059, price = 16046, count = 1, kind = "item", item = "Silk Cloth", id = 4306 },
+        { s = SID, t = T + 59, auctionId = 142300059, price = 16046, count = 1, kind = "item", item = "Wool Cloth", id = 2592 },
+        { s = SID, t = T + 67, auctionId = 142310355, price = 16047, count = 1, kind = "item", item = "Wool Cloth", id = 2592 },
+        { s = SID, t = T + 70, auctionId = 142318523, price = 16046, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051, seller = "Wrong Guess" },
+        { s = SID, t = T + 75, auctionId = 142310003, price = 16047, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051 },
+        { s = SID, t = T + 81, auctionId = 132895591, price = 16499, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051 },
+        { s = SID, t = T + 84, auctionId = 132893650, price = 16499, count = 1, kind = "item", item = "Red Mageweave Bag", id = 10051 },
+        { s = SID, t = T + 87, auctionId = 132893638, price = 16499, count = 1, kind = "item" },
+        -- a purchase that has its item: a won mail of its price is its own and names no bid
+        { s = SID, t = T + 90, item = "Mithril Casing", id = 10561, count = 1, price = 4685, kind = "item", named = "bid" },
+        { s = SID, t = T + 91, auctionId = 5, price = 4685, count = 1, kind = "item" },
+        -- a bid of another session with the same price: a mail of this session does not name it
+        { s = SID2, t = T + 3800, auctionId = 6, price = 16499, count = 1, kind = "item" },
+      },
+      posted = {
+        { s = SID, t = T + 10, item = "Fadeleaf", id = 3818, count = 1, buyout = 375, hours = 24, kind = "commodity" },             -- sold
+        { s = SID, t = T + 11, item = "Raider's Belt", id = 9788, count = 1, buyout = 400, hours = 12, kind = "item" },              -- expired
+        { s = SID, t = T + 12, item = "Red Leather Bag", id = 2657, count = 1, buyout = 1600, hours = 24, kind = "item" },           -- cancelled
+        { s = SID, t = T + 13, item = "Sprite Darter Egg", id = 11474, count = 1, buyout = 650, hours = 24, kind = "item" },         -- no outcome
+        { s = SID, t = T + 14, item = "Gorilla Fang", id = 2799, count = 12, buyout = 2352, hours = 48, kind = "commodity" },        -- no outcome, 48 h
+        { s = SID, t = T + 15, item = "Fadeleaf", id = 3818, count = 1, buyout = 375, hours = 24, kind = "commodity" },              -- the second of two, one sale
+        { s = SID, t = T + 16, item = "Raider's Belt", id = 9788, count = 2, buyout = 800, hours = 12, kind = "commodity" },         -- another count than the return
+      },
+      sold = { { s = SID, t = T + 3000, item = "Fadeleaf", bid = 375, buyout = 1, cut = 18, deposit = 10, net = 367 } },
+      returned = { { s = SID, t = T + 600, item = "Red Leather Bag", id = 2657, count = 1, reason = "cancelled" } },
+    })
+    won(109, "Red Mageweave Bag", 10051, 16046, "Putrid Deathgasp")
+    won(110, "Red Mageweave Bag", 10051, 16499, "Bagmaker One")
+    won(110, "Red Mageweave Bag", 10051, 16499, "Bagmaker Two")
+    won(110, "Red Mageweave Bag", 10051, 16499, "Bagmaker Two")
+    won(111, "Red Mageweave Bag", 10051, 16499, "Bagmaker One")
+    won(112, "Mithril Casing", 10561, 4685, "Smith")
+    -- an hour in: every posting can still be open
+    M.epoch = T + 3600
+    local rows, all = Market.buildAuctions()
+    local mine = {}
+    for _, r in ipairs(rows) do if r.s == SID or r.s == SID2 then mine[#mine + 1] = r end end
+    local bags = find(mine, "Bought", "Red Mageweave Bag")
+    local got = {}
+    for _, r in ipairs(bags) do got[#got + 1] = (r.t - T) .. ":" .. r.price .. ":" .. tostring(r.note) .. ":" .. tostring(r.byInvoice) end
+    eq("round 2: a bid is named by the won mail of its session with exactly its price: the newest bid of 16,046 and the three of 16,499, each with the mail's seller",
+      table.concat(got, " "), "87:16499:Bagmaker One:true 84:16499:Bagmaker Two:true 81:16499:Bagmaker Two:true 70:16046:Putrid Deathgasp:true")
+    local blank, guessedName = 0, 0
+    for _, r in ipairs(mine) do
+      if r.item == nil then blank = blank + 1 end
+      if r.what == "Bought" and (r.item == "Silk Cloth" or r.item == "Wool Cloth") then guessedName = guessedName + 1 end
+    end
+    eq("round 2: no purchase row is without an item, and no guessed name is shown", blank .. " " .. guessedName, "0 0")
+    eq("round 2: the bids nothing names are counted, not listed: two on one auction, two of 16,047, the one beside a named purchase, the one of another session", all.bids, 6)
+    eq("round 2: the fifth mail (a fourth 16,499) has no bid left and adds no row", #bags, 4)
+    eq("round 2: a purchase that has its item keeps its own mail", #find(mine, "Bought", "Mithril Casing"), 1)
+    eq("round 2: only the rows with an item count as bought", all.bought .. " " .. all.spent, "5 " .. (16046 + 3 * 16499 + 4685))
+    eq("round 2: nothing is written into the stored rows", tostring(ns.DB.loot.ah.bought[8].item) .. " " .. ns.DB.loot.ah.bought[1].item, "nil Silk Cloth")
+    local tipB = (function() local tip = _G.GameTooltip; tip:ClearLines(); GP.auctionTip(nil, bags[1], tip); return table.concat(tip.lines or {}, "\n") end)()
+    check("round 2: the hover says where the name comes from", tipB:find("auction mail of this price", 1, true) ~= nil, tipB)
+    -- one row per auction
+    local posted = find(mine, "Posted")
+    got = {}
+    for _, r in ipairs(posted) do got[#got + 1] = r.item end
+    table.sort(got)
+    eq("round 2: a posting with its outcome is not a row: the sold Fadeleaf and the cancelled bag are gone, the rest can still be open", table.concat(got, ","), "Fadeleaf,Gorilla Fang,Raider's Belt,Raider's Belt,Sprite Darter Egg")
+    eq("round 2: the Sold and Cancelled rows know when they were posted (the oldest posting of that item)", find(mine, "Sold", "Fadeleaf")[1].postedAt .. " " .. find(mine, "Cancelled")[1].postedAt, (T + 10) .. " " .. (T + 12))
+    eq("round 2: the open postings are counted", all.posted .. " " .. all.ended, "5 0")
+    -- 13 hours in: the 12 h postings have run out, one came back
+    M.epoch = T + 13 * 3600
+    table.insert(ns.DB.loot.ah.returned, { s = SID, t = T + 12 * 3600 + 500, item = "Raider's Belt", id = 9788, count = 1, reason = "expired" })
+    rows, all = Market.buildAuctions()
+    mine = {}
+    for _, r in ipairs(rows) do if r.s == SID then mine[#mine + 1] = r end end
+    got = {}
+    for _, r in ipairs(find(mine, "Posted")) do got[#got + 1] = r.item end
+    table.sort(got)
+    eq("round 2: a posting whose time ran out is no longer a row: the belt that came back is its Expired row, the lot of 2 has no outcome recorded", table.concat(got, ","), "Fadeleaf,Gorilla Fang,Sprite Darter Egg")
+    eq("round 2: the returned belt of 1 ends the posting of 1, not the lot of 2", find(mine, "Expired")[1].postedAt, T + 11)
+    eq("round 2: the posting with no recorded outcome is counted, not listed", all.ended, 1)
+    -- three days in: nothing can be open
+    M.epoch = T + 3 * 86400
+    rows, all = Market.buildAuctions()
+    local open = 0
+    for _, r in ipairs(rows) do if r.s == SID and r.what == "Posted" then open = open + 1 end end
+    eq("round 2: three days later no posting is listed; four ended with no outcome recorded", open .. " " .. all.ended, "0 4")
+    local _, sumS = GP.auctions({ sessions = { sess }, ledger = {} })
+    eq("round 2: a period counts its own bids and ended postings", sumS.bids .. " " .. sumS.ended .. " " .. sumS.posted, "5 4 0")
+    local tipText = GP.partialAhTip(sumS).text
+    check("round 2: the remark's hover names each reason with its count", tipText:find("5 bids with no item recorded", 1, true) ~= nil and tipText:find("4 postings whose time ran out", 1, true) ~= nil
+      and tipText:find("desktop app", 1, true) == nil, tipText)
+    for i = #log, n0 + 1, -1 do log[i] = nil end
+    M.epoch = keepEpoch
   end
 
   -- ── journal: the item behind an auction row ────────────────────────────────────────────────────────────────
