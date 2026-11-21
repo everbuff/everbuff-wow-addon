@@ -298,18 +298,6 @@ end
 function UI.fmtRange(a, b, live)
   return UI.fmtClock(a) .. " to " .. ((live or not b) and "now" or UI.fmtClock(b))
 end
--- the TYPE word of every story event kind, sentence case, one table for Activity and every list that names a kind
--- (docs/UX_OVERHAUL.md 4.2). tests/panes/columns.lua checks that every kind the addon writes has one.
-UI.KIND_LABEL = {
-  LEVELUP = "Level", ZONE = "Zone", FIRSTZONE = "New zone", DISCOVERY = "Discovery", FLIGHT = "Flight path", FLIGHTTRIP = "Flight",
-  DUNGEON = "Dungeon", DUNGEONLEAVE = "Dungeon", QUESTACCEPT = "Quest", QUESTDONE = "Quest", REWARD = "Reward",
-  BOSS = "Boss", KILL = "Kill", WIPE = "Wipe", DEATH = "Died", ALIVE = "Revived", ROSTERJOIN = "Party", ROSTERLEAVE = "Party",
-  LOOT = "Loot", COLLECT = "Collected", UPGRADE = "Gear", BROKEN = "Gear", GOLDAWAY = "Gold",
-  SKILLUP = "Skill", RECIPE = "Recipe", PROFTIER = "Profession", ACHIEV = "Achievement", SPELL = "Learned", REP = "Reputation",
-  VENDOR = "Merchant", TRAINER = "Trainer", MAIL = "Mail", AUCTION = "Auction", TRADE = "Trade", BANK = "Bank",
-}
--- the event results that carry a colour (2.5 rule 3): a kill is good, a wipe and a death are bad
-UI.KIND_RESULT = { KILL = "good", WIPE = "bad", DEATH = "bad" }
 local PLURAL = { entry = "entries", faction = "factions", copy = "copies", party = "parties", ["party member"] = "party members" }
 -- "1 item", "2 items", "3 entries"
 function UI.plural(n, word, many)
@@ -1508,7 +1496,7 @@ function UI.SubTabs(parent, items, opts)
     ctl.hidden = set or {}
     ctl.layoutTabs()
   end
-  -- a pane not yet rebuilt on the kit (Sessions, Activity, Fights) ends where its host's converted pages end, at
+  -- a pane not yet rebuilt on the kit (Fights) ends where its host's converted pages end, at
   -- BOX_L + MAIN_W, so every page of the host shares one right edge
   function ctl.clamp(key)
     local p = ctl.panes[key]
@@ -2800,7 +2788,8 @@ UI.ALIASES = {
   ["Combat/fights"] = { "Home", "fights" },
   ["Combat/deaths"] = { "Home", "deaths" },
   ["Home/overview"] = { "Home", "now" },
-  ["Home/timeline"] = { "Home", "activity" },
+  ["Home/timeline"] = { "Home", "now" },
+  ["Home/activity"] = { "Home", "now" },
   -- the auctions are a breakdown of Gold now (4.9): the old key opens Gold on Auction house
   ["Loot/auctions"] = { "Loot", "gold", function() if ns.Gold and ns.Gold.open then ns.Gold.open("all", "auctions") end end },
   -- Quests fold into Leveling and Crafting into Professions (4.10, 4.11); Settings > Capture and Data are one page,
@@ -2823,7 +2812,7 @@ end
 -- the settings keys of the new window (3.1), their defaults, and the migration of a 0.9.51 save
 UI.SETTING_DEFAULTS = {
   lastTab = "Home", lastSub = "now", fightsView = "important", itemsQuality = "green", itemsMode = "newest",
-  sessionsShowShort = false, goldPeriod = "session", welcomeDone = false, advancedOpen = false,
+  goldPeriod = "session", welcomeDone = false, advancedOpen = false,
 }
 function UI.MigrateSettings(s)
   if type(s) ~= "table" then return end

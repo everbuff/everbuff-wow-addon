@@ -114,8 +114,7 @@ function R.start()
   row("SESSION_START", string.format("%s\t%s\t%s\tlvl=%d", sess.player or "?", sess.realm or "?", context, sess.level))
   local aclOn, combatOn = ns.Logging.enforce()
   row("LOGGING", string.format("acl=%d\tcombat=%d", aclOn and 1 or 0, combatOn and 1 or 0))
-  ns.msg(("recording %s%s|r · %ssession %s|r · the combat log is the record; this is just the beacon")
-    :format(ns.CYAN, context, ns.CYAN, sess.id))
+  ns.msg(("capturing %s%s|r · %ssession %s|r"):format(ns.CYAN, context, ns.CYAN, sess.id))
 end
 
 -- PLAYER_LOGOUT fires on a /reload as well as on a real logout (#14), and WoW writes the save file right after it. So

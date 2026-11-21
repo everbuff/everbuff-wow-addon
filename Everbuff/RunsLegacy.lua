@@ -119,8 +119,11 @@ function L.inSession(sess)
   local c = me()
   if not (c and type(sess) == "table") then return 0 end
   local a = num(sess.startedEpoch)
-  local z = type(sess.endedEpoch) == "number" and sess.endedEpoch or math.huge
-  if a <= 0 then return 0 end
+  -- (a record with no stored end is open-ended only while it is the running session; one the client closed without
+  -- saving has no known span, so no run is counted for it)
+  local running = ns.Recorder and ns.Recorder.current and ns.Recorder.current() == sess
+  local z = type(sess.endedEpoch) == "number" and sess.endedEpoch or (running and math.huge or nil)
+  if a <= 0 or not z then return 0 end
   local n = 0
   local function count(list)
     for _, r in ipairs(type(list) == "table" and list or {}) do

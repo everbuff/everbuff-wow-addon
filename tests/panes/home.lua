@@ -282,6 +282,13 @@ return function(P)
     reopen()
     check("Now at the cap: WORTH A LOOK lists the 3 largest gold lines, largest first", #c.lookList == 3 and c.lookList[1].title == "Buyout" and c.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 " .. UI.fmtClock(1800000000)
       and c.lookList[2].meta:find(UI.money(-27880, true), 1, true) == 1 and c.lookList[3].title == "Loot" and c.lookHead:IsShown() and shown(c.lookRows) == 3, c.lookList[1] and c.lookList[1].meta)
+    -- a sale says which way the gold went, as a purchase does; a sale with no item named stays the source's word
+    ns.Gold.entries = function() return {
+      { delta = 28150, src = "auctionSales", detail = "Formula: Enchant Boots - Greater Stamina", t = 1800000000 },
+      { delta = -281985, src = "auctions", detail = "Bought Black Lotus x3", t = 1800000100 }, { delta = 900, src = "auctionSales", detail = "", t = 1800000200 } } end
+    reopen()
+    eq("Now at the cap: a purchase and a sale are both named by what happened", c.lookList[1].title .. " | " .. c.lookList[2].title, "Bought Black Lotus x3 | Sold Formula: Enchant Boots - Greater Stamina")
+    check("Now at the cap: a sale with no item named is not called Sold of nothing", c.lookList[3].title ~= "Sold " and not c.lookList[3].title:find("^Sold"), c.lookList[3].title)
     ns.Gold.entries = keepEntries
     -- the name: whole, or not at all
     local first = (keepName("player"))

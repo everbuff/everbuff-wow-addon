@@ -1,5 +1,5 @@
 -- Pane tests: gold, one model on every surface (everbuff-wow-addon #38). Everbuff/Economy.lua holds the model
--- (ns.Gold) and LOOT > Gold (docs/UX_PRAGMATIC.md 4.2); Home / Sessions shows a session's gold band. Played on
+-- (ns.Gold) and LOOT > Gold (docs/UX_PRAGMATIC.md 4.2); a Home / Sessions row opens its session's journal. Played on
 -- tests/play_gold.lua ("gold": two evenings with a name behind every row).
 --   model     every journal row parsed, the balance chain intact, each source summing to the session ledger, the
 --             quest, item, merchant, mob and player named, Location and Coordinates only from the row's own record
@@ -533,65 +533,23 @@ return function(P)
     check("Gold: the pane registers no events (it refreshes when it is shown)", #listening == 0, table.concat(listening, ","))
   end
 
-  -- ── Home / Sessions: the gold band ──────────────────────────────────────────────────────────────────────────
-  for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
-    for _, data in ipairs({ "gold", "goldlong" }) do
-      local tag = ("Sessions gold %dx%d %s"):format(size[1], size[2], data)
-      local c = P.open("home", "sessions", size[1], size[2], data)
-      ns.UI.Open("Home", "sessions"); M.settle()
-      local band, cb = c.goldBand, P.box(c)
-      local bb = P.box(band)
-      local ses = ns.Recorder.current()
-      -- (A17: the gold block flows S5 under the list, its section header names the session as the list does)
-      local under = c.shortLine:IsShown() and (P.box(c.shortLine).t + UI.H.DAY_ROW) or (P.box(c.tbl.frame).t + c.tbl.height)
-      check(tag .. ": the gold block flows S5 under the list", P.visible(band) and near(P.box(c.goldHead).t, under + UI.S.S5, 1), P.box(c.goldHead).t .. " vs " .. under)
-      check(tag .. ": the block opens on the running session: When, length, net and pace in coins", c.goldHead.label.text:find(UI.fmtWhen(ses.startedEpoch):upper(), 1, true) ~= nil and band.title.text:find("net " .. UI.money(ses.gained - ses.spent, true), 1, true) and band.title.text:find("per hour$") ~= nil, c.goldHead.label.text .. " | " .. band.title.text)
-      local bad = {}
-      local lastR
-      for i, b in ipairs(band.blocks) do
-       if b.shown ~= false then
-        local x = P.box(b)
-        if x.l < bb.l or x.l + x.w > bb.l + bb.w or x.t + x.h > bb.t + bb.h + 0.5 then bad[#bad + 1] = "block " .. i .. " outside the band" end
-        if lastR and x.l < lastR + UI.SP.L - 0.5 then bad[#bad + 1] = "block " .. i .. " too close" end
-        lastR = x.l + x.w
-        for _, fs in ipairs(b.lines) do
-          local fb = P.box(fs)
-          if (fs.text or "") ~= "" and (fb.t + fb.h > bb.t + bb.h - 4) then bad[#bad + 1] = "line past the band: " .. fs.text end
-          if (fs.text or "") ~= "" and fs:IsTruncated() then bad[#bad + 1] = "cut: " .. fs.text end
-        end
-       end
-      end
-      -- under WIDE the BEST EARNERS block gives its room to the other three (no line cut at 900)
-      check(tag .. ": BEST EARNERS shows at WIDE only", (band.blocks[2].shown ~= false) == UI.G.isWide(UI.G.winW()))
-      local tb = P.box(band.title)
-      if tb.l + tb.w > bb.l + bb.w + 0.5 then bad[#bad + 1] = "title past the panel" end
-      check(tag .. ": the blocks side by side inside the panel, S5 apart", #bad == 0, table.concat(bad, "; "))
-      eq(tag .. ": block heads", band.blocks[1].head.text .. "|" .. band.blocks[2].head.text .. "|" .. band.blocks[3].head.text .. "|" .. band.blocks[4].head.text, "TOP SOURCES|BEST EARNERS|BIGGEST SINKS|NOTES")
-      check(tag .. ": top source, best quest, biggest sink and the strangers are named",
-        band.blocks[1].lines[1].text:find("^Trades received  ") and band.blocks[2].lines[1].text:find("^Quest: The Defias Brotherhood") and band.blocks[3].lines[1].text:find("^Auction house  ")
-        and band.blocks[4].lines[1].text:find("^Traded with: Xzqtgold") and band.blocks[4].lines[2].text:find("^Not traced: ") and band.blocks[4].lines[3].text:find("^Above vendor price: 1 sale"), band.blocks[4].lines[1].text)
-    end
-  end
+  -- ── Home / Sessions: a row opens its session's journal here (the gold block under the list is cut, 1.2) ──
   do
     local c = P.open("home", "sessions", 1250, 760, "gold")
     ns.UI.Open("Home", "sessions"); M.settle()
-    local band = c.goldBand
     local prevRow
-    for _, r in ipairs(shown(c.tbl.rows)) do if r.item.endedEpoch and r.item.gold and (r.item.gold.training or 0) == 1200 then prevRow = r end end
+    for _, r in ipairs(shown(c.tbl.rows)) do
+      local s0 = r.item and r.item.sess
+      if s0 and s0.endedEpoch and s0.gold and (s0.gold.training or 0) == 1200 then prevRow = r end
+    end
     check("Sessions gold: the first evening's row was found", prevRow ~= nil)
-    click(prevRow)
-    check("Sessions gold: a click on a row shows that session's gold", c.goldHead.label.text:find(UI.fmtWhen(prevRow.item.startedEpoch):upper(), 1, true) ~= nil and band.blocks[2].lines[1].text:find("^Quest: The Jasperlode Mine") ~= nil and band.blocks[3].lines[1].text:find("^Training  12" .. UI.NBSP .. "|T[^|]*SilverIcon") ~= nil, band.blocks[3].lines[1].text)
-    check("Sessions gold: the shown row is the selected one", c.tbl.selected == prevRow.item)
-    click(c.goldHead.link)
-    local gold
-    for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then gold = tab.paneByKey.gold.content end end
-    check("Sessions gold: the button opens that session's journal in the Gold pane", P.visible(gold) and gold.st.scope == prevRow.item.id and gold.st.view == "journal" and gold.period.value == nil and #dataRows(gold.tbl.journal) == #prevRow.item.goldLog, gold.st.scope)
-    -- a session from before 0.9.40
-    local ses = ns.Recorder.current()
-    ses.goldLog, ses.trades, ses.goldLogDropped = nil, nil, nil
-    ns.UI.Open("Home", "sessions"); M.settle()
-    click(shown(c.tbl.rows)[1])
-    check("Sessions gold: a session without a journal keeps its top sources and says why the rest is empty", band.blocks[1].lines[1].text:find("^Trades received") ~= nil and band.blocks[2].lines[1].text == "Recorded before addon 0.9.40" and band.blocks[4].lines[1].text:find("^Changed while away: %+42") ~= nil, band.blocks[2].lines[1].text)
+    if prevRow then
+      local sess = prevRow.item.sess
+      click(prevRow)
+      local gold
+      for _, tab in ipairs(P.T.tabs) do if tab.name == "Loot" then gold = tab.paneByKey.gold.content end end
+      check("Sessions gold: a click on a row opens that session's journal in the Gold pane", P.visible(gold) and gold.st.scope == sess.id and gold.st.view == "journal" and gold.period.value == nil and #dataRows(gold.tbl.journal) == #sess.goldLog, gold.st.scope)
+    end
   end
   -- ── day periods: the day rows, where the history starts, and when Sources is not offered ────────────────────
   local DAY = 86400

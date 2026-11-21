@@ -11,23 +11,7 @@ local UI = ns.UI
 local C = ns.UI.C
 local S, G, H = UI.S, UI.G, UI.H
 
--- ── formatting (the Sessions half below still reads these) ─────────────────────────
 local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
--- (the not-yet-redesigned Sessions tab speaks the kit's money dialect: coin icons, the two largest units, 2.5)
-local function coin2(c) return ns.fmtMoney(c, { icons = true, units = 2 }) end
-local function fmtTime(sec)
-  sec = math.floor(tonumber(sec) or 0)
-  if sec <= 0 then return "-" end
-  local d, h, m = math.floor(sec / 86400), math.floor((sec % 86400) / 3600), math.floor((sec % 3600) / 60)
-  if d > 0 then return ("%dd %dh"):format(d, h) end
-  if h > 0 then return ("%dh %dm"):format(h, m) end
-  return m .. "m"
-end
-local function commas(n)
-  n = tostring(math.floor(tonumber(n) or 0))
-  local out = n:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
-  return out
-end
 local function nowT() return (GetServerTime and GetServerTime()) or time() end
 local function num(v) return (type(v) == "number" and v == v) and v or 0 end
 local function curSession() return (ns.Recorder and ns.Recorder.current and ns.Recorder.current()) or nil end
@@ -575,6 +559,8 @@ function Now.goldLines()
     local title = (type(r.detail) == "string" and r.detail ~= "") and r.detail or word or label or "Gold"
     -- (a flight or a training row's detail is only the name of who was paid: "Flight: Tal")
     if (r.src == "flights" or r.src == "training") and word and title ~= word then title = word .. ": " .. title end
+    -- (a sale's detail is the item alone; beside "Bought Black Lotus x3" it says which way the gold went)
+    if r.src == "auctionSales" and title == r.detail then title = "Sold " .. title end
     local parts = { UI.money(r.delta, true) }
     if label and label ~= title then parts[#parts + 1] = label end
     parts[#parts + 1] = UI.fmtClock(r.t)
@@ -1024,7 +1010,10 @@ end
 local build, refresh = Now.build, Now.refresh
 
 
--- ── HOME / Sessions: one row per play session (login -> logout), newest first ─────
+-- ── HOME / Sessions: what each play session gave (docs/UX_PRAGMATIC.md 1.2) ───────────────────────────────────
+-- One line for the week, then one table under day rows. A row is a session, not a login: logins of the character
+-- less than 5 minutes apart are one row (Gold.joined, the one definition of "this session"). Every cell is a stored
+-- counter of the session records; a counter a record does not hold is a blank cell, a stored zero reads "0".
 local sessionsRebuild, sessionsView
 local function sessionRows()
   local out = {}
@@ -1038,110 +1027,176 @@ local function sessionRows()
   end)
   return out
 end
--- a strip of bars, one per session (oldest left), value scaled to the strip height; negative values
--- hang below the baseline in ember. Pooled textures; hover names the session and value. The strip is as wide as
--- the pane gives it (placeStrips): each of the STRIP_N slots is stripW / STRIP_N wide and holds a bar of at most
--- BAR_MAX px, centred in it.
-local STRIP_N, STRIP_H, BAR_W, BAR_GAP, BAR_MAX = 10, 44, 28, 4, 56
-local function makeStrip(parent, label, n)
-  local st = CreateFrame("Frame", nil, parent); st:SetSize((n or STRIP_N) * (BAR_W + BAR_GAP), STRIP_H + 18)
-  st.n = n or STRIP_N
-  st.slot, st.barW = BAR_W + BAR_GAP, BAR_W
-  st.title = UI.Text(st, "LABEL", "fgMuted"); st.title:SetPoint("TOPLEFT", 0, 0); UI.SetText(st.title, label)
-  st.base = st:CreateTexture(nil, "ARTWORK"); st.base:SetPoint("BOTTOMLEFT", 0, 0); st.base:SetPoint("BOTTOMRIGHT", 0, 0); st.base:SetHeight(1)
-  st.base:SetColorTexture(C.line[1], C.line[2], C.line[3], 1)
-  st.bars, st.hits = {}, {}
-  return st
-end
--- values: array of { v = number, label = string, live = bool, sel = bool } oldest first (false leaves a slot empty);
--- fmt(v) renders the hover text. A bar is a value, never an accent (2.5): fgSubtle, the selected or the running one in
--- fg, a loss hanging below the baseline in fgMuted.
-local function renderStrip(st, values, fmt, signed)
-  st.values, st.fmt, st.signed = values, fmt, signed   -- drawn again when the strip takes a new width
-  local slot, bw = st.slot, st.barW
-  local maxAbs = 1
-  -- (a slot may be empty: false, as the Days strip of Loot > Gold leaves a day without a row)
-  for i = 1, st.n or STRIP_N do local e = values[i]; if e and math.abs(e.v) > maxAbs then maxAbs = math.abs(e.v) end end
-  local baseY = signed and STRIP_H / 2 or 0
-  st.base:ClearAllPoints(); st.base:SetPoint("BOTTOMLEFT", 0, baseY); st.base:SetPoint("BOTTOMRIGHT", 0, baseY)
-  local span = signed and STRIP_H / 2 or STRIP_H
-  for i = 1, st.n or STRIP_N do
-    local e = values[i]
-    local bar = st.bars[i]; local hit = st.hits[i]
-    if not bar then
-      bar = st:CreateTexture(nil, "ARTWORK"); st.bars[i] = bar
-      hit = CreateFrame("Frame", nil, st); hit:EnableMouse(true); st.hits[i] = hit
-      hit:SetScript("OnEnter", function(h) if h.tip and GameTooltip then GameTooltip:SetOwner(h, "ANCHOR_TOP"); GameTooltip:AddLine(h.tip, 1, 1, 1); GameTooltip:Show() end end)
-      hit:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-    end
-    if e then
-      local h = math.max(1, math.floor(math.abs(e.v) / maxAbs * (span - 2) + 0.5))
-      bar:ClearAllPoints(); bar:SetWidth(bw); bar:SetHeight(h)
-      local cx = (i - 1) * slot + slot / 2
-      if e.v < 0 then bar:SetPoint("TOP", st, "BOTTOMLEFT", cx, baseY)
-      else bar:SetPoint("BOTTOM", st, "BOTTOMLEFT", cx, baseY) end
-      local col = e.v < 0 and C.fgMuted or ((e.live or e.sel) and C.fg or C.fgSubtle)
-      bar:SetColorTexture(col[1], col[2], col[3], 1); bar:Show()
-      hit:ClearAllPoints(); hit:SetSize(slot, STRIP_H); hit:SetPoint("BOTTOMLEFT", (i - 1) * slot, 0); hit.tip = e.label .. " \194\183 " .. fmt(e.v); hit:Show()
-    else bar:Hide(); hit:Hide() end
+
+local Sess = { EMPTY_S = 5 * 60, RUNS_FROM = "0.9.50" }
+ns.Sessions = Sess
+-- "0.9.51" against "0.9.50": true when version `v` is `min` or later; false for a version that cannot be read
+function Sess.verAtLeast(v, min)
+  if type(v) ~= "string" or type(min) ~= "string" then return false end
+  local a, b = {}, {}
+  for n in v:gmatch("%d+") do a[#a + 1] = tonumber(n) end
+  for n in min:gmatch("%d+") do b[#b + 1] = tonumber(n) end
+  if #a == 0 then return false end
+  for i = 1, math.max(#a, #b) do
+    local x, y = a[i] or 0, b[i] or 0
+    if x ~= y then return x > y end
   end
+  return true
 end
-local function stripValues(rows, key, signed, selId)
-  -- rows newest first -> take the last STRIP_N, oldest left
-  local out = {}
-  local n = math.min(#rows, STRIP_N)
-  for i = n, 1, -1 do
-    local sess = rows[i]
-    local v = signed and ((tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)) or (tonumber(sess[key]) or 0)
-    out[#out + 1] = { v = v, label = UI.fmtWhen(sess.startedEpoch or 0), live = (sess.endedEpoch == nil), sel = selId ~= nil and sess.id == selId }
+local function statN(v) if type(v) == "number" and v == v then return v end return nil end
+-- The rows of the list, newest first, and how many were left out. A row: { parts (its session records, newest
+-- first), sess (the newest), id, startedEpoch (of the first login), endedEpoch (nil while it runs or when not
+-- stored), live, logins, secs (the lengths of its logins added up: the time logged out between two logins is not
+-- played; nil when a login has no stored end), level0, level, atCap (it started at the level cap: no XP to earn),
+-- xp, net, gained, spent, deaths, items, runs }. xp, net, deaths and runs are nil when no record of the row stores
+-- the counter.
+-- runs: the runs of the run store that began in the session (RunsLegacy.inSession, the Dungeons list's own rows). A
+-- count of 0 is said only for a session the run store covers (addon 0.9.50 on); before that 0 means not recorded.
+-- The session's old `dungeons` counter is never read: it counted door entries (22 for a night with 2 runs).
+-- Left out: rows under 5 minutes with nothing in them (no XP, gold, death or loot).
+function Sess.rows(now)
+  now = now or nowT()
+  local cur = curSession()
+  local all = sessionRows()
+  table.sort(all, function(a, b)
+    if num(a.startedEpoch) ~= num(b.startedEpoch) then return num(a.startedEpoch) > num(b.startedEpoch) end
+    return tostring(a.id) > tostring(b.id)
+  end)
+  local cap = plain(call(GetMaxPlayerLevel)) or 60
+  local used, rows, hidden = {}, {}, 0
+  for _, s in ipairs(all) do
+    if not used[s] then
+      local parts = {}
+      for _, p in ipairs(sessionParts(s)) do if not used[p] then used[p] = true; parts[#parts + 1] = p else break end end
+      if #parts == 0 then used[s] = true; parts[1] = s end
+      local first = parts[#parts]
+      local r = { parts = parts, sess = s, id = s.id, startedEpoch = statN(first.startedEpoch), endedEpoch = statN(s.endedEpoch),
+        live = (s == cur), logins = #parts, secs = 0, items = 0 }
+      local runsKnown, runs = true, 0
+      for _, p in ipairs(parts) do
+        local a, z = statN(p.startedEpoch), statN(p.endedEpoch) or (p == cur and now or nil)
+        if r.secs and a and z then r.secs = r.secs + math.max(0, z - a) else r.secs = nil end
+        if statN(p.xp) then r.xp = (r.xp or 0) + p.xp end
+        if statN(p.gained) or statN(p.spent) then
+          r.gained, r.spent = (r.gained or 0) + num(p.gained), (r.spent or 0) + num(p.spent)
+        end
+        if statN(p.deaths) then r.deaths = (r.deaths or 0) + p.deaths end
+        r.items = r.items + num(p.items)
+        runs = runs + (ns.RunsLegacy and ns.RunsLegacy.inSession(p) or 0)
+        -- (a login with no stored end has no known span: its runs are not known)
+        if not Sess.verAtLeast(p.addonVersion, Sess.RUNS_FROM) or not z then runsKnown = false end
+      end
+      if r.gained then r.net = r.gained - r.spent end
+      if runs > 0 or runsKnown then r.runs = runs end
+      local l1 = statN(s.level)
+      local l0 = statN(first.level0) or statN(first.level)
+      if l0 and l0 > 0 then r.level0, r.level = l0, (l1 and l1 > l0) and l1 or l0 end
+      r.atCap = r.level0 ~= nil and r.level0 >= cap
+      local empty = not r.live and r.secs ~= nil and r.secs < Sess.EMPTY_S and num(r.xp) == 0 and num(r.gained) == 0 and num(r.spent) == 0
+        and num(r.deaths) == 0 and r.items == 0
+      if empty then hidden = hidden + 1 else rows[#rows + 1] = r end
+    end
+  end
+  return rows, hidden
+end
+-- The list has gaps when the character's own totals are more than every stored session adds up to: both are bumped
+-- by the same change, so the difference is sessions whose record is gone (the desktop app removes a session from
+-- the save once it has saved it). Never a guess: with equal sums the list says nothing.
+function Sess.gaps()
+  if not (ns.DB and ns.charGuid and ns.charGuid() and ns.char) then return false end
+  local c = ns.char()
+  if type(c) ~= "table" then return false end
+  local g, x = 0, 0
+  for _, s in ipairs(sessionRows()) do g, x = g + num(s.gained), x + num(s.xp) end
+  return num(type(c.gold) == "table" and c.gold.gained) > g or num(type(c.xp) == "table" and c.xp.gained) > x
+end
+-- The answer line: the week's net gold from the day rows (the Week of Loot > Gold, one function), and the runs of
+-- the run store that began in it. When the gold history starts inside the week the line names the real start.
+-- nil while the character has no gold day row in the week.
+function Sess.answer()
+  if not (ns.Gold and ns.Gold.scope and ns.DB and ns.charGuid and ns.charGuid()) then return nil end
+  local ok, sc = pcall(ns.Gold.scope, "week", "char")
+  if not (ok and type(sc) == "table" and sc.period and sc.period.from and sc.to and #(sc.period.days or {}) > 0) then return nil end
+  local from = sc.since or sc.period.from
+  local out = { since = sc.since, from = from, to = sc.to, net = num(sc.ledger.gained) - num(sc.ledger.spent), runs = 0 }
+  local c = ns.char()
+  local function count(list)
+    for _, r in ipairs(type(list) == "table" and list or {}) do
+      if type(r) == "table" and num(r.t) >= from and num(r.t) < sc.to then out.runs = out.runs + 1 end
+    end
+  end
+  count(c.dungeonRuns); count(c.dungeonLegacy)
+  if type(c.dungeonRun) == "table" then count({ c.dungeonRun }) end
+  return out
+end
+-- what a click on a row opens: the session's gold journal (Loot > Gold), when the row is the running session or
+-- one stored login with a journal. nil: the row opens nothing.
+function Sess.goldScope(r)
+  if type(r) ~= "table" or type(r.sess) ~= "table" then return nil end
+  if r.live then return "session" end
+  if r.logins == 1 and type(r.sess.goldLog) == "table" and #r.sess.goldLog > 0 and r.sess.id then return r.sess.id end
+  return nil
+end
+
+local function withDays(rows)
+  local out, i = {}, 1
+  while i <= #rows do
+    local day = UI.fmtDay(rows[i].startedEpoch or 0)
+    -- (the day alone: a total would claim the sessions of a day whose other records are gone)
+    out[#out + 1] = { ebSection = day }
+    while i <= #rows and UI.fmtDay(rows[i].startedEpoch or 0) == day do out[#out + 1] = rows[i]; i = i + 1 end
   end
   return out
 end
-ns._test = ns._test or {}
-ns._test.stripValues = stripValues
-
--- a session with nothing in it: under 2 minutes, no XP, gold, kills or items (hidden unless sessionsShowShort, 4.2)
-local function isShort(sess, now)
-  if sess.endedEpoch == nil then return false end
-  if UI.sessionSecs(sess, now) >= 120 then return false end
-  local net = (tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)
-  return num(sess.xp) == 0 and net == 0 and num(sess.kills) == 0 and num(sess.items) == 0
+local function fmtLength(secs)
+  if not secs then return "" end
+  if secs < 30 then return UI.fmtDur(secs) end
+  return UI.fmtPlayed(secs)
 end
-ns._test.sessionIsShort = isShort
 
--- the selected session's gold block under the list: S3, the title line, S2, then blocks of a head and three lines of 16
-local BAND_LINE = 16
-local BAND_BLOCK_H = UI.LINE_H.LABEL + UI.S.S1 + 3 * BAND_LINE
-local BAND_H = 2 * UI.S.S3 + UI.LINE_H.BODY + UI.S.S2 + BAND_BLOCK_H
-local sel = {}              -- sel.id: the session clicked; sel.shown: the session the gold block shows
 local function buildSessions(content)
   local G, H = UI.G, UI.H
   sessionsView = content
-  -- the page: one scroll holding the answer, the two charts, the list, the hidden-sessions line and the gold block
   local sf, child = UI.ScrollChild(content, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
   local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
   content.sf, content.col = sf, col
   content.summary = UI.Summary(col)
-  local xpStrip = makeStrip(col, "XP per session")
-  local goldStrip = makeStrip(col, "Gold per session")
-  content.xpStrip, content.goldStrip = xpStrip, goldStrip
-  content.section = UI.Section(col, "All sessions")
-  -- When (a LIVE badge after the running one) · Length · Level · XP · Gold · Kills · Deaths · Runs. A row click shows
-  -- that session's gold under the list; it opens no page, so there is no chevron.
-  local tbl = UI.KitTable(col, {
-    { key = "date", label = "When", flex = 1, min = 120 },
-    { key = "len", label = "Length", kind = "num", min = 56 },
+  content.section = UI.Section(col, "Sessions")
+  -- When (a LIVE badge after the running one) · Length · Level · XP · Gold · Deaths · Runs. A column is left out
+  -- while it has nothing to say (0.3): one level on every row, every row at the level cap, fewer than a third of
+  -- the rows with a value.
+  local spec = {
+    { key = "date", label = "When", flex = 1, min = 96 },
+    { key = "len", label = "Length", kind = "num", min = 56, tip = "Time logged in. A session of several logins adds them up." },
     { key = "lvl", label = "Level", kind = "num", min = 48, measure = { "17 to 18" }, tip = "Your level when the session started, and when it ended if you levelled" },
     { key = "xp", label = "XP", kind = "num", min = 64 },
-    { key = "gold", label = "Gold", kind = "money", min = 88 },
-    { key = "kills", label = "Kills", kind = "num", min = 48 },
+    { key = "gold", label = "Gold", kind = "money", min = 88, tip = "Earned less spent in the session" },
     { key = "deaths", label = "Deaths", kind = "num", min = 48 },
-    { key = "dung", label = "Runs", kind = "num", min = 40, tip = "Stored dungeon runs that began in the session" },
-  }, { chevron = false,
-    onClick = function(_, sess) if sess and sess.id then sel.id = sess.id; if sessionsRebuild then sessionsRebuild() end end end,
+    { key = "dung", label = "Runs", kind = "num", min = 40, tip = "Dungeon runs that began in the session, as Dungeons lists them" },
+  }
+  local specOf = {}
+  for _, c in ipairs(spec) do specOf[c.key] = c end
+  local tbl = UI.KitTable(col, spec, {
+    onClick = function(_, r)
+      local scope = Sess.goldScope(r)
+      if scope and ns.Gold and ns.Gold.open then ns.Gold.open(scope, "journal") end
+    end,
+    tooltip = function(_, r, tip)
+      if not (r and r.startedEpoch) then return end
+      local from = UI.fmtStamp(r.startedEpoch)
+      tip:AddLine(r.endedEpoch and (from .. " to " .. UI.fmtClock(r.endedEpoch)) or from, 1, 1, 1)
+      local function line(k, v) tip:AddDoubleLine(k, v, C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+      if r.logins > 1 then line("Logins", tostring(r.logins)) end
+      if not r.secs then line("Length", "Not recorded") end
+      if r.atCap then line("XP", "Max level") elseif r.xp == nil then line("XP", "Not recorded") end
+      if r.net == nil then line("Gold", "Not recorded") end
+      if r.deaths == nil then line("Deaths", "Not recorded") end
+      line("Runs", r.runs and tostring(r.runs) or "Not recorded")
+      if Sess.goldScope(r) then tip:AddLine("Click for the gold of this session", C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3]) end
+    end,
     onLayout = function(t) for i = 1, t.shownN do pcall(content.placeLive, t, t.rows[i]) end end,
     onHeight = function() if content.place then pcall(content.place) end end })
-  content.tbl = tbl
+  content.tbl, content.spec = tbl, specOf
   -- the LIVE badge right after the When text (S2), the text shortening first
   function content.placeLive(t, row)
     local cw, fs, b = t.cols and t.cols.date, row.c and row.c.date, row.ebBadge
@@ -1156,211 +1211,91 @@ local function buildSessions(content)
       fs:SetWidth(cw.w)
     end
   end
-  -- the hidden short sessions: one line under the list with the link that shows them (and hides them again)
-  content.shortLine = CreateFrame("Frame", nil, col); content.shortLine:SetHeight(H.DAY_ROW)
-  content.shortText = UI.Text(content.shortLine, "BODY", "fgMuted"); content.shortText:SetPoint("LEFT", content.shortLine, "LEFT", S.S3, 0)
-  content.shortLink = UI.KitButton(content.shortLine, "Show them", "link", function()
-    if ns.DB and ns.DB.settings then ns.DB.settings.sessionsShowShort = not ns.DB.settings.sessionsShowShort end
-    if sessionsRebuild then sessionsRebuild() end
-  end, { role = "BODY" })
-  content.shortLink:SetPoint("LEFT", content.shortText, "RIGHT", S.S1, 0)
-  content.shortLine:Hide()
-  -- the selected session's gold (#38), S5 under the list: the running session until a row is clicked. A section
-  -- header (the session, a link to its journal), then a panel with one line (length, net and pace) and the blocks:
-  -- top sources, best earners, biggest sinks, notes.
-  content.goldHead = UI.Section(col, "Gold")
-  content.goldHead:SetLink("Open gold journal \226\128\186", function() if ns.Gold and sel.shown then ns.Gold.open(sel.shown, "journal") end end)
-  local band = UI.Box(col, "panel", "line")
-  band:SetHeight(BAND_H)
-  band.title = UI.Text(band, "BODY", "fgSubtle"); band.title:SetPoint("TOPLEFT", band, "TOPLEFT", S.S3, -S.S3); band.title:SetPoint("TOPRIGHT", band, "TOPRIGHT", -S.S3, -S.S3)
-  band.blocks = {}
-  -- (NOTES, not "flags": a banned word, principle 8)
-  for i, label in ipairs({ "Top sources", "Best earners", "Biggest sinks", "Notes" }) do
-    local b = CreateFrame("Frame", nil, band); b:SetHeight(BAND_BLOCK_H)
-    b.head = UI.Text(b, "LABEL", "fgMuted"); b.head:SetPoint("TOPLEFT", b, "TOPLEFT", 0, 0); b.head:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
-    UI.SetText(b.head, label)
-    b.lines = {}
-    for j = 1, 3 do
-      local fs = UI.Text(b, "BODY", "fg"); fs:SetJustifyH("LEFT")
-      fs:SetPoint("TOPLEFT", b, "TOPLEFT", 0, -(UI.LINE_H.LABEL + S.S1 + (j - 1) * BAND_LINE)); fs:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, -(UI.LINE_H.LABEL + S.S1 + (j - 1) * BAND_LINE))
-      b.lines[j] = fs
-    end
-    band.blocks[i] = b
-  end
-  content.goldBand = band
-  -- four blocks where they fit whole; under WIDE the BEST EARNERS block goes, so no line of the other three is cut
-  local function placeBand(w)
-    local shown = {}
-    for i, b in ipairs(band.blocks) do
-      if i == 2 and not G.isWide(G.winW()) then b:Hide() else b:Show(); shown[#shown + 1] = b end
-    end
-    local n = #shown
-    local bw = math.floor((w - 2 * S.S3 - (n - 1) * S.S5) / n)
-    band.blockW = bw
-    for i, b in ipairs(shown) do
-      b:ClearAllPoints(); b:SetPoint("TOPLEFT", band, "TOPLEFT", S.S3 + (i - 1) * (bw + S.S5), -(S.S3 + UI.LINE_H.BODY + S.S2)); b:SetWidth(bw)
-    end
-  end
-  -- the two charts share the list's text width in two halves, S5 apart: the first title starts on the WHEN header
-  local STRIP_TOTAL = STRIP_H + 18
   function content.place()
     local w = G.mainW(G.winW())
     col:SetWidth(w)
     local y = 0
-    local function put(f, h, x, fw) f:ClearAllPoints(); f:SetPoint("TOPLEFT", col, "TOPLEFT", x or 0, -y); f:SetWidth(fw or w); if h then f:SetHeight(h) end end
-    put(content.summary, H.SUMMARY); pcall(content.summary.layout); y = y + H.SUMMARY + S.S3
+    local function put(f, h) f:ClearAllPoints(); f:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); f:SetWidth(w); if h then f:SetHeight(h) end end
+    if content.summary:IsShown() then put(content.summary, H.SUMMARY); pcall(content.summary.layout); y = y + H.SUMMARY + S.S3 end
     if tbl.width ~= math.min(w, G.TABLE_MAX) then tbl.relayout(w) end
-    if xpStrip:IsShown() then
-      -- (the charts span the list's text: from the WHEN header to the end of the last column)
-      local half = math.floor(((tbl.usedW or w) - 2 * S.S3 - S.S5) / 2)
-      for i, st in ipairs({ xpStrip, goldStrip }) do
-        st:ClearAllPoints(); st:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3 + (i - 1) * (half + S.S5), -y); st:SetWidth(half); st:SetHeight(STRIP_TOTAL)
-        st.slot = half / STRIP_N
-        st.barW = math.max(4, math.min(BAR_MAX, math.floor(st.slot - BAR_GAP)))
-        if st.values then renderStrip(st, st.values, st.fmt, st.signed) end
-      end
-      y = y + STRIP_TOTAL + S.S5
-    end
-    put(content.section, H.SECTION); y = y + H.SECTION
+    if content.section:IsShown() then put(content.section, H.SECTION); y = y + H.SECTION end
     put(tbl.frame)
-    y = y + (tbl.height or 0)
-    if content.shortLine:IsShown() then put(content.shortLine, H.DAY_ROW); y = y + H.DAY_ROW end
-    if band:IsShown() then
-      y = y + S.S5
-      put(content.goldHead, H.SECTION); y = y + H.SECTION
-      put(band, BAND_H); pcall(placeBand, w); y = y + BAND_H
-    end
-    y = y + S.S4
+    y = y + (tbl.height or 0) + S.S4
     col:SetHeight(y); sf:SetContentHeight(y)
     content.contentH = y
   end
   content:HookScript("OnSizeChanged", function() pcall(content.place) end)
-  local function fillBand(rows)
-    local sess
-    for _, s in ipairs(rows) do if s.id == sel.id then sess = s end end
-    sess = sess or rows[1]
-    sel.shown = sess and sess.id or nil
-    local sum = sess and ns.Gold and ns.Gold.summary(sess)
-    if not sum then band:Hide(); content.goldHead:Hide(); return end
-    band.usedW = band.blockW   -- (the names line is fitted to this width: drawn again when the blocks get another)
-    band:Show(); content.goldHead:Show()
-    -- (the session as the list names it, fmtWhen; money as coins with two units, signed)
-    content.goldHead:SetLabel("Gold \194\183 " .. UI.fmtWhen(sess.startedEpoch or 0))
-    local parts = { UI.fmtPlayed(sum.elapsed), "net " .. UI.money(sum.net, true) }
-    if sum.perHour then parts[#parts + 1] = UI.money(math.floor(sum.perHour + 0.5), true) .. " per hour" end
-    band.title:SetText(table.concat(parts, " \194\183 "))
-    local L = { {}, {}, {}, {} }
-    for i, r in ipairs(sum.topIn) do L[1][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
-    -- (a long name is shortened, never the amount: the line is cut at the name with "...")
-    local function best(word, t)
-      if not t then return end
-      local name, amt = tostring(t.name or ""), coin2(t.amount)
-      L[2][#L[2] + 1] = { ("%s: %s  %s"):format(word, name, amt), nil, function(n) return ("%s: %s...  %s"):format(word, name:sub(1, n), amt) end, #name }
-    end
-    best("Quest", sum.bestQuest); best("Mob", sum.bestMob); best("Sold", sum.bestItem)
-    for i, r in ipairs(sum.sinks) do L[3][i] = { ("%s  %s"):format(r.label, coin2(r.amount)) } end
-    -- (bookkeeping notes in a neutral colour: red never means unusual bookkeeping, principle 5)
-    if #sum.strangers > 0 then
-      -- (whole names plus "+N" in the block's width)
-      local pre, names = "Traded with: ", sum.strangers
-      local room = (band.blockW or 200) - UI.TextWidth("BODY", pre)
-      local out, shownN = "", 0
-      for i, n in ipairs(names) do
-        local cand = (shownN > 0 and (out .. ", ") or "") .. n
-        local tail = (#names - i) > 0 and (" +" .. (#names - i)) or ""
-        if shownN > 0 and UI.TextWidth("BODY", cand .. tail) > room then break end
-        out, shownN = cand, shownN + 1
-      end
-      if shownN < #names then out = out .. " +" .. (#names - shownN) end
-      L[4][#L[4] + 1] = { pre .. out, C.fgSubtle }
-    end
-    if sum.unexplained > 0 then L[4][#L[4] + 1] = { "Not traced: " .. coin2(sum.unexplained), C.fgSubtle } end
-    if sum.above > 0 then L[4][#L[4] + 1] = { ("Above vendor price: %s"):format(UI.plural(sum.above, "sale")), C.fgSubtle } end
-    if #L[4] < 3 and sum.away ~= 0 then L[4][#L[4] + 1] = { "Changed while away: " .. UI.money(sum.away, true) } end
-    if #L[4] < 3 and sum.dropped > 0 then L[4][#L[4] + 1] = { ("%s past the limit not kept"):format(UI.plural(sum.dropped, "entry")) } end
-    local EMPTY = { "No income", sum.journal and "None recorded" or "Recorded before addon 0.9.40", "Nothing spent", "Nothing to note" }
-    for i, b in ipairs(band.blocks) do
-      for j, fs in ipairs(b.lines) do
-        local l = L[i][j] or (j == 1 and #L[i] == 0 and { EMPTY[i], C.fgMuted }) or nil
-        fs:SetText(l and l[1] or "")
-        if l and l[3] and fs.IsTruncated then
-          local n = l[4]
-          while n > 4 and fs:IsTruncated() do n = n - 1; fs:SetText(l[3](n)) end
-        end
-        local cl = (l and l[2]) or C.fg
-        fs:SetTextColor(cl[1], cl[2], cl[3])
-      end
-    end
-  end
   sessionsRebuild = function()
-    local all = sessionRows()
     local nowS = nowT()
-    local showShort = ns.DB and ns.DB.settings and ns.DB.settings.sessionsShowShort
-    local rows, hidden = {}, 0
-    for _, s in ipairs(all) do if showShort or not isShort(s, nowS) then rows[#rows + 1] = s else hidden = hidden + 1 end end
-    content.shownSessions, content.hiddenShort = rows, hidden
-    -- the answer: the running session (or the last one) in its own figures
-    local cur = rows[1]
-    if cur then
-      local net = (tonumber(cur.gained) or 0) - (tonumber(cur.spent) or 0)
-      local segs = { { text = ("%s: **%s**"):format(cur.endedEpoch == nil and "This session" or "Last session", UI.fmtPlayed(UI.sessionSecs(cur, nowS))) } }
-      if num(cur.xp) > 0 then segs[#segs + 1] = { text = ("**+%s** XP"):format(UI.fmtNum(cur.xp)) } end
-      if net ~= 0 then segs[#segs + 1] = { text = ("**%s**"):format(UI.money(net, true)) } end
-      content.summary:SetSegments(segs)
-    else content.summary:SetSegments({ { text = "No session yet" } }) end
-    if #rows > 0 then xpStrip:Show(); goldStrip:Show() else xpStrip:Hide(); goldStrip:Hide() end
-    pcall(fillBand, rows)
-    renderStrip(xpStrip, stripValues(rows, "xp", false, sel.shown), function(v) return commas(v) .. " XP" end, false)
-    renderStrip(goldStrip, stripValues(rows, nil, true, sel.shown), function(v) return (v < 0 and "-" or "+") .. fmtMoney(math.abs(v)) end, true)
-    content.section:SetMeta(#rows > 0 and UI.plural(#rows, "session") or nil)
-    tbl.setRows(rows, function(row, sess)
+    local rows, hidden = Sess.rows(nowS)
+    content.shownSessions, content.hiddenEmpty = rows, hidden
+    -- the answer: the week, each part only when it can be derived
+    local a = Sess.answer()
+    content.answer = a
+    if a and #rows > 0 then
+      local head = a.since and ("Since " .. UI.fmtStamp(a.since)) or "This week"
+      local segs = { { text = ("%s: net **%s**"):format(head, UI.money(a.net, true)) } }
+      if a.runs > 0 then segs[#segs + 1] = { text = ("**%d** %s"):format(a.runs, a.runs == 1 and "run" or "runs") } end
+      content.summary:SetSegments(segs); content.summary:Show()
+    else content.summary:Hide() end
+    -- the header says where the list starts, once (0.2.3), and the one remark when the stored totals prove a gap
+    if #rows > 0 then
+      local oldest = rows[#rows].startedEpoch
+      content.section:SetLabel("Sessions" .. (oldest and (" since " .. UI.fmtSince(oldest)) or ""))
+      local okG, gaps = pcall(Sess.gaps)
+      content.gaps = okG and gaps or false
+      if content.gaps then
+        content.section:SetMeta("not every session is kept", { title = "Not every session is kept",
+          text = "This character's totals are higher than the listed sessions add up to. The desktop app removes a session from the game's save once it has saved it." })
+      else content.section:SetMeta(nil) end
+      content.section:Show()
+    else content.section:Hide() end
+    -- which columns have something to say
+    local has = { lvl = 0, xp = 0, gold = 0, deaths = 0, dung = 0 }
+    local oneLevel, sameLevel, anyBelowCap = true, nil, false
+    for _, r in ipairs(rows) do
+      if r.level0 then
+        has.lvl = has.lvl + 1
+        if r.level ~= r.level0 then oneLevel = false end
+        if sameLevel == nil then sameLevel = r.level0 elseif sameLevel ~= r.level0 then oneLevel = false end
+      end
+      if not r.atCap then anyBelowCap = true; if r.xp ~= nil then has.xp = has.xp + 1 end end
+      if r.net ~= nil then has.gold = has.gold + 1 end
+      if r.deaths ~= nil then has.deaths = has.deaths + 1 end
+      if r.runs ~= nil then has.dung = has.dung + 1 end
+    end
+    local hide = {}
+    for k, n in pairs(has) do hide[k] = n == 0 or n * 3 < #rows end
+    if oneLevel then hide.lvl = true end
+    if not anyBelowCap then hide.xp = true end
+    local changed = false
+    for k, h in pairs(hide) do if (specOf[k].hide or false) ~= h then specOf[k].hide = h; changed = true end end
+    content.colHidden = hide
+    if changed then tbl.relayout(G.mainW(G.winW())) end
+    tbl.setRows(withDays(rows), function(row, r)
       local c = row.c
-      local live = (sess.endedEpoch == nil)
-      c.date:SetText(UI.fmtWhen(sess.startedEpoch or 0))
-      if live then
+      c.date:SetText(UI.fmtClock(r.startedEpoch or 0))
+      if r.live then
         if not row.ebBadge then row.ebBadge = UI.Badge(row, "LIVE"); UI.SetTip(row.ebBadge, { title = "LIVE", text = "The session you are playing now" }) end
         row.ebBadge:Show()
       elseif row.ebBadge then row.ebBadge:Hide() end
-      c.len:SetText(UI.fmtPlayed(UI.sessionSecs(sess, nowS)))
-      -- (the level the session started at, from the session itself; "17 to 18" when it levelled)
-      local l1 = tonumber(sess.level) or 0
-      local l0 = tonumber(sess.level0) or l1
-      c.lvl:SetText(l0 <= 0 and "-" or (l1 > l0 and (l0 .. " to " .. l1) or tostring(l0)))
-      c.xp:SetText(num(sess.xp) > 0 and UI.fmtNum(sess.xp) or "-")
-      local net = (tonumber(sess.gained) or 0) - (tonumber(sess.spent) or 0)
-      c.gold:SetText(net ~= 0 and UI.money(net, true) or "-")
-      c.kills:SetText(num(sess.kills) > 0 and UI.fmtNum(sess.kills) or "-")
-      c.deaths:SetText(num(sess.deaths) > 0 and UI.fmtNum(sess.deaths) or "-")
-      -- (the runs of the run store that began in the session, the Dungeons list's own rows; the session's old counter
-      -- counted door entries before 0.9.50 and is never printed)
-      local nRuns = ns.RunsLegacy and ns.RunsLegacy.inSession(sess) or 0
-      c.dung:SetText(nRuns > 0 and tostring(nRuns) or "")
-      for _, k in ipairs({ "len", "lvl", "xp", "gold", "kills", "deaths", "dung" }) do if c[k]:GetText() == "-" then UI.SetColor(c[k], "fgMuted") end end
+      c.len:SetText(fmtLength(r.secs))
+      c.lvl:SetText(r.level0 and (r.level > r.level0 and (r.level0 .. " to " .. r.level) or tostring(r.level0)) or "")
+      c.xp:SetText((r.atCap or r.xp == nil) and "" or UI.fmtNum(r.xp))
+      c.gold:SetText(r.net == nil and "" or (r.net == 0 and "0" or UI.money(r.net, true)))
+      c.deaths:SetText(r.deaths == nil and "" or UI.fmtNum(r.deaths))
+      c.dung:SetText(r.runs == nil and "" or tostring(r.runs))
+      row.ebNoOpen = Sess.goldScope(r) == nil
     end)
     for i = 1, tbl.shownN do pcall(content.placeLive, tbl, tbl.rows[i]) end
-    local selected
-    for _, s in ipairs(rows) do if s.id == sel.shown then selected = s end end
-    tbl.setSelected(selected)
-    if #rows == 0 then tbl.setState("Your first session is being recorded now. It shows up here with its XP, gold and runs.") end
-    if hidden > 0 or showShort then
-      local n = 0
-      for _, s in ipairs(all) do if isShort(s, nowS) then n = n + 1 end end
-      if n > 0 then
-        content.shortText:SetText(showShort and (UI.plural(n, "short session") .. " with nothing in them are shown.")
-          or (UI.plural(n, "short session") .. " with nothing in them " .. (n == 1 and "is" or "are") .. " hidden."))
-        content.shortText:SetWidth(UI.TextWidth("BODY", content.shortText:GetText()) + 1)
-        content.shortLink:SetLabel(showShort and "Hide them" or "Show them")
-        content.shortLine:Show()
-      else content.shortLine:Hide() end
-    else content.shortLine:Hide() end
+    if #rows == 0 then tbl.setState("No session stored yet.") end
     content.place()
-    if band:IsShown() and band.blockW ~= band.usedW then pcall(fillBand, rows) end
   end
   sessionsRebuild()
 end
--- HOME is the landing tab (order 0). Now and Sessions live here; Activity (the 0.9.51 Timeline) is registered
--- into Home by Emitter.lua, Fights by Recording.lua and Deaths by Deaths.lua (docs/UX_OVERHAUL.md 0.3).
-UI.registerHost(0, "Home", "How this session is going, and every session, pull and death before it.")
+-- HOME is the landing tab (order 0). Now and Sessions live here; Fights is registered into Home by Recording.lua
+-- and Deaths by Deaths.lua, each shown only while it has rows (docs/UX_PRAGMATIC.md 0.5).
+UI.registerHost(0, "Home", "How this session is going, and every session before it.")
 local ticker
 UI.registerPane("Home", 1, "Now", build, function()
   if nowView then refresh(nowView) end
@@ -1378,5 +1313,5 @@ UI.registerPane("Home", 2, "Sessions", buildSessions, function() if sessionsRebu
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}
 ns._test.sessionRows = sessionRows
-ns._test.fmtTime, ns._test.commas, ns._test.journeyMoney = fmtTime, commas, fmtMoney
+ns._test.journeyMoney = fmtMoney
 ns._test.journeyRefresh = function() if nowView then refresh(nowView) end return nowView end

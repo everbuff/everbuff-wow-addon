@@ -529,7 +529,6 @@ Tonight's temporary sub-tabs are listed in §0.3.
 | `fightsView` | `"important"` |
 | `itemsQuality` | `"green"` |
 | `itemsMode` | `"newest"` |
-| `sessionsShowShort` | false |
 | `goldPeriod` | `"session"` |
 | `welcomeDone` | false |
 | `whatsNewSeen` | nil (a version string) |
@@ -547,7 +546,7 @@ Tonight's temporary sub-tabs are listed in §0.3.
 | `Combat/fights` | `Home/fights` | T |
 | `Combat/deaths` | `Home/deaths` | T |
 | `Home/overview` | `Home/now` | T |
-| `Home/timeline` | `Home/activity` tonight; in phase 2, `Home/sessions` with the live session page open at its Activity section | T |
+| `Home/timeline`, `Home/activity` | `Home/now` (Home > Activity is removed, `docs/UX_PRAGMATIC.md` 1.3) | T |
 | `Loot/auctions` | `Loot/gold` with breakdown Auction house | phase 2 |
 | `Character/quests` | `Character/leveling` | phase 2 |
 | `Character/crafting` | `Character/professions` | phase 2 |
@@ -822,90 +821,40 @@ The per-hour gold rate is `ns.Economy` session net divided by session hours (the
 - `THIS CHARACTER`: 2-up cards (`(336-12)/2 = 162` wide), PLAYED / BALANCE, KILLS / DEATHS;
 - then `LAST RUN` as a ROW2 link (no primary).
 
-### 4.2 Home > Sessions, the session page, and Activity (phase 2)
+### 4.2 Home > Sessions (content from `docs/UX_PRAGMATIC.md` 1.2)
 
 **Tooltip:** "Every play session: how long, what you earned, and how far you got."
 
-**Summary line:** "Today: 38m · +2,450 XP · +26g 99s · your 3rd longest session this week". The last segment appears only when a week has 3 or more sessions.
+**The page:** the answer line, the section header, one table. No chart, no block under the list, no control row.
 
-**Control row right:** search input 176, placeholder "Search everything you did". Typing replaces the table with Activity results across all history:
-- the summary line reads `34 events match "gnoll" · Back to sessions` (the second segment is a link);
-- the results use the Activity columns plus a Session column (`fmtDate` 72).
+**Answer line:** "This week: net -80g 88s · 6 runs". The net is the Week of Loot > Gold (`Gold.scope("week")`, the gold day rows). The runs are the rows of the run store that began in the same range. When the gold history starts inside the week the line names that moment instead of "This week": "Since Wed 18 Nov 20:35: net -80g 88s · 6 runs". The runs part is left out at 0. The whole line is left out while the week has no gold day row.
 
-**Columns at 900** (684 = 24 insets + 524 fixed + 8 gaps of 12 (96) + When 160)
+**Section header:** "SESSIONS SINCE THU 5 NOV" (the first login of the oldest listed row). Meta, only when proven: "not every session is kept", muted, with the reason in its hover. The proof: the character's own totals (`characters[guid].gold.gained`, `xp.gained`) are more than the stored session records add up to (`ns.Sessions.gaps`).
+
+**Rows:** one per session, newest first, under bare day rows (`ns.Sessions.rows`).
+- Logins of the character less than 5 minutes apart are one row (`Gold.joined`, the one definition of "this session"). The row starts at its first login; its length is the logins added up; its counters are their sums; its level runs from the first login's to the last's.
+- A row under 5 minutes with no XP, gold, death or loot is not listed. The running session is always listed.
+- A click opens the session's journal in Loot > Gold, for the running session and for a row of one login that has a journal. Other rows open nothing and carry no chevron.
+- The hover has the day, the start and the end, the number of logins when above 1, and the run count.
+
+**Columns at 900**
 
 | Column | Width | Content |
 |---|---|---|
-| When | flex (min 120, max 240) | clock under day rows, plus IN PROGRESS on the live row |
-| Length | 56 | |
-| XP | 64 | signed |
-| Levels | 48 | "1" or "-" |
-| Gold | 88 | signed, two units; tooltip adds "per hour of play" |
-| Kills | 48 | |
-| Deaths | 48 | |
-| Runs | 40 | |
-| › | 12 | |
+| When | flex (min 96) | clock of the first login, plus LIVE on the running session |
+| Length | 56 | to the minute; blank when a login has no stored end |
+| Level | 48 | "59 to 60", or one level; left out when every row is the same single level |
+| XP | 64 | the stored counter, "0" for a stored zero; blank for a session that started at the level cap (hover "Max level"); left out when every row started at the cap |
+| Gold | 88 | signed net, two units |
+| Deaths | 48 | the stored counter, "0" for a stored zero |
+| Runs | 40 | runs of the run store that began in the session; "0" only for a session of addon 0.9.50 or later; blank before that. The old per session counter is never read. |
+| › | 12 | only on rows that open their gold |
 
-**Hidden sessions:** sessions under 2 minutes with no XP, gold, kills or items are hidden unless `sessionsShowShort` is true. The footer row (24) reads "8 short sessions with nothing in them are hidden. Show them" (link; it toggles the key).
+A column with a value on fewer than a third of the rows is left out (0.3 of the pragmatic document); its value stays in the row's hover.
 
-**Empty:** "Your first session is being recorded now. It shows up here with its XP, gold and runs."
+**Empty:** "No session stored yet."
 
-**Session page** (`UI.Detail`)
-- Back "‹ Sessions".
-- TITLE "Today, 21:35 to now" with IN PROGRESS, or `fmtWhen` plus `fmtRange` for an ended session ("Thu 19 Nov, 22:04 to 23:34").
-- META "38m · level 18 · The Barrens, Orgrimmar +1".
-- Cards:
-
-  | Label | Value | Meta |
-  |---|---|---|
-  | XP | "+2,450" | "3,860 per hour" |
-  | GOLD | "+26g 99s" | "+42g 61s per hour" |
-  | KILLS | "26" | "0 deaths" |
-  | RUNS | "1" | "Ragefire Chasm" |
-
-- Sections:
-  1. `DUNGEON RUNS`: run rows that open the run page.
-  2. `GOLD`, as a two-column mini table:
-     - "Earned +30g 6s · top: Looted coin 18g 2s, Quest rewards 9g";
-     - "Spent -3g 7s · top: Repairs 2g";
-     - then the link "Open in Gold ›";
-     - untraced money becomes the META line "While you were away (in): 3s 35c. Hover for details." It is never red;
-     - "Recorded before addon 0.9.40" becomes "Gold details start from 15 Nov.";
-     - "Strangers" becomes "Players you traded with".
-  3. `ACTIVITY`: the old Timeline for this session.
-     - Section header right: filter button "Everything ▾".
-     - Columns at 900 (24 + 264 + 4 gaps of 12 (48) + Event 348):
-
-       | Column | Width |
-       |---|---|
-       | Time | 40 |
-       | Type | 72 |
-       | Event | flex |
-       | Place | 140 |
-       | › | 12 |
-       | Coords | 72, WIDE only |
-
-     - Kill rows open the fight page.
-     - Event copy has amounts: "Sold 3 items for 45s", "Mail: 1 item, 2g taken", "Quest done: Wanted: Kolkar Leaders (+450 XP, 1g)".
-     - The WHILE FIGHTING column is cut.
-
-**Activity groups** (every kind on `origin/main` in exactly one group; tested; a future kind without a group fails the test)
-
-| Group | Kinds |
-|---|---|
-| Everything | all |
-| Quests and levels | QUESTACCEPT, QUESTDONE, REWARD, LEVELUP, REP, ACHIEV, SPELL |
-| Fights | KILL, BOSS, WIPE, DEATH, ALIVE, ROSTERJOIN, ROSTERLEAVE |
-| Travel | ZONE, FIRSTZONE, DISCOVERY, FLIGHT, FLIGHTTRIP, DUNGEON, DUNGEONLEAVE |
-| Loot and gear | LOOT, COLLECT, UPGRADE, BROKEN, GOLDAWAY |
-| Town visits | VENDOR, TRAINER, MAIL, AUCTION, TRADE |
-| Professions | SKILLUP, RECIPE, PROFTIER |
-
-Type labels are sentence case words per kind (Quest, Kill, Level, Loot, Merchant, Trainer, Mail, Auction, Trade, and so on), listed in one `UI.KIND_LABEL` table.
-
-**Rail at WIDE:**
-- `GOLD PER SESSION`: the kept chart, one bar per session; today in `accent`, the others `data-single`; the value on hover; day labels under the bars.
-- `THIS WEEK`: 2-up cards PLAYED / XP and GOLD / RUNS.
+**Cut:** the Kills column, both bar strips, the gold block under the list, the line about hidden short sessions and its setting, the session page, the search. Home > Activity is removed with all of its code (`docs/UX_PRAGMATIC.md` 1.3); `story.events` is written as before.
 
 ### 4.3 Home > Fights, and the fight page (tonight: registration only; restyle in phase 2)
 
@@ -1419,7 +1368,7 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
   - "Window scale": slider, 90% to the current maximum.
   - "Reset window size and position": [Reset].
 - `ON-SCREEN NOTIFICATIONS` (section right [Preview])
-  - Description: "Level-ups, deaths and wipes always show. Everything else is recorded either way."
+  - Description: "Level-ups, deaths and wipes always show. Everything else is captured either way."
   - Loot: checkbox.
   - "Show loot from": filter button with the Items quality labels.
 - Last row: "Show the welcome guide again" [Show].

@@ -23,10 +23,7 @@ local T = ns._test or {}
 -- sessions follow each other with no time between them and each test means the one record it made, so the join is
 -- off here; its own tests switch it on (tests/panes/gold.lua) and tests/real_truth.lua runs with it.
 ns.Gold.JOIN_S = 0
--- Home > Activity is removed (docs/UX_PRAGMATIC.md 0.5, 1.3): its tab is not shown and nothing links to it. The page's
--- code is still loaded until the Activity work deletes it, and its own tests below open it behind this switch.
-check("Activity: the tab is off unless switched on", ns.ACTIVITY_TAB == nil and ns.UI.SubVisible("Home", "activity") == false)
-ns.ACTIVITY_TAB = true
+-- Home > Activity is removed (docs/UX_PRAGMATIC.md 0.5, 1.3): no pane, no tab, and its old keys open Home > Now.
 
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
@@ -284,8 +281,6 @@ do
   check("fmtMoney: a hidden or broken value reads as 0c", (function() M.secrets[777] = true; local r = T.fmtMoney(777); M.secrets[777] = nil; return r end)() == "0c" and T.fmtMoney(nil) == "0c" and T.fmtMoney(0 / 0) == "0c")
   check("fmtMoney: one formatter behind every pane", T.fmtMoney == ns.fmtMoney and T.economyFmtMoney == ns.fmtMoney and T.journeyMoney == ns.fmtMoney)
 end
-check("fmtTime", T.fmtTime(90061) == "1d 1h" and T.fmtTime(3661) == "1h 1m" and T.fmtTime(300) == "5m" and T.fmtTime(0) == "-")
-check("commas", T.commas(1234567) == "1,234,567" and T.commas(50) == "50")
 check("fmtDur: the fight list speaks the one dialect, never mm:ss", T.fmtDur(75) == "1m 15s" and T.fmtDur(9) == "9s", T.fmtDur(75))
 check("plain passes numbers", T.plain(5) == 5 and T.plain("x") == nil)
 check("safeKey passes plain values", T.safeKey("abc") == "abc" and T.safeKey(nil) == nil)
@@ -293,11 +288,8 @@ check("safeStr type gate", T.safeStr("ok") == "ok" and T.safeStr(5) == nil)
 check("statSig stable", T.statSig({ level = 1, ap = 10 }) == T.statSig({ level = 1, ap = 10 }))
 check("foesText", T.foesText({ foes = {} }) == "unknown" and T.foesText({ bossName = "Edwin", foes = {} }) == "Edwin")
 
--- ── Events tab helpers ──
-check("eventMatches all", T.eventMatches({ kind = "ZONE" }, "all"))
-check("eventMatches combat", T.eventMatches({ kind = "KILL" }, "combat") and not T.eventMatches({ kind = "ZONE" }, "combat"))
-check("eventMatches travel", T.eventMatches({ kind = "FLIGHT" }, "travel") and T.eventMatches({ kind = "DUNGEON" }, "travel"))
-check("eventMatches journey", T.eventMatches({ kind = "LEVELUP" }, "journey") and not T.eventMatches({ kind = "LOOT" }, "journey"))
+-- ── one-line places ──
+T.fmtWhere = function(e) return ns.UI.fmtLocation(e.zone, e.x, e.y, e.sub) end
 check("fmtWhere zone + coords", T.fmtWhere({ zone = "Elwynn Forest", x = 0.421, y = 0.637 }) == "Elwynn Forest  (42.1, 63.7)")
 check("fmtWhere sub, zone", T.fmtWhere({ zone = "Elwynn Forest", sub = "Goldshire" }) == "Goldshire, Elwynn Forest")
 check("fmtWhere sub == zone collapses", T.fmtWhere({ zone = "Deadmines", sub = "Deadmines" }) == "Deadmines")
@@ -678,13 +670,13 @@ check("the sidebar order is Home, Dungeons, Character, Loot, then Settings pinne
 check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Combat == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
 local function host(n) for _, tab in ipairs(T.tabs) do if tab.name == n then return tab end end end
 check("Dungeons hosts Runs", (function() local h = host("Dungeons"); return h and h.panes[1].key == "runs" end)())
-check("Home hosts Now · Sessions · Activity · Fights · Deaths", (function() local h = host("Home"); local k = {}; for _, pn in ipairs(h and h.panes or {}) do k[#k + 1] = pn.key end; return table.concat(k, ",") == "now,sessions,activity,fights,deaths" end)())
+check("Home hosts Now · Sessions · Fights · Deaths (no Activity pane)", (function() local h = host("Home"); local k = {}; for _, pn in ipairs(h and h.panes or {}) do k[#k + 1] = pn.key end; return table.concat(k, ",") == "now,sessions,fights,deaths" and h.paneByKey.activity == nil end)())
 check("old window keys resolve to their new place", (function()
   local R = ns.UI.Resolve
   local a1, b1 = R("Combat", "dungeons"); local a2, b2 = R("Combat", "fights"); local a3, b3 = R("Combat", "deaths")
   local a4, b4 = R("Home", "overview"); local a5, b5 = R("Home", "timeline"); local a6 = R("Combat")
   return a1 == "Dungeons" and b1 == "runs" and a2 == "Home" and b2 == "fights" and a3 == "Home" and b3 == "deaths"
-    and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "activity" and a6 == "Dungeons" end)())
+    and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "now" and a6 == "Dungeons" end)())
 check("Loot hosts Items · Gold; Character hosts Leveling · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and #c.panes == 3 and c.panes[1].key == "leveling" and c.panes[2].key == "reputation" and c.panes[3].key == "professions" end)())
 check("settings builder exposed", type(ns.BuildSettings) == "function")
 -- ── Settings sub-tab control ──
@@ -710,12 +702,6 @@ check("Fights list has a filter button and a search in the control row (A3)", fl
 if fl and fl.tabs then
   local okF, errF = pcall(function() fl.tabs.select("death"); fl.tabs.select("notable"); fl.tabs.select("all") end)
   check("Fights filter tabs switch cleanly", okF, errF)
-end
-local tlTab = host("Home") and host("Home").paneByKey.activity
-check("Activity pane has a filter button and a search in the control row (A3)", tlTab and tlTab.content and tlTab.content.filterButton ~= nil and tlTab.content.search ~= nil)
-if tlTab and tlTab.content and tlTab.content.setFilter then
-  local okT, errT = pcall(function() tlTab.content.setFilter("combat"); tlTab.content.setFilter("all") end)
-  check("Timeline filter tabs switch cleanly", okT, errT)
 end
 -- ── in-combat SECRET aura data (Midnight): tracked by instance id, names resolved / backfilled ──
 local SECRET = 0 / 0   -- NaN cannot be used as a table key: stands in for a Secret Value in the stub
@@ -947,11 +933,7 @@ check("a real login keeps the logged-out session ended at its logout", s14.ended
 M.fire("PLAYER_DEAD"); M.now = M.now + 95; M.dead = false; M.fire("PLAYER_UNGHOST")
 local lastDeath; for i = #ns.DB.story.events, 1, -1 do if ns.DB.story.events[i].kind == "DEATH" then lastDeath = ns.DB.story.events[i]; break end end
 check("death row carries the corpse-run downtime", lastDeath and lastDeath.downtime == 95, lastDeath and lastDeath.downtime)
--- ── text search on Timeline and Loot ──
-check("event search matches text", ns._test.eventMatches({ kind = "KILL", text = "Kobold Vermin down!" }, "all", "kobold"))
-check("event search matches zone", ns._test.eventMatches({ kind = "ZONE", text = "x", zone = "Westfall" }, "all", "westf"))
-check("event search rejects non-matching", not ns._test.eventMatches({ kind = "KILL", text = "Kobold Vermin down!" }, "all", "murloc"))
-check("event search still respects the filter tab", not ns._test.eventMatches({ kind = "LOOT", text = "Kobold" }, "combat", "kobold"))
+-- ── text search on Loot ──
 M.tick()
 check("loot search matches item", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "linen"))
 check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner", guid = "Creature-0-1-1-1-40-00AA" }, "miner"))
@@ -1339,7 +1321,6 @@ do
   local chr = host("Character")
   local pp = chr and chr.paneByKey.professions
   check("Professions pane with its history builds and renders cleanly", pp and pp.built and pp.buildError == nil and pp.showError == nil, pp and (pp.buildError or pp.showError))
-  check("timeline: the Professions filter", T.eventMatches({ kind = "SKILLUP" }, "professions") and T.eventMatches({ kind = "RECIPE" }, "professions") and not T.eventMatches({ kind = "LOOT" }, "professions"))
   ns.UI.Open("Home"); M.tick()
   local home = host("Home")
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))
@@ -1492,7 +1473,7 @@ do
     check("fight row hover tooltip renders", okH, errH)
   end
 end
--- ── fight detail -> Timeline window ──
+-- ── the fight detail has no Timeline button (Home > Activity is removed) ──
 do
   local f = { uid = "tl-win", startEpoch = M.epoch + 500000, duration = 30, outcome = "kill", foes = { "Windowed Mob" } }
   ns.DB.combat.fights[#ns.DB.combat.fights + 1] = f
@@ -1501,16 +1482,8 @@ do
   L[#L + 1] = { kind = "ZONE", t = f.startEpoch + 3600, text = "Far Away Later", s = ns.DB.active }
   ns.OpenFightDetail(f)
   local dv = T.fightDetail()
-  dv.tlBtn:GetScript("OnClick")(dv.tlBtn)
-  local w = ns._test.timelineWindow()
-  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "activity" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
-  local tl = host("Home").paneByKey.activity
-  local sumText = {}
-  for _, sg in ipairs(tl.content.timelineSummary.segs or {}) do sumText[#sumText + 1] = sg.text end
-  check("the summary line names the window and offers Show everything", table.concat(sumText, "|"):find("Showing", 1, true) ~= nil and table.concat(sumText, "|"):find("Show everything", 1, true) ~= nil, table.concat(sumText, "|"))
-  check("events outside the window are filtered out", ns._test.eventMatches(L[#L], "all", "") == false and ns._test.eventMatches(L[#L - 1], "all", "") == true)
-  tl.content.clearWindow()
-  check("Show everything clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
+  check("the fight detail has no Timeline button and nothing opens a time window", dv.tlBtn == nil and ns.OpenTimelineWindow == nil)
+  check("an old Activity key opens Home > Now", ns.UI.Open("Home", "activity") ~= nil and host("Home").ctl.active == "now", host("Home").ctl.active)
   ns.UI.Open("Home", "overview")
 end
 -- ── durability lost across a death ──
@@ -1619,16 +1592,12 @@ do
   ns.Emitter.setCorner("TOPLEFT")
   check("choosing a corner ends free placement", ns.DB.settings.flagPos == nil and ns.DB.settings.emitCorner == "TOPLEFT")
 end
--- ── per-session bar strips ──
+-- ── Home > Sessions has no bar strips (docs/UX_PRAGMATIC.md 1.2) ──
 do
-  local rows = { { startedEpoch = 300, xp = 900, gained = 100, spent = 400 }, { startedEpoch = 200, xp = 300, gained = 500, spent = 0, endedEpoch = 250 }, { startedEpoch = 100, xp = 0, gained = 0, spent = 0, endedEpoch = 150 } }
-  local xpv = ns._test.stripValues(rows, "xp")
-  check("XP strip is oldest-left with the live session last", #xpv == 3 and xpv[1].v == 0 and xpv[3].v == 900 and xpv[3].live == true)
-  local gv = ns._test.stripValues(rows, nil, true)
-  check("gold strip is signed net per session", gv[2].v == 500 and gv[3].v == -300, gv[3].v)
   ns.UI.Open("Home", "sessions"); M.tick()
   local sp = host("Home").paneByKey.sessions
-  check("Sessions pane renders both strips", sp.content.xpStrip and sp.content.goldStrip and #ns.UI.paneErrors() == 0, table.concat(ns.UI.paneErrors(), " || "))
+  check("Sessions pane renders with no strip, no gold block and no hidden-sessions line", sp.content.xpStrip == nil and sp.content.goldStrip == nil and sp.content.goldBand == nil and sp.content.shortLine == nil
+    and sp.content.tbl ~= nil and #ns.UI.paneErrors() == 0, table.concat(ns.UI.paneErrors(), " || "))
 end
 -- ── run headers in the Fights list ──
 do
@@ -2359,10 +2328,6 @@ do
   local function shownRows(rows) local out = {}; for _, r in ipairs(rows or {}) do if r.shown ~= false then out[#out + 1] = r end end return out end
 
   -- logged in as Hart: none of Undertaker's rows in any pane
-  ns.UI.Open("Home", "timeline"); M.tick()
-  local tl = host("Home").paneByKey.activity.content
-  local tlRows = shownRows(tl.timelineRows)
-  check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
   -- the item rows of Loot > Items (not its day rows), every quality shown
   local function itemRows(ic) local out = {}; for _, r in ipairs(shownRows(ic.lootRows)) do if r.item and not r.item.ebSection then out[#out + 1] = r end end return out end
@@ -2388,9 +2353,6 @@ do
 
   -- logged in as Undertaker: only his rows
   asUT()
-  ns.UI.Open("Home", "timeline"); M.tick()
-  tlRows = {}; for _, r in ipairs(shownRows(tl.timelineRows)) do if r.ev then tlRows[#tlRows + 1] = r end end   -- the event rows (not the day headers)
-  check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
   lr = itemRows(host("Loot").paneByKey.items.content)
   check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].c.item:GetText() == "Undertaker Shroud", #lr)

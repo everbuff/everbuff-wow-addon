@@ -233,16 +233,7 @@ local function buildDetail(content)
     end
   end)
   v.delBtn:SetPoint("TOPRIGHT", -14, -12)
-  -- what else happened around this fight: the Timeline filtered to the fight's span (+ looting window)
-  v.tlBtn = UI.Button(v, "Timeline", 90, 24, function()
-    local f = v.fight; if not (f and ns.OpenTimelineWindow) then return end
-    local s0 = f.startEpoch or 0
-    ns.OpenTimelineWindow(s0 - 5, s0 + (f.duration or 0) + 20, foesText(f) .. "  " .. date("%H:%M", s0))
-  end)
-  v.tlBtn:SetPoint("RIGHT", v.delBtn, "LEFT", -8, 0)
-  -- (the button opens Home > Activity on the fight's span: with that tab gone there is no button)
-  if UI.SubVisible and UI.SubVisible("Home", "activity") then v.titleFS:SetPoint("RIGHT", v.tlBtn, "LEFT", -UI.SP.M, 0)
-  else v.tlBtn:Hide(); v.titleFS:SetPoint("RIGHT", v.delBtn, "LEFT", -UI.SP.M, 0) end
+  v.titleFS:SetPoint("RIGHT", v.delBtn, "LEFT", -UI.SP.M, 0)
 
   -- scrubber: drag to inspect the character's state at any moment of the fight
   local slider = CreateFrame("Slider", "EverbuffFightScrubber", v, "OptionsSliderTemplate")

@@ -252,7 +252,7 @@ local function onTamper(what)
   L.repairs = (L.repairs or 0) + 1
   L.lastCulprit = culprit
   local who = culprit and ("|cffff4444" .. culprit .. "|r") or "another addon or a macro"
-  ns.msg(("|cffe5544bBlocked " .. who .. "|r from disabling %s - recording re-enabled. If that wasn't you, that addon is sabotaging your logs; consider removing it."):format(what))
+  ns.msg(("|cffe5544bBlocked " .. who .. "|r from disabling %s. It is back on. If that wasn't you, that addon is sabotaging your logs; consider removing it."):format(what))
   bigWarn("everbuff.gg: blocked an addon from stopping your combat log")
 end
 
@@ -291,7 +291,7 @@ function L.startGuardian()
       wasOff = true
     elseif wasOff then
       wasOff = false
-      ns.msg("|cff47c97ecombat logging is back ON|r - recording resumed.")
+      ns.msg("|cff47c97ecombat logging is back ON|r")
     end
     -- A change after startup means something dropped logging and we corrected it - count it + mark
     -- the gap in the landmark index (the first tick is initial setup, not a repair).

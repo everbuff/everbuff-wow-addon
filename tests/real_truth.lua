@@ -156,9 +156,9 @@ eq("Home: a hidden tab falls back to Now, whatever was open", home.ctl.active, "
 UI.Open("Home", "sessions"); M.settle()
 eq("Home: Open on the hidden Deaths tab reports false", UI.Open("Home", "deaths"), false); M.settle()
 eq("Home: and lands on Now from Sessions too", home.ctl.active, "now")
-eq("Home: no Activity tab (0.5, 1.3)", home.ctl.hidden.activity, true)
-eq("Home: Open on Activity reports false and lands on Now", UI.Open("Home", "activity"), false); M.settle()
-eq("Home: Activity falls back to Now", home.ctl.active, "now")
+eq("Home: no Activity pane (0.5, 1.3)", home.paneByKey.activity, nil)
+UI.Open("Home", "activity"); M.settle()
+eq("Home: the old Activity key opens Now", home.ctl.active, "now")
 -- ── Home > Now at the level cap (1.1) ──
 do
   local nv = T.journeyRefresh(); M.settle()
@@ -200,7 +200,7 @@ do
   eq("Now: WORTH A LOOK is the session's three gold lines, largest first", #nv.lookList, 3)
   check("Now: the largest is the 28g 19s purchase at 11:48, named by its auction row", nv.lookList[1].title == "Bought Black Lotus x3" and nv.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 11:48", titles[1])
   -- (the second largest is a sale collected at the first login: the mail paid 28,150 for the 29,000 sale)
-  check("Now: the second is the Formula sale collected at 11:45, the third the 2g 78s purchase", nv.lookList[2].title:find("^Formula: Enchant Boots %- Greater Stamina") ~= nil
+  check("Now: the second is the Formula sale collected at 11:45, the third the 2g 78s purchase", nv.lookList[2].title:find("^Sold Formula: Enchant Boots %- Greater Stamina") ~= nil
     and nv.lookList[2].meta == UI.money(28150, true) .. " \194\183 Auction sales \194\183 11:45" and nv.lookList[3].title == "Bought Golden Sansam x20", tostring(titles[2]) .. " ; " .. tostring(titles[3]))
   check("Now: SAVED TO everbuff.gg keeps the brand in lower case inside the label", byKey.saved.label.text == "SAVED TO everbuff.gg", byKey.saved.label.text)
   local words = {}
@@ -226,6 +226,57 @@ local function sess(id) return ns.DB.sessions[id] end
 eq("Sessions: 20 Nov 15:08 holds 1 run", L.inSession(sess("261120150804-41c5")), 1)
 eq("Sessions: 19 Nov 15:29 holds 1 run (the rebuilt Blackrock Depths row)", L.inSession(sess("261119152922-c4ed")), 1)
 eq("Sessions: 17 Nov 20:34 holds none stored (its old counter said 22)", L.inSession(sess("261117203427-8c86")), 0)
+
+-- ── Home > Sessions (1.2). 45 stored records of the character; 4 start under 5 minutes after the one before ended
+-- (21 Nov 11:45 and 11:47, 16 Nov 17:01 and 17:48, 11 Nov 10:46 and 11:19, 5 Nov 03:05 and 03:11), so 41 sessions;
+-- 3 of them are under 5 minutes with nothing in them (16 Nov 09:08 76 s, 11 Nov 08:23 17 s, 5 Nov 20:06 131 s).
+do
+  local Sess = ns.Sessions
+  local rows, hidden = Sess.rows()
+  eq("Sessions: 38 rows listed, 3 empty ones left out (45 records, 41 sessions)", #rows .. " " .. hidden, "38 3")
+  local by = {}
+  for _, r in ipairs(rows) do by[r.startedEpoch] = r end
+  local top = rows[1]
+  eq("Sessions: the newest row is the two logins of 21 Nov, from 11:45:25: 627 s logged in, net -225,137 copper, 0 deaths",
+    ("%d %d %d %d %d"):format(top.logins, top.startedEpoch, top.secs, top.net, top.deaths), "2 1795257925 627 -225137 0")
+  local r16
+  for _, r in ipairs(rows) do if r.logins == 2 and r.level0 == 48 then r16 = r end end
+  check("Sessions: 16 Nov 17:01 joins two logins: 4,176 s, 48 to 49, 57,878 XP, +50,725 copper", r16 and r16.logins == 2 and r16.secs == 4176 and r16.level0 == 48 and r16.level == 49
+    and r16.xp == 57878 and r16.net == 50725, r16 and (r16.secs .. " " .. r16.xp .. " " .. r16.net))
+  local runs, sum = {}, { xp = 0, deaths = 0 }
+  for _, r in ipairs(rows) do
+    if r.runs and r.runs > 0 then runs[#runs + 1] = UI.fmtStamp(r.startedEpoch) .. "=" .. r.runs end
+    sum.xp, sum.deaths = sum.xp + (r.xp or 0), sum.deaths + (r.deaths or 0)
+  end
+  eq("Sessions: runs only where the run store has one (never the old counters 22, 12, 6, 6, 5, 4, 3)", table.concat(runs, " | "), "Fri 20 Nov 15:08=1 | Thu 19 Nov 15:29=1")
+  eq("Sessions: the listed rows hold the 25 deaths and 1,904,466 XP of the stored records", sum.deaths .. " " .. sum.xp, "25 1904466")
+  eq("Sessions: the character's totals are above the stored sessions (6,627,648 earned against 3,288,448): a proven gap", Sess.gaps(), true)
+  local a = Sess.answer()
+  check("Sessions: the answer is the gold history's range: since Wed 18 Nov 20:35, net -808,803 copper, 6 runs", a and a.since == 1795030532 and a.net == -808803 and a.runs == 6,
+    a and (tostring(a.since) .. " " .. a.net .. " " .. a.runs))
+  UI.Open("Home", "sessions"); M.settle()
+  local v = home.paneByKey.sessions.content
+  local segs = {}
+  for _, sg in ipairs(v.summary.segs or {}) do segs[#segs + 1] = strip(sg.text) end
+  eq("Sessions: the answer line", (table.concat(segs, " | "):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " "):gsub(" | ", "|"):gsub(" |", "|")), "Since Wed 18 Nov 20:35: net -80 88|6 runs")
+  eq("Sessions: the header says where the list starts and that it has gaps", v.section.label.text .. " | " .. v.section.meta.text, "SESSIONS SINCE THU 5 NOV | not every session is kept")
+  local cols = {}
+  for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.key ~= "_chev" then cols[#cols + 1] = col.key end end
+  eq("Sessions: columns When, Length, Level, XP, Gold, Deaths (Runs has 4 counts in 38 rows; no Kills)", table.concat(cols, ","), "date,len,lvl,xp,gold,deaths")
+  local trs = shown(v.tbl)
+  local function line(r) local o = {}; for _, k in ipairs(cols) do o[#o + 1] = strip((strip(r.c[k].text):gsub("\194\160", " "):gsub("%s+", " "))) end return table.concat(o, " | ") end
+  eq("Sessions: 38 table rows", #trs, 38)
+  eq("Sessions: today's row", line(trs[1]), "11:45 | 10m | 60 |  | -22 51 | 0")
+  eq("Sessions: yesterday evening", line(trs[2]), "20:01 | 3h 53m | 59 to 60 | 191,592 | -126 58 | 0")
+  eq("Sessions: yesterday afternoon", line(trs[3]), "15:08 | 1h 38m | 58 to 59 | 74,593 | +3 52 | 2")
+  local all = {}
+  for _, r in ipairs(trs) do all[#all + 1] = line(r) end
+  local text = table.concat(all, " / ")
+  check("Sessions: no row for the empty logins, and none reads a dash or the old counter", not text:find(" | - ", 1, true) and not text:find("| 22$"), text:sub(1, 200))
+  check("Sessions: a level 41 session that earned nothing reads 0 XP (12 Nov 21:22)", text:find("21:22 | 18m | 41 | 0 | -2 56 | 0", 1, true) ~= nil)
+  check("Sessions: the joined rows of 16, 11 and 5 Nov", text:find("17:01 | 1h 10m | 48 to 49 | 57,878 | +5 7 | 0", 1, true) ~= nil and text:find("10:46 | 33m | 37 | 19,341 | +6 25 | 1", 1, true) ~= nil
+    and text:find("03:05 | 25m | 1 to 3 | 2,604 | +2 53 | 0", 1, true) ~= nil)
+end
 
 -- ── Settings > Data and sync ──
 UI.Open("Settings"); M.settle()

@@ -55,18 +55,6 @@ return function(P)
       check("Fights " .. tag .. ": the enemy column is at most 360", t.cols.foe.w <= 360, t.cols.foe.w)
       check("Fights " .. tag .. ": no group size column (the party is in the tooltip)", t.cols.grp == nil)
     end
-    local h = P.open("home", "timeline", size[1], size[2], "normal")
-    local tt = h and kitOf(h, "ev")
-    check("Timeline " .. tag .. ": the list was found", tt ~= nil)
-    if tt then
-      local cut, zcut = {}, {}
-      for _, r in ipairs(rowsOf(tt)) do
-        if r.c.ev:IsTruncated() and tostring(r.c.ev.text):find("%d") then cut[#cut + 1] = r.c.ev.text end
-        if r.c.where:IsTruncated() then zcut[#zcut + 1] = r.c.where.text end
-      end
-      check("Timeline " .. tag .. ": an event summary with counts is never cut", #cut == 0, table.concat(cut, " | "))
-      check("Timeline " .. tag .. ": no zone name is cut under PLACE", #zcut == 0, table.concat(zcut, " | "))
-    end
   end
   -- A1: a day row shows its label and nothing else, after a data row with a stack count was recycled into it
   do
@@ -96,7 +84,7 @@ return function(P)
     end
     local bad, n = dayExtras(c)
     check("Items: a day row shows only its label, no stack count or icon from a recycled row (A1)", n > 0 and #bad == 0, table.concat(bad, "; "))
-    for _, pg in ipairs({ { "home", "timeline" }, { "combat", "fights" }, { "loot", "gold" } }) do
+    for _, pg in ipairs({ { "home", "sessions" }, { "combat", "fights" }, { "loot", "gold" } }) do
       local cc = P.open(pg[1], pg[2], 1600, 1000, "long")
       local b2 = dayExtras(cc)
       check(pg[1] .. "/" .. pg[2] .. ": a day row shows only its label (A1)", #b2 == 0, table.concat(b2, "; "))

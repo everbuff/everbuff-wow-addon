@@ -128,7 +128,7 @@ return function(P)
   local function reopen(hostName, pane) ns.UI.Open(hostName, pane); M.settle() end
 
   local PAGES = {
-    { "home", "overview" }, { "home", "timeline" }, { "home", "sessions" },
+    { "home", "overview" }, { "home", "sessions" },
     { "combat", "fights" }, { "combat", "deaths" },               -- (Dungeons: tests/panes/dungeons.lua)
   }
   local HOST = { home = "Home", combat = "Combat" }
@@ -153,122 +153,7 @@ return function(P)
 
   -- (Home > Now has its own file, tests/panes/home.lua)
 
-  -- ── Home / Sessions (a kit page): the two charts span the list's text, from the WHEN header to the last column
-  for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
-    local tag = ("Sessions %dx%d"):format(size[1], size[2])
-    local c = P.open("home", "sessions", size[1], size[2], "long")
-    local tbl = c.tbl
-    local xs, gs, hb = P.box(c.xpStrip), P.box(c.goldStrip), P.box(tbl.head.date.fs)
-    local lastCol = tbl.cols.dung
-    local listR = P.box(tbl.frame).l + lastCol.x + lastCol.w
-    check(tag .. ": XP PER SESSION starts where the WHEN header does", near(xs.l, hb.l), ("%s vs %s"):format(xs.l, hb.l))
-    check(tag .. ": the strips are two equal halves S5 apart, ending at the last column", near(xs.w, gs.w) and near(gs.l - (xs.l + xs.w), UI.S.S5) and math.abs(gs.l + gs.w - listR) <= 1.5, ("%s %s %s/%s"):format(xs.w, gs.l - (xs.l + xs.w), gs.l + gs.w, listR))
-    local outside, colours = 0, {}
-    for _, st in ipairs({ c.xpStrip, c.goldStrip }) do
-      local sb = P.box(st)
-      for _, bar in ipairs(st.bars) do
-        if bar.shown ~= false then
-          local b = P.box(bar); if b.l < sb.l - 0.5 or b.l + b.w > sb.l + sb.w + 0.5 then outside = outside + 1 end
-        end
-      end
-    end
-    eq(tag .. ": every bar stays inside its strip", outside, 0)
-    -- the session list: one When dialect, the LIVE badge after its text, "-" for nothing, no stray dot
-    local live, dots, zeros = nil, {}, {}
-    for i = 1, tbl.shownN do
-      local r = tbl.rows[i]
-      if r.item and not r.item.ebSection then
-        if r.item.endedEpoch == nil then live = r end
-        for k, cell in pairs(r.c) do
-          local t = tostring(cell.text or "")
-          if t:find("\226\128\162", 1, true) then dots[#dots + 1] = k end
-          if (k == "gold" or k == "len") and (t == "0" or t:find("^0[gsc ]") or t == "0m") then zeros[#zeros + 1] = k .. i end
-        end
-      end
-    end
-    check(tag .. ": no stray bullet in any cell (A17)", #dots == 0, table.concat(dots, ","))
-    check(tag .. ": zero money and zero length read -, never 0 (B11)", #zeros == 0, table.concat(zeros, ","))
-    if live then
-      local db, tb = P.box(live.ebBadge), P.box(live.c.date)
-      check(tag .. ": the LIVE badge sits S2 after the When text (B11)", live.ebBadge and live.ebBadge.shown ~= false and near(db.l, tb.l + tb.w + UI.S.S2, 1), db and (db.l .. " vs " .. (tb.l + tb.w)))
-    end
-    -- the gold block flows S5 under the list (or under the hidden-sessions line), not pinned to the window bottom
-    if c.goldBand:IsShown() then
-      local under = c.shortLine:IsShown() and P.box(c.shortLine) or P.box(tbl.frame)
-      local gh = P.box(c.goldHead)
-      check(tag .. ": the gold block starts S5 under the list (A17)", near(gh.t, under.t + (c.shortLine:IsShown() and UI.H.DAY_ROW or tbl.height) + UI.S.S5, 1), gh.t .. " vs " .. under.t)
-    end
-  end
-  -- short empty sessions are hidden behind one line with the link that shows them
-  do
-    local c = P.open("home", "sessions", 900, 580, "normal")
-    local S0 = ns.DB.sessions
-    local id = "short-empty-test"
-    S0[id] = { id = id, startedEpoch = M.epoch - 7200, endedEpoch = M.epoch - 7200 + 40, char = ns.DB.active and S0[ns.DB.active] and S0[ns.DB.active].char, guid = ns.DB.active and S0[ns.DB.active] and S0[ns.DB.active].guid }
-    for k, v in pairs(S0[ns.DB.active] or {}) do if k ~= "id" and k ~= "startedEpoch" and k ~= "endedEpoch" and type(v) ~= "table" and type(v) ~= "number" then S0[id][k] = S0[id][k] or v end end
-    ns.UI.Open("Home", "sessions"); M.settle()
-    if ns._test.sessionIsShort(S0[id], M.epoch) then
-      local listed = false
-      for _, s in ipairs(c.shownSessions or {}) do if s.id == id then listed = true end end
-      check("Sessions: a 40 s empty session is hidden (B11)", not listed and c.shortLine:IsShown(), tostring(c.shortText.text))
-      c.shortLink:GetScript("OnClick")(c.shortLink); M.settle()
-      listed = false
-      for _, s in ipairs(c.shownSessions or {}) do if s.id == id then listed = true end end
-      check("Sessions: Show them lists it", listed)
-      c.shortLink:GetScript("OnClick")(c.shortLink); M.settle()
-    end
-    S0[id] = nil
-    ns.UI.Open("Home", "sessions"); M.settle()
-  end
-
-  -- ── Home / Activity (a kit page): a day row per day, the Type word, the chevron in its own column
-  do
-    local c = P.open("home", "timeline", 900, 580)
-    addRun(); reopen("Home", "timeline")
-    local tbl = c.timelineTable
-    local secs, evs = 0, 0
-    local bad = {}
-    for i = 1, tbl.shownN do
-      local r = tbl.rows[i]
-      if r.item and r.item.ebSection then
-        secs = secs + 1
-        check("Activity: a day row takes no mouse (no hover, no click)", r._mouse == false)
-        if not tostring(r.item.ebSection):find("EVENT", 1, true) and not tostring(r.item.ebSection):lower():find("event", 1, true) then bad[#bad + 1] = r.item.ebSection end
-      elseif r.ev then
-        evs = evs + 1
-        local word = tostring(r.c.type.text or "")
-        if word:upper() == word and #word > 3 then bad[#bad + 1] = "type upper " .. word end
-        if tostring(r.c.ev.text):find("  ", 1, true) then bad[#bad + 1] = "double space " .. tostring(r.c.ev.text) end
-      end
-    end
-    check("Activity: day rows and event rows", secs >= 1 and evs >= 3, secs .. "/" .. evs)
-    check("Activity: day rows name their count, Type is a sentence-case word, no double space (A5)", #bad == 0, table.concat(bad, " | "))
-    eq("Activity: tbl.sections() lists the day rows", #tbl.sections(), secs)
-    check("Activity: no While fighting column (A5)", tbl.cols.foe == nil)
-    local row
-    for i = 1, tbl.shownN do local r = tbl.rows[i]; if r.ev and r.ev.kind == "LOOT" then row = r; break end end
-    check("Activity: a loot event is listed", row ~= nil)
-    if row then
-      check("Activity: the open marker is its own 12 px column, not in the event text", row.c._chev and row.c._chev.text == "\226\128\186" and tbl.cols._chev and tbl.cols._chev.w == 12 and not tostring(row.c.ev.text):find(">", 1, true))
-      check("Activity: a stored event is never marked by the list", row.ev.ebNoOpen == nil)
-      row:GetScript("OnEnter")(row)
-      local tip = _G.GameTooltip
-      check("Activity: the tooltip shows the event and the click hint", tip.lines[#tip.lines] == "Click to open", tip.lines[#tip.lines])
-      row:GetScript("OnLeave")(row)
-      row:GetScript("OnClick")(row, "LeftButton")
-      check("Activity: clicking a loot event opens Loot / Items", host("Loot").ctl.active == "items")
-    end
-    -- the control row: the search 176 x 24, S2 left of the filter button, which ends on the list's right edge
-    c = P.open("home", "timeline", 900, 580)
-    local sb, fb = P.box(c.search), P.box(c.filterButton)
-    check("Activity: the search is 176 x 24, S2 left of the filter (A3)", near(sb.w, 176) and near(sb.h, 24) and near(fb.l - (sb.l + sb.w), UI.S.S2), ("%s x %s, gap %s"):format(sb.w, sb.h, fb.l - (sb.l + sb.w)))
-    check("Activity: search and filter sit on one row", near(sb.t, fb.t), sb.t .. " vs " .. fb.t)
-    ns.OpenTimelineWindow(0, 1, "Kobold Miner"); M.settle()
-    local segs = {}
-    for _, sg in ipairs(c.timelineSummary.segs or {}) do segs[#segs + 1] = sg.text end
-    check("Activity: a window is said on the summary line with the way back", table.concat(segs, "|"):find("Show everything", 1, true) ~= nil, table.concat(segs, "|"))
-    c.clearWindow()
-  end
+  -- (Home > Sessions has its own file, tests/panes/sessions.lua; Home > Activity is removed)
 
   -- ── Home / Fights (a kit page): day and run rows, sorting by a header, durations in one dialect
   do

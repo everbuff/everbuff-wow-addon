@@ -2014,7 +2014,7 @@ function Gold.menuItems()
   items[#items + 1] = { kind = "check", text = "Lock", checked = function() return (Gold.pillCfg() or {}).locked == true end,
     pick = function() Gold.pillOpt("locked", not ((Gold.pillCfg() or {}).locked == true)) end }
   local on = (Gold.pillCfg() or {}).on == true
-  items[#items + 1] = { kind = "button", text = on and "Hide" or "Show the gold pill", pick = function() Gold.pillOn(not on) end }
+  items[#items + 1] = { kind = "button", text = on and "Hide" or "Show gold on screen", pick = function() Gold.pillOn(not on) end }
   items[#items + 1] = { kind = "button", text = "Open gold", pick = function() Gold.openSoon() end }
   return items
 end
@@ -3768,7 +3768,7 @@ function ns.BuildGoldSettings(pane)
   pane.cbCompact = checkbox(mainPg, "Compact numbers",
     function() return (Gold.cfg() or {}).compact == true end, function(v) Gold.cfg(true).compact = v; Gold.fire() end)
   pane.barText = pane.cbPill.row.desc
-  pane.moreBtn = button(mainPg, "Pill size, tooltip rows and resets", "More \226\128\186", "ghost", function() main:Hide(); more:Show(); refresh() end)
+  pane.moreBtn = button(mainPg, "Size, tooltips and resets", "More \226\128\186", "ghost", function() main:Hide(); more:Show(); refresh() end)
   onScreen.items = { pane.cbPill.row, pane.cbTips.row, pane.pick1.row, pane.pick2.row, rateRow, pane.pickFilter.row, pane.cbIcons.row, pane.cbCompact.row, pane.moreBtn.row }
   -- hidden characters, each with "Show again"
   local hiddenSec = section(mainPg, "Hidden characters")
@@ -3800,13 +3800,13 @@ function ns.BuildGoldSettings(pane)
   local back = { head = UI.Section(morePg.col, "More gold settings"), items = {} }
   pane.backBtn = UI.KitButton(back.head.right, "\226\128\185 Gold display", "ghost", function() more:Hide(); main:Show(); refresh() end)
   pane.backBtn:SetPoint("TOPRIGHT", back.head.right, "TOPRIGHT", -K.S3, 0)
-  pane.cbLock = checkbox(morePg, "Lock the pill",
+  pane.cbLock = checkbox(morePg, "Lock the gold display",
     function() return (Gold.pillCfg() or {}).locked == true end, function(v) Gold.pillOpt("locked", v) end)
   local function pct(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
-  pane.slScale = slider(morePg, "Pill text size", Gold.PILL_SCALE[1], Gold.PILL_SCALE[2], 0.05,
+  pane.slScale = slider(morePg, "Text size", Gold.PILL_SCALE[1], Gold.PILL_SCALE[2], 0.05,
     function() return tonumber((Gold.pillCfg() or {}).scale) or 1 end,
     function(v) if not Gold.inCombat() then Gold.pillOpt("scale", v) end end, pct)
-  pane.slAlpha = slider(morePg, "Pill opacity", Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2], 0.05,
+  pane.slAlpha = slider(morePg, "Opacity", Gold.PILL_ALPHA[1], Gold.PILL_ALPHA[2], 0.05,
     function() return tonumber((Gold.pillCfg() or {}).alpha) or 1 end,
     function(v) if not Gold.inCombat() then Gold.pillOpt("alpha", v) end end, pct)
   back.items = { pane.cbLock.row, pane.slScale.row, pane.slAlpha.row }
@@ -3821,7 +3821,7 @@ function ns.BuildGoldSettings(pane)
     function() return (Gold.tipCfg() or {}).month == true end, function(v) Gold.tipCfg(true).month = v end)
   tipsSec.items = { pane.slRows.row, pane.cbWeek.row, pane.cbMonth.row }
   local resetSec = section(morePg, "Reset")
-  pane.resetPos = button(morePg, "Pill position", "Reset", "ghost", function() if not (ns.blockedInCombat and ns.blockedInCombat()) then Gold.pillOpt("pos") end end)
+  pane.resetPos = button(morePg, "Position on screen", "Reset", "ghost", function() if not (ns.blockedInCombat and ns.blockedInCombat()) then Gold.pillOpt("pos") end end)
   pane.resetRate = button(morePg, "Per hour", "Reset", "ghost", function() Gold.resetRate(); refresh() end)
   -- two clicks: the first names what goes, the second within 3 s deletes it
   local RESET, CONFIRM = "Reset gold history", "Confirm: delete this character's day history"
