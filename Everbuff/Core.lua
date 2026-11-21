@@ -282,7 +282,7 @@ SlashCmdList.EVERBUFF = function(arg)
   if arg == "" or arg == "show" or arg == "open" then
     if ns.UI then ns.UI.Toggle() else ns.msg("UI not loaded") end
   elseif arg == "rec" or arg == "recording" then
-    if ns.UI then ns.UI.Open("Combat", "fights") end
+    if ns.UI then ns.UI.Open("Home", "fights") end
   -- NOTE: /eb loot · /eb ready · /eb crew (raid-lead tools) are DEFERRED - see addon/Everbuff/future/.
   elseif arg:match("^ack") then
     local ack = ns.parseAckCode((arg:gsub("^ack%s*", "")))

@@ -6,7 +6,8 @@ local M = require("wow_stub")
 local passed, failed = 0, 0
 local function check(name, cond, detail)
   if cond then passed = passed + 1
-  else failed = failed + 1; print(("FAIL  %s%s"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
+  -- (io.write, not print: a test file that silences print for the addon's chat lines must not hide a failure)
+  else failed = failed + 1; io.write(("FAIL  %s%s\n"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
 end
 local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pred(v) then n = n + 1 end end return n end
 
@@ -22,6 +23,10 @@ local T = ns._test or {}
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
 check("ADDON_LOADED creates ns.DB", type(ns.DB) == "table")
+-- the suite plays as a player who went through the first-run guide (Home > Now's own tests, tests/panes/home.lua,
+-- walk the guide itself); without this every open of Home would show the guide instead of Now
+ns.DB.settings = ns.DB.settings or {}
+ns.DB.settings.welcomeDone = true
 check("db.gold/xp/played initialised", ns.DB and ns.char().gold and ns.char().xp and ns.char().played)
 check("#23 the character block lives under the player GUID", ns.DB.characters["Player-1-000001"] == ns.char() and ns.DB.character == nil and ns.DB.loot.gold == nil)
 M.money = 5000; M.xp = 100
@@ -252,7 +257,7 @@ do
 end
 check("fmtTime", T.fmtTime(90061) == "1d 1h" and T.fmtTime(3661) == "1h 1m" and T.fmtTime(300) == "5m" and T.fmtTime(0) == "-")
 check("commas", T.commas(1234567) == "1,234,567" and T.commas(50) == "50")
-check("fmtDur", T.fmtDur(75) == "1:15" and T.fmtDur(9) == "9s")
+check("fmtDur: the fight list speaks the one dialect, never mm:ss", T.fmtDur(75) == "1m 15s" and T.fmtDur(9) == "9s", T.fmtDur(75))
 check("plain passes numbers", T.plain(5) == 5 and T.plain("x") == nil)
 check("safeKey passes plain values", T.safeKey("abc") == "abc" and T.safeKey(nil) == nil)
 check("safeStr type gate", T.safeStr("ok") == "ok" and T.safeStr(5) == nil)
@@ -578,22 +583,31 @@ end
 local names = {}
 for _, tab in ipairs(T.tabs) do names[tab.name] = true end
 check("Sync is no longer a top-level tab", names.Sync == nil)
-check("five top-level tabs: Home · Combat · Loot · Character · Settings", #T.tabs == 5 and names.Home and names.Combat and names.Loot and names.Character and names.Settings, #T.tabs)
-check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Dungeons == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
+check("five top-level tabs: Home · Dungeons · Character · Loot · Settings", #T.tabs == 5 and names.Home and names.Dungeons and names.Loot and names.Character and names.Settings, #T.tabs)
+check("the sidebar order is Home, Dungeons, Character, Loot, then Settings pinned", (function()
+  local o = {}; for _, tab in ipairs(T.tabs) do o[#o + 1] = tab.name end
+  return table.concat(o, ",") == "Home,Dungeons,Character,Loot,Settings" end)())
+check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Combat == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
 local function host(n) for _, tab in ipairs(T.tabs) do if tab.name == n then return tab end end end
-check("Combat hosts Dungeons · Fights · Deaths in that order", (function() local h = host("Combat"); return h and h.panes[1].key == "dungeons" and h.panes[2].key == "fights" and h.panes[3].key == "deaths" end)())
-check("Home hosts Overview · Timeline · Sessions", (function() local h = host("Home"); return h and h.panes[1].key == "overview" and h.panes[2].key == "timeline" and h.panes[3].key == "sessions" end)())
-check("Loot hosts Items · Gold; Character hosts Quests · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and c.panes[1].key == "quests" and c.panes[3].key == "professions" end)())
-check("capture pane builder exposed", type(ns.BuildCapturePane) == "function")
+check("Dungeons hosts Runs", (function() local h = host("Dungeons"); return h and h.panes[1].key == "runs" end)())
+check("Home hosts Now · Sessions · Activity · Fights · Deaths", (function() local h = host("Home"); local k = {}; for _, pn in ipairs(h and h.panes or {}) do k[#k + 1] = pn.key end; return table.concat(k, ",") == "now,sessions,activity,fights,deaths" end)())
+check("old window keys resolve to their new place", (function()
+  local R = ns.UI.Resolve
+  local a1, b1 = R("Combat", "dungeons"); local a2, b2 = R("Combat", "fights"); local a3, b3 = R("Combat", "deaths")
+  local a4, b4 = R("Home", "overview"); local a5, b5 = R("Home", "timeline"); local a6 = R("Combat")
+  return a1 == "Dungeons" and b1 == "runs" and a2 == "Home" and b2 == "fights" and a3 == "Home" and b3 == "deaths"
+    and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "activity" and a6 == "Dungeons" end)())
+check("Loot hosts Items · Gold; Character hosts Leveling · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and #c.panes == 3 and c.panes[1].key == "leveling" and c.panes[2].key == "reputation" and c.panes[3].key == "professions" end)())
+check("settings builder exposed", type(ns.BuildSettings) == "function")
 -- ── Settings sub-tab control ──
 local settingsTab
 for _, tab in ipairs(T.tabs) do if tab.name == "Settings" then settingsTab = tab end end
 local st = settingsTab and settingsTab.content and settingsTab.content.subtabs
-check("Settings exposes a tab control with three panes", st and st.panes.general and st.panes.capture and st.panes.data)
+check("Settings exposes a tab control with three panes: General, Gold display, Data and sync (4.12)", st and st.panes.general and st.panes.golddisplay and st.panes.data and #st.tabs == 3)
 if st then
-  local okSel, errSel = pcall(function() st.select("capture"); st.select("data"); st.select("general") end)
+  local okSel, errSel = pcall(function() st.select("golddisplay"); st.select("data"); st.select("general") end)
   check("switching sub-tabs renders cleanly", okSel, errSel)
-  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.capture:IsShown() and not st.panes.data:IsShown())
+  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.golddisplay:IsShown() and not st.panes.data:IsShown())
 end
 -- ── Source / Location split ──
 check("fmtLocation zone + coords", ns.UI.fmtLocation("Elwynn Forest", 0.421, 0.637) == "Elwynn Forest  (42.1, 63.7)")
@@ -604,15 +618,15 @@ local lastFight = ns.DB.combat.fights[#ns.DB.combat.fights]
 check("fights capture coordinates at the pull", lastFight and lastFight.x == 0.421 and lastFight.y == 0.637 and lastFight.map == 37, lastFight and lastFight.x)
 -- ── filter tabs on Fights + Timeline ──
 local fl = T.fightsList()
-check("Fights list has a tab control", fl and fl.tabs and fl.tabs.content ~= nil)
+check("Fights list has a filter button and a search in the control row (A3)", fl and fl.filter and fl.search and fl.tabs ~= nil)
 if fl and fl.tabs then
   local okF, errF = pcall(function() fl.tabs.select("death"); fl.tabs.select("notable"); fl.tabs.select("all") end)
   check("Fights filter tabs switch cleanly", okF, errF)
 end
-local tlTab = host("Home") and host("Home").paneByKey.timeline
-check("Timeline pane has a filter tab control", tlTab and tlTab.content and tlTab.content.tabs ~= nil)
-if tlTab and tlTab.content and tlTab.content.tabs then
-  local okT, errT = pcall(function() tlTab.content.tabs.select("combat"); tlTab.content.tabs.select("all") end)
+local tlTab = host("Home") and host("Home").paneByKey.activity
+check("Activity pane has a filter button and a search in the control row (A3)", tlTab and tlTab.content and tlTab.content.filterButton ~= nil and tlTab.content.search ~= nil)
+if tlTab and tlTab.content and tlTab.content.setFilter then
+  local okT, errT = pcall(function() tlTab.content.setFilter("combat"); tlTab.content.setFilter("all") end)
   check("Timeline filter tabs switch cleanly", okT, errT)
 end
 -- ── in-combat SECRET aura data (Midnight): tracked by instance id, names resolved / backfilled ──
@@ -859,11 +873,12 @@ check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Lin
 do
   local t0 = M.epoch + 100000
   local L, Fz = ns.DB.story.events, ns.DB.combat.fights
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {} }                                     -- trash, the foe's name hidden
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" } }                        -- after the run
+  -- (the run's fights are in its instance, B3: the zone names it)
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {}, zone = "Ragefire Chasm" }                -- trash, the foe's name hidden
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" }, zone = "Durotar" }                        -- after the run
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
   -- a rare picked up after the run, its row still stamped with the dungeon's zone (the stamp is the last loot window's)
@@ -890,10 +905,10 @@ do
   -- a fight inside an instance with no foe and no death is a trash pull, not a flight (57 of 57 in Maraudon read "Fled")
   local dvR = T.dungeonDetail()
   local trash, fled = 0, 0
-  for _, b in ipairs(dvR and dvR.child.btn or {}) do
-    if b.shown ~= false and b.re then
-      if b.re.text == "Trash" then trash = trash + 1 elseif b.re.text == "Fled" then fled = fled + 1 end
-    end
+  local pulls = dvR and dvR.tables.pulls
+  for i = 1, pulls and pulls.shownN or 0 do
+    local t = pulls.rows[i].c.re.text
+    if t == "Trash" then trash = trash + 1 elseif t == "Fled" then fled = fled + 1 end
   end
   check("run detail: a fight with no foe reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
 end
@@ -994,9 +1009,10 @@ end
 -- ── day labels ──
 do
   local nowT = M.epoch
-  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "Today")
-  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "Yesterday")
-  check("fmtDay older shows weekday and date", ns.UI.fmtDay(nowT - 5 * 86400, nowT) == date("%A, %b %d", nowT - 5 * 86400))
+  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "TODAY")
+  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "YESTERDAY")
+  local old = nowT - 5 * 86400
+  check("fmtDay older shows weekday, day and month in capitals", ns.UI.fmtDay(old, nowT) == (date("%A ", old) .. tonumber(date("%d", old)) .. date(" %b", old)):upper(), ns.UI.fmtDay(old, nowT))
 end
 -- ── delete a single fight from its detail (two clicks) ──
 do
@@ -1145,34 +1161,40 @@ do
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTACCEPT", t = t0 + 10, text = "Quest:  Investigate Echo Ridge", zone = "Elwynn Forest" }
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 300, text = "Complete:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.48, y = 0.41 }
   L[#L + 1] = { s = ns.DB.active, kind = "REWARD", t = t0 + 301, text = "Chose:  Worn Shortsword" }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 302, text = "Complete:  quest", zone = "Elwynn Forest" }
   local rows, sum = T.buildQuests()
-  check("quests: completed and open counted", sum.done >= 1 and sum.open >= 1 and sum.rewards >= 1, sum.done .. "/" .. sum.open)
+  check("quests: every turn-in counted, accepted quests left out (Leveling, 4.10)", sum.done >= 2, sum.done)
   local top = rows[1]
-  check("quests: newest first with a status", top and top.name == "Kobold Camp Cleanup" and top.status == "done", top and top.name)
-  local openRow; for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then openRow = r end end
-  check("quests: accepted but not completed is in progress", openRow and openRow.status == "accepted")
+  check("quests: newest first", top and top.t == t0 + 302 and rows[2].name == "Kobold Camp Cleanup", top and top.name)
+  check("quests: a name the game did not give is never the placeholder", top.name ~= "quest" and top.unnamed == true, top.name)
+  for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then check("quests: an accepted quest is not a turn-in", false) end end
   ns.char().reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
   L[#L + 1] = { s = ns.DB.active, kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
+  ns.DB.story.rep = ns.DB.story.rep or {}
+  table.insert(ns.DB.story.rep, { s = ns.DB.active, t = t0 + 499, faction = "Ironforge", amount = 75, src = "Quest: Kobold Camp Cleanup" })
   local rr, rs = T.buildReputation()
-  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[3].name == "Darnassus", rr[1] and rr[1].name)
-  check("reputation: last standing gain matched to the faction", rr[1].lastUp == t0 + 500 and rs.ups >= 1)
-  ns.char().professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
-  L[#L + 1] = { s = ns.DB.active, kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
+  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[#rr].name == "Darnassus", rr[1] and rr[1].name)
+  local sw; for _, r in ipairs(rr) do if r.name == "Stormwind" then sw = r end end
+  check("reputation: the live bar read from the client (1,500 of 3,000)", sw and sw.progress == 1500 and sw.need == 3000, sw and tostring(sw.progress))
+  check("reputation: this session's gains per faction", rr[1].session == 75 and rs.gained >= 75, rr[1].session)
+  local hist = T.buildRepHistory("Ironforge")
+  check("reputation: how you earned it, newest first, the new standing too", #hist == 2 and hist[1].milestone and hist[2].change == "+75" and hist[2].source == "Quest: Kobold Camp Cleanup", #hist)
+  ns.char().professions = { ["Mining"] = { rank = 118, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
-  L[#L + 1] = { s = ns.DB.active, kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
   local pr, ps = T.buildProfessions()
-  check("professions: highest skill first with rank/max", pr[1] and pr[1].name == "Mining" and pr[1].rank == 78 and pr[1].max == 150, pr[1] and pr[1].name)
-  check("professions: milestones and skill-ups per profession", pr[1].tiers >= 1 and pr[1].skillups >= 1 and ps.recipes >= 1, pr[1].tiers .. "/" .. pr[1].skillups)
-  -- a gathered skill-up has no prof field: its profession comes from the text
+  check("professions: highest skill first with rank/max and the rank's name", pr[1] and pr[1].name == "Mining" and pr[1].rank == 118 and pr[1].max == 150 and pr[1].rankName == "Journeyman", pr[1] and pr[1].name)
+  check("professions: the training line 10 under the next rank", pr[1].training == "Expert training opens at 125", pr[1].training)
+  check("professions: the training line once it is open", T.trainingLine("Tailoring", 125, 150) == "Expert training is open at any Tailoring trainer" and T.trainingLine("Tailoring", 100, 150) == nil)
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
   local pr2 = T.buildProfessions()
   local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
-  check("professions: a skill-up without a prof field still counts", fa and fa.skillups == 1, fa and fa.skillups)
-  local hist = T.buildSkillups()
-  check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
-  check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
-  check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  check("professions: a skill-up without a prof field still counts this session", fa and fa.session == 1, fa and fa.session)
+  ns.char().playedAtLevel = { [11] = 3600, [12] = 7200 }
+  L[#L + 1] = { s = ns.DB.active, kind = "LEVELUP", t = t0 + 700, text = "Ding!  Level 12" }
+  local lv = T.buildLevels(12, t0 + 800)
+  local l11; for _, r in ipairs(lv) do if r.level == 11 then l11 = r end end
+  check("levels: newest level first, the time at a level from the played stamps", lv[1].level == 12 and l11 and l11.at == 3600, lv[1] and lv[1].level)
   -- founder 2026-09-30: nothing opens or moves in combat, so the desktop never loses the flag mid-fight
   do
     local corner0 = ns.DB.settings.emitCorner
@@ -1213,7 +1235,7 @@ do
   local sw; for _, r in ipairs(rh) do if r.faction == "Stormwind" and r.change == "+250" then sw = r end end
   local sorted = true; for i = 2, #rh do if rh[i].t > rh[i - 1].t then sorted = false end end
   check("reputation history: gains and new standings, newest first", #rh >= 2 and sw ~= nil and sorted, #rh)
-  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 1 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
+  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 2 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
   ns.UI.Open("Character", "reputation"); M.tick()
   local rp = host("Character").paneByKey.reputation
   check("Reputation pane with its history builds and renders cleanly", rp and rp.built and rp.buildError == nil and rp.showError == nil, rp and (rp.buildError or rp.showError))
@@ -1225,14 +1247,15 @@ do
   ns.UI.Open("Home"); M.tick()
   local home = host("Home")
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))
-  local ov = home.paneByKey.overview
-  check("Home opens on Overview with the cards in the pane", home.ctl.active == "overview" and ov.content.cLevel and ov.content.cLevel:GetParent() == ov.content)
+  ns.UI.Open("Home", "now"); M.tick()
+  local ov = home.paneByKey.now
+  check("Home / Now holds the hero and the four cards in the pane", home.ctl.active == "now" and ov.content.hero and #ov.content.cards.cards == 4 and ov.content.hero:GetParent() == ov.content.col)
   ns.UI.Open("Loot", "gold")
   local gold = host("Loot").paneByKey.gold
-  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.cBalance and gold.content.cBalance.value:GetText() ~= nil)
+  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.shownCards and gold.content.shownCards[1].value:GetText() ~= nil)
   ns.UI.Open("Home")
-  ov.content.cXP:GetScript("OnMouseUp")(ov.content.cXP)
-  check("clicking the XP card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
+  ov.content.cards.cards[2]:GetScript("OnClick")(ov.content.cards.cards[2])
+  check("clicking the XP PER HOUR card opens Character / Leveling", host("Character").ctl.active == "leveling" and host("Character").paneByKey.leveling.built)
   ns.UI.Open("Home", "sessions")
   local srows = T.sessionRows()
   check("Sessions pane lists the current session first", #srows >= 1 and srows[1].id == ns.DB.active, srows[1] and srows[1].id)
@@ -1384,12 +1407,14 @@ do
   local dv = T.fightDetail()
   dv.tlBtn:GetScript("OnClick")(dv.tlBtn)
   local w = ns._test.timelineWindow()
-  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "timeline" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
-  local tl = host("Home").paneByKey.timeline
-  check("window banner shown", tl.content.timelineBanner.shown == true)
+  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "activity" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
+  local tl = host("Home").paneByKey.activity
+  local sumText = {}
+  for _, sg in ipairs(tl.content.timelineSummary.segs or {}) do sumText[#sumText + 1] = sg.text end
+  check("the summary line names the window and offers Show everything", table.concat(sumText, "|"):find("Showing", 1, true) ~= nil and table.concat(sumText, "|"):find("Show everything", 1, true) ~= nil, table.concat(sumText, "|"))
   check("events outside the window are filtered out", ns._test.eventMatches(L[#L], "all", "") == false and ns._test.eventMatches(L[#L - 1], "all", "") == true)
-  tl.content.timelineBanner:GetScript("OnClick")(tl.content.timelineBanner)
-  check("clicking the banner clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
+  tl.content.clearWindow()
+  check("Show everything clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
   ns.UI.Open("Home", "overview")
 end
 -- ── durability lost across a death ──
@@ -1412,9 +1437,9 @@ do
   local L = ns.char().lockouts
   check("locked instances captured with reset time and boss progress", L and #L == 1 and L[1].name == "Blackfathom Deeps" and L[1].down == 4 and L[1].bosses == 6 and L[1].resetAt == M.epoch + 90000, L and #L)
   ns.UI.Open("Combat", "dungeons"); M.tick()
-  local dg = host("Combat").paneByKey.dungeons
+  local dg = host("Dungeons").paneByKey.runs
   local txt = T.dungeonsLockText and T.dungeonsLockText() or ""
-  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps 4/6") ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
+  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps: 4 of 6 bosses down", 1, true) ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
   M.saved = {}
 end
 -- ── retail trait string ──
@@ -1471,7 +1496,7 @@ do
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
   local minQ = items.content.lootFilter()
-  check("quality filter starts at All", minQ == 0)
+  check("quality filter starts at Green and better (docs/UX_OVERHAUL.md 4.8)", minQ == 2, minQ)
   local rows = {
     { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed" },
     { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe" },
@@ -1485,13 +1510,11 @@ do
   local byQ = ns._test.lootSort({ unpack(rows) }, "quality", false)
   check("sort by quality puts the rare first", byQ[1].item == "Blue Sword", byQ[1].item)
 end
--- ── onboarding card ──
+-- ── Home > Now: the old onboarding card is gone (docs/UX_OVERHAUL.md 4.1) ──
 do
   ns.UI.Open("Home", "overview"); M.tick()
-  local ov = host("Home").paneByKey.overview.content
-  check("onboarding card shows on a fresh install", ov.onboard and ov.onboard:IsShown() and not ns.DB.settings.onboarded)
-  ov.onboard.okBtn:GetScript("OnClick")(ov.onboard.okBtn)
-  check("Got it dismisses the card for good", ns.DB.settings.onboarded == true and not ov.onboard:IsShown())
+  local ov = host("Home").paneByKey.now.content
+  check("Home > Now carries no onboarding card", ov.onboard == nil and ov.hero ~= nil)
 end
 -- ── flag free-drag position ──
 do
@@ -1517,12 +1540,14 @@ do
   local L = ns.DB.story.events
   ns.char().dungeonRuns = ns.char().dungeonRuns or {}
   table.insert(ns.char().dungeonRuns, T.runRecord("Wailing Caverns", t0, 600))
-  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" }, zone = "Wailing Caverns" }
+  -- (B3: a pull counts for a run only inside its window and in its instance: an open-world pull at the same time gets no run row)
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-out", session = ns.DB.active, startEpoch = t0 + 90, duration = 10, outcome = "kill", foes = { "Plainstrider" }, zone = "The Barrens" }
   local dv = T.fightDetail(); if dv then dv:Hide() end          -- an earlier test left the replay open; the list only rebuilds when visible
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
   local found = false
-  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):find("Wailing Caverns") then found = true end end
+  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):lower():find("wailing caverns", 1, true) then found = true end end
   local diag = {}
   for _, r in ipairs(ns.DungeonRuns()) do if r.name == "Wailing Caverns" then diag[#diag + 1] = ("run %s..%s fights=%d"):format(tostring(r.startT), tostring(r.endT), #(r.fights or {})) end end
   diag[#diag + 1] = "days=" .. tostring(fl.daysFn and #(fl.daysFn() or {}))
@@ -1566,6 +1591,7 @@ do
   check("Settings > Data has the sync box", settingsTab.content.ackBox ~= nil and settingsTab.content.ackBtn ~= nil)
   settingsTab.content.ackBox:SetText("not a code"); settingsTab.content.ackBtn:GetScript("OnClick")(settingsTab.content.ackBtn)
   check("a bad code does not crash and leaves data alone", #M.errors == 0 and ns.DB.combat.lastAck.source == "paste")
+  settingsTab.content.ackBox:SetText("")   -- (the field empty again, as a player finds it: the shots show its placeholder)
   ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
 end
 -- ── ack by session (everbuff-business #46): exactly the sessions the backend stored are pruned, nothing older ──
@@ -2056,8 +2082,10 @@ do
   -- Home: the GOLD card is the character's own ledger, and kills, deaths and fights count the character's sessions only
   a.gold.balance = 123456
   local ovc = T.journeyRefresh()
-  check("#23 Home GOLD shows the logged-in character's balance", ovc and ovc.cGold.value:GetText() == T.journeyMoney(123456), ovc and ovc.cGold.value:GetText())
-  local before = ovc.cKills.value:GetText()
+  local function goldTip() local t = ovc.cards.cards[3].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
+  check("#23 Home GOLD names the logged-in character's balance", ovc and goldTip() == ns.fmtMoney(123456, { icons = true }), ovc and goldTip())
+  local function lifetime() local t = ovc.cards.cards[4].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
+  local before = lifetime()
   ns.DB.sessions["other-23"] = { guid = "Player-1-000002", startedEpoch = 1 }
   local ev = ns.DB.story.events
   ev[#ev + 1] = { kind = "KILL", text = "Kill: Wolf", s = "other-23", t = 1 }
@@ -2065,16 +2093,17 @@ do
   local fl = ns.DB.combat.fights
   fl[#fl + 1] = { uid = "other-23-f1", s = "other-23", startedEpoch = 1, duration = 1 }
   T.journeyRefresh()
-  check("#23 Home kills, deaths and fights leave out another character's sessions", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() ~= nil, ovc.cKills.value:GetText())
+  ns.DB.sessions["other-23"].kills, ns.DB.sessions["other-23"].deaths = 1, 1
+  T.journeyRefresh()
+  check("#23 Home's lifetime kills and deaths leave out another character's sessions", lifetime() == before, lifetime())
   check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
-  local subBefore = ovc.cKills.sub:GetText()
   _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
   T.journeyRefresh()
-  check("#23 on the other character Home counts its kill, death and fight", ovc.cKills.value:GetText() == "1 kills" and ovc.cKills.sub:GetText():find("^1 death ") ~= nil and ovc.cKills.sub:GetText():find("1 fights") ~= nil, tostring(ovc.cKills.value:GetText()) .. " | " .. tostring(ovc.cKills.sub:GetText()))
+  check("#23 on the other character Home's lifetime counts its own kill and death", lifetime() == "1 kill \194\183 1 death", lifetime())
   _G.UnitGUID = realGUID
   table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
   T.journeyRefresh()
-  check("#23 Home is back to the first character's counts", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() == subBefore)
+  check("#23 Home is back to the first character's counts", lifetime() == before, lifetime())
 end
 -- ── #23 every pane shows the logged-in character only: a two-character save (Hart and Undertaker) ──
 do
@@ -2112,7 +2141,7 @@ do
   ns.DB.characters[UT] = ns.DB.characters[UT] or ns.newCharBlock()
   ns.DB.characters[UT].dungeonRuns = { T.runRecord("Shadowfang Keep", t0 + 1100, 300, { nDeaths = { me = 1, party = 0 },
     gold = { looted = 777, quests = 0, lootValue = 0, items = 1, purse = 777 } }) }
-  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9 }
+  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9, zone = "Shadowfang Keep" }
   Fz[#Fz + 1] = utF
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1195, item = "Undertaker Shroud", count = 1, q = "ff0070dd", src = "Undertaker Bane" }
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1196, money = 777, src = "Undertaker Bane" }
@@ -2124,12 +2153,16 @@ do
 
   -- logged in as Hart: none of Undertaker's rows in any pane
   ns.UI.Open("Home", "timeline"); M.tick()
-  local tl = host("Home").paneByKey.timeline.content
+  local tl = host("Home").paneByKey.activity.content
   local tlRows = shownRows(tl.timelineRows)
   check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  local lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.nm:GetText()) or r.nm:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.nm:GetText() == "Hart Cloth" end))
+  -- the item rows of Loot > Items (not its day rows), every quality shown
+  local function itemRows(ic) local out = {}; for _, r in ipairs(shownRows(ic.lootRows)) do if r.item and not r.item.ebSection then out[#out + 1] = r end end return out end
+  local itc = host("Loot").paneByKey.items.content
+  itc.setLootQuality("all")
+  local lr = itemRows(itc)
+  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.c.item:GetText()) or r.c.item:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.c.item:GetText() == "Hart Cloth" end))
   local dv = T.fightDetail(); if dv then dv:Hide() end
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
@@ -2138,13 +2171,10 @@ do
   check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.runViews(), function(r) return r.name == "Shadowfang Keep" end))
   check("#23 Hart: Combat / Deaths leaves out Undertaker's death", not has(T.collectDeaths(), function(d) return d.killer == "Undertaker Bane" end))
   local qRows = T.buildQuests()
-  check("#23 Hart: Character / Quests leaves out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
-  local _, repSum = T.buildReputation()
-  local repUps = repSum.ups
+  check("#23 Hart: Character / Leveling's quests leave out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
+  local repUps = #T.buildRepHistory()
   check("#23 Hart: reputation history leaves out Undertaker's gains", not has(T.buildRepHistory(), function(r) return r.faction == "Undercity" end))
-  local mineUps = #T.buildSkillups("Mining")
-  check("#23 Hart: profession history leaves out Undertaker's skill-ups", not has(T.buildSkillups("Mining"), function(r) return r.rank == 99 end))
-  check("#23 Hart: Loot / Auctions leaves out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
+  check("#23 Hart: the auction rows (Loot > Gold, Auction house) leave out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
   check("#23 Hart: Home / Sessions leaves out Undertaker's session", #T.sessionRows() > 0 and not has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end))
   check("#23 Hart: a fight's loot leaves out another character's pickups", #T.fightLoot(utF) == 0)
   check("#23 isMine reads a fight's `session` (Home counted none of the real fights in 0.9.31)", ns.isMine(hartF) and not ns.isMine(utF) and not ns.isMine({ session = "no-such-session" }))
@@ -2155,8 +2185,9 @@ do
   tlRows = {}; for _, r in ipairs(shownRows(tl.timelineRows)) do if r.ev then tlRows[#tlRows + 1] = r end end   -- the event rows (not the day headers)
   check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].nm:GetText() == "Undertaker Shroud", #lr)
+  lr = itemRows(host("Loot").paneByKey.items.content)
+  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].c.item:GetText() == "Undertaker Shroud", #lr)
+  host("Loot").paneByKey.items.content.setLootQuality("green")
   ns.UI.Open("Combat", "fights"); M.tick()
   fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
@@ -2165,10 +2196,9 @@ do
   local ds = T.collectDeaths()
   check("#23 Undertaker: Combat / Deaths shows only his death, linked to his fight", #ds == 1 and ds[1].killer == "Undertaker Bane" and ds[1].fight == utF, #ds)
   qRows = T.buildQuests()
-  check("#23 Undertaker: Character / Quests shows only his quests", #qRows == 2 and isUT(qRows[1].name) and isUT(qRows[2].name), #qRows)
-  local _, utRep = T.buildReputation()
+  check("#23 Undertaker: Character / Leveling's quests show only his turn-in", #qRows == 1 and isUT(qRows[1].name), #qRows)
   local rh = T.buildRepHistory()
-  check("#23 Undertaker: reputation shows only his gain and his new standing", utRep.ups == 1 and #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
+  check("#23 Undertaker: reputation shows only his gain and his new standing", #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
   check("#23 Undertaker: Loot / Auctions shows only his sale", #(ns.Market.buildAuctions()) == 1 and (ns.Market.buildAuctions())[1].item == "Undertaker Linen")
   local sr = T.sessionRows()
   check("#23 Undertaker: Home / Sessions shows only his session", #sr == 1 and sr[1].id == "ut-23", #sr)
@@ -2176,8 +2206,7 @@ do
 
   -- back on Hart: the same views as before; nothing stored was changed by the filtering
   asHart()
-  local _, repBack = T.buildReputation()
-  check("#23 back on Hart: his reputation and profession counts are unchanged", repBack.ups == repUps and #T.buildSkillups("Mining") == mineUps)
+  check("#23 back on Hart: his reputation history is unchanged", #T.buildRepHistory() == repUps)
   check("#23 filtering changes nothing stored: every row is still in the save", #L == nL0 + 8 and #Fz == nF0 + 1 and #Lg == nLg0 + 2 and #R == nR0 + 1 and ns.DB.sessions["ut-23"] ~= nil)
   -- no GUID yet: there is nothing to tell the characters apart by, so every row shows
   _G.UnitGUID = function() return nil end
@@ -2354,6 +2383,13 @@ for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", 
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end
+-- UX overhaul step 1 (docs/UX_OVERHAUL.md 5): the shared formatters and the cmap scan of the text characters
+do
+  local ok, err = pcall(dofile("tests/formatters.lua"), { check = check, ns = ns })
+  check("UX tests/formatters.lua runs to its end", ok, err)
+  local okG, errG = pcall(loadfile("tests/glyphs.lua"), { check = check })
+  check("UX tests/glyphs.lua runs to its end", okG, errG)
+end
 -- 0.9.49 (#42, plan in #51): the chat guards, the group member not named yet, the friendly target that is no foe,
 -- the sticky dungeon check records and the client's restricted events (on a save file of its own)
 do
@@ -2363,13 +2399,17 @@ end
 -- 0.9.50 (#51): the durable dungeon run (Everbuff/Runs.lua): visits and typed gaps, the encounter state machine, XP
 -- and gold per visit, the purse check, the learned alias, the cap and the size of a record (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.50 tests/runs.lua runs to its end", ok, err)
 end
 -- 0.9.51 (#51, the plan's milestone 0.9.50): bests per route and the segments, the dungeon statistics, Delete,
 -- Split, Join and Keep, the glance and the instances of the hour (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs_bests.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.51 tests/runs_bests.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
@@ -2543,11 +2583,13 @@ do
     end
     return out
   end
-  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", character = "Character" }
+  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
+  -- old page keys (combat/dungeons, home/overview) resolve through the window's aliases (docs/UX_OVERHAUL.md 3.1)
   function P.open(host, pane, w, h, data)
     useData(data or "normal")
     ns.UI.SetWindowSize(w or 900, h or 580)
-    local name = HOSTS[host] or host
+    local name
+    name, pane = ns.UI.Resolve(HOSTS[host] or host, pane)
     ns.UI.Open(name, pane); M.settle()
     for _, tab in ipairs(T.tabs) do
       if tab.name == name then
@@ -2574,6 +2616,13 @@ do
   end
   table.sort(files)
   check("pane tests: tests/panes holds test files", #files > 0, #files)
+  -- EB_PANES=items,gold runs only those pane files (while iterating; CI runs every one)
+  local only = os.getenv("EB_PANES")
+  if only and only ~= "" then
+    local keep = {}
+    for _, f in ipairs(files) do for name in only:gmatch("[^,]+") do if f == name .. ".lua" then keep[#keep + 1] = f end end end
+    files = keep
+  end
   for _, file in ipairs(files) do
     local chunk, err = loadfile("tests/panes/" .. file)
     check("pane tests: parse " .. file, chunk ~= nil, err)

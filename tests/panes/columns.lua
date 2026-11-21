@@ -35,39 +35,149 @@ return function(P)
     local head = UI.LayoutColumns(spec, 700, fixed(320), 12, 8)
     check("LayoutColumns: nor under its header label and measured values", head.name.w == 90 and head.realm.w == UI.COL_FLOOR, ("%d %d"):format(head.name.w, head.realm.w))
   end
+  -- Fights and Activity are kit pages (A4): a place name is never cut under PLACE, the enemy keeps the flex width up
+  -- to its max, an event summary with counts is never cut, and a day row shows only its label (A1)
+  local function kitOf(content, key)
+    for _, f in ipairs(P.descendants(content)) do
+      local t = rawget(f, "ebKitTable")
+      if t and P.visible(f) and t.cols and t.cols[key] then return t end
+    end
+  end
   for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
     local tag = ("%dx%d"):format(size[1], size[2])
     local c = P.open("combat", "fights", size[1], size[2], "normal")
-    local t = c and tableOf(c)
+    local t = c and kitOf(c, "foe")
     check("Fights " .. tag .. ": the list was found", t ~= nil)
     if t then
       local cut = {}
       for _, r in ipairs(rowsOf(t)) do if r.c.loc:IsTruncated() then cut[#cut + 1] = r.c.loc.text end end
-      check("Fights " .. tag .. ": no zone name is cut", #cut == 0, table.concat(cut, ", "))
-      check("Fights " .. tag .. ": Faced and Location share the spare width equally", math.abs(t.cols.foe.w - t.cols.loc.w) <= 1, ("%d vs %d"):format(t.cols.foe.w, t.cols.loc.w))
+      check("Fights " .. tag .. ": no zone name is cut under PLACE", #cut == 0, table.concat(cut, ", "))
+      check("Fights " .. tag .. ": the enemy column is at most 360", t.cols.foe.w <= 360, t.cols.foe.w)
+      check("Fights " .. tag .. ": no group size column (the party is in the tooltip)", t.cols.grp == nil)
     end
     local h = P.open("home", "timeline", size[1], size[2], "normal")
-    local tt = h and tableOf(h)
+    local tt = h and kitOf(h, "ev")
     check("Timeline " .. tag .. ": the list was found", tt ~= nil)
     if tt then
-      local cut = {}
+      local cut, zcut = {}, {}
       for _, r in ipairs(rowsOf(tt)) do
         if r.c.ev:IsTruncated() and tostring(r.c.ev.text):find("%d") then cut[#cut + 1] = r.c.ev.text end
+        if r.c.where:IsTruncated() then zcut[#zcut + 1] = r.c.where.text end
       end
       check("Timeline " .. tag .. ": an event summary with counts is never cut", #cut == 0, table.concat(cut, " | "))
-      -- past the summary's minimum, the foe and the place share the width equally; from 1250 wide a realistic foe
-      -- name is never cut. At 900 the summary is held at its minimum and the names take everything else.
-      if size[1] >= 1250 then
-        check("Timeline " .. tag .. ": While fighting and Location share the spare width equally", math.abs(tt.cols.foe.w - tt.cols.where.w) <= 2, ("%d vs %d"):format(tt.cols.foe.w, tt.cols.where.w))
-        local foes = {}
-        for _, r in ipairs(rowsOf(tt)) do if r.c.foe:IsTruncated() then foes[#foes + 1] = r.c.foe.text end end
-        check("Timeline " .. tag .. ": no realistic foe name is cut under While fighting", #foes == 0, table.concat(foes, ", "))
-      else
-        local evMin = 0
-        for _, r in ipairs(rowsOf(tt)) do
-          if tostring(r.c.ev.text):find("^Auction house: 2 posts, 1 bid, 1 buy$") then evMin = math.ceil(P.G.naturalWidth(r.c.ev)) end
+      check("Timeline " .. tag .. ": no zone name is cut under PLACE", #zcut == 0, table.concat(zcut, " | "))
+    end
+  end
+  -- A1: a day row shows its label and nothing else, after a data row with a stack count was recycled into it
+  do
+    local c = P.open("loot", "items", 1600, 1000, "long")
+    local function dayExtras(content)
+      local bad, n = {}, 0
+      for _, f in ipairs(P.descendants(content)) do
+        local t = rawget(f, "ebKitTable")
+        if t and P.visible(f) then
+          for i = 1, t.shownN do
+            local r = t.rows[i]
+            if r.item and r.item.ebSection then
+              n = n + 1
+              for _, k in ipairs(UI.ROW_EXTRAS) do local x = rawget(r, k); if x and x.shown ~= false then bad[#bad + 1] = ("%s on %s"):format(k, tostring(r.item.ebSection)) end end
+              for key, cell in pairs(r.c) do if cell.shown ~= false and (cell.text or "") ~= "" then bad[#bad + 1] = ("cell %s on %s"):format(key, tostring(r.item.ebSection)) end end
+            end
+          end
         end
-        check("Timeline " .. tag .. ": the event column holds only its measured minimum, the names take the rest", evMin > 0 and tt.cols.ev.w <= evMin + 1, ("%d vs %d"):format(tt.cols.ev.w, evMin))
+      end
+      return bad, n
+    end
+    -- sort away and back so day rows land on rows that held items with counts
+    local items = c
+    for _, mode in ipairs({ "newest", "byitem", "newest" }) do
+      if items.setLootMode then pcall(items.setLootMode, mode) end
+      P.M.settle()
+    end
+    local bad, n = dayExtras(c)
+    check("Items: a day row shows only its label, no stack count or icon from a recycled row (A1)", n > 0 and #bad == 0, table.concat(bad, "; "))
+    for _, pg in ipairs({ { "home", "timeline" }, { "combat", "fights" }, { "loot", "gold" } }) do
+      local cc = P.open(pg[1], pg[2], 1600, 1000, "long")
+      local b2 = dayExtras(cc)
+      check(pg[1] .. "/" .. pg[2] .. ": a day row shows only its label (A1)", #b2 == 0, table.concat(b2, "; "))
+    end
+  end
+  -- A left-aligned column right after a right-aligned one needs S5 (24) between them: at S3 two headers read as one
+  -- label ("TIME VS BEST") and two values as one ("4m 47s -"). Every kit table on the kit pages, at both sizes.
+  do
+    local FX = dofile("tests/dungeon_fixture.lua")
+    local function pairsOf(root)
+      local bad, n = {}, 0
+      for _, f in ipairs(P.descendants(root)) do
+        local t = rawget(f, "ebKitTable")
+        if t and P.visible(f) and t.cols then
+          n = n + 1
+          local shownCols = {}
+          for _, col in ipairs(t.full or t.spec) do
+            local cw = t.cols[col.key]
+            if cw and not col.chevron and col.kind ~= "icon" then shownCols[#shownCols + 1] = { col = col, x = cw.x, w = cw.w } end
+          end
+          table.sort(shownCols, function(a, b) return a.x < b.x end)
+          for i = 1, #shownCols - 1 do
+            local a, b = shownCols[i], shownCols[i + 1]
+            if a.col.justify == "RIGHT" and b.col.justify ~= "RIGHT" and b.x - (a.x + a.w) < UI.S.S5 then
+              bad[#bad + 1] = ("%s|%s %d"):format(a.col.key, b.col.key, b.x - (a.x + a.w))
+            end
+          end
+        end
+      end
+      return bad, n
+    end
+    for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+      local tag = ("%dx%d"):format(size[1], size[2])
+      local undo, fx = FX.install(ns, P.M, "")
+      local c = P.open("dungeons", "runs", size[1], size[2], "normal")
+      local bad, n = pairsOf(c)
+      check("Runs " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", n > 0 and #bad == 0, table.concat(bad, ", "))
+      for _, rec in ipairs({ fx.wc2, fx.rfc }) do
+        ns.Dungeons.openRun(rec); P.M.settle()
+        bad, n = pairsOf(c)
+        check("Run page " .. rec.inst .. " " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", n > 0 and #bad == 0, table.concat(bad, ", "))
+        -- the tables of a run page share their edges: every table's first text column starts at the same x (inset
+        -- 12, the 36 px lead, gap 12: x 60), its last numeric column ends at the same right edge, and every header
+        -- is justified as its cells are
+        local dv = P.T.dungeonDetail()
+        local firsts, lasts, just = {}, {}, {}
+        for key, tb in pairs(dv.tables) do
+          if P.visible(tb.frame) and tb.cols then
+            local fx0, lr
+            for _, col in ipairs(tb.full or tb.spec) do
+              local cw = tb.cols[col.key]
+              if cw and cw.w > 0 and not col.chevron and col.kind ~= "icon" then
+                if (col.kind == nil or col.kind == "text") and not fx0 then fx0 = cw.x end
+                if col.justify == "RIGHT" then lr = math.max(lr or 0, cw.x + cw.w) end
+                local hb = tb.head and tb.head[col.key]
+                local hj = hb and hb.fs and hb.fs._justify
+                if hj and hj ~= (col.justify or "LEFT") then just[#just + 1] = key .. "." .. col.key end
+                for i = 1, tb.shownN or 0 do
+                  local r = tb.rows[i]
+                  local cell = r and r.c and r.c[col.key]
+                  if cell and not (r.item and r.item.ebSection) and cell._justify and cell._justify ~= (col.justify or "LEFT") then just[#just + 1] = key .. "." .. col.key .. i; break end
+                end
+              end
+            end
+            if fx0 then firsts[#firsts + 1] = key .. "=" .. fx0 end
+            if lr then lasts[#lasts + 1] = key .. "=" .. lr end
+          end
+        end
+        local function same(list) local v; for _, s in ipairs(list) do local x = tonumber(s:match("=(%-?[%d.]+)$")); if v and math.abs(v - x) > 0.5 then return false end; v = v or x end return #list > 1 end
+        table.sort(firsts); table.sort(lasts)
+        check("Run page " .. rec.inst .. " " .. tag .. ": every table's first text column starts at x 60", same(firsts) and tonumber(firsts[1]:match("=(%-?[%d.]+)$")) == 60, table.concat(firsts, " "))
+        check("Run page " .. rec.inst .. " " .. tag .. ": every table's last numeric column ends on one right edge", same(lasts), table.concat(lasts, " "))
+        check("Run page " .. rec.inst .. " " .. tag .. ": every header is justified as its cells", #just == 0, table.concat(just, " "))
+      end
+      local dv = P.T.dungeonDetail and P.T.dungeonDetail()
+      if dv and dv:IsShown() then dv.d.Close() end
+      undo()
+      for _, pane in ipairs({ "leveling", "reputation", "professions" }) do
+        local cc = P.open("character", pane, size[1], size[2], "normal")
+        bad, n = pairsOf(cc)
+        check("Character " .. pane .. " " .. tag .. ": no left-aligned column follows a right-aligned one by less than 24", #bad == 0, table.concat(bad, ", "))
       end
     end
   end

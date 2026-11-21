@@ -165,6 +165,7 @@ flag:SetScript("OnEnter", function(self)
   emblem:SetSize(34, 34)                       -- gentle hover pop (static, no flashing)
   -- anchor the tooltip clear of the icon: below it for top corners, above it for bottom corners
   local key = (ns.DB and ns.DB.settings and ns.DB.settings.emitCorner) or "TOPLEFT"
+  if not (GameTooltip and GameTooltip.SetOwner) then return end
   GameTooltip:SetOwner(self, "ANCHOR_NONE")
   GameTooltip:ClearAllPoints()
   if key == "TOPRIGHT" then GameTooltip:SetPoint("TOPRIGHT", self, "BOTTOMRIGHT", 0, -6)
@@ -180,7 +181,7 @@ flag:SetScript("OnEnter", function(self)
   if ns.Gold and ns.Gold.flagTip then pcall(ns.Gold.flagTip, GameTooltip, self) end
   GameTooltip:Show()
 end)
-flag:SetScript("OnLeave", function() emblem:SetSize(30, 30); GameTooltip:Hide() end)
+flag:SetScript("OnLeave", function() emblem:SetSize(30, 30); if GameTooltip then GameTooltip:Hide() end end)
 
 -- ── the event panel: unfurls beside the flag on events ─────────────────────────
 local panel = CreateFrame("Frame", "EverbuffToast", UIParent)
@@ -200,6 +201,7 @@ local ICON_INSET = 44   -- keep text clear of the corner icon
 -- sizes and lower opacity were never proven readable; the hide switch and the opacity slider are gone, and a saved
 -- `flagHidden` or `flagAlpha` from an older version is dropped.
 local FLAG_MIN, FLAG_MAX = 1.0, 1.5
+Emitter.FLAG_RANGE = { FLAG_MIN, FLAG_MAX }   -- Settings > General reads the flag size range here
 local function flagPrefs()
   local st = (ns.DB and ns.DB.settings) or {}
   st.flagHidden, st.flagAlpha = nil, nil
@@ -375,6 +377,7 @@ function Emitter.event(kind, d, quiet)
       -- profession skill-ups carry what was crafted + how many times, in which profession (= name)
       prof = (kind == "SKILLUP" and d.craft) and name or nil, craft = d.craft, crafted = d.crafted,
       standing = d.standing,  -- reputation tier reached (REP)
+      xp = (kind == "QUESTDONE" and type(d.xp) == "number" and d.xp > 0) and d.xp or nil,   -- the quest's XP reward
       money = (kind == "GOLDAWAY" or kind == "TRADE") and type(d.money) == "number" and d.money or nil,   -- copper, signed (#31)
       -- seconds on the taxi (FLIGHTTRIP, #11): the catalog's T-2 and T-5 read it per trip, not from the text
       duration = (kind == "FLIGHTTRIP" and type(d.duration) == "number") and math.floor(d.duration * 10 + 0.5) / 10 or nil,
@@ -2477,9 +2480,9 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if a1 == "player" and pushed.OPEN[a4] then pushed.obj = { name = safeStr(a2), at = GetTime() } end
   elseif event == "QUEST_TURNED_IN" then
     pushed.turnIn = GetTime()
-    Emitter.event("QUESTDONE", { name = questTitle(a1, nil) })
-    Emitter.questMoney(plainNum(a3), plainNum(a1))
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
+    Emitter.event("QUESTDONE", { name = questTitle(a1, nil), xp = qxp })
+    Emitter.questMoney(plainNum(a3), plainNum(a1))
     if qxp and qxp > 0 and ns.DB then ns.char().xp = ns.char().xp or {}; ns.char().xp.fromQuests = (ns.char().xp.fromQuests or 0) + qxp end
   elseif event == "ENCOUNTER_START" then
     Emitter.event("BOSS", { name = a2 or "boss" })
@@ -2788,233 +2791,26 @@ if GetQuestReward and hooksecurefunc then
   end)
 end
 
--- ── config tab: pick which screen corner the flag + notifications live in ───────
+-- ── the Settings tab ───────
 if ns.UI and ns.UI.registerTab then
+  -- the panes are Sync.lua's (ns.BuildSettings, docs/UX_OVERHAUL.md 4.12)
   ns.UI.registerTab(20, "Settings", function(content)
-    local C = ns.UI.C
-    local title = ns.UI.FS(content, "GameFontNormalLarge"); title:SetPoint("TOPLEFT", 14, -14); title:SetText("Settings")
-    local sub = ns.UI.FS(content, "GameFontHighlightSmall", C.dim); sub:SetPoint("TOPLEFT", 14, -38)
-    sub:SetText("Look and notifications, capture health, stored data.")
+    if ns.BuildSettings then ns.BuildSettings(content) end
+  end, function() end, nil, "bottom", "How the window and notifications behave, and whether your data reaches everbuff.gg.")
 
-    -- ── sub-tabs: a real tab control on a bordered pane (UI.Tabs); panes built eagerly so tests cover them
-    local subtabs = ns.UI.Tabs(content, { { key = "general", label = "General" }, { key = "gold", label = "Gold" }, { key = "capture", label = "Capture" }, { key = "data", label = "Data" } }, nil, 14)
-    content.subtabs = subtabs
-    local general, capture, data = subtabs.panes.general, subtabs.panes.capture, subtabs.panes.data
-
-    -- ═══ General: flag position · window size · on-screen notifications ═══
-    local flagHdr = ns.UI.FS(general, "GameFontNormal", C.gold); flagHdr:SetPoint("TOPLEFT", 14, -6); flagHdr:SetText("Flag position")
-    local choices = {
-      { "TOPLEFT", "Top left" }, { "TOPRIGHT", "Top right" },
-      { "BOTTOMLEFT", "Bottom left" }, { "BOTTOMRIGHT", "Bottom right" },
-    }
-    local btns = {}
-    local function refresh()
-      local cur = (ns.DB and ns.DB.settings and ns.DB.settings.emitCorner) or "TOPLEFT"
-      for _, b in ipairs(btns) do
-        local col = (b.corner == cur) and C.gold or C.dim
-        b.text:SetTextColor(col[1], col[2], col[3])
-      end
-    end
-    local x, y = 14, -32
-    for i, ch in ipairs(choices) do
-      local b = ns.UI.Button(general, ch[2], 130, 28, function() Emitter.setCorner(ch[1]); refresh() end)
-      b.corner = ch[1]; b:SetPoint("TOPLEFT", x, y); btns[#btns + 1] = b
-      if i % 2 == 0 then x = 14; y = y - 36 else x = x + 140 end
-    end
-    local PREVIEW = { { "LEVELUP", {} }, { "LOOT", { name = "Cursed Felblade", count = 1 } }, { "BOSS", { name = "Edwin VanCleef" } }, { "DEATH", {} }, { "DISCOVERY", { name = "Westfall" } } }
-    local previewI = 0
-    local preview = ns.UI.Button(general, "Preview a notification", 200, 26, function()
-      previewI = (previewI % #PREVIEW) + 1
-      local pv = PREVIEW[previewI]
-      Emitter.event(pv[1], pv[2])   -- cycles level-up, loot, boss, death, discovery so every style is seen
-    end)
-    preview:SetPoint("TOPLEFT", 14, y - 8)
-
-    -- flag size (the flag is always shown: the desktop aligns the recording with it, desktop #90)
-    local fsHdr = ns.UI.FS(general, "GameFontNormal", C.gold); fsHdr:SetPoint("TOPLEFT", 14, y - 48); fsHdr:SetText("Flag size")
-    local fsl = CreateFrame("Slider", "EverbuffFlagScaleSlider", general, "OptionsSliderTemplate")
-    fsl:SetOrientation("HORIZONTAL"); fsl:SetWidth(240); fsl:SetHeight(16); fsl:SetPoint("TOPLEFT", 18, y - 76)
-    fsl:SetMinMaxValues(FLAG_MIN, FLAG_MAX); fsl:SetValueStep(0.05); fsl:SetObeyStepOnDrag(true)
-    if _G.EverbuffFlagScaleSliderLow then _G.EverbuffFlagScaleSliderLow:SetText("100%") end
-    if _G.EverbuffFlagScaleSliderHigh then _G.EverbuffFlagScaleSliderHigh:SetText("150%") end
-    local curFs = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.flagScale)) or 1
-    fsl:SetValue(curFs)
-    if _G.EverbuffFlagScaleSliderText then _G.EverbuffFlagScaleSliderText:SetText(math.floor(curFs * 100 + 0.5) .. "%") end
-    fsl:SetScript("OnValueChanged", function(_, val)
-      Emitter.setFlagScale(val)
-      if _G.EverbuffFlagScaleSliderText then _G.EverbuffFlagScaleSliderText:SetText(math.floor(val * 100 + 0.5) .. "%") end
-    end)
-    local fsNote = ns.UI.FS(general, "GameFontDisableSmall", C.dim); fsNote:SetPoint("TOPLEFT", 14, y - 104); fsNote:SetWidth(300); fsNote:SetJustifyH("LEFT")
-    fsNote:SetText("The flag is always shown: the desktop app reads it to line up your recording with your data.")
-
-    local scHdr = ns.UI.FS(general, "GameFontNormal", C.gold); scHdr:SetPoint("TOPLEFT", 14, y - 140); scHdr:SetText("Window size")
-    local sc = CreateFrame("Slider", "EverbuffScaleSlider", general, "OptionsSliderTemplate")
-    sc:SetOrientation("HORIZONTAL"); sc:SetWidth(240); sc:SetHeight(16); sc:SetPoint("TOPLEFT", 18, y - 168)
-    sc:SetMinMaxValues(0.7, 1.3); sc:SetValueStep(0.05); sc:SetObeyStepOnDrag(true)
-    if _G.EverbuffScaleSliderLow then _G.EverbuffScaleSliderLow:SetText("70%") end
-    if _G.EverbuffScaleSliderHigh then _G.EverbuffScaleSliderHigh:SetText("130%") end
-    local curSc = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.winScale)) or 1
-    sc:SetValue(curSc)
-    if _G.EverbuffScaleSliderText then _G.EverbuffScaleSliderText:SetText(math.floor(curSc * 100 + 0.5) .. "%") end
-    sc:SetScript("OnValueChanged", function(_, val)
-      val = math.floor(val * 20 + 0.5) / 20
-      if ns.DB and ns.DB.settings then ns.DB.settings.winScale = val end
-      if ns.UI.SetWindowScale then ns.UI.SetWindowScale(val) end
-      if _G.EverbuffScaleSliderText then _G.EverbuffScaleSliderText:SetText(math.floor(val * 100 + 0.5) .. "%") end
-    end)
-
-    local ntHdr = ns.UI.FS(general, "GameFontNormal", C.gold); ntHdr:SetPoint("TOPLEFT", 340, -6); ntHdr:SetText("On-screen notifications")
-    local ntSub = ns.UI.FS(general, "GameFontDisableSmall", C.dim); ntSub:SetPoint("TOPLEFT", 340, -26); ntSub:SetWidth(330); ntSub:SetJustifyH("LEFT")
-    ntSub:SetText("Level-ups, deaths and wipes always show. Untick a group to keep it off screen; it is still recorded in the Timeline.")
-    local ny = -62
-    for _, g in ipairs({
-      { "travel",   "Travel: zones, dungeons, discoveries, flight paths" },
-      { "quests",   "Quests: accepted, completed, rewards" },
-      { "kills",    "Kills: notable mobs and boss pulls" },
-      { "loot",     "Loot: drops at or above the threshold below" },
-      { "progress", "Progress: skill-ups, spells, reputation, achievements, collections" },
-    }) do
-      local cb = CreateFrame("CheckButton", nil, general, "UICheckButtonTemplate"); cb:SetPoint("TOPLEFT", 342, ny); cb:SetSize(22, 22)
-      local muted = ns.DB and ns.DB.settings and ns.DB.settings.flagMute and ns.DB.settings.flagMute[g[1]]
-      cb:SetChecked(not muted)
-      local lbl = ns.UI.FS(general, "GameFontHighlightSmall"); lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0); lbl:SetWidth(300); lbl:SetJustifyH("LEFT"); lbl:SetText(g[2])
-      cb:SetScript("OnClick", function(self)
-        if ns.DB and ns.DB.settings then
-          ns.DB.settings.flagMute = ns.DB.settings.flagMute or {}
-          ns.DB.settings.flagMute[g[1]] = (not self:GetChecked()) and true or nil
-        end
-      end)
-      ny = ny - 24
-    end
-    local ltHdr = ns.UI.FS(general, "GameFontHighlightSmall", C.dim); ltHdr:SetPoint("TOPLEFT", 342, ny - 6); ltHdr:SetText("Loot toast threshold")
-    local ltBtns = {}
-    local function refreshLT()
-      local cur = (ns.DB and ns.DB.settings and ns.DB.settings.lootToast) or "rare"
-      for _, b in ipairs(ltBtns) do local col = (b.mode == cur) and C.gold or C.dim; b.text:SetTextColor(col[1], col[2], col[3]) end
-    end
-    for _, m in ipairs({ { "uncommon", "Uncommon+" }, { "rare", "Rare+" }, { "epic", "Epic+" }, { "off", "Off" } }) do
-      local b = ns.UI.Button(general, m[2], 44, 24, function() if ns.DB and ns.DB.settings then ns.DB.settings.lootToast = m[1] end; refreshLT() end)
-      b.mode = m[1]; ltBtns[#ltBtns + 1] = b
-    end
-    -- the threshold buttons: each as wide as its label plus M each side, S apart, in a row that starts under the
-    -- header and wraps onto a second row before it would pass the pane's right edge (inset 14, as the left column)
-    local ltY = ny - 24
-    local function placeLT(pw)
-      pw = tonumber(pw) or 0
-      local SP = ns.UI.SP
-      local lx, ly = 342, ltY
-      for _, b in ipairs(ltBtns) do
-        ns.UI.FitButton(b, 44)
-        local bw = b:GetWidth()
-        if pw > 0 and lx > 342 and lx + bw > pw - 14 then lx, ly = 342, ly - 24 - SP.S end
-        b:ClearAllPoints(); b:SetPoint("TOPLEFT", general, "TOPLEFT", lx, ly)
-        lx = lx + bw + SP.S
-      end
-    end
-    general.placeLootToast = placeLT
-    general:HookScript("OnSizeChanged", function(_, w) pcall(placeLT, w) end)
-    pcall(placeLT, general:GetWidth())
-    general.lootToastButtons = ltBtns
-    refreshLT()
-
-    -- ═══ Gold: tooltips, the pill, per hour, resets (Economy.lua, 0.9.45) ═══
-    if ns.BuildGoldSettings then content.goldRefresh = ns.BuildGoldSettings(subtabs.panes.gold) end
-
-    -- ═══ Capture: health + disconnect protection (Sync.lua) ═══
-    if ns.BuildCapturePane then ns.BuildCapturePane(capture) end
-
-    -- ═══ Data: stored counts · clear · fight stat sampling ═══
-    local dataHdr = ns.UI.FS(data, "GameFontNormal", C.gold); dataHdr:SetPoint("TOPLEFT", 14, -6); dataHdr:SetText("Stored data")
-    local dataInfo = ns.UI.FS(data, "GameFontHighlightSmall", C.dim); dataInfo:SetPoint("TOPLEFT", 18, -30); dataInfo:SetWidth(660); dataInfo:SetJustifyH("LEFT")
-    local function refreshData()
-      local db = ns.DB or { combat = {}, loot = {}, story = {} }
-      local nF = #(db.combat.fights or {})
-      local capF = 5000
-      if ns.Fights and ns.Fights.capInfo then nF, capF = ns.Fights.capInfo() end
-      local pending = 0
-      for _, f in ipairs(db.combat.fights or {}) do if f.uploaded ~= true then pending = pending + 1 end end
-      dataInfo:SetText(("%d of %d fights  ·  %d loot  ·  %d events  ·  %d fights waiting for the desktop app%s"):format(
-        nF, capF, #(db.loot.log or {}), #(db.story.events or {}), pending,
-        (nF >= capF - 25) and "   (near the cap: oldest fights roll off)" or ""))
-    end
-    local function clearBtn(label, bx, fn)
-      local b = ns.UI.Button(data, label, 132, 24)
-      b:SetPoint("TOPLEFT", dataInfo, "BOTTOMLEFT", bx, -12)
-      b.armed = false
-      b:SetScript("OnClick", function(bb)
-        if not bb.armed then
-          bb.armed = true; bb.text:SetText("Confirm?"); bb.text:SetTextColor(C.red[1], C.red[2], C.red[3])
-          C_Timer.After(3, function()
-            if bb.armed then bb.armed = false; bb.text:SetText(label); bb.text:SetTextColor(C.gold[1], C.gold[2], C.gold[3]) end
-          end)
-        else
-          bb.armed = false; bb.text:SetText(label); bb.text:SetTextColor(C.gold[1], C.gold[2], C.gold[3])
-          fn(); refreshData()
-        end
-      end)
-      return b
-    end
-    clearBtn("Clear fights", 0, function() if ns.DB then ns.DB.combat.fights = {}; ns.DB.combat.fightSeq = 0 end end)
-    -- (the gold ledger is not the loot list: clearing it would break looted + ... = gained, 0.9.44)
-    clearBtn("Clear loot", 140, function() if ns.DB then ns.DB.loot.log = {} end end)
-    clearBtn("Clear events", 280, function() if ns.DB then ns.DB.story.events = {} end end)
-
-    local sampHdr = ns.UI.FS(data, "GameFontNormal", C.gold); sampHdr:SetPoint("TOPLEFT", 14, -104); sampHdr:SetText("Fight stat sampling")
-    local samp = CreateFrame("Slider", "EverbuffSampleSlider", data, "OptionsSliderTemplate")
-    samp:SetOrientation("HORIZONTAL"); samp:SetWidth(240); samp:SetHeight(16); samp:SetPoint("TOPLEFT", 18, -130)
-    local smin = (ns.Fights and ns.Fights.SAMPLE_MIN) or 1
-    local smax = (ns.Fights and ns.Fights.SAMPLE_MAX) or 10
-    samp:SetMinMaxValues(smin, smax); samp:SetValueStep(1); samp:SetObeyStepOnDrag(true)
-    if _G.EverbuffSampleSliderLow then _G.EverbuffSampleSliderLow:SetText(smin .. "s") end
-    if _G.EverbuffSampleSliderHigh then _G.EverbuffSampleSliderHigh:SetText(smax .. "s") end
-    local curSamp = (ns.DB and ns.DB.settings and tonumber(ns.DB.settings.statSample)) or (ns.Fights and ns.Fights.DEFAULT_SAMPLE) or 1
-    samp:SetValue(curSamp)
-    if _G.EverbuffSampleSliderText then _G.EverbuffSampleSliderText:SetText("every " .. curSamp .. "s") end
-    samp:SetScript("OnValueChanged", function(_, val)
-      val = math.floor(val + 0.5)
-      if ns.DB and ns.DB.settings then ns.DB.settings.statSample = val end
-      if _G.EverbuffSampleSliderText then _G.EverbuffSampleSliderText:SetText("every " .. val .. "s") end
-    end)
-    local sampDesc = ns.UI.FS(data, "GameFontDisableSmall", C.dim); sampDesc:SetPoint("TOPLEFT", 14, -160); sampDesc:SetWidth(640); sampDesc:SetJustifyH("LEFT")
-    sampDesc:SetText("How often character stats are snapshotted during a fight. Lower = finer scrubber detail but more SavedVariables. Applies from your next fight.")
-
-    -- desktop sync: paste the code the desktop app shows after an upload; acked data is pruned here
-    local ackHdr = ns.UI.FS(data, "GameFontNormal", C.gold); ackHdr:SetPoint("TOPLEFT", 14, -200); ackHdr:SetText("Desktop sync")
-    local ackBox = ns.UI.EditBox(data, 380, 22, "paste the sync code from the desktop app"); ackBox:SetPoint("TOPLEFT", 18, -224)
-    local ackInfo = ns.UI.FS(data, "GameFontDisableSmall", C.dim); ackInfo:SetPoint("TOPLEFT", 14, -252); ackInfo:SetWidth(640); ackInfo:SetJustifyH("LEFT")
-    local function refreshAck()
-      local la = ns.DB and ns.DB.combat and ns.DB.combat.lastAck
-      ackInfo:SetText(la and ("Last synced %s via %s: %d fights acked. The desktop app can also sync on its own while the game is closed."):format(date("%b %d, %H:%M", la.at or 0), la.source == "paste" and "a pasted code" or "the desktop file", la.fights or 0)
-        or "Never synced. Uploaded fights, loot and events are pruned here once the desktop app acks them. It syncs on its own while the game is closed, or paste its code above.")
-    end
-    local ackBtn = ns.UI.Button(data, "Apply", 80, 22, function()
-      local ack = ns.parseAckCode(ackBox:GetText())
-      if ack then
-        local marked = ns.applyAck(ack, "paste"); ackBox:SetText(""); refreshData(); refreshAck()
-        if ns.msg then ns.msg(("desktop sync applied: %d fight%s acked"):format(marked, marked == 1 and "" or "s")) end
-      else ackInfo:SetText("|cffe5484dThat is not a sync code.|r It looks like EB-ACK-<number>, shown by the desktop app after an upload.") end
-    end)
-    ackBtn:SetPoint("LEFT", ackBox, "RIGHT", 8, 0)
-    content.ackBox, content.ackBtn = ackBox, ackBtn
-    refreshAck()
-
-    refreshData()
-    content.refresh = function() refresh(); refreshData(); if ns.RefreshCapturePane then ns.RefreshCapturePane() end; if content.goldRefresh then content.goldRefresh() end end
-    subtabs.select("general"); refresh()
-  end, function() end, nil, "bottom")
-
-  -- ── Events tab: a filterable timeline of everything Everbuff.GG detected, newest first ──
-  -- Journey / Combat / Travel / Loot chips cut the firehose; a Where column surfaces the coordinates
-  -- every event already carries; combat rows jump to their fight, loot rows to the Loot tab.
+  -- ── Home > Activity (docs/UX_OVERHAUL.md 4.2): everything you did, newest first under day rows, on the kit table.
+  --    The group filter and the search sit in the control row; a fight's window (ns.OpenTimelineWindow) shows on the
+  --    summary line with a link back to everything. Every kind the addon writes is in exactly one group.
   local eventsRebuild, eventsTicker, eventsView
   local EVENT_GROUP = {
-    journey = { LEVELUP = true, ACHIEV = true, SPELL = true, REP = true, SKILLUP = true, REWARD = true, QUESTACCEPT = true, QUESTDONE = true, BROKEN = true, COLLECT = true, PROFTIER = true, RECIPE = true, UPGRADE = true },
-    combat  = { BOSS = true, KILL = true, WIPE = true, DEATH = true, ALIVE = true, ROSTERJOIN = true, ROSTERLEAVE = true },
-    travel  = { ZONE = true, DUNGEON = true, DUNGEONLEAVE = true, DISCOVERY = true, FLIGHT = true, FIRSTZONE = true, FLIGHTTRIP = true },
-    loot    = { LOOT = true },
-    professions = { SKILLUP = true, PROFTIER = true, RECIPE = true },
+    journey = { QUESTACCEPT = true, QUESTDONE = true, REWARD = true, LEVELUP = true, REP = true, ACHIEV = true, SPELL = true },
+    combat  = { KILL = true, BOSS = true, WIPE = true, DEATH = true, ALIVE = true, ROSTERJOIN = true, ROSTERLEAVE = true },
+    travel  = { ZONE = true, FIRSTZONE = true, DISCOVERY = true, FLIGHT = true, FLIGHTTRIP = true, DUNGEON = true, DUNGEONLEAVE = true },
+    loot    = { LOOT = true, COLLECT = true, UPGRADE = true, BROKEN = true, GOLDAWAY = true },
+    town    = { VENDOR = true, TRAINER = true, MAIL = true, AUCTION = true, TRADE = true, BANK = true },
+    professions = { SKILLUP = true, RECIPE = true, PROFTIER = true },
   }
-  -- an optional time window (a fight's span) set by ns.OpenTimelineWindow; cleared from the banner
+  -- an optional time window (a fight's span) set by ns.OpenTimelineWindow; cleared from the summary line
   local window = nil   -- { t0, t1, label }
   local function eventMatches(e, filter, q)
     if window and ((e.t or 0) < window.t0 or (e.t or 0) > window.t1) then return false end
@@ -3036,114 +2832,159 @@ if ns.UI and ns.UI.registerTab then
       if t >= st - 1 and t <= st + (f.duration or 0) + 2 and ns.isMine(f) then return f end
     end
   end
-  ns.UI.registerPane("Home", 2, "Timeline", function(content)
-    local C, UI = ns.UI.C, ns.UI
-    local SP = UI.SP
+  ns.UI.registerPane("Home", 3, "Activity", function(content)
+    local UI = ns.UI
+    local S, G, H = UI.S, UI.G, UI.H
     eventsView = content
-    local LABELS = {
-      LEVELUP = "Level up", ZONE = "Zone", DUNGEON = "Dungeon", DUNGEONLEAVE = "Dungeon",
-      QUESTACCEPT = "Quest", QUESTDONE = "Quest", BOSS = "Boss", KILL = "Kill", WIPE = "Wipe",
-      DEATH = "Death", ALIVE = "Revived", SKILLUP = "Skill up", DISCOVERY = "Discovery",
-      LOOT = "Loot", REWARD = "Reward",
-      ACHIEV = "Achievement", SPELL = "Learned", REP = "Reputation", FLIGHT = "Flight path",
-      FIRSTZONE = "First visit", ROSTERJOIN = "Joined", ROSTERLEAVE = "Left", BROKEN = "Broken gear",
-      COLLECT = "Collected", PROFTIER = "Profession", FLIGHTTRIP = "Flight", RECIPE = "Recipe", UPGRADE = "Gear up",
-    }
     -- pane state on one table (no new upvalues for the module's event handler)
-    local st = { filter = "all" }
-    -- filter TABS on a bordered pane; the list lives inside the pane
-    local tabs = UI.Tabs(content, {
-      { key = "all", label = "All" }, { key = "journey", label = "Journey" }, { key = "combat", label = "Combat" },
-      { key = "travel", label = "Travel" }, { key = "loot", label = "Loot" }, { key = "professions", label = "Professions" },
-    }, -30, 2, { shared = true, onSelect = function(key) st.filter = key; if eventsRebuild then eventsRebuild() end end })
-    content.tabs = tabs
-    local pane = tabs.content
-    -- first row: the text search at the right (it ends where the list ends), the window banner to its left
-    local search = UI.EditBox(pane, 180, UI.ROW_H, "search events"); search:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -UI.SCROLLBAR, -SP.XS)
-    -- window banner: "Showing <fight> · clear", from the pane's left to the search box, its text on one line
-    local banner = UI.Button(pane, "", 320, UI.ROW_H, function() window = nil; if eventsRebuild then eventsRebuild() end end)
-    banner:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, -SP.XS); banner:SetPoint("RIGHT", search, "LEFT", -SP.M, 0); banner:Hide()
-    banner.text:ClearAllPoints(); banner.text:SetPoint("LEFT", banner, "LEFT", SP.M, 0); banner.text:SetPoint("RIGHT", banner, "RIGHT", -SP.M, 0)
-    if banner.text.SetWordWrap then banner.text:SetWordWrap(false) end
-    content.timelineBanner = banner
-    ns.OpenTimelineWindow = function(t0, t1, label)
-      window = { t0 = t0, t1 = t1, label = label or "this window" }
-      if UI.Open then UI.Open("Home", "timeline") end
+    local A = { filter = "all", GROUPS = {
+      { "all", "Everything" }, { "journey", "Quests and levels" }, { "combat", "Fights" }, { "travel", "Travel" },
+      { "loot", "Loot and gear" }, { "town", "Town visits" }, { "professions", "Professions" } } }
+    function A.groupLabel(key) for _, g in ipairs(A.GROUPS) do if g[1] == key then return g[2] end end return "Everything" end
+    -- the event text as the player reads it: one space between words (the stored notification text has two after
+    -- its colon; that text is what the desktop reads on screen, so it is kept as written)
+    function A.text(e) return (tostring(e.text or UI.KIND_LABEL[e.kind] or e.kind or "?"):gsub("%s%s+", " ")) end
+    -- the page: one scroll holding the summary line, the section header and the list
+    local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
+    local sf, col = UI.ScrollChild(v, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+    A.col = CreateFrame("Frame", nil, col); A.col:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); A.col:SetSize(1, 1)
+    col = A.col
+    A.summary = UI.Summary(col)
+    A.section = UI.Section(col, "All activity")
+    content.timelineSummary, content.timelineSection = A.summary, A.section
+    -- the control row, right to left: the group filter, then the search S2 left of it (as Loot > Items)
+    local controls = content.ebControls or v
+    A.filterBtn = UI.FilterButton(controls, { default = "all", label = "Everything",
+      items = function()
+        local out = {}
+        for _, g in ipairs(A.GROUPS) do out[#out + 1] = { g[1], g[2], A.filter == g[1] } end
+        return out
+      end,
+      onPick = function(key) content.setFilter(key) end })
+    A.filterBtn:SetPoint("TOPRIGHT", controls, "TOPRIGHT", 0, 0)
+    local search = UI.Search(controls, "Search activity")
+    search:SetPoint("TOPRIGHT", A.filterBtn, "TOPLEFT", -S.S2, 0)
+    search:HookScript("OnTextChanged", function() if eventsRebuild then eventsRebuild() end end)
+    content.search, content.filterButton = search, A.filterBtn
+    function content.setFilter(key)
+      A.filter = EVENT_GROUP[key] and key or "all"
+      A.filterBtn:SetValue(A.filter, A.groupLabel(A.filter))
       if eventsRebuild then eventsRebuild() end
     end
+    content.filter = function() return A.filter end
+    ns.OpenTimelineWindow = function(t0, t1, label)
+      window = { t0 = t0, t1 = t1, label = label or "this window" }
+      if UI.Open then UI.Open("Home", "activity") end
+      if eventsRebuild then eventsRebuild() end
+    end
+    content.clearWindow = function() window = nil; if eventsRebuild then eventsRebuild() end end
     ns._test.timelineWindow = function() return window end
-    search:HookScript("OnTextChanged", function() if eventsRebuild then eventsRebuild() end end)
-    content.search = search
     local typeNames = {}
-    for _, label in pairs(LABELS) do typeNames[#typeNames + 1] = label end
-    -- columns: Time · Type · Event · (opens) · Location (name) · Coords · While fighting (source); a header per day
-    local tbl = UI.Table(pane, {
-      { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "23:59:59" } },
-      { key = "type", label = "Type", kind = "tag", measure = typeNames },
-      -- the event summary carries counts: its minimum is the widest realistic summary line, so the counts are not
-      -- what the ellipsis takes. Past that minimum it has no more weight than the names beside it: the place and the
-      -- foe share what is left equally (as Faced and Location do on Fights), so neither name is starved for it
-      { key = "ev", label = "Event", flex = 1, min = 120, measure = { "Auction house: 2 posts, 1 bid, 1 buy" } },
-      { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
-      { key = "where", label = "Location", flex = 1, min = 80, color = "dim" },
-      { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } },
-      { key = "foe", label = "While fighting", flex = 1, min = 80 },
-    }, { top = -(SP.XS + UI.ROW_H + SP.M), bottom = 2,
-      onClick = function(r)
-        local ev = r.ev; if not ev then return end
+    for _, label in pairs(UI.KIND_LABEL) do typeNames[#typeNames + 1] = label end
+    -- When · Type · Event · Place · Coords (WIDE) · ›. Type is a word in BODY fgSubtle; only a kill, a wipe and a
+    -- death carry a colour (2.5 rule 3). The chevron is the last 12 px column.
+    local tbl = UI.KitTable(col, {
+      { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" } },
+      { key = "type", label = "Type", kind = "tag", min = 72, measure = typeNames },
+      { key = "ev", label = "Event", flex = 1, min = 120 },
+      { key = "where", label = "Place", kind = "tag", min = 140, max = 140 },
+      { key = "coords", label = "Coords", kind = "num", min = 72, wide = true, measure = { "100.0, 100.0" } },
+    }, {
+      onClick = function(_, ev)
+        if not ev or ev.ebSection then return end
         if EVENT_GROUP.combat[ev.kind] then
           local f = fightAt(ev.t or 0); if f and ns.OpenFightDetail then ns.OpenFightDetail(f) end
         elseif ev.kind == "LOOT" and UI.Open then UI.Open("Loot", "items") end
       end,
+      onHeight = function() if A.place then pcall(A.place) end end,
       tooltip = function(r, ev, tip)
-        tip:AddLine(ev.text or ev.kind or "?", 1, 1, 1, true)
-        tip:AddLine(date("%b %d, %H:%M:%S", ev.t or 0) .. "  ·  " .. (LABELS[ev.kind] or ev.kind or ""), 0.8, 0.8, 0.8)
+        if not ev or ev.ebSection then return end
+        tip:AddLine(A.text(ev), 1, 1, 1, true)
+        tip:AddLine(UI.fmtWhen(ev.t or 0) .. " \194\183 " .. (UI.KIND_LABEL[ev.kind] or ev.kind or ""), 0.78, 0.79, 0.80)
         local place = UI.fmtPlace(ev.zone, ev.sub); local co = UI.fmtCoords(ev.x, ev.y)
-        if place ~= "" or co ~= "" then tip:AddLine(place .. (co ~= "" and ("  " .. co) or ""), 0.6, 0.7, 0.75) end
-        if ev.standing then tip:AddLine("Standing: " .. tostring(ev.standing), 0.6, 0.7, 0.75) end
-        if ev.craft then tip:AddLine(("Crafted: %s x%s"):format(tostring(ev.craft), tostring(ev.crafted or 1)), 0.6, 0.7, 0.75) end
-        if ev.foe then tip:AddLine("While fighting: " .. tostring(ev.foe), 1.0, 0.44, 0.30) end
-        if ev.downtime then tip:AddLine(("Back on your feet after %ds"):format(ev.downtime), 0.6, 0.7, 0.75) end
-        if ev.guid then tip:AddLine("GUID: " .. tostring(ev.guid), 0.45, 0.5, 0.55) end
-        if r.clickable then tip:AddLine("Click to open", 0.5, 0.65, 0.75) end
+        if place ~= "" or co ~= "" then tip:AddLine(place .. (co ~= "" and ("  " .. co) or ""), 0.78, 0.79, 0.80) end
+        if ev.standing then tip:AddLine("Standing: " .. tostring(ev.standing), 0.78, 0.79, 0.80) end
+        if ev.craft then tip:AddLine(("Crafted: %s x%s"):format(tostring(ev.craft), tostring(ev.crafted or 1)), 0.78, 0.79, 0.80) end
+        -- (the enemy you were fighting, only when the event does not already name it)
+        if ev.foe and not A.text(ev):find(tostring(ev.foe), 1, true) then tip:AddLine("While fighting " .. tostring(ev.foe), 0.78, 0.79, 0.80) end
+        if ev.downtime then tip:AddLine("Back on your feet after " .. UI.fmtDur(ev.downtime), 0.78, 0.79, 0.80) end
+        if r.clickable then tip:AddLine("Click to open", 0.55, 0.57, 0.59) end
       end })
     content.timelineTable = tbl
     content.timelineRows = tbl.rows   -- exposed for the headless tests
-    local function fill(row, e)
+    function A.fill(row, e)
       row.ev = e
       row.clickable = (EVENT_GROUP.combat[e.kind] and fightAt(e.t or 0) ~= nil) or e.kind == "LOOT"
+      row.ebNoOpen = (not row.clickable) or nil
       local c = row.c
-      c.time:SetText(date("%H:%M:%S", e.t or 0))
-      c.type:SetText(LABELS[e.kind] or e.kind or "?")
-      local col = COLORS[e.kind] or C.dim
-      c.type:SetTextColor(col[1], col[2], col[3])
-      c.ev:SetText(e.text or e.kind or "?")
-      c.open:SetText(row.clickable and ">" or "")
-      c.where:SetText(UI.fmtPlace(e.zone, e.sub))
-      c.coords:SetText(UI.fmtCoords(e.x, e.y))
-      if e.combat then c.foe:SetText(e.foe or "in combat"); c.foe:SetTextColor(EMBER[1], EMBER[2], EMBER[3]) end
+      c.time:SetText(UI.fmtClock(e.t or 0))
+      local res = UI.KIND_RESULT[e.kind]
+      local word = UI.KIND_LABEL[e.kind] or "Other"
+      c.type:SetText(res == "bad" and (UI.dot("bad") .. word) or word)
+      if res then UI.SetColor(c.type, res) end
+      c.ev:SetText(A.text(e))
+      c.where:SetText(e.zone or "-"); if not e.zone then UI.SetColor(c.where, "fgMuted") end
+      local co = UI.fmtCoords(e.x, e.y)
+      c.coords:SetText(co ~= "" and co or "-"); if co == "" then UI.SetColor(c.coords, "fgMuted") end
+    end
+    A.place = function()
+      local w = G.mainW(G.winW())
+      col:SetWidth(w)
+      A.summary:ClearAllPoints(); A.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); A.summary:SetWidth(w); pcall(A.summary.layout)
+      local y = H.SUMMARY + S.S3
+      A.section:ClearAllPoints(); A.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); A.section:SetWidth(w); y = y + H.SECTION
+      tbl.frame:ClearAllPoints(); tbl.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); tbl.frame:SetWidth(w)
+      if tbl.width ~= math.min(w, G.TABLE_MAX) then tbl.relayout(w) end
+      y = y + (tbl.height or 0) + S.S4
+      col:SetHeight(y); sf:SetContentHeight(y)
+      A.contentH = y
+    end
+    content:HookScript("OnSizeChanged", function() pcall(A.place) end)
+    -- the answer: what this session holds so far, or the fight's window and the way back to everything
+    function A.answer(log)
+      if window then
+        A.summary:SetSegments({ { text = "Showing **" .. tostring(window.label) .. "**" }, { text = "Show everything", onClick = function() content.clearWindow() end } })
+        return
+      end
+      local sid = ns.DB and ns.DB.active
+      local n, kills, quests = 0, 0, 0
+      for _, e in ipairs(log) do
+        if e.s == sid then
+          n = n + 1
+          if e.kind == "KILL" then kills = kills + 1 elseif e.kind == "QUESTDONE" then quests = quests + 1 end
+        end
+      end
+      local segs = { { text = n == 0 and "This session: nothing yet" or ("This session: **%s**"):format(UI.plural(n, "event")) } }
+      if kills > 0 then segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(kills, "kill")) } end
+      if quests > 0 then segs[#segs + 1] = { text = ("**%s** turned in"):format(UI.plural(quests, "quest")) } end
+      A.summary:SetSegments(segs)
     end
     eventsRebuild = function()
       local log = ns.mine(ns.DB and ns.DB.story.events)   -- the logged-in character's events only (#23)
-      local q = search:GetText()
-      if window then banner.text:SetText(("Showing: %s   ·   click to show everything"):format(window.label)); banner:Show() else banner:Hide() end
+      local q = search:GetText() or ""
+      A.answer(log)
+      local list = {}
+      for i = #log, 1, -1 do if eventMatches(log[i], A.filter, q) then list[#list + 1] = log[i] end end
+      -- a day row over each day: "TODAY · 42 EVENTS"
+      local days = {}
+      for _, e in ipairs(list) do local k = date("%Y-%m-%d", e.t or 0); days[k] = (days[k] or 0) + 1 end
       local items, lastDay = {}, nil
-      for i = #log, 1, -1 do
-        local e = log[i]
-        if eventMatches(e, st.filter, q) then
-          local day = date("%Y-%m-%d", e.t or 0)
-          if day ~= lastDay then                          -- a day header whenever the date changes
-            lastDay = day
-            items[#items + 1] = { ebSection = UI.fmtDay(e.t):upper() }
-          end
-          items[#items + 1] = e
-        end
+      for _, e in ipairs(list) do
+        local k = date("%Y-%m-%d", e.t or 0)
+        if k ~= lastDay then lastDay = k; items[#items + 1] = { ebSection = UI.fmtDay(e.t or 0) .. " \194\183 " .. UI.plural(days[k], "event") } end
+        items[#items + 1] = e
       end
-      tbl.setRows(items, fill)
+      tbl.setRows(items, A.fill)
       for _, row in ipairs(tbl.rows) do if row.item and row.item.ebSection then row.ev, row.clickable = nil, nil end end
-      if #items == 0 then tbl.setEmpty(#log == 0 and "No events yet. Play and they show up here." or "No events match this filter or search.") end
+      A.section:SetMeta(#list > 0 and UI.plural(#list, "event") or nil)
+      if #items == 0 then
+        if q ~= "" then tbl.setState(('No event matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
+        elseif #log == 0 then tbl.setState("Nothing yet. Quests, kills, loot and town visits show here as you play.")
+        else tbl.setState(("Nothing under %s yet."):format(A.groupLabel(A.filter)), "Show everything", function() content.setFilter("all") end) end
+      end
+      A.place()
     end
-    tabs.select("all")
+    content.setFilter("all")
   end, function()
     if eventsRebuild then eventsRebuild() end
     -- rebuild only while this tab is actually visible (the old ticker ran forever, even hidden)
@@ -3152,107 +2993,78 @@ if ns.UI and ns.UI.registerTab then
         if eventsView and eventsView:IsShown() and eventsRebuild then eventsRebuild() end
       end)
     end
-  end)
+  end, "Everything you did, newest first: quests, kills, loot, travel and town visits.")
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
   ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 
-  -- ── Loot tab, Items pane: every item you picked up, newest first. Coin is not listed here: every purse change,
-  --    looted coin included, is a row of the Gold pane's journal (#38) ─────────
-  local function qrgb(q)
-    if not q or #q < 8 then return 0.8, 0.8, 0.8 end
-    return (tonumber(q:sub(3, 4), 16) or 200) / 255, (tonumber(q:sub(5, 6), 16) or 200) / 255, (tonumber(q:sub(7, 8), 16) or 200) / 255
-  end
+  -- ── Loot > Items (docs/UX_OVERHAUL.md 4.8): every item you picked up, newest first under day rows, or one row per
+  --    item. Coin is not listed here: every purse change, looted coin included, is in Loot > Gold (#38). Returned
+  --    auctions are in Gold > Auction house. Built from the kit; all state on one table (no new upvalues here).
   local fmtMoney = ns.fmtMoney   -- the one formatter (UI.lua)
   ns._test = ns._test or {}; ns._test.fmtMoney = fmtMoney
   local lootRebuild
-  ns.UI.registerHost(2, "Loot", "Every item you picked up, and every copper that came in or went out.")
+  ns.UI.registerHost(3, "Loot", "What you picked up, and where every copper came from and went.")
   ns.UI.registerPane("Loot", 1, "Items", function(content)
-    local C, UI = ns.UI.C, ns.UI
-    local SP = UI.SP
-    -- state on one table: the pane's filter, sort and mode (no new upvalues for the module's event handler)
-    local st = { minQ = 0, sortKey = "time", sortAsc = false, mode = "newest" }
-    -- toolbar, on the 4 px grid: row 1 is the totals line at the left, the mode button and the search box at the
-    -- right; row 2 is the quality filter group. The table's header starts M below row 2.
-    local BAR_H = UI.ROW_H
-    local ROW2 = -(BAR_H + SP.S)
-    local TABLE_TOP = ROW2 - BAR_H - SP.M
-    local search = UI.EditBox(content, 180, BAR_H, "search item, source, zone"); search:SetPoint("TOPRIGHT", content, "TOPRIGHT", -UI.SCROLLBAR, 0)   -- ends where the list does
-    search:HookScript("OnTextChanged", function() if lootRebuild then lootRebuild() end end)
-    content.search = search
-    -- Newest (the log) or By item (one row per item: total quantity, drop count, most frequent source)
-    local modeBtn = UI.Button(content, "By item", 84, BAR_H, function(b)
-      st.mode = (st.mode == "newest") and "byitem" or "newest"
-      b.text:SetText(st.mode == "newest" and "By item" or "Newest")
-      if lootRebuild then lootRebuild() end
-    end)
-    modeBtn:SetPoint("RIGHT", search, "LEFT", -SP.S, 0)
-    content.lootMode = function() return st.mode end
-    local totals = UI.FS(content, "GameFontHighlightSmall", C.gold)
-    if totals.SetWordWrap then totals:SetWordWrap(false) end
-    if totals.SetMaxLines then totals:SetMaxLines(1) end
-    totals:SetJustifyH("LEFT")
-    -- inset like the table's first column (UI.Table's inset, SP.S), as the Auctions chips are, so the text lines up
-    totals:SetPoint("LEFT", content, "TOPLEFT", SP.S, -BAR_H / 2); totals:SetPoint("RIGHT", modeBtn, "LEFT", -SP.M, 0)
-    content.lootTotals = totals
-    -- quality floor: All · Uncommon+ · Rare+ · Epic+
-    local Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 }
-    local qBtns = {}
-    local function styleQ() for _, b in ipairs(qBtns) do UI.SetButtonSelected(b, b.minQ == st.minQ) end end
-    local prev
-    for _, qq in ipairs({ { 0, "All" }, { 2, "Uncommon+" }, { 3, "Rare+" }, { 4, "Epic+" } }) do
-      local b = UI.Button(content, qq[2], 44, BAR_H, function(bb) st.minQ = bb.minQ; styleQ(); if lootRebuild then lootRebuild() end end)
-      UI.FitButton(b, 44)
-      b.minQ = qq[1]
-      if prev then b:SetPoint("LEFT", prev, "RIGHT", SP.XS, 0) else b:SetPoint("TOPLEFT", content, "TOPLEFT", SP.S, ROW2) end
-      qBtns[#qBtns + 1] = b; prev = b
+    local UI, C = ns.UI, ns.UI.C
+    local S, G, H = UI.S, UI.G, UI.H
+    local IT = { Q_RANK = { ff9d9d9d = 0, ffffffff = 1, ff1eff00 = 2, ff0070dd = 3, ffa335ee = 4, ffff8000 = 5, ffe6cc80 = 6 },
+      QUALITY = { { "all", "Everything", 0 }, { "white", "White and better", 1 }, { "green", "Green and better", 2 },
+        { "blue", "Blue and better", 3 }, { "purple", "Purple and better", 4 } },
+      st = { sortKey = "time", sortAsc = false } }
+    local st = IT.st
+    local function cfg() return (ns.DB and ns.DB.settings) or {} end
+    local function qualityOf(key) for _, q in ipairs(IT.QUALITY) do if q[1] == key then return q end end return IT.QUALITY[3] end
+    st.quality = qualityOf(cfg().itemsQuality)[1]
+    st.mode = cfg().itemsMode == "byitem" and "byitem" or "newest"
+    st.minQ = qualityOf(st.quality)[3]
+    function IT.rank(e) return IT.Q_RANK[(e.q or ""):lower()] or 1 end
+    function IT.rgb(q)
+      q = type(q) == "string" and q or ""
+      if #q < 8 then return 0.8, 0.8, 0.8 end
+      return (tonumber(q:sub(3, 4), 16) or 200) / 255, (tonumber(q:sub(5, 6), 16) or 200) / 255, (tonumber(q:sub(7, 8), 16) or 200) / 255
     end
-    styleQ()
-    content.lootQualityButtons = qBtns
-    -- buttons as wide as their labels (the mode button as its longer label, so it keeps its size when it flips);
-    -- measured again on every rebuild, as the label font may not be ready when the pane is built
-    local function fitToolbar()
-      for _, b in ipairs(qBtns) do UI.FitButton(b, 44) end
-      local cur, w = modeBtn.text:GetText(), 0
-      for _, label in ipairs({ "By item", "Newest" }) do modeBtn.text:SetText(label); w = math.max(w, tonumber(modeBtn.text:GetStringWidth()) or 0) end
-      modeBtn.text:SetText(cur)
-      modeBtn:SetWidth(math.ceil(w) + 2 * SP.M)
+    function IT.price(e) return (ns.Now and ns.Now.sellPrice and tonumber(e.id) and ns.Now.sellPrice(tonumber(e.id))) or 0 end
+    -- the name a row shows: link brackets stripped, never a placeholder
+    function IT.name(e)
+      local n = e.item
+      if ns.Now and ns.Now.stripLink then n = ns.Now.stripLink(n) end
+      n = tostring(n or ""):gsub("^%[(.*)%]$", "%1")
+      if n == "" then return nil end
+      return n
     end
-    content.lootFilter = function() return st.minQ, st.sortKey, st.sortAsc end
-    -- sort keys read the same fields the columns show
-    local function sortVal(e, key)
-      if key == "time" then return e.t or 0
-      elseif key == "item" then return (e.item or ""):lower()
-      elseif key == "qty" then return tonumber(e.count) or 1
-      elseif key == "from" then return (e.src or ""):lower()
-      elseif key == "loc" then return (e.zone or ""):lower()
-      elseif key == "quality" then return Q_RANK[(e.q or ""):lower()] or 1 end
-      return 0
+    -- where it came from: the enemy, "Quest: <name>", "Mail from Thrall", "Auction won"; legacy " at (x, y)" split off
+    function IT.from(e)
+      local srcName, legacy = (e.src or ""):match("^(.-) at (%(.-%))$")
+      srcName = srcName or e.src
+      if srcName == "Quest reward" and IT.questNames and IT.questNames[e] then srcName = "Quest: " .. IT.questNames[e] end
+      return srcName, legacy
     end
-    local function sortRows(rows)
-      if st.sortKey == "time" and not st.sortAsc then return rows end   -- already newest first
-      table.sort(rows, function(a, b)
-        local va, vb = sortVal(a, st.sortKey), sortVal(b, st.sortKey)
-        if va == vb then return (a.t or 0) > (b.t or 0) end
-        if st.sortAsc then return va < vb else return va > vb end
-      end)
-      return rows
+    -- the Items list never shows coin, nor an auction that came back (that is Gold > Auction house)
+    function IT.matches(e, q)
+      if e.money then return false end
+      if e.src == "Auction returned" then return false end
+      if st.minQ > 0 and IT.rank(e) < st.minQ then return false end
+      if not q or q == "" then return true end
+      local hay = ((IT.name(e) or "") .. " " .. (e.src or "") .. " " .. ((IT.questNames and IT.questNames[e]) or "") .. " " .. (e.zone or "")):lower()
+      return hay:find(q:lower(), 1, true) ~= nil
     end
-    ns._test.lootSort = function(rows, key, asc) local k0, a0 = st.sortKey, st.sortAsc; st.sortKey, st.sortAsc = key, asc; local out = sortRows(rows); st.sortKey, st.sortAsc = k0, a0; return out end
-    local function aggregate(loot, q, matches)
+    ns._test.lootMatches = function(e, q) local m = st.minQ; st.minQ = 0; local r = IT.matches(e, q); st.minQ = m; return r end
+    -- By item: one row per item, its pickups (times), total quantity, first seen and the most frequent source
+    function IT.aggregate(loot, q, matches)
       local by, order = {}, {}
       for _, e in ipairs(loot) do
-        if not e.money and matches(e, q) then
+        if not e.money and e.item and matches(e, q) then
           local a = by[e.item]
           if not a then
-            a = { item = e.item, count = 0, drops = 0, q = e.q, icon = e.icon, id = e.id, quest = e.quest, t = e.t, srcs = {}, agg = true }
+            a = { item = e.item, count = 0, drops = 0, q = e.q, icon = e.icon, id = e.id, quest = e.quest, t = e.t, first = e.t, srcs = {}, agg = true }
             by[e.item] = a; order[#order + 1] = a
           end
           a.count = a.count + (tonumber(e.count) or 1); a.drops = a.drops + 1
           if (e.t or 0) > (a.t or 0) then a.t = e.t end
+          if (e.t or 0) < (a.first or math.huge) then a.first = e.t end
           if e.src then a.srcs[e.src] = (a.srcs[e.src] or 0) + 1 end
         end
       end
-      -- the most frequent source; the drop count is its own column
       for _, a in ipairs(order) do
         local best, bn = nil, 0
         for src, n in pairs(a.srcs) do if n > bn then best, bn = src, n end end
@@ -3261,135 +3073,269 @@ if ns.UI and ns.UI.registerTab then
       table.sort(order, function(a, b) if a.count ~= b.count then return a.count > b.count end return (a.t or 0) > (b.t or 0) end)
       return order
     end
-    ns._test.lootAggregate = aggregate
-    local function lootMatches(e, q)
-      if e.money then return false end   -- coin rows of the loot log belong to the Gold pane
-      if st.minQ > 0 and (Q_RANK[(e.q or ""):lower()] or 1) < st.minQ then return false end
-      if not q or q == "" then return true end
-      local hay = ((e.item or "") .. " " .. (e.src or "") .. " " .. ((st.questNames and st.questNames[e]) or "") .. " " .. (e.zone or "") .. (e.quest and " quest" or "")):lower()
-      return hay:find(q:lower(), 1, true) ~= nil
-    end
-    ns._test.lootMatches = lootMatches
-
-    -- two tables on one column model, one per mode: Newest is Time · Item · Source · Location · Coords · Qty,
-    -- By item is Time · Item · Source · Qty · Drops (the aggregate has no one place). Text columns sit left and
-    -- share the free width, shortening with "..."; the number columns sit together at the right and never shorten,
-    -- so a right-aligned quantity never reads as part of the source beside it.
-    local COL_TIME = { key = "time", label = "Time", kind = "tag", color = "dim", measure = { "00:00:00" }, sort = true }
-    local COL_ICON = { key = "icon", label = "", kind = "icon" }
-    local COL_ITEM = { key = "item", label = "Item", flex = 3, min = 120, sort = true }
-    local COL_QTY = { key = "qty", label = "Qty", kind = "num", color = "dim", measure = { "x200" }, sort = true }
-    local COL_FROM = { key = "from", label = "Source", flex = 2, min = 90, sort = true }
-    local SPEC = {
-      newest = { COL_TIME, COL_ICON, COL_ITEM, COL_FROM,
-        { key = "loc", label = "Location", flex = 2, min = 80, color = "dim", sort = true },
-        { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } }, COL_QTY },
-      byitem = { COL_TIME, COL_ICON, COL_ITEM, COL_FROM, COL_QTY,
-        { key = "drops", label = "Drops", kind = "num", color = "dim", measure = { "999" } } },
+    ns._test.lootAggregate = IT.aggregate
+    ns._test.lootContent = function() return content end
+    local SORT = {
+      time = function(e) return e.t or 0 end, first = function(e) return e.first or e.t or 0 end,
+      item = function(e) return (IT.name(e) or ""):lower() end, from = function(e) return (IT.from(e) or ""):lower() end,
+      loc = function(e) return (e.zone or ""):lower() end, price = function(e) return IT.price(e) end,
+      times = function(e) return e.drops or 1 end, qty = function(e) return tonumber(e.count) or 1 end,
+      quality = function(e) return IT.rank(e) end,
     }
-    local FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
-    local tbls = {}
-    -- the quest badge is its own text right after the name; the name gives up the badge's width so neither overlaps.
-    -- A row without the badge gets the column's full width back (a pooled row may have shown a quest item before).
-    local function placeBadge(row, tbl)
-      local badge, nm, cw = row.questBadge, row.c.item, tbl.cols.item
-      if not (badge and cw) then return end
-      if not row.isQuest then badge:Hide(); nm:SetWidth(cw.w); return end
-      local bw = math.ceil(tonumber(badge:GetStringWidth()) or 0)
-      local nw = math.max(1, cw.w - bw - SP.S)
-      nm:SetWidth(nw)
-      local tw = math.min(nw, math.ceil(tonumber(nm:GetStringWidth()) or 0))
-      badge:ClearAllPoints(); badge:SetPoint("LEFT", row, "LEFT", cw.x + tw + SP.S, 0); badge:Show()
+    function IT.sortRows(rows, key, asc)
+      key, asc = key or st.sortKey, (asc == nil) and st.sortAsc or asc
+      -- (newest first is sorted too, stable on the log's order: a row written late with an earlier time, as a
+      -- merged or imported one, still lands under its own day)
+      local f = SORT[key] or SORT.time
+      local order = {}
+      for i, e in ipairs(rows) do order[e] = i end
+      table.sort(rows, function(a, b)
+        local va, vb = f(a), f(b)
+        if va == vb then return order[a] < order[b] end
+        if asc then return va < vb else return va > vb end
+      end)
+      return rows
     end
-    local function placeBadges(tbl) for i = 1, tbl.shownN or 0 do pcall(placeBadge, tbl.rows[i], tbl) end end
-    local function tooltip(row, _, tip)
-      if row.itemId then tip:SetHyperlink("item:" .. tostring(row.itemId)) end
+    ns._test.lootSort = function(rows, key, asc) return IT.sortRows(rows, key, asc) end
+
+    -- the page: one scroll holding the summary line and the list
+    local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
+    local sf, child = UI.ScrollChild(v, { slim = true, top = 0, left = 0, right = 0, bottom = 0 })
+    local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
+    IT.summary = UI.Summary(col)
+    content.lootSummary = IT.summary
+    -- one list-page structure on Runs, By dungeon and Items: the section header with the list's count
+    IT.section = UI.Section(col, "All items")
+    -- the control row, right to left: search, quality filter, Newest · By item
+    local controls = content.ebControls or v
+    local search = UI.Search(controls, "Search loot")   -- (fits the one search width, 176 - 26)
+    search:SetPoint("TOPRIGHT", controls, "TOPRIGHT", 0, 0)
+    search:HookScript("OnTextChanged", function() if lootRebuild then lootRebuild() end end)
+    content.search = search
+    local qf = UI.FilterButton(controls, { default = "green", label = "Green and better",
+      items = function()
+        local out = {}
+        for _, q in ipairs(IT.QUALITY) do out[#out + 1] = { q[1], q[2], st.quality == q[1] } end
+        return out
+      end,
+      onPick = function(key) IT.setQuality(key) end })
+    qf:SetPoint("TOPRIGHT", search, "TOPLEFT", -S.S2, 0)
+    content.lootQuality = qf
+    local seg = UI.Segmented(controls, { { "newest", "Newest", "Every pickup, newest first" }, { "byitem", "By item", "One row per item: how often, how many in all" } },
+      { value = st.mode, onPick = function(key) IT.setMode(key) end })
+    seg:SetPoint("TOPRIGHT", qf, "TOPLEFT", -S.S2, 0)
+    content.lootModeControl = seg
+    function IT.setQuality(key)
+      local q = qualityOf(key)
+      st.quality, st.minQ = q[1], q[3]
+      if ns.DB and ns.DB.settings then ns.DB.settings.itemsQuality = q[1] end
+      qf:SetValue(q[1], q[2])
+      if lootRebuild then lootRebuild() end
     end
-    local function onClick(row)
+    function IT.setMode(key)
+      st.mode = key == "byitem" and "byitem" or "newest"
+      if ns.DB and ns.DB.settings then ns.DB.settings.itemsMode = st.mode end
+      seg:SetValue(st.mode)
+      st.sortKey, st.sortAsc = st.mode == "byitem" and "qty" or "time", false
+      for _, t in pairs(IT.tbls) do t.setSort(st.sortKey, st.sortAsc) end
+      if lootRebuild then lootRebuild() end
+    end
+    content.lootMode = function() return st.mode end
+    content.lootFilter = function() return st.minQ, st.sortKey, st.sortAsc end
+    content.setLootQuality, content.setLootMode = function(k) IT.setQuality(k) end, function(k) IT.setMode(k) end
+
+    -- two tables, one per mode. The badge after a quest item's name is a neutral QUEST badge.
+    local PRICE_TIP = "What a vendor pays for one. \"-\" when the game has not told the addon yet."
+    local spec = {
+      newest = {
+        { key = "time", label = "When", kind = "tag", min = 40, measure = { "00:00" }, sort = true },
+        { key = "icon", label = "", kind = "icon" },
+        { key = "item", label = "Item", flex = 1, min = 120, sort = true },
+        { key = "from", label = "From", min = 160, sort = true },
+        { key = "loc", label = "Place", min = 120, sort = true },
+        { key = "price", label = "Vendor price", kind = "money", min = 80, sort = true, tip = PRICE_TIP },
+        { key = "coords", label = "Coords", kind = "num", min = 72, wide = true },
+      },
+      byitem = {
+        { key = "icon", label = "", kind = "icon" },
+        { key = "item", label = "Item", flex = 1, min = 120, sort = true },
+        { key = "times", label = "Times", kind = "num", min = 48, sort = true, tip = "How many times you picked it up" },
+        { key = "qty", label = "Total", kind = "num", min = 56, sort = true, tip = "How many you picked up in all" },
+        { key = "first", label = "First seen", kind = "tag", min = 96, sort = true },
+        { key = "price", label = "Vendor price", kind = "money", min = 80, sort = true, tip = PRICE_TIP },
+      },
+    }
+    IT.tbls = {}
+    -- the name, then its stack count ("x4", fgMuted, a text of its own) S1 after it, then the QUEST badge: the name
+    -- shortens inside what is left of the column, the count and the badge never do
+    local function placeBadge(tbl, row)
+      local cw, fs, b, ct = tbl.cols and tbl.cols.item, row.c and row.c.item, row.ebBadge, row.ebCount
+      if not (cw and fs) then return end
+      local live = row.item and not row.item.ebSection
+      local cntW = (ct and ct:IsShown() and live) and (UI.TextWidth("BODY", ct:GetText()) + S.S1) or 0
+      local bw = (b and b:IsShown() and live) and ((tonumber(b:GetWidth()) or 0) + S.S2) or 0
+      if not live and b then b:Hide() end
+      local tw = math.max(1, math.min(UI.TextWidth("BODY", fs:GetText()), cw.w - cntW - bw))
+      fs:SetWidth((cntW > 0 or bw > 0) and tw or cw.w)
+      if cntW > 0 then ct:ClearAllPoints(); ct:SetPoint("LEFT", row, "LEFT", cw.x + tw + S.S1, 0); ct:SetWidth(cntW - S.S1) end
+      if bw > 0 then b:ClearAllPoints(); b:SetPoint("LEFT", row, "LEFT", cw.x + tw + cntW + S.S2, 0) end
+    end
+    IT.placeBadge = placeBadge
+    for mode, sp in pairs(spec) do
+      IT.tbls[mode] = UI.KitTable(col, sp, {
+        sortKey = mode == "byitem" and "qty" or "time", sortAsc = false,
+        onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; if lootRebuild then lootRebuild() end end,
+        onLayout = function(t) for i = 1, t.shownN do pcall(placeBadge, t, t.rows[i]) end end,
+        onHeight = function() if IT.place then pcall(IT.place) end end,
+        tooltip = function(row, e, tip)
+          if not e or e.ebSection then return end
+          if row.itemId and tip.SetHyperlink then tip:SetHyperlink("item:" .. tostring(row.itemId))
+          else tip:AddLine(IT.name(e) or "Item", IT.rgb(e.q)) end
+          if e.agg then tip:AddLine(("Picked up %s, %s in all"):format(UI.plural(e.drops, "time"), UI.fmtNum(e.count)), 0.78, 0.79, 0.80)
+          elseif e.t then tip:AddLine(UI.fmtWhen(e.t), 0.78, 0.79, 0.80) end
+        end })
+    end
+    content.lootTables = IT.tbls
+    -- a row opens nothing; shift-click puts the item's link in the chat box
+    function IT.shiftClick(row)
       if row.itemId and IsShiftKeyDown and IsShiftKeyDown() and GetItemInfo and ChatEdit_InsertLink then
         local _, link = GetItemInfo(row.itemId); if link then ChatEdit_InsertLink(link) end
       end
     end
-    local function onSort(key, asc)
-      st.sortKey, st.sortAsc = key, asc
-      for _, t in pairs(tbls) do t.setSort(key, asc) end
-      if lootRebuild then lootRebuild() end
-    end
-    for mode, spec in pairs(SPEC) do
-      local t = UI.Table(content, spec, { top = TABLE_TOP, sortKey = st.sortKey, sortAsc = st.sortAsc, onSort = onSort,
-        tooltip = tooltip, onClick = onClick, onLayout = placeBadges, emptyText = "No items yet. Items you pick up show here." })
-      tbls[mode] = t
-    end
-    content.lootTables = tbls
-    local function showTable(t, on)
-      if on then t.sf:Show() else t.header:Hide(); t.sf:Hide(); t.empty:Hide() end
-    end
-    -- fill one row of either table from a log entry or an aggregate
-    local function fill(row, e)
-      row.nm = row.c.item                                         -- the name cell, for tests and readers
-      row.itemId = tonumber(e.id)                                 -- hover tooltip / shift-click link
-      row.isQuest = e.quest and true or nil
-      if not row.questBadge then
-        row.questBadge = UI.FS(row, "GameFontHighlightSmall"); row.questBadge:SetTextColor(0x8c / 255, 0x91 / 255, 0x97 / 255)
-        if row.questBadge.SetWordWrap then row.questBadge:SetWordWrap(false) end
-        row.questBadge:SetText("quest")
-        -- a row with no item tooltip and no shortened cell shows no empty tooltip box
-        row:HookScript("OnEnter", function(r)
-          if GameTooltip and GameTooltip.NumLines and GameTooltip:GetOwner() == r and GameTooltip:NumLines() == 0 then GameTooltip:Hide() end
-        end)
-      end
+    function IT.fill(row, e)
       local c = row.c
-      c.time:SetText(date("%H:%M:%S", e.t or 0))
-      c.icon:SetTexture(e.icon or FALLBACK)
-      c.item:SetText(e.item or "?"); c.item:SetTextColor(qrgb(e.q))
-      c.qty:SetText("x" .. (e.count or 1))
-      if c.drops then c.drops:SetText(tostring(e.drops or 1)) end
-      -- legacy rows embedded " at (x, y)" in the source; split it out so old data still reads right
-      local srcName, legacyLoc = (e.src or ""):match("^(.-) at (%(.-%))$")
-      srcName = srcName or e.src
-      -- a quest's reward names its quest (#38): the QUESTDONE row of the same turn-in
-      if srcName == "Quest reward" and st.questNames and st.questNames[e] then srcName = "Quest: " .. st.questNames[e] end
-      c.from:SetText(srcName or "unknown")
-      if not srcName then c.from:SetTextColor(C.dim[1], C.dim[2], C.dim[3]) end
-      if c.loc then c.loc:SetText(e.zone or "") end
-      -- legacy rows carried "(x, y)" inside the source; show it in the coords column, bare
-      if c.coords then c.coords:SetText((e.x and e.y) and UI.fmtCoords(e.x, e.y) or (legacyLoc and legacyLoc:gsub("[()]", "")) or "") end
+      row.itemId = tonumber(e.id)
+      if not row.ebShift then row.ebShift = true; row:SetScript("OnClick", IT.shiftClick) end
+      if c.time then c.time:SetText(UI.fmtClock(e.t or 0)) end
+      c.icon:SetTexture(e.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+      local name = IT.name(e)
+      local n = tonumber(e.count) or 1
+      if not row.ebCount then row.ebCount = UI.Text(row, "BODY", "fgMuted") end
+      if name and not e.agg and n > 1 then row.ebCount:SetText("x" .. n); row.ebCount:Show() else row.ebCount:Hide() end
+      if name then
+        c.item:SetText(name)
+        c.item:SetTextColor(IT.rgb(e.q))
+      else
+        c.item:SetText("Item " .. tostring(e.id or "")); UI.SetColor(c.item, "fgMuted")
+      end
+      if e.quest then
+        if not row.ebBadge then row.ebBadge = UI.Badge(row, "Quest") end
+        row.ebBadge:Show()
+      elseif row.ebBadge then row.ebBadge:Hide() end
+      if c.from then
+        local srcName = IT.from(e)
+        if srcName and srcName ~= "" then c.from:SetText(srcName) else c.from:SetText("Other"); UI.SetColor(c.from, "fgMuted") end
+      end
+      if c.loc then c.loc:SetText(e.zone or "-"); if not e.zone then UI.SetColor(c.loc, "fgMuted") end end
+      if c.coords then
+        local _, legacy = IT.from(e)
+        c.coords:SetText((e.x and e.y) and UI.fmtCoords(e.x, e.y) or (legacy and legacy:gsub("[()]", "")) or "-")
+      end
+      if c.times then c.times:SetText(UI.fmtNum(e.drops or 1)) end
+      if c.qty then c.qty:SetText(UI.fmtNum(e.count or 1)) end
+      if c.first then c.first:SetText(UI.fmtDate(e.first or e.t or 0)) end
+      local p = IT.price(e)
+      if p > 0 then c.price:SetText(UI.money(p)) else c.price:SetText("-"); UI.SetColor(c.price, "fgMuted") end
     end
-    lootRebuild = function()
-      local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
-      -- totals line: the item pickups counted (coin is the Gold pane's)
-      local items, stacks = 0, 0
+    IT.place = function()
+      local w = G.mainW(G.winW())
+      col:SetWidth(w)
+      IT.summary:ClearAllPoints(); IT.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); IT.summary:SetWidth(w); pcall(IT.summary.layout)
+      local y = H.SUMMARY + S.S3
+      IT.section:ClearAllPoints(); IT.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); IT.section:SetWidth(w); y = y + H.SECTION
+      local t = IT.tbls[st.mode]
+      t.frame:ClearAllPoints(); t.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); t.frame:SetWidth(w)
+      if t.width ~= math.min(w, G.TABLE_MAX) then t.relayout(w) end
+      y = y + (t.height or 0) + S.S4
+      col:SetHeight(y); sf:SetContentHeight(y)
+      IT.contentH = y
+    end
+    content:HookScript("OnSizeChanged", function() pcall(IT.place) end)
+    -- the quest a quest reward belongs to: the QUESTDONE row of the same turn-in (kept beside the rows, never saved)
+    function IT.readQuests(loot)
+      IT.questNames = IT.questNames or setmetatable({}, { __mode = "k" })
       local done = {}
-      st.questNames = st.questNames or setmetatable({}, { __mode = "k" })
       for _, ev in ipairs((ns.DB and ns.DB.story and ns.DB.story.events) or {}) do
         if ev.kind == "QUESTDONE" and type(ev.text) == "string" then done[#done + 1] = ev end
       end
       for _, e in ipairs(loot) do
-        if not e.money then
-          items = items + 1; stacks = stacks + (tonumber(e.count) or 1)
-          -- (kept beside the rows, never written into the loot log)
-          if e.src == "Quest reward" and not st.questNames[e] then
-            for _, ev in ipairs(done) do
-              if ev.s == e.s and math.abs((ev.t or 0) - (e.t or 0)) <= 5 then st.questNames[e] = ev.text:match("^Complete:%s+(.+)$"); break end
-            end
+        if not e.money and e.src == "Quest reward" and not IT.questNames[e] then
+          for _, ev in ipairs(done) do
+            if ev.s == e.s and math.abs((ev.t or 0) - (e.t or 0)) <= 5 then IT.questNames[e] = ev.text:match("^Complete:%s+(.+)$"); break end
           end
         end
       end
-      totals:SetText(("%d pickup%s  ·  %d item%s in all"):format(items, items == 1 and "" or "s", stacks, stacks == 1 and "" or "s"))
-      pcall(fitToolbar)
-      local q = search:GetText()
-      local rows
-      if st.mode == "byitem" then rows = aggregate(loot, q, lootMatches)
-      else rows = {}; for i = #loot, 1, -1 do if lootMatches(loot[i], q) then rows[#rows + 1] = loot[i] end end end
-      rows = sortRows(rows)
-      local tbl = tbls[st.mode]
-      for mode, t in pairs(tbls) do showTable(t, mode == st.mode) end
-      tbl.setRows(rows, fill)
-      placeBadges(tbl)
-      content.lootRows = tbl.rows
     end
+    -- the answer: this session's items at this filter, and the best of them
+    function IT.answer(loot)
+      local sid = ns.DB and ns.DB.active
+      local n, best = 0, nil
+      for _, e in ipairs(loot) do
+        if e.s == sid and IT.matches(e, "") then
+          n = n + 1
+          if not best or IT.rank(e) > IT.rank(best) or (IT.rank(e) == IT.rank(best) and IT.price(e) > IT.price(best)) then best = e end
+        end
+      end
+      local qlabel = qualityOf(st.quality)[2]:lower()
+      local segs = {}
+      if st.quality == "all" then segs[1] = { text = n == 0 and "This session: no items yet" or ("This session: **%s**"):format(UI.plural(n, "item")) }
+      else segs[1] = { text = n == 0 and ("This session: nothing %s yet"):format(qlabel:gsub(" and better", " or better")) or ("This session: **%s**, %s"):format(UI.plural(n, "item"), qlabel) } end
+      if best then
+        local r, g, b = IT.rgb(best.q)
+        segs[2] = { text = ("best: |cff%02x%02x%02x%s|r"):format(math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5), IT.name(best) or "item"),
+          tip = function(tip) if tonumber(best.id) and tip.SetHyperlink then tip:SetHyperlink("item:" .. tostring(best.id)) else tip:AddLine(IT.name(best) or "Item") end end }
+      end
+      IT.summary:SetSegments(segs)
+    end
+    lootRebuild = function()
+      local loot = ns.mine(ns.DB and ns.DB.loot.log)   -- persisted; the logged-in character's rows only (#23)
+      IT.readQuests(loot)
+      IT.answer(loot)
+      local q = search:GetText() or ""
+      local rows
+      if st.mode == "byitem" then rows = IT.sortRows(IT.aggregate(loot, q, IT.matches), st.sortKey, st.sortAsc)
+      else
+        local list = {}
+        for i = #loot, 1, -1 do if loot[i].item and IT.matches(loot[i], q) then list[#list + 1] = loot[i] end end
+        list = IT.sortRows(list, st.sortKey, st.sortAsc)
+        if st.sortKey == "time" and not st.sortAsc then
+          -- newest first: a day row over each day, "TODAY · 3 ITEMS"
+          local days, order = {}, {}
+          for _, e in ipairs(list) do
+            local k = date("%Y-%m-%d", e.t or 0)
+            if not days[k] then days[k] = 0; order[#order + 1] = k end
+            days[k] = days[k] + 1
+          end
+          rows = {}
+          local last
+          for _, e in ipairs(list) do
+            local k = date("%Y-%m-%d", e.t or 0)
+            if k ~= last then last = k; rows[#rows + 1] = { ebSection = UI.fmtDay(e.t or 0) .. " \194\183 " .. UI.plural(days[k], "item") } end
+            rows[#rows + 1] = e
+          end
+        else rows = list end
+      end
+      for mode, t in pairs(IT.tbls) do if mode == st.mode then t.frame:Show() else t.frame:Hide() end end
+      local tbl = IT.tbls[st.mode]
+      tbl.setSort(st.sortKey, st.sortAsc)
+      tbl.setRows(rows, IT.fill)
+      for i = 1, tbl.shownN do pcall(IT.placeBadge, tbl, tbl.rows[i]) end
+      IT.nShown = 0
+      for _, r in ipairs(rows) do if not r.ebSection then IT.nShown = IT.nShown + 1 end end
+      IT.section:SetMeta(IT.nShown > 0 and UI.plural(IT.nShown, "item") or nil)
+      if #rows == 0 then
+        if q ~= "" then tbl.setState(('No item matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
+        elseif st.minQ >= 2 then tbl.setState("Loot anything green or better and it shows here. Lower the quality filter to see grey and white items.")
+        else tbl.setState("Loot anything and it shows here, with where it came from.") end
+      end
+      content.lootRows = tbl.rows
+      IT.place()
+    end
+    qf:SetValue(st.quality, qualityOf(st.quality)[2])
+    for _, t in pairs(IT.tbls) do t.setSort(st.mode == "byitem" and "qty" or "time", false) end
+    st.sortKey = st.mode == "byitem" and "qty" or "time"
     lootRebuild()
-  end, function() if lootRebuild then lootRebuild() end end)
+  end, function() if lootRebuild then lootRebuild() end end, "Everything you picked up: drops, quest rewards, mail and auctions won.")
 end
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──

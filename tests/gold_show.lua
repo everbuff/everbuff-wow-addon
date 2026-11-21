@@ -279,7 +279,7 @@ return function(P)
     if first and ns._test.dungeonDetail() then
       ns._test.renderRun(first)
       local dv = ns._test.dungeonDetail()
-      check("dungeons: the run's page reads items, coin and loot value from that block", dv and dv.lootLine == ("4 items  ·  %s coin  ·  loot value about %s"):format(fmt(3300), fmt(1200)), dv and dv.lootLine)
+      check("dungeons: the run's page reads items, coin and loot value from that block", dv and dv.lootLine == ("Coin looted %s · quest rewards %s · vendor price of items %s"):format(ns.UI.money(2100), ns.UI.money(1200), ns.UI.money(1200)), dv and dv.lootLine)
       check("dungeons: and says when the looted coin is not what the purse gained", dv and dv.purseLine == ("Coin %s of %s gained inside"):format(fmt(2100), fmt(2600)), dv and dv.purseLine)
     end
     check("dungeons: Gold.runFor is gone with the view-time runs it matched", G.runFor == nil)

@@ -44,12 +44,13 @@ local function fmtDowntime(dn)
   if not dn then return "" end
   return dn >= 60 and ("%dm %02ds"):format(math.floor(dn / 60), dn % 60) or (dn .. "s")
 end
-UI.registerPane("Combat", 3, "Deaths", function(content)
+UI.registerPane("Home", 5, "Deaths", function(content)
   view = content
   local summary = UI.SummaryLine(content, C.red, nil, true)
   view.summary = summary
   -- When · Level · Location · Coords · Slain by · (opens the fight) · Downtime · Gear lost
-  local tbl = UI.Table(UI.Below(content, summary), {
+  local holder = UI.Below(content, summary)
+  local tbl = UI.Table(holder, {
     { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
     { key = "lvl", label = "Level", kind = "num", measure = { "60" } },
     { key = "zone", label = "Location", flex = 1, min = 90 },
@@ -58,9 +59,13 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
     { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
     { key = "down", label = "Downtime", kind = "num", color = "dim", measure = { "59m 59s" } },
     { key = "gear", label = "", kind = "tag", color = "red", measure = { "-100% gear" } },
-  }, { top = 0, emptyText = "No deaths recorded. Stay alive out there.",
+  }, { top = 0,
     onClick = function(row) if row.fight and ns.OpenFightDetail then ns.OpenFightDetail(row.fight) end end })
   view.tbl = tbl
+  -- no death at all: the kit's big empty state (2.7), its top at CONTENT_TOP + 48 as on Dungeons > Runs (4.4)
+  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "You have not died yet.",
+    text = "When you die, this page shows what killed you and the pull to replay." })
+  view.empty:Hide()
 
   listRebuild = function()
     local list = collectDeaths()
@@ -81,6 +86,7 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
     end
     local rows = {}
     for i = #list, 1, -1 do rows[#rows + 1] = list[i] end
+    if #rows == 0 then summary:Hide(); holder:Hide(); view.empty:Show() else view.empty:Hide(); summary:Show(); holder:Show() end
     tbl.setRows(rows, function(row, d)
       row.fight = d.fight
       row.c.time:SetText(date("%m/%d %H:%M", d.t or 0))
@@ -98,7 +104,7 @@ UI.registerPane("Combat", 3, "Deaths", function(content)
 end, function()
   if listRebuild then listRebuild() end
   if not ticker then ticker = C_Timer.NewTicker(3, function() if view and view:IsShown() and listRebuild then listRebuild() end end) end
-end)
+end, "Every death: what killed you, and the moments before it.")
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

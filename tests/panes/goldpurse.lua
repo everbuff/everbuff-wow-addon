@@ -3,9 +3,8 @@
 -- its list at 1250x760 once a balance went above 1,000g. Here every gold surface is laid out around balances above
 -- 10,000g (the data as played, the alts up to the Classic cap of 214,748g) and above 1,000,000g (the long data, the
 -- alts up to 9,999,999g), at the three window sizes:
---   Gold pane   Sources, Journal, Days, Characters, Zones and Runs, for this character and for the account: no text
---               past its box or over another, every cell inside the list, no number shortened, the cards, the
---               status line and the caption in full
+--   Gold pane   every breakdown, today and all time, and Characters for the account: no text past its box or over
+--               another, every cell inside the column, no number shortened, the cards' labels and amounts in full
 --   elsewhere   the Overview gold card, the Sessions gold band, the pill and its tooltip
 return function(P)
   local check, M, ns = P.check, P.M, P.ns
@@ -14,14 +13,6 @@ return function(P)
   local tip = _G.GameTooltip
   local DAY = 86400
   local function click(b) b.scripts.OnClick(b, "LeftButton"); M.settle() end
-  local function pick(c, btn, label)
-    if not (c.menu.shown and c.menu.anchor == btn) then click(btn) end
-    for _, b in ipairs(c.menu.btns) do
-      if b.shown ~= false and b.text.text == label then click(b); return true end
-    end
-    c.menu:Hide()
-    return false
-  end
   local savedCurrent = ns.Recorder.current
   ns.Recorder.current = function() return ns.DB.active and ns.DB.sessions[ns.DB.active] or nil end
   local realPrint = print
@@ -94,23 +85,42 @@ return function(P)
     check(tag .. ": every header and cell ends inside the list, every number in full", #bad == 0, table.concat(bad, "; "):sub(1, 500))
     return n
   end
-  local KEYS = { "cBalance", "cIn", "cOut", "cNet", "cRate" }
-  local function cards(tag, c)
-    local bad = {}
-    local cb = P.box(c)
-    for _, k in ipairs(KEYS) do
-      local p = c[k]
-      local b = P.box(p)
-      if b.l < cb.l - 0.5 or b.l + b.w > cb.l + cb.w + 0.5 then bad[#bad + 1] = k .. " outside the pane" end
-      for _, part in ipairs({ "title", "value" }) do
-        if p[part]:IsTruncated() then bad[#bad + 1] = k .. "." .. part .. " shortened: " .. tostring(p[part].text) end
-        local fb = P.box(p[part])
-        if fb.l < b.l + UI.SP.S - 0.5 or fb.l + P.G.naturalWidth(p[part]) > b.l + b.w - UI.SP.S + 0.5 then bad[#bad + 1] = k .. "." .. part .. " outside the padding" end
+  -- the Gold pane's tables (UI.KitTable, one page scroll): every cell inside the column, no number shortened
+  local function kitTables(tag, c)
+    local bad, n = {}, 0
+    local colR = P.box(c.col).l + P.box(c.col).w + 0.5
+    for key, tbl in pairs(c.tbl) do
+      if P.visible(tbl.frame) and tbl.shownN > 0 then
+        n = n + 1
+        for i = 1, tbl.shownN do
+          local r = tbl.rows[i]
+          if r.shown ~= false and r.item and not r.item.ebSection then
+            for _, col in ipairs(tbl.spec) do
+              local cell = r.c[col.key]
+              if cell and tbl.cols[col.key] then
+                local b = P.box(cell)
+                if b and b.l + b.w > colR then bad[#bad + 1] = ("%s row %d %s past the column by %d px"):format(key, i, col.key, math.ceil(b.l + b.w - colR)) end
+                if (col.kind == "money" or col.kind == "num") and cell:IsTruncated() then bad[#bad + 1] = ("%s row %d %s shortened: %s"):format(key, i, col.key, tostring(cell.text)) end
+              end
+            end
+          end
+        end
       end
     end
-    if c.caption:IsTruncated() then bad[#bad + 1] = "caption shortened: " .. tostring(c.caption.text) end
-    if P.visible(c.statusRow) and c.status:IsTruncated() then bad[#bad + 1] = "status line shortened" end
-    check(tag .. ": the cards hold their amounts in full, the caption and the status line are in full", #bad == 0, table.concat(bad, "; "):sub(1, 500))
+    check(tag .. ": every cell ends inside the column, every number in full", #bad == 0, table.concat(bad, "; "):sub(1, 500))
+    return n
+  end
+  local function cards(tag, c)
+    local bad = {}
+    local colB = P.box(c.col)
+    for i, cd in ipairs(c.shownCards) do
+      local b = P.box(cd)
+      if b.l < colB.l - 0.5 or b.l + b.w > colB.l + colB.w + 0.5 then bad[#bad + 1] = i .. " outside the column" end
+      for _, part in ipairs({ "label", "value" }) do
+        if cd[part]:IsTruncated() then bad[#bad + 1] = i .. "." .. part .. " shortened: " .. tostring(cd[part].text) end
+      end
+    end
+    check(tag .. ": the cards hold their labels and amounts in full", #bad == 0, table.concat(bad, "; "):sub(1, 500))
   end
 
   for _, size in ipairs({ { 900, 580 }, { 1250, 760 }, { 1600, 1000 } }) do
@@ -124,34 +134,35 @@ return function(P)
         -- this character, today
         Gold.open("today", view); M.settle()
         local vt = ("%s %s"):format(tag, v[2])
-        check(vt .. ": the view is open", c.st.view == view and c.viewBtn.text.text == v[2], c.st.view)
-        local n = tables(vt, c)
-        check(vt .. ": its list has rows", n >= 1 or view == "journal" or view == "sources", n)
+        check(vt .. ": the breakdown is open", c.st.view == view and c.breakdown.text:GetText() == "Break down by: " .. v[2], c.st.view)
+        local n = kitTables(vt, c)
+        check(vt .. ": its list has rows", n >= 1 or view == "journal" or view == "sources" or view == "auctions", n)
         cards(vt, c)
         audit(vt)
-        -- the account, all time (Zones and Runs are this character's: the pane says so and stays laid out)
+        -- all time
         Gold.open("all", view); M.settle()
-        pick(c, c.whoBtn, "Account")
-        vt = vt .. ", account, all time"
-        tables(vt, c)
+        vt = vt .. ", all time"
+        kitTables(vt, c)
         cards(vt, c)
         audit(vt)
-        pick(c, c.whoBtn, "This character")
       end
-      -- Characters with the characters not seen in 90 days counted, at its fullest: the widest TOTAL row
+      -- Characters for the account with the characters not seen in 90 days counted, at its fullest
       Gold.open("today", "chars"); M.settle()
-      if P.visible(c.staleBtn) then click(c.staleBtn) end
-      local ct = P.visible(c.tblChars.sf) and c.tblChars or c.tblCharsNarrow
+      c.setWho("account"); M.settle()
+      if P.visible(c.staleBtn) and not c.st.withStale then click(c.staleBtn) end
+      local ct = c.tbl.chars
       local total = ct.rows[1]
       local ro = c.rosterData
-      check(tag .. " Characters: the TOTAL row holds every purse in full, the hint of a character not seen since the update too", total.item.total == true and total.c.balance.text == fmt(ro.total)
+      check(tag .. " Characters: the total row holds every purse in full, a character to log in on too", total.item.total == true and total.c.balance:GetText() == Gold.GP.money(ro.total)
         and not total.c.balance:IsTruncated() and ro.total > 2 * BIG and (function()
-          for i = 1, ct.shownN do local r = ct.rows[i]; if r.c.seen.text == "log in once to refresh" then return not r.c.seen:IsTruncated() end end
+          for i = 1, ct.shownN do local r = ct.rows[i]; if r.c.seen:GetText() == "log in once" then return not r.c.seen:IsTruncated() end end
           return false
-        end)(), total.c.balance.text)
-      tables(tag .. " Characters, everyone counted", c)
+        end)(), total.c.balance:GetText())
+      kitTables(tag .. " Characters, everyone counted", c)
+      cards(tag .. " Characters, everyone counted", c)
       audit(tag .. " Characters, everyone counted")
-      if P.visible(c.staleBtn) then click(c.staleBtn) end
+      if c.st.withStale then click(c.staleBtn) end
+      c.setWho("char"); M.settle()
 
       -- the Overview gold card and the Sessions gold band on the same purses
       for _, page in ipairs({ "overview", "sessions" }) do
@@ -160,12 +171,14 @@ return function(P)
         ns.UI.Open("Loot", "gold"); M.settle(); ns.UI.Open("Home", page); M.settle()
         local pt = ("%s Home %s"):format(tag, page)
         if page == "overview" then
-          local p = h.cGold
+          -- the GOLD card is this session's net; the balance and what every character holds are in its tooltip
+          local p = h.cards.cards[3]
           local roAll = Gold.roster("all")
-          check(pt .. ": the Gold card says the balance and what every character holds, in full", p.value.text == fmt(me.gold.balance) and not p.value:IsTruncated() and not p.sub:IsTruncated()
-            and p.sub2On == true and p.sub2.text == "all characters " .. fmt(roAll.total) and not p.sub2:IsTruncated(), tostring(p.value.text) .. " | " .. tostring(p.sub2.text))
-          local pb, vb, s2 = P.box(p), P.box(p.value), P.box(p.sub2)
-          check(pt .. ": both stay inside the card", vb.l + P.G.naturalWidth(p.value) <= pb.l + pb.w + 0.5 and s2.t + s2.h <= pb.t + pb.h + 0.5, ("%s %s"):format(vb.l + P.G.naturalWidth(p.value), pb.l + pb.w))
+          local tip = p.ebTip or {}
+          check(pt .. ": the Gold card's tooltip names the balance and what every character holds, in full", tip.pairs and tip.pairs[1][2] == ns.fmtMoney(me.gold.balance, { icons = true })
+            and (roAll.count < 2 or (tip.pairs[2] and tip.pairs[2][2] == ns.fmtMoney(roAll.total, { icons = true }))) and not p.value:IsTruncated() and not p.meta:IsTruncated(), tostring(p.value.text))
+          local pb, vb = P.box(p), P.box(p.value)
+          check(pt .. ": the value stays inside the card", vb.l + P.G.naturalWidth(p.value) <= pb.l + pb.w + 0.5, ("%s %s"):format(vb.l + P.G.naturalWidth(p.value), pb.l + pb.w))
         end
         tables(pt, h)
         audit(pt)
