@@ -909,6 +909,13 @@ Type labels are sentence case words per kind (Quest, Kill, Level, Loot, Merchant
 
 ### 4.3 Home > Fights, and the fight page (tonight: registration only; restyle in phase 2)
 
+> Revised by `docs/UX_PRAGMATIC.md` 1.4 (built on the draft branch): the sub-tab exists only while the character has
+> pulls stored. The addon removes a pull once the desktop app has saved it, so the list is the stretch since the
+> last pickup and never the character's history. The section header reads "PULLS SINCE <oldest stored pull>", the
+> line under it counts only what is listed ("58 pulls · 0 wipes · 2 deaths · 22m in combat"), the filter reads
+> "All pulls · Bosses, wipes and deaths · Kills · Wipes · Deaths", and an empty filter is scoped ("No wipe among the
+> stored pulls."). The copy below that differs from this is superseded.
+
 **Tooltip:** "Every pull: bosses, wipes and deaths first, with a replay of each."
 
 **Segmented control:** `Important · All`, default from `fightsView`. Important means bosses, elites, wipes and any death.
@@ -951,6 +958,11 @@ Type labels are sentence case words per kind (Quest, Kill, Level, Loot, Merchant
 
 ### 4.4 Home > Deaths, and the death page (tonight: registration only)
 
+> Revised by `docs/UX_PRAGMATIC.md` 1.5 (built on the draft branch): the sub-tab exists only while a stored death of
+> the character names its killer. Columns When, Level, Killed by, Place, Coords, Downtime; no gear column. A killer
+> the game hid is a blank cell. The line over the list reads "Deaths since <oldest stored event>", with "most in
+> <place>" only from 3 deaths in 2 places. The copy below that differs from this is superseded.
+
 **Tooltip:** "Every death: what killed you, and the moments before it."
 
 **Segmented control:** `Mine · Everyone`. Default Mine. Everyone adds party members' deaths in your dungeon runs.
@@ -986,6 +998,16 @@ The IN column is cut.
 - Sections: `THE LAST MOMENTS` (the existing slain-by recap and the aura timeline of the linked pull, with no damage amounts), then the links "Open the pull ›" and "Open the run ›".
 
 ### 4.5 Dungeons > Runs (tonight)
+
+> Revised by `docs/UX_PRAGMATIC.md` 2.1 (built on the draft branch). The hero's answer is the result ("7 bosses in
+> 1h 9m"; a comparison leads only when there is a best to compare with), its META the day and the bosses missed, then
+> the deaths and the best drop. The line with the instances this hour and the lockouts shows only with something to
+> say. One table: When, Dungeon, Time, Vs best, Bosses, Deaths, Worth, Best drop (WIDE). Worth is the looted coin
+> plus the vendor value of the items, never quest coin. A boss total ("2/4") only from the dungeon's learned list or a
+> lockout; otherwise the kills alone. "first run" is not said. The runs from before the run store are rows of the
+> same table, marked "partial" (time and worth only, `characters[guid].dungeonLegacy`), and a column is left out while
+> fewer than a third of the listed rows have a value for it. Day rows and the section carry no run count. No cell is
+> a "-". Empty: "No run stored yet". The wireframes below that differ from this are superseded.
 
 **Tooltip:** "Your dungeon runs against your best: time, bosses, deaths, loot and XP."
 
@@ -1086,6 +1108,18 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 
 ### 4.6 Dungeons > Run page (tonight)
 
+> Revised by `docs/UX_PRAGMATIC.md` 2.2 (built on the draft branch). META: the day and clock span, the level, "party
+> of N" only from a stored pull's group, "solo" only from a stored size of 1, the comparison when there is one. Cards,
+> each only with a value: TIME (meta "7m 59s dead or outside"), BOSSES (meta "boss clock 1h 3m"), XP (per hour of
+> time inside), WORTH ("1g 16s coin · 18g 3s items at vendor prices"; quest coin only in the hover). Bosses table:
+> Boss, Killed at, Split, Fight length; boss 1's split is since entering, the others since the kill before, and kill
+> clocks keep their seconds past the hour. The deaths are one line under the table ("Deaths: 16:12 (2m 45s down) ·
+> 16:30 (1m 14s down)") unless a row names a killer or a party member. Loot: green and better as rows (Item, From,
+> When), then "29 more: 21 white, 8 grey"; From names the boss of the run killed at most 90 s before a row whose
+> stored source is a placeholder, "Trash" for an enemy placeholder with none, blank otherwise, and the hover says how
+> it was derived. A section with nothing in it is not on the page. A partial row's page is its Time and its Worth.
+> The wireframes below that differ from this are superseded.
+
 The page uses `UI.Detail(host, items, index, render)` with the Runs list's current order.
 
 ```
@@ -1149,6 +1183,10 @@ At WIDE (tonight too, since it only adds cards): 6 cards, adding XP ("4,210" / "
 **Copy:** the TIME card tooltip reads "Time inside the dungeon. Your clocks: entered 20:08, first pull 20:10, last kill 20:39, left 20:41." The VS YOUR BEST tooltip names the route: "Against your fastest run that killed these 6 bosses: Lady Anacondra, Lord Cobrahn, +4."
 
 ### 4.7 Dungeons > By dungeon (tonight)
+
+> Revised by `docs/UX_PRAGMATIC.md` 2.3 (built on the draft branch): the sub-tab exists only once two dungeons have
+> two stored runs each. Columns Dungeon, Runs, Best, Average (from two runs), Deaths per run, Worth per run. No
+> summary line, no per hour rates, no level, no full clears. The copy below that differs from this is superseded.
 
 **Tooltip:** "Which dungeon is worth your time: your best, your average, and what each pays."
 
@@ -1421,6 +1459,13 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
 - the first row gains the "Show your gold on screen" checkbox (the moved prompt).
 
 **Data and sync** (tooltip "Whether your data reaches everbuff.gg, and what is stored")
+
+> Revised by `docs/UX_PRAGMATIC.md` 5 (built on the draft branch, in part): the status reads "Saved to everbuff.gg:
+> Sat 21 Nov 11:45, 142 pulls" (when the desktop app last picked data up and how many pulls it took), the section is
+> CAPTURE HEALTH with "CAPTURING in <zone>", and Stored data has "Pulls waiting · N" and "Loot · N pickups". Clear is
+> hidden for an empty store and never resets `combat.fightSeq`. The Events row is gone. The copy below that differs
+> from this is superseded; the move of the paste box and Clear under Advanced is not built yet.
+
 - `DESKTOP SYNC`
   - Status: "Last picked up by the desktop app: 2m ago · 4 fights not yet saved by the desktop app". Both counts come from the one Sync function.
   - Paste box: 400x24, placeholder "Paste the code from the desktop app". The error shows only after a paste attempt.

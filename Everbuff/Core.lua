@@ -370,6 +370,8 @@ f:SetScript("OnEvent", function(_, event, ...)
     ns.migrateDB(db)
     ns.DB = db
     if ns.flushBlocked then ns.flushBlocked() end   -- blocks seen before the save file loaded
+    -- the runs from before the run store, copied once from the gold runs (before anything is pruned)
+    if ns.RunsLegacy then pcall(ns.RunsLegacy.harvestAll, db) end
     -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
     if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or next(EverbuffAck.sessions or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
       local marked, removed = ns.applyAck(EverbuffAck, "file")

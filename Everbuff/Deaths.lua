@@ -1,9 +1,10 @@
 -- Everbuff.GG · Deaths.lua - the death recap gallery.
 --
--- Deaths are the emotionally sticky, shareable moments of a forever-classic run (and the whole point of
--- hardcore). This is mostly a FILTERED VIEW: every death from the eventlog, matched to its fight when
--- there is one, so a click deep-links into the Fights detail that already renders the "slain by" recap
--- with the scrubber parked at the moment of death. Plus a cause-of-death summary.
+-- A filtered view (docs/UX_PRAGMATIC.md 1.5): every death still in the stored events, matched to its pull while the
+-- pull is stored, so a click opens the replay at the moment of death. The stored events are a window, not the
+-- character's history (500 rows of every kind, pruned when the desktop app picks a session up), so the page says
+-- where it starts and counts only its own rows. In a dungeon the game hides who killed the character: that cell is
+-- blank, never a word like "unknown". The tab exists only while a stored death names its killer.
 
 local ADDON, ns = ...
 local UI = ns.UI
@@ -39,6 +40,29 @@ local function collectDeaths()
   return out
 end
 
+-- the oldest stored event of the character: where this page's history starts (nil with none)
+local function since()
+  local t0
+  for _, e in ipairs(ns.mine(ns.DB and ns.DB.story.events)) do
+    local t = tonumber(e.t)
+    if t and (not t0 or t < t0) then t0 = t end
+  end
+  return t0
+end
+-- the deaths the character's stored session records count (their counters outlive the event rows)
+local function sessionDeaths()
+  local n = 0
+  for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do
+    if type(s) == "table" and ns.isMySession(s) then n = n + (tonumber(s.deaths) or 0) end
+  end
+  return n
+end
+-- whether a stored death of the character names its killer (the tab's reason to exist)
+local function anyKiller()
+  for _, d in ipairs(collectDeaths()) do if d.killer then return true end end
+  return false
+end
+
 local ticker
 local function fmtDowntime(dn)
   if not dn then return "" end
@@ -48,55 +72,62 @@ UI.registerPane("Home", 5, "Deaths", function(content)
   view = content
   local summary = UI.SummaryLine(content, C.red, nil, true)
   view.summary = summary
-  -- When · Level · Location · Coords · Slain by · (opens the fight) · Downtime · Gear lost
+  -- When · Level · Killed by · Place · Coords · (opens the pull) · Downtime. No gear column: the loss is the same 10%
+  -- on every row.
   local holder = UI.Below(content, summary)
   local tbl = UI.Table(holder, {
     { key = "time", label = "When", kind = "tag", color = "dim", measure = { "12/31 23:59" } },
     { key = "lvl", label = "Level", kind = "num", measure = { "60" } },
-    { key = "zone", label = "Location", flex = 1, min = 90 },
+    { key = "by", label = "Killed by", flex = 1, min = 90 },
+    { key = "zone", label = "Place", flex = 1, min = 90 },
     { key = "coords", label = "Coords", kind = "tag", justify = "RIGHT", color = "dim", measure = { "100.0, 100.0" } },
-    { key = "by", label = "Slain by", flex = 1, min = 90, color = "red" },
     { key = "open", label = "", kind = "tag", color = "dim", measure = { ">" } },
     { key = "down", label = "Downtime", kind = "num", color = "dim", measure = { "59m 59s" } },
-    { key = "gear", label = "", kind = "tag", color = "red", measure = { "-100% gear" } },
   }, { top = 0,
     onClick = function(row) if row.fight and ns.OpenFightDetail then ns.OpenFightDetail(row.fight) end end })
   view.tbl = tbl
   -- no death at all: the kit's big empty state (2.7), its top at CONTENT_TOP + 48 as on Dungeons > Runs (4.4)
-  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "You have not died yet.",
+  view.empty = UI.Empty(content, { icon = "Interface\\Icons\\Ability_Rogue_FeignDeath", title = "You have not died.",
     text = "When you die, this page shows what killed you and the pull to replay." })
   view.empty:Hide()
 
   listRebuild = function()
     local list = collectDeaths()
-    -- cause-of-death aggregation for the summary line
-    local byKiller, byZone = {}, {}
+    -- the line over the list: where the stored history starts, and the place most deaths happened in once that says
+    -- something (at least 3 deaths in at least 2 places)
+    local byZone, places = {}, 0
     for _, d in ipairs(list) do
-      if d.killer then byKiller[d.killer] = (byKiller[d.killer] or 0) + 1 end
-      if d.zone then byZone[d.zone] = (byZone[d.zone] or 0) + 1 end
+      if d.zone then
+        if not byZone[d.zone] then places = places + 1 end
+        byZone[d.zone] = (byZone[d.zone] or 0) + 1
+      end
     end
-    local function top(t) local bn, bc = nil, 0; for k, c in pairs(t) do if c > bc then bn, bc = k, c end end return bn, bc end
-    local tk, tkc = top(byKiller); local tz, tzc = top(byZone)
+    local tz, tzc = nil, 0
+    for k, c in pairs(byZone) do if c > tzc or (c == tzc and tz and k < tz) then tz, tzc = k, c end end
     if #list == 0 then summary:SetText("")
     else
-      local bits = { ("%d death%s"):format(#list, #list == 1 and "" or "s") }
-      if tk then bits[#bits + 1] = ("most often: %s (%d)"):format(tk, tkc) end
-      if tz then bits[#bits + 1] = ("deadliest zone: %s (%d)"):format(tz, tzc) end
-      summary:SetText(table.concat(bits, "   ·   "))
+      local t0 = since()
+      local bits = { t0 and ("Deaths since " .. UI.fmtStamp(t0)) or "Deaths" }
+      if #list >= 3 and places >= 2 and tz then bits[#bits + 1] = ("most in %s (%d)"):format(tz, tzc) end
+      summary:SetText(table.concat(bits, "   \194\183   "))
     end
+    view.since = since()
+    -- (with nothing listed, "You have not died." only when the stored sessions count no death either)
+    view.sessionDeaths = sessionDeaths()
+    if view.empty.title then view.empty.title:SetText(view.sessionDeaths == 0 and "You have not died." or "No death is stored with its details.") end
     local rows = {}
     for i = #list, 1, -1 do rows[#rows + 1] = list[i] end
     if #rows == 0 then summary:Hide(); holder:Hide(); view.empty:Show() else view.empty:Hide(); summary:Show(); holder:Show() end
     tbl.setRows(rows, function(row, d)
       row.fight = d.fight
       row.c.time:SetText(date("%m/%d %H:%M", d.t or 0))
-      row.c.lvl:SetText(d.level and tostring(d.level) or "-")
-      row.c.zone:SetText(d.zone or "-")
+      -- (a cell with nothing recorded is blank: never "-", never "unknown")
+      row.c.lvl:SetText(d.level and tostring(d.level) or "")
+      row.c.zone:SetText(d.zone or "")
       row.c.coords:SetText(UI.fmtCoords(d.x, d.y))
-      row.c.by:SetText(d.killer or "unknown")
+      row.c.by:SetText(d.killer or "")
       row.c.open:SetText(d.fight and ">" or "")
       row.c.down:SetText(fmtDowntime(d.downtime))
-      row.c.gear:SetText((d.durLoss and d.durLoss > 0) and ("-%d%% gear"):format(d.durLoss) or "")
     end)
   end
 
@@ -104,8 +135,10 @@ UI.registerPane("Home", 5, "Deaths", function(content)
 end, function()
   if listRebuild then listRebuild() end
   if not ticker then ticker = C_Timer.NewTicker(3, function() if view and view:IsShown() and listRebuild then listRebuild() end end) end
-end, "Every death: what killed you, and the moments before it.")
+end, "The deaths still stored: what killed you, and the pull to replay.",
+  function() return anyKiller() end)
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}
 ns._test.collectDeaths = collectDeaths
+ns._test.deathsView = function() if listRebuild then listRebuild() end; return view end

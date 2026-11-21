@@ -280,11 +280,12 @@ return function(P)
     for _, s in ipairs(tbl.sections()) do
       local t = tostring(s.text):lower()
       if t:find("wailing caverns", 1, true) then runHead = s.text end
-      if t:find("fight", 1, true) then dayHead = s.text end
+      if t:find("pull", 1, true) then dayHead = s.text end
     end
     check("Fights: a run row heads the fights inside a dungeon run", runHead ~= nil)
-    check("Fights: a day row counts its fights (A4)", dayHead ~= nil, dayHead)
-    if runHead then check("Fights: the run row names its death count (A7)", tostring(runHead):lower():find("death", 1, true) ~= nil or tostring(runHead):lower():find("nobody died", 1, true) ~= nil, runHead) end
+    check("Fights: a day row counts its pulls (A4)", dayHead ~= nil, dayHead)
+    -- (a count only when somebody died: "nobody died" is not said of a list that holds only the stored pulls)
+    if runHead then check("Fights: the run row names its death count, or none (A7)", tostring(runHead):lower():find("nobody died", 1, true) == nil, runHead) end
     local bad = {}
     for i = 1, tbl.shownN do
       local r = tbl.rows[i]
@@ -392,7 +393,7 @@ return function(P)
     end
   end
 
-  -- ── Combat / Deaths: the summary wraps and the table moves below it; the gear loss is its own cell
+  -- ── Combat / Deaths: the summary wraps and the table moves below it; no gear column (the loss is the same on every row)
   do
     local c = P.open("combat", "deaths", 900, 580, "long")
     addRun(); reopen("Combat", "deaths")
@@ -401,8 +402,8 @@ return function(P)
     check("Deaths: the long summary wraps instead of cutting its numbers", not c.summary:IsTruncated())
     local r
     for _, x in ipairs(shownRows(c.tbl)) do if x.c.by.text == "Mutanus the Devourer" then r = x end end
-    check("Deaths: the gear loss and the open marker are cells of their own", r ~= nil and r.c.gear.text == "-10% gear" and r.c.open.text == ">" and not tostring(r.c.down.text):find("gear", 1, true),
-      r and ("%s|%s|%s"):format(tostring(r.c.gear.text), tostring(r.c.open.text), tostring(r.c.down.text)))
+    check("Deaths: the open marker is a cell of its own, and there is no gear column", r ~= nil and r.c.gear == nil and r.c.open.text == ">" and not tostring(r.c.down.text):find("gear", 1, true),
+      r and ("%s|%s"):format(tostring(r.c.open.text), tostring(r.c.down.text)))
     if not r then return end
     r:GetScript("OnClick")(r, "LeftButton")
     check("Deaths: clicking a death opens its fight", host("Home").ctl.active == "fights")

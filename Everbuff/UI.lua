@@ -215,6 +215,13 @@ function UI.fmtWhen(t, now)
   if date("%Y", t) == date("%Y", now) then return d .. ", " .. UI.fmtClock(t) end
   return d
 end
+-- "Sat 21 Nov 11:45" ("21 Nov 2025 11:45" before this year): a fixed moment, such as where a stored list starts or
+-- when the desktop app picked data up. Never "Today": a section header and a status row are read days later too.
+function UI.fmtStamp(t, now)
+  t = tonumber(t) or 0; now = now or nowT()
+  if date("%Y", t) == date("%Y", now) then return date("%a ", t) .. dayNum(t) .. date(" %b ", t) .. UI.fmtClock(t) end
+  return dayNum(t) .. date(" %b %Y ", t) .. UI.fmtClock(t)
+end
 -- day rows: "TODAY", "YESTERDAY", "MONDAY 16 NOV" ("MONDAY 16 NOV 2025" before this year)
 function UI.fmtDay(t, now)
   t = tonumber(t) or 0; now = now or nowT()
@@ -1451,7 +1458,7 @@ function UI.SubTabs(parent, items, opts)
     b:SetSize(w, G.CTRL_H); b:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -G.CTRL_Y)
     local ul = b:CreateTexture(nil, "OVERLAY")
     ul:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0); ul:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 0); ul:SetHeight(2)
-    b.text, b.accent, b.key = fs, ul, it.key
+    b.text, b.accent, b.key, b.ebW = fs, ul, it.key, w
     b:SetScript("OnClick", function(tb) UI.Click(); ctl.select(tb.key) end)
     b:SetScript("OnEnter", function(tb) if ctl.active ~= tb.key then fs:SetTextColor(unpackc(C.fg)) end end)
     b:SetScript("OnLeave", function() ctl.style() end)
@@ -1471,6 +1478,25 @@ function UI.SubTabs(parent, items, opts)
     x = x + w + S.S5
   end
   ctl.tabsRight = x - S.S5
+  -- A sub-tab can be hidden while its page has nothing to show (docs/UX_PRAGMATIC.md 0.5): the tabs left of it close
+  -- the gap. ctl.setHidden({ key = true }) lays the row out again; a hidden tab's pane can still be selected by code.
+  ctl.hidden = {}
+  function ctl.layoutTabs()
+    local tx = G.TEXT_L
+    for _, b in ipairs(ctl.tabs) do
+      if ctl.hidden[b.key] then b:Hide()
+      else
+        b:ClearAllPoints(); b:SetPoint("TOPLEFT", parent, "TOPLEFT", tx, -G.CTRL_Y)
+        if not ctl.back then b:Show() end
+        tx = tx + b.ebW + S.S5
+      end
+    end
+    ctl.tabsRight = tx - S.S5
+  end
+  function ctl.setHidden(set)
+    ctl.hidden = set or {}
+    ctl.layoutTabs()
+  end
   -- a pane not yet rebuilt on the kit (Sessions, Activity, Fights) ends where its host's converted pages end, at
   -- BOX_L + MAIN_W, so every page of the host shares one right edge
   function ctl.clamp(key)
@@ -1517,7 +1543,7 @@ function UI.SubTabs(parent, items, opts)
   function ctl.hideBack()
     ctl.back = nil
     if ctl.backBtn then ctl.backBtn:Hide(); ctl.olderBtn:Hide(); ctl.newerBtn:Hide() end
-    for _, b in ipairs(ctl.tabs) do b:Show() end
+    for _, b in ipairs(ctl.tabs) do if not ctl.hidden[b.key] then b:Show() end end
     for _, cr in pairs(ctl.controls) do cr:Show() end
   end
   return ctl
@@ -3082,8 +3108,23 @@ local function buildHost(t, content)
   end })
   t.ctl.ebTabName = t.name
   content.tabs = t.ctl
+  -- the sub-tabs whose page has something to show now (a pane's `visible` function; none: always). When the page on
+  -- screen loses its tab, the host goes to its first tab.
+  t.refreshTabs = function()
+    local hidden, first = {}, nil
+    for _, pn in ipairs(t.panes) do
+      local ok, vis = true, true
+      if pn.visible then ok, vis = pcall(pn.visible) end
+      if ok and vis == false then hidden[pn.key] = true elseif not first then first = pn.key end
+    end
+    t.ctl.setHidden(hidden)
+    if t.ctl.active and hidden[t.ctl.active] and first and not t.ctl.back then t.ctl.select(first) end
+    return hidden
+  end
+  local hidden = t.refreshTabs()
   local want = ns.DB and ns.DB.settings and ns.DB.settings.lastTab == t.name and ns.DB.settings.lastSub
-  if want and t.paneByKey[want] then t.ctl.select(want) elseif items[1] then t.ctl.select(items[1].key) end
+  if want and t.paneByKey[want] and not hidden[want] then t.ctl.select(want)
+  else for _, it in ipairs(items) do if not hidden[it.key] then t.ctl.select(it.key); break end end end
 end
 function UI.registerHost(order, name, desc)
   -- (a pane registered before its host made the host with a placeholder order: the host's own call sets it)
@@ -3095,6 +3136,7 @@ function UI.registerHost(order, name, desc)
   local t = { order = order, name = name, subtitle = desc, panes = {}, host = true }
   t.build = function(content) buildHost(t, content) end
   t.onShow = function()
+    if t.refreshTabs then t.refreshTabs() end
     local pn = t.ctl and t.paneByKey and t.paneByKey[t.ctl.active]
     if pn and pn.built and pn.onShow then pn.onShow() end
   end
@@ -3102,10 +3144,11 @@ function UI.registerHost(order, name, desc)
   return t
 end
 -- desc: the sub-tab's tooltip, one sentence on what the page answers
-function UI.registerPane(hostName, order, label, build, onShow, desc)
+-- visible: optional, a function that answers false while the page has nothing to show (its sub-tab is then hidden)
+function UI.registerPane(hostName, order, label, build, onShow, desc, visible)
   local h = hosts[hostName]
   if not h then h = UI.registerHost(50, hostName, nil); h.autoOrder = true end
-  h.panes[#h.panes + 1] = { order = order, key = paneKey(label), label = label, build = build, onShow = onShow, desc = desc }
+  h.panes[#h.panes + 1] = { order = order, key = paneKey(label), label = label, build = build, onShow = onShow, desc = desc, visible = visible }
 end
 function UI.paneErrors()
   local out = {}
@@ -3156,7 +3199,9 @@ function UI.Open(name, sub)
   local t
   for _, x in ipairs(tabs) do if x.name == name then t = x end end
   local ctl = t and hostCtl(t)
-  if sub and ctl and ctl.select and ctl.panes and ctl.panes[sub] then ctl.select(sub) end
+  -- (a page whose sub-tab is hidden now has nothing to show: the host stays on the page it has)
+  if t and t.refreshTabs then t.refreshTabs() end
+  if sub and ctl and ctl.select and ctl.panes and ctl.panes[sub] and not (ctl.hidden and ctl.hidden[sub]) then ctl.select(sub) end
   if after then pcall(after) end
 end
 

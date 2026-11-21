@@ -241,8 +241,9 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     local run = view()
     ns._test.renderRun(run); M.settle()
     local dv = ns._test.dungeonDetail()
-    eq("Dungeons: a run reads items, coin, loot value and coin per hour from its own gold block", dv.lootLine,
-      ("Coin looted %s · vendor price of items %s · %s per hour"):format(ns.UI.money(32000), ns.UI.money(51000), ns.UI.money(64000, true)))
+    eq("Dungeons: a run's WORTH is its coin looted plus the vendor value of its items, from its own gold block", dv.card.worth and dv.card.worth.value.text, ns.UI.money(32000 + 51000))
+    eq("Dungeons: and the card says the two parts", ns.Dungeons.D.worthParts(run), ("%s coin · %s items at vendor prices"):format(ns.UI.money(32000), ns.UI.money(51000)))
+    check("Dungeons: the WORTH card's meta is not cut at 900 px", dv.card.worth.meta.IsTruncated == nil or not dv.card.worth.meta:IsTruncated(), dv.card.worth.meta.text)
     local function onPage(text)
       local found, cutOff = false, false
       for _, fs in ipairs(dv.lines) do
@@ -250,7 +251,6 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       end
       return found and not cutOff
     end
-    check("Dungeons: the line is on the run's page in full at 900 px", onPage(dv.lootLine))
     check("Dungeons: no purse line while the looted coin is what the purse gained", dv.purseLine == nil)
     check("Dungeons: the clocks of the run are two lines, in full", dv.timeLine == "Inside 30m 0s" and dv.timeLine2 == "Active 30m 0s" and onPage(dv.timeLine) and onPage(dv.timeLine2), dv.timeLine)
     -- the list row of the run reads the same block as its page
@@ -261,9 +261,8 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       end
     end
     local row = listRow()
-    eq("Dungeons: the list row of that run reads the block's items", row and row.c.loot.text, "12 items")
-    eq("Dungeons: and its coin looted (a WIDE column)", row and row.c.coin.text, ns.UI.money(32000))
-    eq("Dungeons: and no XP per hour while the run has no XP", row and row.c.xph.text, "-")
+    eq("Dungeons: the list row of that run reads the same worth", row and row.c.worth.text, ns.UI.money(32000 + 51000))
+    check("Dungeons: the list has no item count, coin or XP per hour column", row and row.c.loot == nil and row.c.coin == nil and row.c.xph == nil)
     -- the purse gained more inside than was booked as looted (group shares booked as mail, seen 2026-11-18)
     rec.gold.looted, rec.gold.purse = 365, 11253
     rec.xp = { gain = 12300, kill = 9000, quest = 0, n = 45, l0 = 23, p0 = 0.4, l1 = 24, p1 = 0.1, need = 30000 }
@@ -273,11 +272,12 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     check("Dungeons: that line is on the page in full", onPage(dv.purseLine))
     eq("Dungeons: the XP line reads XP, XP per hour, the levels and the runs the next level takes", dv.xpLine,
       "12,300 XP, all from kills")
-    eq("Dungeons: the rate, the levels, the runs the next level takes and the kills (a lower bound) are the line under it", dv.xpMore,
-      "24,600 per hour · level 23.4 to 24.1 · about 3 more runs to level 25 · at least 45 kills")
+    eq("Dungeons: the levels, the runs the next level takes and the kills (a lower bound) are the line under it", dv.xpMore,
+      "level 23.4 to 24.1 · about 3 more runs to level 25 · at least 45 kills")
+    -- (one rate on the page: the XP card's, per hour of the 30 minutes inside)
+    eq("Dungeons: the XP card carries the rate, per hour of time inside", dv.card.xp and dv.card.xp.meta.text, "24,600 per hour")
     check("Dungeons: the XP lines and the hidden-lines note are on the page in full", onPage(dv.xpLine) and onPage(dv.xpMore) and onPage("12 XP lines were hidden by the client."))
     row = listRow()
-    eq("Dungeons: the list row reads XP per hour while the run has XP", row and row.c.xph.text, "24,600")
     table.remove(list)
   end
   ns.Recorder.current = savedCurrent

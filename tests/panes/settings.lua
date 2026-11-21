@@ -5,6 +5,7 @@
 -- write, the two-step clears, the collapsed Advanced, the sync box and the secure reload button in combat.
 return function(P)
   local check, M, ns = P.check, P.M, P.ns
+  local eq = P.eq
   local UI = ns.UI
   local SET = ns.SettingsView
   local S, G = UI.S, UI.G
@@ -176,11 +177,15 @@ return function(P)
     local d = SET.data
     local keepAck = ns.DB.combat.lastAck
     ns.DB.combat.lastAck = nil; SET.refreshData()
-    check("Data: before any sync it says so", d.syncStatus.text.text:find("^Not seen yet: install the desktop app from everbuff.gg") ~= nil, d.syncStatus.text.text)
+    check("Data: before any sync it says so", d.syncStatus.text.text:find("^Saved to everbuff.gg: not seen yet. Install the desktop app from everbuff.gg") ~= nil, d.syncStatus.text.text)
     ns.DB.combat.lastAck = { at = (GetServerTime and GetServerTime() or time()) - 120, fights = 2, source = "file" }
     SET.refreshData()
     local sync = ns.SyncState()
-    check("Data: the status names the last pickup and the fights waiting, from the one Sync function", d.syncStatus.text.text == ("Last picked up by the desktop app 2m ago \194\183 %s not saved yet"):format(UI.plural(sync.waiting, "pull")), d.syncStatus.text.text)
+    -- (the pickup as a fixed moment and what it took, both from combat.lastAck; the pulls waiting have their own row)
+    check("Data: the status names the last pickup and the pulls it took, from the one Sync function", d.syncStatus.text.text == ("Saved to everbuff.gg: %s, 2 pulls"):format(UI.fmtStamp(sync.ackAt))
+      and sync.ackFights == 2 and sync.stored == #ns.DB.combat.fights, d.syncStatus.text.text)
+    ns.DB.combat.lastAck = { at = sync.ackAt, source = "file" }; SET.refreshData()
+    eq("Data: a pickup with no count says only when", d.syncStatus.text.text, "Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt))
     check("Data: the error shows only after a paste attempt", not P.visible(d.ackError))
     d.ackBox:SetText("not a code"); click(d.ackBtn)
     check("Data: a bad code shows the error and changes nothing", P.visible(d.ackError) and d.ackError.text.text:find("EB-ACK-", 1, true) ~= nil and #M.errors == 0)
@@ -202,18 +207,24 @@ return function(P)
     ns.DB.loot.log = { { item = "a" } }
     ns.DB.story.events = { { kind = "ZONE" }, { kind = "ZONE" }, { kind = "ZONE" } }
     SET.refreshData()
-    check("Data: the stored rows read Pulls · 2 pulls stored, Loot · 1 pickup, Events · 3",
-      d.stored.fights.label.text == "Pulls \194\183 2 pulls stored" and d.stored.loot.label.text == "Loot \194\183 1 pickup" and d.stored.events.label.text == "Events \194\183 3",
+    local keepSeq = ns.DB.combat.fightSeq
+    ns.DB.combat.fightSeq = 6879
+    check("Data: the stored rows read Pulls waiting · 2 and Loot · 1 pickup; the events have no row",
+      d.stored.fights.label.text == "Pulls waiting \194\183 2" and d.stored.loot.label.text == "Loot \194\183 1 pickup" and d.stored.events == nil,
       d.stored.fights.label.text .. " | " .. d.stored.loot.label.text)
-    check("Data: each clear says it cannot be undone", d.stored.fights.desc.text == "Cannot be undone.")
+    check("Data: each clear says it cannot be undone", d.stored.fights.desc.text == "Not picked up by the desktop app yet. Clearing cannot be undone." and d.stored.loot.desc.text == "Clearing cannot be undone.")
     local btn = d.stored.fights.btn
     click(btn)
     check("Data: the first click only asks", #ns.DB.combat.fights == 2 and btn.armed == true and btn.text.text == "Click again to clear 2 pulls", btn.text.text)
     M.runTimers(); M.settle()
     check("Data: after 4 s it is as it was", btn.armed == false and btn.text.text == "Clear")
     click(btn); click(btn)
-    check("Data: the second click clears the pulls and nothing else", #ns.DB.combat.fights == 0 and ns.DB.combat.fightSeq == 0 and #ns.DB.loot.log == 1 and #ns.DB.story.events == 3)
+    check("Data: the second click clears the pulls and nothing else", #ns.DB.combat.fights == 0 and #ns.DB.loot.log == 1 and #ns.DB.story.events == 3)
+    eq("Data: the count of pulls ever recorded is not reset (the pull ids stay monotonic)", ns.DB.combat.fightSeq, 6879)
+    check("Data: with nothing stored there is no Clear, and the row says nothing is waiting", d.stored.fights.label.text == "Pulls waiting \194\183 0" and d.stored.fights.btn.shown == false
+      and d.stored.fights.desc.text == "Nothing is waiting for the desktop app.", d.stored.fights.label.text)
     ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events = keepF, keepL, keepE
+    ns.DB.combat.fightSeq = keepSeq
     -- advanced
     ns.DB.settings.advancedOpen = nil; SET.refreshData()
     check("Data: Advanced is collapsed by default", not P.visible(d.sample) and d.advHead.label.text == "ADVANCED \226\128\186", tostring(d.advHead.label.text))

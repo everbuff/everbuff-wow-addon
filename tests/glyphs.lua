@@ -11,7 +11,7 @@ local FM = dofile("tests/fontmetrics.lua")
 local FACES = { "Inter-Medium", "Inter-SemiBold" }   -- every text role but the display ones (2.4)
 local fonts = {}
 for _, f in ipairs(FACES) do fonts[f] = FM.load("Everbuff/media/fonts/" .. f .. ".ttf") end
-local FILES = { "Core", "Deaths", "Dungeons", "Economy", "Emitter", "Journey", "Market", "Progress", "Recording", "Runs",
+local FILES = { "Core", "Deaths", "Dungeons", "Economy", "Emitter", "Journey", "Market", "Progress", "Recording", "Runs", "RunsLegacy",
   "Sync", "UI", "Visits", "Fights", "Segments", "Logging", "Debug", "SelfTest" }
 
 local BS = string.char(92)

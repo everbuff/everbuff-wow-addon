@@ -3,7 +3,8 @@
 -- Until 0.9.49 a run was rebuilt at view time from the DUNGEON and DUNGEONLEAVE story events, which the 500 row cap
 -- and the desktop's acknowledgement remove within hours. From 0.9.50 a run is a stored record of the logged-in
 -- character: `characters[guid].dungeonRun` while it is open, `characters[guid].dungeonRuns[]` once closed (oldest
--- first, at most Runs.CAP). The acknowledgement never touches either. Nothing before 0.9.50 is backfilled.
+-- first, at most Runs.CAP). The acknowledgement never touches either. Of the time before 0.9.50 only
+-- what the character's gold runs still hold is kept, as partial rows of their own (RunsLegacy.lua).
 --
 -- What a run is made of:
 --   visits    one row per stretch inside. Every sum (seconds, XP, coin, items) is kept per visit, so the run's sums
@@ -1784,6 +1785,8 @@ function Runs.dungeonRows()
       row.coinPerHour = warm and (num(s.looted) + num(s.quests)) * 3600 / s.active or nil
       row.xpPerHour = (warm and num(s.xp) > 0) and s.xp * 3600 / s.active or nil
       row.deathsPerRun = num(s.deaths) / s.n
+      -- (what a run of the dungeon was worth: looted coin and the vendor value of its items, never quest coin)
+      row.worthPerRun = (num(s.looted) + num(s.lootValue)) / s.n
       out[#out + 1] = row
     end
   end
@@ -1892,6 +1895,16 @@ function Runs.visitClocks(rec)
   local starts = { 0 }
   for k = 2, n do starts[k] = starts[k - 1] + num(V[k - 1].secs) + gaps[k][1] end
   return starts, gaps
+end
+-- The wall time (epoch) of a moment on the run's clock, through the visits: the clock stands still while the
+-- character is outside alive or offline. nil when the record cannot say (Runs.visitClocks).
+function Runs.wallOf(rec, clock)
+  clock = plainNum(clock)
+  if type(rec) ~= "table" or not clock or not plainNum(rec.t) then return nil end
+  local starts = Runs.visitClocks(rec)
+  if not starts then return nil end
+  local j = Runs.visitAt(starts, clock)
+  return rec.t + num(rec.visits[j].i) + (clock - starts[j])
 end
 -- Split a run at visit k (2 or later) into two: A, the visits before, keeps the id; B, from visit k on, is a run of
 -- its own (`open = "split"`). Every sum lives per visit, so the two add up to the run. What no visit row holds goes to

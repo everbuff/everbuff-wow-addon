@@ -1152,14 +1152,22 @@ return function(P)
     check("bydungeon: coin and XP per active hour, deaths per run", rk and rk.coinPerHour == 84000 and rk.xpPerHour == 20000 and rk.deathsPerRun == 1.5
       and rk.best == 40 and rk.avg == 50, rk and rk.coinPerHour)
     check("bydungeon: under 5 active minutes a dungeon has no rate", wc and wc.coinPerHour == nil and wc.xpPerHour == nil and wc.deathsPerRun == 1)
+    check("bydungeon: what a run was worth is the looted coin and the item value, never the quest coin", rk and rk.worthPerRun == (18000 + 5000) / 2, rk and rk.worthPerRun)
+    -- By dungeon exists once two dungeons have two stored runs each (docs/UX_PRAGMATIC.md 2.3)
+    check("bydungeon: with one dungeon run twice the page does not exist yet", ns.Dungeons.D.byVisible() == false)
+    local r4 = T.runRecord("Wailing Caverns", M.epoch - 1500, 100, { firstPull = 10, size = 1, diff = 1, secs = secs(100, 50),
+      gold = { looted = 100 }, bosses = { { enc = 2, combat = 5, kill = 40 } } })
+    c.dungeonRuns[#c.dungeonRuns + 1] = r4; R.statsAdd(c, r4)
+    check("bydungeon: with two dungeons run twice it does", ns.Dungeons.D.byVisible() == true)
     local lv = T.dungeonList()
     lv.setView("dungeons")
     local by = T.dungeonBy()
     local cells, rowOf = {}, {}
     for _, r in ipairs(by.dtbl.rows) do if r.shown ~= false and r.drow then cells[r.drow.name] = r.c; rowOf[r.drow.name] = r end end
     local k, w = cells["Razorfen Kraul"], cells["Wailing Caverns"]
-    check("bydungeon: the cells read the rates and the deaths", k and k.xp.text == "20,000" and k.dpr.text == "2.0" and k.coin.text ~= "-" and k.best.text == ns.UI.fmtDur(40) and k.avg.text == ns.UI.fmtDur(50), k and k.xp.text)
-    check("bydungeon: a dungeon under 5 active minutes reads - for coin and XP, its deaths per run as a number", w and w.coin.text == "-" and w.xp.text == "-" and w.dpr.text == "1.0", w and w.coin.text)
+    check("bydungeon: the cells read the best, the average, the deaths and the worth per run", k and k.dpr.text == "2.0" and k.worth.text == ns.UI.money(11500)
+      and k.best.text == ns.UI.fmtDur(40) and k.avg.text == ns.UI.fmtDur(50) and k.xp == nil and k.coin == nil, k and k.worth.text)
+    check("bydungeon: no cell is a dash", (function() for _, c2 in pairs(cells) do for _, fs in pairs(c2) do if fs.text == "-" then return false end end end return true end)())
     local tl = {}
     local tr = rowOf["Razorfen Kraul"]
     if tr and tr.GetScript and tr:GetScript("OnEnter") then
@@ -1167,7 +1175,7 @@ return function(P)
       for _, l in ipairs(GameTooltip.lines or {}) do tl[#tl + 1] = tostring(l) end
       if tr:GetScript("OnLeave") then tr:GetScript("OnLeave")(tr) end
     end
-    check("bydungeon: the row's hover says what Best and Average measure", table.concat(tl, "|"):find("First pull to last kill, on the route of your best.", 1, true) ~= nil, table.concat(tl, "|"))
+    check("bydungeon: the row's hover says what Best and Average measure", table.concat(tl, "|"):find("first pull to last kill, on the route of your best.", 1, true) ~= nil, table.concat(tl, "|"))
     lv.setView("runs")
   end
 

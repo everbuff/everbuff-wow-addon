@@ -12,27 +12,22 @@ local UI = ns.UI
 local C = ns.UI.C
 local S, G, H = UI.S, UI.G, UI.H
 
--- the one read of the desktop sync state (docs/UX_OVERHAUL.md 5 step 3a): the last ack and the fights the desktop app
--- has not saved yet. The title-bar chip and Data and sync both read it, on show.
+-- the one read of the desktop sync state (docs/UX_OVERHAUL.md 5 step 3a): the last ack (when, and how many pulls it
+-- took), the pulls stored and the ones the desktop app has not saved yet. The title-bar chip, Home and Data and sync
+-- all read it, on show. The addon removes a pull once the desktop app has saved it, so `stored` is only ever the
+-- stretch since the last pickup: `ackAt` and `ackFights` are what is known of the pulls before it.
 function ns.SyncState()
   local combat = ns.DB and ns.DB.combat
-  local waiting = 0
-  for _, f in ipairs((combat and combat.fights) or {}) do if f.uploaded ~= true then waiting = waiting + 1 end end
-  return { lastAck = combat and combat.lastAck or nil, waiting = waiting }
+  local waiting, stored = 0, 0
+  for _, f in ipairs((combat and combat.fights) or {}) do stored = stored + 1; if f.uploaded ~= true then waiting = waiting + 1 end end
+  local la = combat and type(combat.lastAck) == "table" and combat.lastAck or nil
+  return { lastAck = la, waiting = waiting, stored = stored, ackAt = la and tonumber(la.at) or nil, ackFights = la and tonumber(la.fights) or nil }
 end
 
 local SET = {}          -- the Settings panes and their state (ns.SettingsView for the tests)
 ns.SettingsView = SET
 local function cfg() return (ns.DB and ns.DB.settings) or {} end
 local function nowT() return (GetServerTime and GetServerTime()) or time() end
--- (to the minute under an hour, then whole hours, then whole days: "23h ago", not "23h 1m ago")
-local function ago(t)
-  local d = math.max(0, nowT() - (tonumber(t) or 0))
-  if d < 60 then return "just now" end
-  if d < 3600 then return UI.fmtDur(d, { minutes = true }) .. " ago" end
-  if d < 172800 then return math.floor(d / 3600) .. "h ago" end
-  return math.floor(d / 86400) .. " days ago"
-end
 
 -- the settings column(s) span the main column, BOX_L to BOX_L + MAIN_W, as every other page (A2): one column under
 -- WIDE, two halves S5 apart at WIDE, so a control's right edge is the main column's text edge (BOX_L + MAIN_W - S3).
@@ -270,14 +265,14 @@ function SET.refreshGeneral()
 end
 
 -- ═══ Data and sync ═════════════════════════════════════════════════════════════════════════════════════════════
+-- (Clear on the pulls never resets combat.fightSeq: the pull ids stay monotonic, and it is the only count of the
+-- pulls ever recorded. The story events have no row here: the backend reads them and a count of them says nothing.)
 local STORED = {
-  { "fights", "Pulls", function(db) return #(db.combat.fights or {}) end, function(n) return UI.plural(n, "pull") .. " stored" end,
-    function() if ns.DB then ns.DB.combat.fights = {}; ns.DB.combat.fightSeq = 0 end end, "pull" },
+  { "fights", "Pulls waiting", function(db) return #(db.combat.fights or {}) end, function(n) return UI.fmtNum(n) end,
+    function() if ns.DB then ns.DB.combat.fights = {} end end, "pull" },
   -- (the gold ledger is not the loot list: clearing it would break looted + ... = gained, 0.9.44)
   { "loot", "Loot", function(db) return #(db.loot.log or {}) end, function(n) return UI.plural(n, "pickup") end,
     function() if ns.DB then ns.DB.loot.log = {} end end, "pickup" },
-  { "events", "Events", function(db) return #(db.story.events or {}) end, function(n) return UI.fmtNum(n) end,
-    function() if ns.DB then ns.DB.story.events = {} end end, "event" },
 }
 local SAMPLES = { { 1, "Fine" }, { 3, "Normal" }, { 10, "Coarse" } }
 local function buildData(pane)
@@ -311,8 +306,8 @@ local function buildData(pane)
   pane:HookScript("OnShow", function() d.ackError:Hide() end)
   d.syncDesc = note(col, "After the desktop app saves your data it shows a code. Paste it here so the addon can free that space.")
   sync.items = { d.syncStatus, d.pasteRow, d.ackError, d.syncDesc }
-  -- RECORDING HEALTH
-  local health = { head = UI.Section(col, "Recording health"), items = {} }
+  -- CAPTURE HEALTH (the addon captures data; only the desktop app knows about video)
+  local health = { head = UI.Section(col, "Capture health"), items = {} }
   d.rec = dotRow(col)
   d.combat = dotRow(col)
   d.combat.btn = UI.KitButton(d.combat, "Turn on", "ghost", function() SET.turnOn() end); d.combat:SetControl(d.combat.btn)
@@ -415,11 +410,11 @@ function SET.refreshData()
   local sync = ns.SyncState()
   local la, waiting = sync.lastAck, sync.waiting
   if la then
-    -- (one line, and "pulls" as in Stored data under it)
-    d.syncStatus:Set(("Last picked up by the desktop app %s \194\183 %s not saved yet"):format(ago(la.at), UI.plural(waiting, "pull")))
+    -- (the pickup as a fixed moment and what it took, both from combat.lastAck: "Sat 21 Nov 11:45, 142 pulls")
+    local took = (sync.ackFights and sync.ackFights > 0) and (", " .. UI.plural(sync.ackFights, "pull")) or ""
+    d.syncStatus:Set("Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt or 0) .. took)
   else
-    d.syncStatus:Set("Not seen yet: install the desktop app from everbuff.gg to watch your recordings." ..
-      (waiting > 0 and (" " .. UI.plural(waiting, "pull") .. " not saved yet.") or ""))
+    d.syncStatus:Set("Saved to everbuff.gg: not seen yet. Install the desktop app from everbuff.gg to keep your history and watch your recordings.")
   end
   pcall(d.placeholderSync)
   -- recording health
@@ -427,8 +422,8 @@ function SET.refreshData()
   local aclOn, combatOn = false, false
   if ns.Logging and ns.Logging.state then aclOn, combatOn = ns.Logging.state() end
   local zone = (GetRealZoneText and GetRealZoneText()) or nil
-  if sess then d.rec:SetState("Recording: on" .. ((type(zone) == "string" and zone ~= "") and (" in " .. zone) or ""), "accent")
-  else d.rec:SetState("Recording: standing by", "fgFaint") end
+  if sess then d.rec:SetState("CAPTURING" .. ((type(zone) == "string" and zone ~= "") and (" in " .. zone) or ""), "accent")
+  else d.rec:SetState("Standing by", "fgFaint") end
   d.combat:SetState(combatOn and "Combat log: on" or "Combat log: off", combatOn and "accent" or "warn", not combatOn)
   d.acl:SetState(aclOn and "Advanced combat logging: on" or "Advanced combat logging: off", aclOn and "accent" or "warn", not aclOn)
   d.remindCb:SetChecked(st.autoSave == nil or st.autoSave == true)
@@ -443,6 +438,10 @@ function SET.refreshData()
       if nF >= cap - 25 then extra = (" \194\183 near the limit of %s: the oldest roll off"):format(UI.fmtNum(cap)) end
     end
     r.label:SetText(it[2] .. " \194\183 " .. it[4](n) .. extra)
+    -- (nothing stored: nothing to clear, so no button)
+    if n > 0 then r.btn:Show() else r.btn:Hide() end
+    if it[1] == "fights" then r:SetDesc(n > 0 and "Not picked up by the desktop app yet. Clearing cannot be undone." or "Nothing is waiting for the desktop app.")
+    else r:SetDesc(n > 0 and "Clearing cannot be undone." or "") end
     pcall(r.layout)
   end
   -- advanced

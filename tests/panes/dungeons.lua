@@ -1,8 +1,9 @@
 -- Pane tests: Dungeons > Runs, the run page and By dungeon (docs/UX_OVERHAUL.md 4.5 to 4.7, 5 step 6), on the runs of
 -- 4.0 (tests/dungeon_fixture.lua) at 900x580 and 1600x1000:
---   every Bosses cell holds "/"; every delta is a UI.fmtDelta word; one primary, none while a run is in progress;
---   the filter clears with its glyph; every run page section is there, with its empty sentence when it has nothing;
---   Back restores the list's scroll offset and its selection; "of N" only with a limit set.
+--   a Bosses cell holds "/" only with a known total; every delta is a UI.fmtDelta word; one primary, none while a
+--   run is in progress; the filter clears with its glyph; a run page section with nothing in it is left out, with no
+--   sentence in its place (docs/UX_PRAGMATIC.md 2.2); Back restores the list's scroll offset and its selection;
+--   "of N" only with a limit set. No cell of these pages is a "-": what was not recorded is blank.
 -- Then the layout (nothing cut, nothing past the right edge), the 1 s ticker of a run in progress, one fight one
 -- reading (a foe-less pull inside a run is Trash), a boss row that opens its fight, and By dungeon.
 return function(P)
@@ -12,7 +13,7 @@ return function(P)
   local function strip(s) return (tostring(s or ""):gsub("|T.-|t", ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("^%s+", ""):gsub("%s+$", "")) end
   local function isDelta(s)
     s = strip(s)
-    return s:find("^%d[%dhms ]* faster$") ~= nil or s:find("^%d[%dhms ]* slower$") ~= nil or s == "same as best" or s == "best" or s == "first run"
+    return s:find("^%d[%dhms ]* faster$") ~= nil or s:find("^%d[%dhms ]* slower$") ~= nil or s == "same as best" or s == "best"
   end
   local function shown(tbl) local out = {}; for i = 1, tbl.shownN or 0 do local r = tbl.rows[i]; if not (r.item and r.item.ebSection) then out[#out + 1] = r end end return out end
   local function pane() return P.open("dungeons", "runs", P.size[1], P.size[2], "normal") end
@@ -68,11 +69,13 @@ return function(P)
     for _, r in ipairs(rows) do if not tostring(r.c.boss.text):find("/", 1, true) then slash = false end end
     check(tag .. ": every Bosses cell holds the total (\"2/4\")", slash, rows[1] and rows[1].c.boss.text)
     local deltas = true
-    for _, r in ipairs(rows) do if r.c.vs.text ~= "-" and not isDelta(r.c.vs.text) then deltas = false end end
-    check(tag .. ": every Vs best cell is a fmtDelta word", deltas, rows[1] and rows[1].c.vs.text)
+    for _, r in ipairs(rows) do if r.c.vs.text ~= "" and not isDelta(r.c.vs.text) then deltas = false end end
+    check(tag .. ": every Vs best cell is a fmtDelta word or blank", deltas, rows[1] and rows[1].c.vs.text)
     local byName = {}
     for _, r in ipairs(rows) do byName[r.run.id] = r end
-    eq(tag .. ": the Ragefire Chasm row: first run, 2/4, one death (Tessa's)", byName[fx.rfc.id] and (byName[fx.rfc.id].c.vs.text .. " " .. byName[fx.rfc.id].c.boss.text .. " " .. byName[fx.rfc.id].c.death.text), "first run 2/4 1")
+    -- (the only stored run of its dungeon compares with nothing: the cell is blank, and "first run" is never said,
+    -- since the runs from before the run store are not all stored)
+    eq(tag .. ": the Ragefire Chasm row: nothing to compare, 2/4, one death (Tessa's)", byName[fx.rfc.id] and (strip(byName[fx.rfc.id].c.vs.text) .. "|" .. byName[fx.rfc.id].c.boss.text .. "|" .. byName[fx.rfc.id].c.death.text), "|2/4|1")
     eq(tag .. ": the best Wailing Caverns run carries BEST", byName[fx.wc2.id] and byName[fx.wc2.id].ebBadge and byName[fx.wc2.id].ebBadge.shown ~= false and byName[fx.wc2.id].ebBadge.ebText, "BEST")
     eq(tag .. ": the older one reads how much slower it was", byName[fx.wc1.id] and strip(byName[fx.wc1.id].c.vs.text), "42s slower")
     local sum = lv.summary.Text()
@@ -81,13 +84,18 @@ return function(P)
     check(tag .. ": no \"of N\" without a limit", sum:find(" of 5", 1, true) == nil, sum)
     eq(tag .. ": the hero is the newest run", lv.heroRun and lv.heroRun.id, fx.rfc.id)
     eq(tag .. ": its verdict: the result of a first run", lv.heroVerdict, "2 of 4 bosses in 12m 30s")
-    check(tag .. ": a first run's META says first run, with no FIRST RUN badge", lv.hero.meta1 and tostring(lv.hero.meta1.text or ""):find("first run", 1, true) ~= nil, lv.hero.meta1 and lv.hero.meta1.text)
+    check(tag .. ": the hero's META names the day and the bosses missed, and never says first run", lv.hero.meta1 and tostring(lv.hero.meta1.text or ""):find("first run", 1, true) == nil
+      and tostring(lv.hero.meta1.text or ""):find("missed Jergosh the Invoker", 1, true) ~= nil, lv.hero.meta1 and lv.hero.meta1.text)
+    check(tag .. ": its second line counts the deaths", lv.hero.meta2 and strip(lv.hero.meta2.text):find("^1 death") ~= nil, lv.hero.meta2 and lv.hero.meta2.text)
     eq(tag .. ": one primary on the list (the hero's Open run)", UI.CountPrimaries(content), 1)
     local cut, past = audit(lv, wb.l + wb.w)
     if os.getenv("EB_DEBUG") then for k, c in pairs(lv.tbl.cols) do print("COL", tag, k, c.x, c.w) end end
     check(tag .. ": nothing on the list is cut or past the window", #cut == 0 and #past == 0, table.concat(cut, " | ") .. " || " .. table.concat(past, " | "))
     local cols = lv.tbl.cols
-    check(tag .. ": Coin looted and XP per hour only at WIDE", (size[1] >= 1250) == (cols.coin ~= nil and (cols.coin.w or 0) > 0), cols.coin and cols.coin.w)
+    check(tag .. ": the list has Worth, and no coin, XP per hour or item count column", cols.worth ~= nil and (cols.worth.w or 0) > 0 and cols.coin == nil and cols.xph == nil and cols.loot == nil and cols.xp == nil)
+    local dash = {}
+    for _, r in ipairs(rows) do for k, fs in pairs(r.c) do if fs.text == "-" then dash[#dash + 1] = k end end end
+    check(tag .. ": no cell of the list is a dash", #dash == 0, table.concat(dash, ","))
 
     -- ── the filter: a dungeon picked, the clear glyph back to all ──
     lv.filter:GetScript("OnClick")(lv.filter)
@@ -100,7 +108,7 @@ return function(P)
     lv.filter.clear:GetScript("OnClick")(lv.filter.clear); M.settle()
     check(tag .. ": the clear glyph shows every run again", #lv.shown == 3 and lv.filter.ebActive == false and lv.filter.text:GetText() == "All dungeons" and lv.filter.clear.shown == false)
     lv.pickInst("Shadowfang Keep"); M.settle()
-    check(tag .. ": a filter with no run says so, with a way back, and no hero", lv.tbl.state == "No run of Shadowfang Keep yet." and lv.hero.shown == false and UI.CountPrimaries(content) == 0, lv.tbl.state)
+    check(tag .. ": a filter with no run says so, with a way back, and no hero", lv.tbl.state == "No run of Shadowfang Keep stored." and lv.hero.shown == false and UI.CountPrimaries(content) == 0, lv.tbl.state)
     lv.tbl.stateLink:GetScript("OnClick")(lv.tbl.stateLink); M.settle()
     check(tag .. ": Show all dungeons clears it", lv.st.inst == nil and #lv.shown == 3)
 
@@ -108,17 +116,24 @@ return function(P)
     T.openRun(byName[fx.wc2.id].run); M.settle()
     check(tag .. ": the run page opens over the list", dv:IsShown() and not lv:IsShown() and dv.run.id == fx.wc2.id)
     local missing = {}
-    for _, k in ipairs(dv.SECTION_KEYS) do if dv.sections[k].shown == false then missing[#missing + 1] = k end end
-    check(tag .. ": every section is on the page, in the spec's order", #missing == 0, table.concat(missing, ","))
+    for _, k in ipairs({ "bosses", "party", "pace", "visits", "pulls", "edit" }) do if dv.sections[k].shown == false then missing[#missing + 1] = k end end
+    check(tag .. ": the sections with something in them are on the page", #missing == 0, table.concat(missing, ","))
+    check(tag .. ": a run nobody died in has no Deaths section and no death line", dv.sections.deaths.shown == false and dv.deathLine == nil)
     local order, lastY = true, -1
-    for _, k in ipairs(dv.SECTION_KEYS) do local b = P.box(dv.sections[k]); if not b or b.t <= lastY then order = false end; lastY = b and b.t or lastY end
-    check(tag .. ": the sections run Bosses, Loot, Deaths, XP, Party, Pace, Entered and left, All pulls, Edit", order)
-    eq(tag .. ": VS YOUR BEST on the best run: how much it beat the best before it", dv.deltaText, "42s faster")
-    eq(tag .. ": the cards are four, six at WIDE", #dv.cards, size[1] >= 1250 and 6 or 4)
+    for _, k in ipairs(dv.SECTION_KEYS) do
+      if dv.sections[k].shown ~= false then local b = P.box(dv.sections[k]); if not b or b.t <= lastY then order = false end; lastY = b and b.t or lastY end
+    end
+    check(tag .. ": the sections run Bosses, Loot, Deaths, XP, Party, Pace, Entered and left, Pulls, Edit", order)
+    eq(tag .. ": the best run's comparison: how much it beat the best before it", dv.deltaText, "42s faster")
+    check(tag .. ": and the META line says it", dv.metaText:find("42s faster than your best before", 1, true) ~= nil, dv.metaText)
+    -- (TIME and BOSSES always; XP and WORTH only with a value: at most four, at every size)
+    check(tag .. ": the cards are TIME and BOSSES, then XP and WORTH when the run has them", dv.cards[1] == dv.card.time and dv.cards[2] == dv.card.bosses and #dv.cards <= 4
+      and #dv.cards == 2 + (dv.card.xp and 1 or 0) + (dv.card.worth and 1 or 0), #dv.cards)
+    check(tag .. ": the BOSSES card names the boss clock", tostring(dv.card.bosses.meta.text):find("^boss clock ") ~= nil, dv.card.bosses.meta.text)
     check(tag .. ": the party of five is named", dv.partyFS and strip(dv.partyFS.text):find("Tessa", 1, true) ~= nil and dv.metaText:find("party of 5", 1, true) ~= nil, dv.metaText)
     check(tag .. ": the Pace line is the best of the route", dv.paceLine and dv.paceLine:find("^Your best for these 6 bosses: 28m 41s") ~= nil and dv.paceLine:find("This run is your best.", 1, true) ~= nil, dv.paceLine)
     local bd = true
-    for _, r in ipairs(shown(dv.tables.bosses)) do if r.c.vs.text ~= "-" and not isDelta(r.c.vs.text) then bd = false end end
+    for _, r in ipairs(shown(dv.tables.bosses)) do if r.c.vs and r.c.vs.text ~= "" and not isDelta(r.c.vs.text) then bd = false end end
     check(tag .. ": every delta of the bosses table is a fmtDelta word", bd)
     eq(tag .. ": no primary on the run page", UI.CountPrimaries(content), 0)
     cut, past = audit(dv, wb.l + wb.w)
@@ -139,9 +154,9 @@ return function(P)
     fights[#fights + 1] = { uid = "fx-rfc-trash", session = ns.DB.active, startEpoch = fx.rfc.t + 200, duration = 20, outcome = "fled", foes = {}, zone = "Ragefire Chasm" }
     T.openRun(fx.rfc); M.settle()
     local d1 = dv.tables.deaths.rows[1]
-    -- (Where is a place, never the killer again: the subzone, "at boss N" or "-")
+    -- (Where is a place, never the killer again: the subzone, "at boss N" or blank)
     check(tag .. ": the death of a party member names her", d1 and d1.c.who.text == "Tessa" and d1.c.foe.text == "Taragaman the Hungerer"
-      and d1.c.where.text ~= d1.c.foe.text and (d1.c.where.text == "-" or d1.c.where.text:find("^at boss %d") ~= nil), d1 and (d1.c.who.text .. " / " .. d1.c.where.text))
+      and d1.c.where.text ~= d1.c.foe.text and (d1.c.where.text == "" or d1.c.where.text:find("^at boss %d") ~= nil), d1 and (d1.c.who.text .. " / " .. d1.c.where.text))
     local trash, fled = 0, 0
     -- (a pull with no foe; Jergosh and Bazzalan, left up on the way out, are flights with a foe)
     for _, r in ipairs(shown(dv.tables.pulls)) do
@@ -151,7 +166,7 @@ return function(P)
     check(tag .. ": a pull with no foe inside the run reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
     local label, _, key = ns.FightResult(fights[#fights])
     check(tag .. ": the shared reading says the same", key == "trash" and label[1] == "Trash")
-    eq(tag .. ": the boss card reads 2 of 4 with the misses", dv.cards[3].value.text, "2 of 4")
+    eq(tag .. ": the boss card reads 2 of 4 with the misses", dv.card.bosses.value.text, "2 of 4")
     local bossRow
     for _, r in ipairs(shown(dv.tables.bosses)) do if r.item.fight and r.item.fight.uid == "fx-rfc-1" then bossRow = r end end
     check(tag .. ": a boss whose fight is stored is a row that opens", bossRow ~= nil and not bossRow.item.ebNoOpen)
@@ -163,21 +178,20 @@ return function(P)
       pane(); fx = install(""); T.dungeonList()
     end
 
-    -- ── a run with nothing in it: every section says so in its own sentence ──
+    -- ── a run with nothing in it: its sections are left out, and no sentence or dash takes their place ──
     local bare = T.runRecord("Shadowfang Keep", GetServerTime() - 4000, 400, {})
     table.insert(ns.char().dungeonRuns, 1, bare)
     T.openRun(bare); M.settle()
-    local want = { bosses = "No boss pulled in this run.", loot = "Nothing looted.", deaths = "Nobody died. Clean run.", xp = "No XP in this run.",
-      party = "No fight of this run is stored, so the party is not known.", pace = "Kill the same bosses twice to see your pace.",
-      pulls = "No fight of this run is stored any more. The desktop app saved them." }
     local bad = {}
-    for k, s in pairs(want) do
-      local fs = dv.empties[k]
-      if not (fs and fs.shown ~= false and fs.text == s and dv.sections[k].shown ~= false) then bad[#bad + 1] = k .. "=" .. tostring(fs and fs.text) end
-    end
-    check(tag .. ": every empty section is there with its sentence", #bad == 0, table.concat(bad, " | "))
+    for _, k in ipairs({ "bosses", "loot", "deaths", "xp", "party", "pace", "pulls" }) do if dv.sections[k].shown ~= false then bad[#bad + 1] = k end end
+    check(tag .. ": a section with nothing in it is not on the page", #bad == 0 and next(dv.empties) == nil, table.concat(bad, " | "))
+    check(tag .. ": the cards of a bare run are TIME and BOSSES, with 0 bosses and no total", #dv.cards == 2 and dv.card.bosses.value.text == "0" and dv.card.xp == nil and dv.card.worth == nil, #dv.cards)
+    check(tag .. ": the META of a run with no stored size says neither solo nor a party", dv.metaText:find("solo", 1, true) == nil and dv.metaText:find("party", 1, true) == nil, dv.metaText)
+    local dashes = {}
+    for _, fs in ipairs(P.descendants(dv)) do if P.visible(fs) and fs.text == "-" then dashes[#dashes + 1] = "-" end end
+    check(tag .. ": nothing on the page is a lone dash", #dashes == 0, #dashes)
     check(tag .. ": the edit row is there with its buttons", dv.sections.edit.shown ~= false and #dv.actBtns() == 3)
-    eq(tag .. ": a run with no boss reads 0/0 in the list", (function() for _, r in ipairs(shown(T.dungeonList().tbl)) do if r.run.id == bare.id then return r.c.boss.text end end end)(), "0/0")
+    eq(tag .. ": a run with no boss and no known total reads 0 in the list", (function() for _, r in ipairs(shown(T.dungeonList().tbl)) do if r.run.id == bare.id then return r.c.boss.text end end end)(), "0")
     -- Back from the run page: the list's scroll offset and the selection come back
     for i = 1, 14 do table.insert(ns.char().dungeonRuns, 1, T.runRecord("The Stockade", GetServerTime() - 90000 - i * 3600, 600, {})) end
     R.statsRebuild(ns.char())
@@ -225,20 +239,18 @@ return function(P)
     check(tag .. ": the live summary's lockout reads the run's 1 of 4, with no \"(about)\"", lsum:find("Ragefire Chasm: 1 of 4", 1, true) ~= nil and lsum:find("(about)", 1, true) == nil, lsum)
     T.openRun(liveRow.run); M.settle()
     check(tag .. ": its page shows End run now", (function() for _, b in ipairs(dv.actBtns()) do if b.key == "end" and b.shown ~= false then return true end end end)())
-    -- one item list on the page: the LOOT section counts the rows it lists (drops only: no quest reward, no mail), and
-    -- the LOOT card (WIDE) says the same; the BOSSES card counts against the dungeon's 4 bosses
-    local lootMeta = dv.sections.loot.meta.shown ~= false and dv.sections.loot.meta.text or ""
+    -- one item list on the page: the LOOT section lists the green and better drops only (no quest reward, no mail)
+    -- and counts what it lists; the BOSSES card counts against the dungeon's 4 bosses
+    local lootMeta = dv.sections.loot.shown ~= false and dv.sections.loot.meta.shown ~= false and dv.sections.loot.meta.text or ""
     local nLoot = #(dv.lootItems or {})
     check(tag .. ": the live run's LOOT section lists no quest reward or mail and counts what it lists", (function()
-      for _, it in ipairs(dv.lootItems or {}) do local src = tostring(it.row.src or ""); if src:find("^Quest") or src:find("^Mail") then return false end end
-      return nLoot == 0 and lootMeta == "" or lootMeta == UI.plural(nLoot, "item")
+      for _, it in ipairs(dv.lootItems or {}) do
+        local src = tostring(it.row.src or "")
+        if src:find("^Quest") or src:find("^Mail") or R.qRank(it.row.q) < 2 then return false end
+      end
+      return nLoot == 0 and lootMeta == "" or lootMeta == nLoot .. " green or better"
     end)(), lootMeta)
-    if dv.cards[6] then eq(tag .. ": the COIN LOOTED card counts the same items", dv.cards[6].meta.text, nLoot > 0 and UI.plural(nLoot, "item") or "nothing yet") end
-    eq(tag .. ": the live BOSSES card reads 1 of 4", dv.cards[3].value.text, "1 of 4")
-    if dv.empties.deaths then
-      local c = dv.empties.deaths._color or {}
-      check(tag .. ": an inline empty sentence is fgMuted, never good", math.abs((c[1] or 0) - UI.C.fgMuted[1]) < 0.01 and math.abs((c[2] or 0) - UI.C.fgMuted[2]) < 0.01)
-    end
+    eq(tag .. ": the live BOSSES card reads 1 of 4", dv.card.bosses.value.text, "1 of 4")
     M.tick()
     local renders = dv.renders
     M.epoch = M.epoch + 5
@@ -261,19 +273,27 @@ return function(P)
     dv.d.Close()
     unwind()
 
-    -- ── By dungeon ──
+    -- ── By dungeon: the page exists once two dungeons have two stored runs each (2.3) ──
     unwind()
-    P.open("dungeons", "bydungeon", size[1], size[2], "normal")   -- (a new copy of the suite's data: the runs go on it after)
+    P.open("dungeons", "runs", size[1], size[2], "normal")   -- (a new copy of the suite's data: the runs go on it after)
     install("")
+    ns.UI.Open("Dungeons", "bydungeon"); M.settle()
+    local hostCtl = content.ebHostCtl
+    check(tag .. ": with one dungeon run twice there is no By dungeon tab, and opening it stays on Runs", ns.Dungeons.D.byVisible() == false
+      and hostCtl.hidden.bydungeon == true and hostCtl.active == "runs", tostring(hostCtl.active))
+    table.insert(ns.char().dungeonRuns, 1, T.runRecord("Ragefire Chasm", GetServerTime() - 200000, 700, { gold = { looted = 900, lootValue = 300 } }))
+    R.statsRebuild(ns.char())
+    ns.UI.Open("Dungeons", "bydungeon"); M.settle()
+    check(tag .. ": with two dungeons run twice the tab is there and opens", ns.Dungeons.D.byVisible() == true and not hostCtl.hidden.bydungeon and hostCtl.active == "bydungeon", tostring(hostCtl.active))
     local by = T.dungeonBy(); M.settle()
     eq(tag .. ": By dungeon lists the two dungeons", #by.dshown, 2)
-    eq(tag .. ": sorted by XP per hour below the level cap", by.dtbl.sortKey, "xp")
-    local wcRow
-    for _, r in ipairs(shown(by.dtbl)) do if r.drow.name == "Wailing Caverns" then wcRow = r end end
-    check(tag .. ": the Wailing Caverns row: two runs, the best, your level", wcRow and wcRow.c.n.text == "2" and wcRow.c.best.text == "28m 41s" and wcRow.c.lvl.text == "17", wcRow and wcRow.c.best.text)
-    -- (A15: one lockout wording at every size; at 900 the "Best XP per hour" segment is the one that gives way)
-    if UI.G.isWide(UI.G.winW()) then check(tag .. ": the summary names the dungeon that pays best", by.summary.Text():find("Best XP per hour: ", 1, true) ~= nil, by.summary.Text())
-    else check(tag .. ": at 900 the summary keeps the lockout whole and drops the pay segment", by.summary.Text():find("Best XP per hour", 1, true) == nil and by.summary.Text():find("resets in", 1, true) ~= nil, by.summary.Text()) end
+    local wcRow, rfcRow
+    for _, r in ipairs(shown(by.dtbl)) do if r.drow.name == "Wailing Caverns" then wcRow = r elseif r.drow.name == "Ragefire Chasm" then rfcRow = r end end
+    check(tag .. ": the Wailing Caverns row: two runs, the best and an average", wcRow and wcRow.c.n.text == "2" and wcRow.c.best.text == "28m 41s" and wcRow.c.avg.text ~= "", wcRow and wcRow.c.best.text)
+    check(tag .. ": the columns are Dungeon, Runs, Best, Average, Deaths per run, Worth per run", wcRow and wcRow.c.dpr and wcRow.c.worth and not wcRow.c.xp and not wcRow.c.coin and not wcRow.c.lvl and not wcRow.c.full and not wcRow.c.last)
+    local dashBy = 0
+    for _, r in ipairs(shown(by.dtbl)) do for _, fs in pairs(r.c) do if fs.text == "-" then dashBy = dashBy + 1 end end end
+    eq(tag .. ": no cell of By dungeon is a dash", dashBy, 0)
     cut, past = audit(by, wb.l + wb.w)
     check(tag .. ": nothing on By dungeon is cut or past the window", #cut == 0 and #past == 0, table.concat(cut, " | ") .. " || " .. table.concat(past, " | "))
     wcRow:GetScript("OnClick")(wcRow, "LeftButton"); M.settle()
@@ -312,7 +332,7 @@ return function(P)
     end
     check(tag .. ": a boss total is never the kills while an encounter was left up (B1)", #tb == 0, table.concat(tb, "; "))
     for _, r in ipairs(runs) do
-      if r.name == "Wailing Caverns" then eq(tag .. ": Wailing Caverns reads 6 of 8", ns.Dungeons.D.bossCount(r), "6 of 8") end
+      if r.name == "Wailing Caverns" then eq(tag .. ": Wailing Caverns reads 6 of 8 (its total is the learned list of its two runs)", ns.Dungeons.D.bossCount(ns.Runs.view(r.rec, r.inProgress, false)), "6 of 8") end
     end
     -- the run page and the Fights list count the same fights (one store, B23)
     if fx.rfc then

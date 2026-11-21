@@ -1635,7 +1635,7 @@ return function(P)
       lv.filter.clear:GetScript("OnClick")(lv.filter.clear)
       check("list: the clear glyph resets the filter", lv.st.inst == nil and lv.filter.text:GetText() == "All dungeons" and lv.filter.ebActive == false and #lv.shown == 4)
       lv.pickInst("Shadowfang Keep")
-      check("list: a filter that keeps nothing says so, with a way back, not that there are no runs", #lv.shown == 0 and lv.tbl.state == "No run of Shadowfang Keep yet."
+      check("list: a filter that keeps nothing says so, with a way back, not that there are no runs", #lv.shown == 0 and lv.tbl.state == "No run of Shadowfang Keep stored."
         and lv.tbl.stateLink.text:GetText() == "Show all dungeons", lv.tbl.state)
       lv.pickInst(nil)
       local head = lv.tbl.head
@@ -1649,7 +1649,7 @@ return function(P)
       check("list: Bosses sorts most first, ties newest first", names() == "Maraudon:160 The Deadmines:330 The Deadmines:600 Molten Core:900", names())
       head.death:GetScript("OnClick")(head.death)
       check("list: Deaths sorts most first", lv.shown[1].name == "Molten Core", names())
-      for _, k in ipairs({ "time", "vs", "xp", "xph", "coin", "loot" }) do check("list: " .. k .. " is a sortable column", head[k] and head[k]:GetScript("OnClick") ~= nil) end
+      for _, k in ipairs({ "time", "worth" }) do check("list: " .. k .. " is a sortable column", head[k] and head[k]:GetScript("OnClick") ~= nil) end
       head.time:GetScript("OnClick")(head.time)
       check("list: back on Time: newest first", names() == "The Deadmines:600 Maraudon:160 Molten Core:900 The Deadmines:330", names())
       invariants("list")
@@ -1794,8 +1794,8 @@ return function(P)
     fresh()
     local lv = T.dungeonList and T.dungeonList()
     if lv then
-      check("21: the empty list says how runs get there", lv.empty.shown ~= false and lv.empty.title:GetText() == "No dungeon runs yet"
-        and lv.empty.text:GetText() == "Enter any dungeon and your run is recorded: time, bosses, deaths, loot and XP, against your best.", lv.empty.title:GetText())
+      check("21: the empty list says how runs get there", lv.empty.shown ~= false and lv.empty.title:GetText() == "No run stored yet"
+        and lv.empty.text:GetText() == "Enter any dungeon and your run is recorded: time, bosses, deaths and loot.", lv.empty.title:GetText())
     end
     enter("Maraudon", { type = "raid" }); play(100)
     kill(422, "Noxxion", 30); combat(false); die(); play(10); leave(); play(120); enter("Maraudon"); rise(); play(400)

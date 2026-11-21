@@ -175,6 +175,22 @@ return function(P)
     _G.GetMaxPlayerLevel = function() return lvl end
     V.renderLeveling(); M.settle()
     check("Leveling: at max level the hero says so and the cards change", v.hero.hero.text == ("Level %d \194\183 max level"):format(lvl) and v.cards.cards[1].label.text == "PLAYED" and v.cards.cards[2].label.text == "GOLD PER HOUR" and v.cards.cards[3].label.text == "QUESTS" and v.cards.cards[4].label.text == "DUNGEON RUNS", v.hero.hero.text)
+    -- the dungeon runs card counts the run store (records and rebuilt rows) and says where it starts, never "all time"
+    do
+      local c = ns.char()
+      local keepRuns, keepLegacy = c.dungeonRuns, c.dungeonLegacy
+      local t0 = GetServerTime() - 5 * 86400
+      c.dungeonRuns = { ns._test.runRecord("Blackrock Spire", t0 + 86400, 4148, {}) }
+      c.dungeonLegacy = { { id = "g" .. t0, src = "gold", inst = "Maraudon", t = t0, secs = 4250 } }
+      V.renderLeveling(); M.settle()
+      local card = v.cards.cards[4]
+      check("Leveling: DUNGEON RUNS counts the stored runs and says since when, never all time", card.value.text == "2"
+        and card.meta.text == "stored since " .. tostring(tonumber(date("%d", t0))) .. date(" %b", t0), tostring(card.value.text) .. " / " .. tostring(card.meta.text))
+      c.dungeonRuns, c.dungeonLegacy = {}, {}
+      V.renderLeveling(); M.settle()
+      check("Leveling: with none stored the card says so", card.value.text == "0" and card.meta.text == "none stored yet", tostring(card.meta.text))
+      c.dungeonRuns, c.dungeonLegacy = keepRuns, keepLegacy
+    end
     _G.GetMaxPlayerLevel = keepMax
     Pace.compute, Pace.remaining = realCompute, realRemaining
     -- a quest the game did not name

@@ -19,6 +19,7 @@ Debug.lua
 Recording.lua
 Economy.lua
 Runs.lua
+RunsLegacy.lua
 Progress.lua
 Market.lua
 Visits.lua

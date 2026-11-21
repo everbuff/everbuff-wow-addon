@@ -201,8 +201,8 @@ return function(P)
   -- ── the window remembers where it was: lastTab / lastSub are written on select and read on open ──
   ns.UI.Open("Loot", "gold"); M.settle()
   check("Open: selecting a pane writes lastTab and lastSub", ns.DB.settings.lastTab == "Loot" and ns.DB.settings.lastSub == "gold")
-  ns.UI.Open("Combat", "deaths"); M.settle()
-  check("Open: an old key lands on its new page", ns.UI.activeTab() == "Home" and ns.DB.settings.lastSub == "deaths")
+  ns.UI.Open("Combat", "dungeons"); M.settle()
+  check("Open: an old key lands on its new page", ns.UI.activeTab() == "Dungeons" and ns.DB.settings.lastSub == "runs")
 
   -- ── the status chip ──
   local st = UI.StatusState()

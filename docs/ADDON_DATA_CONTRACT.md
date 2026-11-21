@@ -536,6 +536,30 @@ with `/eb instances limit 5|10|off`) when the player set one.
 `characters[guid].dungeonEvictedTo` (epoch): the latest `endT` of a run evicted from `dungeonRuns`. Join with
 previous run is refused when it is later than the previous run's `endT` (a run between the two left the list).
 
+### Runs from before the run store (`characters[guid].dungeonLegacy`, docs/UX_PRAGMATIC.md gate A)
+
+`characters[guid].dungeonLegacy[]` (optional, at most 200 rows, oldest first; file `Everbuff/RunsLegacy.lua`): the
+character's gold runs (`goldRuns`, from 0.9.47) that have no run record, copied once so the Dungeons list can show
+the runs played before 0.9.50. A gold run belongs to a run record when the two name the same dungeon and began
+within 300 seconds of each other; such a gold run is never copied. A gold run under 60 seconds with no coin, quest
+coin or item is not a run and is not copied.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | `"g"` and the gold run's start epoch |
+| `src` | string | `"gold"`: where the row came from |
+| `inst` | string | the dungeon's name, as the gold run stored it |
+| `t` | number | epoch the gold run began |
+| `secs` | number | seconds the gold run counted in the dungeon, to its 10 second tick (the dungeon's own entrance area counts when it carries the dungeon's name) |
+| `looted?`, `quests?`, `items?`, `lootValue?`, `unpriced?` | number | the gold run's own sums; a 0 is absent |
+
+Rules. The copy runs once per character, at load, before the desktop's acknowledgement is applied: from then on the
+list exists (empty when there was nothing to copy) and is never built again, so a run record deleted by hand does not
+come back as a row and every later run has a record of its own. A row holds only what the gold run stored: no
+bosses, no deaths, no XP, no end time. Nothing is rebuilt from timing, from gaps between events or from zone names.
+The rows never enter `dungeonStats`, bests or averages. The acknowledgement never touches the list. An invalid row is
+dropped on load. Not read by ingest.
+
 Split here (`Runs.split`) cuts a run where a visit begins: the bosses go whole to the side of their kill (or of
 their first pull), deaths, coin and XP with their visits, and the gap between the two is no one's time. Join with
 previous run (`Runs.joinRec`) is its inverse: a split then a join gives the original record back, every number
@@ -709,7 +733,8 @@ and the farm timer), and from 0.9.47 `goldZones`, `goldZonesEvicted`, `goldRun`,
 `goldMonths` and `goldBest` (places, dungeon runs, folded months, records): uploaded with the save file, not read by
 ingest until a backend gate of its own. They were not in the file measured here. From 0.9.50 the stored dungeon
 runs (`characters[guid].dungeonRun`, `dungeonRuns`, `settings.instanceAlias`) are a sixth: they back Combat >
-Dungeons and are not read by ingest.
+Dungeons and are not read by ingest. `characters[guid].dungeonLegacy` (the gold runs with no run record, copied once
+for the Dungeons list) belongs to the same store.
 
 Together 14.4 KB, 0.7 % of the file; the fights are 1.47 MB (71 %). Dropping them would remove in-game panes and save
 almost nothing, so they stay. Reading them on the backend (per-gain reputation, auction postings) needs a place in

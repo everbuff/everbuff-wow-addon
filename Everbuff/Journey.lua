@@ -340,14 +340,15 @@ function Now.lookItems(now)
   for i, v in ipairs(runs) do
     if i > 2 then break end
     local name = v.name or "Dungeon"
-    local total = (DD and DD.totalOf) and DD.totalOf(v) or num(v.total)
+    -- (a total only when it is known, Dungeons.lua D.totalOf: "2 of 4 bosses", else the kills alone, "7 bosses")
+    local total = (DD and DD.totalOf) and DD.totalOf(v) or nil
     local down = num(v.bossesDown)
-    local bosses = total > 0 and ("%d of %s"):format(down, UI.plural(total, "boss")) or "no boss killed"
+    local bosses = (DD and DD.bossWord and (total or down > 0)) and DD.bossWord(v) or "no boss killed"
     local word, wkey, kind = "", nil, "none"
     if DD and DD.vsBest then word, wkey, kind = DD.vsBest(v) end
     local title, badge, bar
     if v.inProgress then title, badge = ("%s: %s so far"):format(name, bosses), "IN PROGRESS"
-    elseif kind == "first" then title = ("%s: first run, %s"):format(name, bosses)
+    elseif kind == "first" then title = ("%s: %s"):format(name, bosses)
     elseif kind == "best" then title, badge, bar = ("%s: your best run, %s"):format(name, bosses), "BEST", "good"
     elseif kind == "slower" and word ~= "" then title = ("%s: %s, %s than your best"):format(name, bosses, word)
     else title = ("%s: %s"):format(name, bosses) end
@@ -926,7 +927,7 @@ local function buildSessions(content)
     { key = "gold", label = "Gold", kind = "money", min = 88 },
     { key = "kills", label = "Kills", kind = "num", min = 48 },
     { key = "deaths", label = "Deaths", kind = "num", min = 48 },
-    { key = "dung", label = "Runs", kind = "num", min = 40, tip = "Dungeon runs in the session" },
+    { key = "dung", label = "Runs", kind = "num", min = 40, tip = "Stored dungeon runs that began in the session" },
   }, { chevron = false,
     onClick = function(_, sess) if sess and sess.id then sel.id = sess.id; if sessionsRebuild then sessionsRebuild() end end end,
     onLayout = function(t) for i = 1, t.shownN do pcall(content.placeLive, t, t.rows[i]) end end,
@@ -1121,7 +1122,10 @@ local function buildSessions(content)
       c.gold:SetText(net ~= 0 and UI.money(net, true) or "-")
       c.kills:SetText(num(sess.kills) > 0 and UI.fmtNum(sess.kills) or "-")
       c.deaths:SetText(num(sess.deaths) > 0 and UI.fmtNum(sess.deaths) or "-")
-      c.dung:SetText(num(sess.dungeons) > 0 and tostring(sess.dungeons) or "-")
+      -- (the runs of the run store that began in the session, the Dungeons list's own rows; the session's old counter
+      -- counted door entries before 0.9.50 and is never printed)
+      local nRuns = ns.RunsLegacy and ns.RunsLegacy.inSession(sess) or 0
+      c.dung:SetText(nRuns > 0 and tostring(nRuns) or "")
       for _, k in ipairs({ "len", "lvl", "xp", "gold", "kills", "deaths", "dung" }) do if c[k]:GetText() == "-" then UI.SetColor(c[k], "fgMuted") end end
     end)
     for i = 1, tbl.shownN do pcall(content.placeLive, tbl, tbl.rows[i]) end

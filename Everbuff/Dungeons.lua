@@ -4,7 +4,9 @@
 -- A classic player thinks in RUNS: enter, clear, leave. From 0.9.50 a run is a stored record of the character
 -- (Runs.lua: characters[guid].dungeonRun and dungeonRuns), so the list survives the desktop's acknowledgement and
 -- the story event cap. These panes only read, except the run page's own edits (keep, end, join, split, delete).
--- Every page is built from the kit in UI.lua: one scroll per page, the summary line first, then the answer.
+-- Every page is built from the kit in UI.lua: one scroll per page. What each shows and what it leaves out is
+-- docs/UX_PRAGMATIC.md section 2: a number only when it is stored, a blank cell where nothing was recorded, and the
+-- runs from before the run store (RunsLegacy.lua) in the same list, marked partial.
 
 local ADDON, ns = ...
 local UI = ns.UI
@@ -63,36 +65,55 @@ end
 D.fitNames = fitNames
 -- "16 Nov", the day of a best
 local function dayMonth(t) return (tostring(tonumber(date("%d", t or 0)) or "")) .. date(" %b", t or 0) end
+-- A kill clock or a split, to the second at every length ("19m 39s", "1h 4m 44s"): splits are compared run against
+-- run, so the seconds are the point (docs/UX_PRAGMATIC.md 7). Every other duration is UI.fmtDur.
+function D.fmtSplit(s)
+  s = tonumber(s)
+  if not s then return "" end
+  s = math.max(0, math.floor(s + 0.5))
+  if s < 3600 then return UI.fmtDur(s) end
+  local h, m, r = math.floor(s / 3600), math.floor((s % 3600) / 60), s % 60
+  return ("%dh %dm %ds"):format(h, m, r)
+end
 -- the one way a pull-to-kill time is named, on the run page, on Runs and on By dungeon
 function D.pullMeta(m) return UI.fmtDur(m) .. " first pull to last kill" end
 
 -- ══ the facts of a run, as every surface says them ═══════════════════════════════════════════════════════════════
--- the bosses a run is counted against: the dungeon's learned list, else the most bosses any stored run of the
--- dungeon met (pulled or killed) or its lockout names. A run in progress has met only the bosses so far, so its own
--- rows alone would say "1 of 1".
-local function knownTotal(name)
+-- The bosses a run is counted against (docs/UX_PRAGMATIC.md 2.1): a total is shown only when it is known, from the
+-- dungeon's learned list (the bosses killed in at least half of two or more stored runs, Runs.learned) or from a
+-- lockout of the dungeon. The bosses one run met are never a total: with a single run "7 of 7" would be a circle.
+local function lockTotal(name)
   if type(name) ~= "string" then return 0 end
   local c = ns.char and ns.char() or nil
   local n = 0
-  local runs = c and type(c.dungeonRuns) == "table" and c.dungeonRuns or {}
-  for _, r in ipairs(runs) do
-    if type(r) == "table" and r.inst == name and type(r.bosses) == "table" then n = math.max(n, #r.bosses) end
-  end
   for _, l in ipairs(c and type(c.lockouts) == "table" and c.lockouts or {}) do
     if type(l) == "table" and l.name == name then n = math.max(n, n0(l.bosses)) end
   end
   return n
 end
+-- the known total of a run's dungeon, or nil. Never below what the run itself met: the total is never the kills
+-- alone when an encounter was left up (B1).
 local function totalOf(run)
-  -- (the most the run, its dungeon's learned list, its other runs and its lockout know of: the total is never the
-  -- kills alone when an encounter was left up, B1)
-  return math.max(n0(run.total), #(run.bosses or {}) + #(run.missing or {}), n0(run.bossesDown), knownTotal(run.name))
+  local known = math.max(n0(run.total), lockTotal(run.name))
+  if known == 0 then return nil end
+  return math.max(known, #(run.bosses or {}) + #(run.missing or {}), n0(run.bossesDown))
 end
 D.totalOf = totalOf
--- "2/4", always with the total (table cells); D.bossCount(run) "2 of 4" (cards and heroes)
-local function bossText(run) return ("%d/%d"):format(n0(run.bossesDown), totalOf(run)) end
+-- "2/4" with a known total, else the kills alone "7" (table cells); D.bossCount(run) "2 of 4" or "7" (cards);
+-- D.bossWord(run) "2 of 4 bosses" or "7 bosses" (sentences)
+local function bossText(run)
+  local t = totalOf(run)
+  return t and ("%d/%d"):format(n0(run.bossesDown), t) or tostring(n0(run.bossesDown))
+end
 D.bossText = bossText
-function D.bossCount(run) return ("%d of %d"):format(n0(run.bossesDown), totalOf(run)) end
+function D.bossCount(run)
+  local t = totalOf(run)
+  return t and ("%d of %d"):format(n0(run.bossesDown), t) or tostring(n0(run.bossesDown))
+end
+function D.bossWord(run)
+  local t = totalOf(run)
+  return t and ("%d of %s"):format(n0(run.bossesDown), UI.plural(t, "boss")) or UI.plural(n0(run.bossesDown), "boss")
+end
 -- the earlier runs of a run's route: the fastest of them before this run (the best it beat), or nil
 local function previousBest(run)
   local rec = run.rec
@@ -127,7 +148,8 @@ local function runnerUp(run)
 end
 D.runnerUp = runnerUp
 -- The run against its best in words (UI.fmtDelta), the color key, and what kind of word it is:
---   "first run"      no earlier run of this dungeon by this character
+--   ""               the only stored run of this dungeon (kind "first"): nothing to compare, and "first run" is not
+--                    said, since runs from before the run store are not all stored
 --   "42s faster"     a best that beat the route's earlier best (kind "best")
 --   "best"           the best of a route no earlier run had (kind "best")
 --   "3m 29s slower"  a run slower than its route's best
@@ -139,7 +161,7 @@ local function vsBest(run)
     if cmp.mode == "prefix" and cmp.delta then local w, k = UI.fmtDelta(cmp.delta); return w, k, "live" end
     return "", nil, "none"
   end
-  if cmp.first then return "first run", nil, "first" end
+  if cmp.first then return "", nil, "first" end
   if cmp.mode == "same" then
     if cmp.isBest then
       local prev = previousBest(run)
@@ -165,13 +187,12 @@ local function missedNames(run)
 end
 -- "2 of 4 bosses, missed Jergosh the Invoker, Bazzalan", "4 of 4 bosses, full clear", "3 bosses"
 local function bossLine(run, width)
-  local down = n0(run.bossesDown)
-  local total = totalOf(run)
-  if total == 0 then return "no boss killed" end
-  local s = ("%d of %s"):format(down, UI.plural(total, "boss"))
+  local down, total = n0(run.bossesDown), totalOf(run)
   local missed = missedNames(run)
+  if down == 0 and #missed == 0 and not total then return "no boss killed" end
+  local s = D.bossWord(run)
   -- (a full clear needs the dungeon's learned list: before it, the bosses a run met are not all there are)
-  if down >= total and #missed == 0 then return run.total and (s .. ", full clear") or s end
+  if total and down >= total and #missed == 0 then return run.total and (s .. ", full clear") or s end
   if #missed > 0 then
     local pre = s .. ", missed "
     return pre .. fitNames(missed, math.max(80, (width or 400) - UI.TextWidth("META", pre)))
@@ -211,14 +232,53 @@ local function runItems(run)
   return out
 end
 D.runItems = runItems
--- the item count every surface of a run shows (the card, the LOOT section, the Runs row): the rows the section
--- lists, or the run's own count when the loot log no longer holds its rows
-local function itemCount(run, items) return (items and #items > 0) and #items or n0(run.items) end
-D.itemCount = itemCount
+-- What a run was worth (2.1): the coin looted and the vendor value of its items. Quest reward coin is not loot and
+-- is not in it. Returns the sum, the coin and the item value.
+function D.worth(run)
+  local g = type(run.gold) == "table" and run.gold or {}
+  return n0(g.looted) + n0(g.lootValue), n0(g.looted), n0(g.lootValue)
+end
+-- "1g 16s coin · 18g 3s items at vendor prices" (the meta of a WORTH card, the tooltip of a Worth cell)
+function D.worthParts(run, short)
+  local _, coin, value = D.worth(run)
+  local parts = {}
+  if coin > 0 then parts[#parts + 1] = UI.money(coin) .. " coin" end
+  if value > 0 then parts[#parts + 1] = UI.money(value) .. (short and " items" or " items at vendor prices") end
+  return table.concat(parts, SEP)
+end
+-- Where a drop of a run came from (2.2). A stored name is shown as stored. In a dungeon the game hides enemy names,
+-- so the loot log holds a placeholder there; then the boss of this run killed at most D.BOSS_WINDOW seconds before
+-- the row is named (an inference by timing, said so in the tooltip), an enemy placeholder with no boss kill in
+-- range is "Trash" (the same inference), and every other placeholder is blank. Returns the text (nil: blank) and
+-- the tooltip line.
+D.PLACEHOLDER = { ["Creature"] = "enemy", ["an enemy"] = "enemy", ["Picked up"] = "none", ["Unknown source"] = "none" }
+D.BOSS_WINDOW = 90
+function D.sourceOf(run, l)
+  local src = type(l.src) == "string" and stripLink(l.src) or nil
+  if src == "" then src = nil end
+  local kind = src and D.PLACEHOLDER[src]
+  if src and not kind then return src, nil end
+  if not src then return nil, "Not recorded" end
+  local rec, t = run.rec, tonumber(l.t)
+  local best, bestD
+  if type(rec) == "table" and t then
+    for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do
+      local w = b.kill and type(b.name) == "string" and Runs.wallOf(rec, b.kill) or nil
+      local d = w and (t - w) or nil
+      if d and d >= 0 and d <= D.BOSS_WINDOW and (not bestD or d < bestD) then best, bestD = b, d end
+    end
+  end
+  if best then
+    return best.name, ("Looted %s after %s died. The game hides enemy names in dungeons."):format(UI.fmtDur(math.floor(bestD)), best.name)
+  end
+  if kind == "enemy" then
+    return "Trash", ("No boss died in the %ds before this. The game hides enemy names in dungeons."):format(D.BOSS_WINDOW)
+  end
+  return nil, "Not recorded"
+end
 -- the best drop of every stored run, worked out once per change of the loot log or the runs (the list draws every
 -- run again every 3 s)
 D.dropCache = { key = nil, byId = {} }
-D.BAG_ICON = "Interface\\Icons\\INV_Misc_Bag_08"
 local function bestDrops(runs)
   local log = ns.DB and ns.DB.loot and ns.DB.loot.log or {}
   local key = ("%d:%d:%d"):format(#log, #runs, n0(Runs._gen))
@@ -301,7 +361,6 @@ function D.lockSegment()
   local L, nowS = myLockouts(), nowT()
   local tip = function(tip)
     tip:AddLine("Lockouts", 1, 1, 1)
-    if #L == 0 then tip:AddLine("This character is not saved to any instance.", 0.78, 0.79, 0.80, true) end
     for _, l in ipairs(L) do tip:AddLine(lockLine(l, nowS), 0.78, 0.79, 0.80, true) end
     local o = openRec()
     for _, l in ipairs(L) do
@@ -315,7 +374,8 @@ function D.lockSegment()
       for i, line in ipairs(other) do if i > 4 then break end; tip:AddLine(line, 0.78, 0.79, 0.80, true) end
     end
   end
-  if #L == 0 then return { text = "No lockouts", tip = tip } end
+  -- (no lockout: nothing to say, the segment is left out)
+  if #L == 0 then return nil end
   if #L > 1 then
     return { text = ("**%d** lockouts, next reset in %s"):format(#L, UI.fmtDur(n0(L[1].resetAt) - nowS, { minutes = true })), tip = tip }
   end
@@ -347,6 +407,8 @@ function D.instanceSegment(at)
     if not lim then tip:AddLine("Set your own limit with /eb instances limit 5 (or 10).", 0.78, 0.79, 0.80, true) end
   end
   if not lim then
+    -- (no instance this hour and no limit set: nothing to say, the segment is left out)
+    if h == 0 then return nil end
     return { text = ("**%d** %s this hour"):format(h, h == 1 and "instance" or "instances"), tip = tip, hour = h }
   end
   local left = lim - h
@@ -356,8 +418,10 @@ function D.instanceSegment(at)
 end
 
 -- ══ RUN PAGE (4.6) ════════════════════════════════════════════════════════════════════════════════════════════════
--- Drawn into the detail page's scroll child: the title and its badges, the META line, the stat cards (4, or 6 at
--- WIDE), then the sections in their fixed order. Every section shows, an empty one with its sentence.
+-- Drawn into the detail page's scroll child (docs/UX_PRAGMATIC.md 2.2): the title and its badges, the META line, the
+-- stat cards (TIME, BOSSES, XP, WORTH, each only with a value), then the sections in their fixed order. A section
+-- with nothing in it is left out; no sentence takes its place. A row from before the run store (RunsLegacy.lua) is
+-- its time and its worth, nothing else.
 local function buildDetail(content, list)
   local v
   local d = UI.Detail(content, { list = list, back = "\226\128\185 Runs",
@@ -371,12 +435,19 @@ local function buildDetail(content, list)
   v.titleFS = UI.Text(col, "TITLE", "fg")
   v.badges = {}
   v.metaFS = UI.Text(col, "META", "fgMuted")
-  v.cards4 = UI.StatRow(col, 4)
-  v.cards6 = UI.StatRow(col, 6)
+  -- (one card row per count of cards, made when first needed: a card with no value is left out, never a "-")
+  v.cardRows = {}
+  v.cardRow = function(n)
+    for k, r in pairs(v.cardRows) do if k ~= n then r:Hide() end end
+    local r = v.cardRows[n]
+    if not r then r = UI.StatRow(col, n); v.cardRows[n] = r end
+    r:Show()
+    return r
+  end
   v.sections, v.lines, v.tables, v.btns = {}, {}, {}, {}
   local SECTION_KEYS = { "bosses", "loot", "deaths", "xp", "party", "pace", "visits", "pulls", "edit" }
   local LABELS = { bosses = "Bosses", loot = "Loot", deaths = "Deaths", xp = "XP", party = "Party", pace = "Pace",
-    visits = "Entered and left", pulls = "All fights in this run", edit = "Edit this run" }
+    visits = "Entered and left", pulls = "Pulls of this run", edit = "Edit this run" }
   for _, k in ipairs(SECTION_KEYS) do v.sections[k] = UI.Section(col, LABELS[k]) end
   v.SECTION_KEYS = SECTION_KEYS
   -- the inline sentences and the META lines of the sections: a pool, laid out per render
@@ -398,8 +469,8 @@ local function buildDetail(content, list)
   v.tables.bosses = UI.KitTable(col, {
     { key = "n", label = "#", kind = "tag", fixed = LEAD },
     { key = "boss", label = "Boss" },
-    { key = "at", label = "Killed at", kind = "num", min = 64, measure = { "1h 59m" } },
-    { key = "since", label = "Since last boss", kind = "num", min = 104 },
+    { key = "at", label = "Killed at", kind = "num", min = 64, measure = { "1h 59m 59s" } },
+    { key = "since", label = "Split", kind = "num", min = 64, measure = { "1h 59m 59s" }, tip = "Boss 1: since entering. Others: since the previous kill." },
     { key = "vs", label = "Vs best", kind = "tag", min = 88, justify = "RIGHT" },
     { key = "len", label = "Fight length", kind = "num", min = 88, measure = { "wipe, 10s" } },
   }, { onClick = function(row) if row.item and row.item.fight then fight(row.item.fight) end end,
@@ -411,14 +482,14 @@ local function buildDetail(content, list)
   v.tables.loot = UI.KitTable(col, {
     { key = "ic", label = "", kind = "icon", fixed = LEAD },
     { key = "item", label = "Item", flex = 1, min = 120 },
-    { key = "src", label = "From", kind = "tag", min = 120, max = 160 },
-    { key = "price", label = "Vendor price", kind = "money", min = 80 },
+    { key = "src", label = "From", kind = "tag", min = 120, max = 200 },
+    { key = "at", label = "When", kind = "num", min = 48, measure = { "00:00" } },
   }, { chevron = "reserve", tooltip = function(row, item, tip)
       local l = item.row
       tip:AddLine(stripLink(l.item), unpack(qColor(l.q)))
-      if l.src then tip:AddLine("From " .. stripLink(l.src), 0.78, 0.79, 0.80, true) end
+      if item.from then tip:AddLine("From " .. item.from, 0.78, 0.79, 0.80, true) end
+      if item.fromTip then tip:AddLine(item.fromTip, 0.78, 0.79, 0.80, true) end
       tip:AddLine(UI.fmtWhen(l.t), 0.78, 0.79, 0.80)
-      if item.price <= 0 then tip:AddLine("Vendor price not known: the game had not loaded this item yet.", 0.78, 0.79, 0.80, true) end
     end })
   v.tables.deaths = UI.KitTable(col, {
     { key = "n", label = "#", kind = "tag", fixed = LEAD },
@@ -561,12 +632,12 @@ local function buildDetail(content, list)
     local badges = {}
     if run.inProgress then badges[#badges + 1] = "IN PROGRESS" end
     local word, wkey, kind = vsBest(run)
-    if kind == "best" then badges[#badges + 1] = "BEST" elseif kind == "first" then badges[#badges + 1] = "FIRST RUN" end
+    if kind == "best" then badges[#badges + 1] = "BEST" end
     if run.keep then badges[#badges + 1] = "KEPT" end
     local title = (run.name or "Dungeon") .. (run.kind == "raid" and " (raid)" or "")
     v.titleFS:ClearAllPoints(); v.titleFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, 0); v.titleFS:SetText(title)
     local bw = 0
-    for i, t in ipairs(badges) do local b = v.badges[i] or UI.Badge(col, t); v.badges[i] = b; b:SetBadge(t); b:Show(); bw = bw + b:GetWidth() + S.S2 end
+    for i, t in ipairs(badges) do local b = v.badges[i] or UI.Badge(col, t); v.badges[i] = b; b:SetBadge(t); b.ebTip = nil; b:Show(); bw = bw + b:GetWidth() + S.S2 end
     for i = #badges + 1, #v.badges do v.badges[i]:Hide() end
     local tw = math.min(UI.TextWidth("TITLE", title), W - 2 * S.S3 - bw)
     v.titleFS:SetWidth(math.max(1, tw))
@@ -576,66 +647,83 @@ local function buildDetail(content, list)
     local meta = { run.inProgress and (UI.fmtDate(run.startT) .. " since " .. UI.fmtClock(run.startT)) or (UI.fmtWhen(run.startT) .. (run.endT and (" to " .. UI.fmtClock(run.endT)) or "")) }
     local x1 = type(run.xp) == "table" and run.xp or {}
     if x1.l0 then meta[#meta + 1] = "level " .. math.floor(x1.l0) end
+    -- (the party only as a stored fact: the largest group a stored pull of the run recorded, or "solo" from the
+    -- record's own size. A size the record does not hold says nothing: it is never read as solo.)
     local grp = run.group and #run.group or 0
-    meta[#meta + 1] = grp > 1 and ("party of " .. grp) or "solo"
-    if n0(run.reentries) > 0 then meta[#meta + 1] = ("re-entered %s"):format(UI.plural(run.reentries, "time")) end
+    if grp > 1 then meta[#meta + 1] = "party of " .. grp
+    elseif not run.inProgress and run.size == 1 then meta[#meta + 1] = "solo" end
     if run.edited then meta[#meta + 1] = "corrected by hand" end
+    -- (the run against its best, once there is one to compare with)
+    if kind == "best" and word ~= "best" and word ~= "" then meta[#meta + 1] = word .. " than your best before"
+    elseif kind == "slower" then meta[#meta + 1] = word == "same as best" and "same as your best" or (word .. " than your best") end
     v.metaFS:ClearAllPoints(); v.metaFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, -22); v.metaFS:SetWidth(W - 2 * S.S3)
     v.metaFS:SetText(table.concat(meta, SEP))
     v.metaText = v.metaFS:GetText()
     y = 48
-    -- the cards: TIME, VS YOUR BEST, BOSSES, DEATHS (and XP, LOOT at WIDE)
-    local wide = G.isWide(G.winW())
-    local row = wide and v.cards6 or v.cards4
-    v.cards4:Hide(); v.cards6:Hide(); row:Show()
+    for _, sec in pairs(v.sections) do sec:Hide() end
+    for _, t in pairs(v.tables) do t.frame:Hide() end
+    v.empties = {}
+    -- the cards: TIME, BOSSES, XP (when the run earned any), WORTH (when it looted anything)
+    local m = Runs.measure(run.rec or {})
+    local cmp = run.cmp or {}
+    -- (the comparison's word, as the tests and the META read it; "first run" names a run with nothing to compare)
+    v.deltaText = (kind == "first" and "first run") or (word ~= "" and word) or "No best yet"
+    local worth = D.worth(run)
+    local defs = { "time", "bosses" }
+    if n0(run.xpGain) > 0 then defs[#defs + 1] = "xp" end
+    if worth > 0 then defs[#defs + 1] = "worth" end
+    local row = v.cardRow(#defs)
     put(row, H.STAT); pcall(row.layout)
-    local cards = row.cards
-    v.cards = cards
-    live.time = cards[1]
-    cards[1]:Set("Time", UI.fmtDur(run.inside), run.inProgress and "inside, so far" or "inside")
-    UI.SetTip(cards[1], function(tip)
+    local cards, card = row.cards, {}
+    for i, k in ipairs(defs) do card[k] = cards[i]; cards[i].ebKey = k end
+    v.cards, v.card = cards, card
+    live.time = card.time
+    local away = n0(run.ghost) + n0(run.outside)
+    card.time:Set("Time", UI.fmtDur(run.inside), run.inProgress and "inside, so far" or (away > 0 and (UI.fmtDur(away) .. " dead or outside") or "inside"))
+    UI.SetTip(card.time, function(tip)
       tip:AddLine("Time", 1, 1, 1)
       tip:AddLine("Time inside the dungeon. " .. (v.clockSentence or ""), 0.78, 0.79, 0.80, true)
       for _, l in ipairs(v.timeTipLines()) do tip:AddLine(l, 0.78, 0.79, 0.80) end
     end)
-    local m = Runs.measure(run.rec or {})
-    local cmp = run.cmp or {}
-    local vsVal = word ~= "" and word or nil
-    if kind == "first" then vsVal = "first run" end
-    -- (one meta string everywhere: "28m 41s first pull to last kill", D.pullMeta)
-    local vsMeta = m and D.pullMeta(m) or "no boss killed"
-    -- (on a card too narrow for the whole string the time stays and the words go to the hover, never cut)
-    local fullMeta = vsMeta
-    if m and UI.TextWidth("META", vsMeta) > (tonumber(cards[2]:GetWidth()) or 0) - 2 * S.S3 then vsMeta = UI.fmtDur(m) end
+    local missed = missedNames(run)
+    local total = totalOf(run)
+    local bossMeta
+    if run.inProgress then bossMeta = total and ((total - n0(run.bossesDown)) > 0 and (UI.fmtNum(total - n0(run.bossesDown)) .. " left") or "all down") or ""
+    elseif m then bossMeta = "boss clock " .. UI.fmtDur(m)
+    else bossMeta = #missed > 0 and ("missed " .. #missed) or "" end
+    card.bosses:Set("Bosses", D.bossCount(run), bossMeta)
     local routeNames = {}
     for _, b in ipairs(run.bosses or {}) do if b.kill then routeNames[#routeNames + 1] = b.name or "Boss" end end
-    if vsVal then
-      cards[2]:Set("Vs your best", vsVal, vsMeta, (wkey == "good" and "good") or (wkey == "warn" and "warn") or "fg")
-      if wkey == "warn" then cards[2].value:SetText(withDot(vsVal, "warn", UI.DOT_SIZE.DISPLAY)) end
-      UI.SetTip(cards[2], { title = "Vs your best", text = ("%s. Against your fastest run that killed these %s: %s."):format(fullMeta:sub(1, 1):upper() .. fullMeta:sub(2), UI.plural(#routeNames, "boss"), fitNames(routeNames, 260)) })
-    else
-      -- (nothing to compare with yet: said in words at TITLE size, never a lone "-")
-      cards[2]:Set("Vs your best", "No best yet", vsMeta, "fgMuted")
-      cards[2].value:SetFont(UI.F.TITLE.ebFile, UI.F.TITLE.ebSize)
-      UI.SetTip(cards[2], { title = "Vs your best", text = "Kill the same bosses in another run to compare." })
+    UI.SetTip(card.bosses, function(tip)
+      tip:AddLine("Bosses", 1, 1, 1)
+      if total then tip:AddLine(bossLine(run, 260), 0.78, 0.79, 0.80, true)
+      else tip:AddLine("Bosses killed in this run. A total shows once the dungeon has been run twice.", 0.78, 0.79, 0.80, true) end
+      if m then tip:AddLine(("Boss clock: %s, the measure bests are compared on."):format(D.pullMeta(m)), 0.78, 0.79, 0.80, true) end
+      if #routeNames > 0 and (kind == "best" or kind == "slower") then
+        tip:AddLine(("Compared with your fastest run that killed these %s: %s."):format(UI.plural(#routeNames, "boss"), fitNames(routeNames, 260)), 0.78, 0.79, 0.80, true)
+      end
+    end)
+    if card.xp then
+      -- (per hour of time inside, the TIME card's own clock; a rate needs Runs.RATE_WARM seconds)
+      local rate = n0(run.inside) >= Runs.RATE_WARM and math.floor(n0(run.xpGain) * 3600 / run.inside + 0.5) or nil
+      card.xp:Set("XP", UI.fmtNum(n0(run.xpGain)), rate and (UI.fmtNum(rate) .. " per hour") or "")
+      UI.SetTip(card.xp, { title = "XP", text = "XP earned inside, and per hour of the time inside." })
     end
-    v.deltaText = vsVal or "No best yet"
-    local missed = missedNames(run)
-    local left = totalOf(run) - n0(run.bossesDown)
-    local bossMeta
-    if run.inProgress then bossMeta = left > 0 and (UI.fmtNum(left) .. " left") or "all down"
-    elseif run.total and #missed == 0 and n0(run.bossesDown) >= run.total then bossMeta = "full clear"
-    else bossMeta = #missed > 0 and ("missed " .. #missed) or "" end
-    cards[3]:Set("Bosses", D.bossCount(run), bossMeta)
-    local names = deathNames(run)
-    cards[4]:Set("Deaths", tostring(deathCount(run)), deathCount(run) == 0 and "clean run" or (#names > 0 and fitNames(names, 120) or ""))
-    if wide then
-      cards[5]:Set("XP", UI.fmtNum(n0(run.xpGain)), run.xpPerHour and (UI.fmtNum(run.xpPerHour) .. " per hour") or "")
-      -- (the coin is the value, the items its meta: Runs names the coin COIN LOOTED and the items LOOT)
-      local nIt = itemCount(run, runItems(run))
-      if n0(run.coin) == 0 and nIt == 0 then cards[6]:Set("Coin looted", "-", "nothing yet")
-      else cards[6]:Set("Coin looted", n0(run.coin) > 0 and UI.money(n0(run.coin)) or "-", UI.plural(nIt, "item")) end
+    if card.worth then
+      local full = D.worthParts(run)
+      local metaW = full
+      if UI.TextWidth("META", full) > (tonumber(card.worth:GetWidth()) or 0) - 2 * S.S3 then metaW = D.worthParts(run, true) end
+      if UI.TextWidth("META", metaW) > (tonumber(card.worth:GetWidth()) or 0) - 2 * S.S3 then metaW = "coin and items" end
+      card.worth:Set("Worth", UI.money(worth), metaW)
+      local g0 = type(run.gold) == "table" and run.gold or {}
+      UI.SetTip(card.worth, function(tip)
+        tip:AddLine("Worth", 1, 1, 1)
+        tip:AddLine(full:sub(1, 1):upper() .. full:sub(2) .. ".", 0.78, 0.79, 0.80, true)
+        if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
+        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+      end)
     end
+    v.worthText = card.worth and card.worth.value:GetText() or nil
     y = y + H.STAT + S.S5
     -- the notes a run can carry (a repeated pull, a lost part): META lines under the cards
     if run.repull then text(line("META", "fgSubtle"), "Possibly two runs: a boss killed before was pulled again in visit " .. run.repull .. ". Split here is on that visit.") end
@@ -648,12 +736,6 @@ local function buildDetail(content, list)
       y = y + H.SECTION
       return sec
     end
-    local function empty(s, color)
-      local fs = line("BODY", color or "fgMuted")
-      fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, -(y + 4)); fs:SetWidth(W - 2 * S.S3); fs:SetText(s)
-      y = y + H.SECTION
-      return fs
-    end
     local function tableAt(tbl, items, fill)
       tbl.frame:Show()
       put(tbl.frame)
@@ -661,18 +743,15 @@ local function buildDetail(content, list)
       tbl.setRows(items, fill)
       y = y + (tbl.height or 0)
     end
-    for _, t in pairs(v.tables) do t.frame:Hide() end
-    v.empties = {}
 
     -- 1 BOSSES: one row per boss in pull order, then the learned list's bosses never pulled
     local bosses = run.bosses or {}
     local byUid = {}
     for _, f in ipairs(run.fights or {}) do if type(f.uid) == "string" then byUid[f.uid] = f end end
-    local bossSec = section("bosses", totalOf(run) > 0 and D.bossCount(run) or nil)
     local brows = {}
     -- (the best run and a first run are their own best: no delta to show)
     -- (a run that is not the best: each boss against the best's split. The best run: against the next fastest run of
-    -- the same bosses. A run nothing compares with leaves the column out and says so once in the section META.)
+    -- the same bosses. A run nothing compares with leaves the column out.)
     local vs, vsAgainst = cmp.vs or {}, nil
     if cmp.first then vs = {} end
     if cmp.isBest then
@@ -694,8 +773,11 @@ local function buildDetail(content, list)
       local res = Runs.bossResult(b)
       local tip = { res .. (n0(b.wipes) > 0 and (", " .. UI.plural(b.wipes, "wipe")) or "") .. (n0(b.pulls) > 1 and (" in " .. UI.plural(b.pulls, "fight")) or "") }
       if b.kill and vs[b.enc] and vsAgainst then tip[#tip + 1] = "Vs best: " .. vsAgainst end
+      -- (Split is on the clock of Killed at: the first boss since entering, so the two cells of its row agree; the
+      -- others since the kill before. Bests still measure from the first pull, Runs.splits.)
       local sp = run.splits and run.splits[b.enc]
-      brows[#brows + 1] = { name = b.name or "Boss", kill = b.kill, n = order[b], since = sp and sp.seg, d = b.kill and vs[b.enc], len = b.combat, tip = tip,
+      local since = sp and b.kill and (sp.prevKey == "start" and b.kill or sp.seg) or nil
+      brows[#brows + 1] = { name = b.name or "Boss", kill = b.kill, n = order[b], since = since, d = b.kill and vs[b.enc], len = b.combat, tip = tip,
         wiped = n0(b.wipes) > 0, fight = b.kill and b.fight and byUid[b.fight] or nil, ebNoOpen = not (b.kill and b.fight and byUid[b.fight]) }
     end
     -- (every boss of the dungeon is listed, the ones still to go too: a run in progress marks the first of them "next")
@@ -708,91 +790,101 @@ local function buildDetail(content, list)
       return false
     end)
     v.bossRows = brows
-    -- (never a column of dashes: with no boss to compare, the column goes and the META says why once)
+    -- (never a column of blanks: with no boss to compare, the column goes)
     local anyVs = false
-    for _, it in ipairs(brows) do if it.d then anyVs = true end end
+    for _, it in ipairs(brows) do if it.d or it.next then anyVs = true end end
     v.tables.bosses.spec[5].hide = not anyVs
     v.bossVsShown = anyVs
-    if not anyVs and #brows > 0 then
-      bossSec:SetMeta((totalOf(run) > 0 and D.bossCount(run) .. SEP or "") .. (run.inProgress and "nothing to compare yet" or "no other run of these bosses yet"))
-    end
-    if #brows == 0 then v.empties.bosses = empty("No boss pulled in this run.")
-    else
+    if #brows > 0 then
+      section("bosses", total and D.bossCount(run) or nil)
       tableAt(v.tables.bosses, brows, function(r, it)
         local dim = not it.kill
-        r.c.n:SetText(it.n and tostring(it.n) or "-")
+        -- (a cell with nothing recorded is blank, never "-")
+        r.c.n:SetText(it.n and tostring(it.n) or "")
         r.c.boss:SetText(it.name); UI.SetColor(r.c.boss, dim and "fgMuted" or "fg")
-        r.c.at:SetText(it.kill and UI.fmtDur(it.kill) or "-")
-        r.c.since:SetText(it.since and UI.fmtDur(it.since) or "-")
-        if it.d then local w2, k2 = UI.fmtDelta(it.d); r.c.vs:SetText(withDot(w2, k2)); UI.SetColor(r.c.vs, k2 or "fgSubtle") else r.c.vs:SetText(it.next and "next" or "-") end
-        if it.kill then r.c.len:SetText(n0(it.len) > 0 and UI.fmtDur(it.len) or "-")
+        r.c.at:SetText(it.kill and D.fmtSplit(it.kill) or "")
+        r.c.since:SetText(it.since and D.fmtSplit(it.since) or "")
+        if it.d then local w2, k2 = UI.fmtDelta(it.d); r.c.vs:SetText(withDot(w2, k2)); UI.SetColor(r.c.vs, k2 or "fgSubtle")
+        else r.c.vs:SetText(it.next and "next" or ""); UI.SetColor(r.c.vs, "fgMuted") end
+        if it.kill then r.c.len:SetText(n0(it.len) > 0 and UI.fmtDur(it.len) or "")
         elseif n0(it.len) > 0 then
           -- (pulled and not killed: what happened, then how long it lasted; a wipe is an event result)
           if it.wiped then r.c.len:SetText(withDot("wipe, " .. UI.fmtDur(it.len), "bad")); UI.SetColor(r.c.len, "bad")
           else r.c.len:SetText("not killed, " .. UI.fmtDur(it.len)); UI.SetColor(r.c.len, "fgMuted") end
-        else r.c.len:SetText("-") end
-        for _, k in ipairs({ "n", "at", "since", "vs", "len" }) do if r.c[k]:GetText() == "-" or r.c[k]:GetText() == "next" then UI.SetColor(r.c[k], "fgMuted") end end
+        else r.c.len:SetText("") end
       end)
     end
-    y = y + S.S5
+    -- the deaths of the run as one line while no row names a killer or a party member (in a dungeon the game hides
+    -- who killed whom): when each happened and how long the character was down
+    local drows = run.deathRows or {}
+    v.deathRows = drows
+    local named = false
+    for _, dd in ipairs(drows) do if dd.foe or dd.who then named = true end end
+    v.deathLine, v.deathFS = nil, nil
+    if deathCount(run) > 0 and not named then
+      local bits = {}
+      for _, dd in ipairs(drows) do
+        local w = type(run.rec) == "table" and Runs.wallOf(run.rec, dd.o) or nil
+        local one = w and UI.fmtClock(w) or (UI.fmtDur(n0(dd.o)) .. " in")
+        if dd.back then one = one .. (" (%s down)"):format(UI.fmtDur(dd.back)) end
+        bits[#bits + 1] = one
+      end
+      if #bits == 0 then v.deathLine = "Deaths: " .. deathCount(run)
+      else
+        v.deathLine = "Deaths: " .. table.concat(bits, SEP)
+        if deathCount(run) > #bits then v.deathLine = v.deathLine .. SEP .. ("and %d more"):format(deathCount(run) - #bits) end
+      end
+      if #brows > 0 then y = y + S.S2 end
+      v.deathFS = text(line("META", "fgMuted"), v.deathLine)
+    end
+    if #brows > 0 or v.deathLine then y = y + S.S5 end
 
-    -- 2 LOOT: the items of the run (green and better), then the coin
+    -- 2 LOOT: the drops of the run, green and better as rows, the rest as one line
     local items = runItems(run)
-    v.lootItems = items
-    -- (the row prices and the footer total are one source: the vendor price of each row's stack)
-    local priced, unpriced = 0, 0
+    v.lootAll = items
+    local shown, white, grey = {}, 0, 0
     for _, it in ipairs(items) do
-      if it.price > 0 then priced = priced + it.price * math.max(1, n0(it.row.count)) else unpriced = unpriced + 1 end
+      if it.rank >= 2 then
+        it.from, it.fromTip = D.sourceOf(run, it.row)
+        shown[#shown + 1] = it
+      elseif it.rank == 1 then white = white + 1 else grey = grey + 1 end
     end
-    local nItems = itemCount(run, items)
-    section("loot", nItems > 0 and UI.plural(nItems, "item") or nil)
-    if #items == 0 and nItems > 0 then v.empties.loot = empty(UI.plural(nItems, "item") .. " looted. Their rows are no longer stored.")
-    elseif #items == 0 then v.empties.loot = empty("Nothing looted.")
-    else
-      tableAt(v.tables.loot, items, function(r, it)
-        local l = it.row
-        -- (the stack count in fgMuted right after the name, as Loot > Auctions writes it)
-        r.c.ic:SetTexture(l.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-        r.c.item:SetText(stripLink(l.item) .. (n0(l.count) > 1 and (" " .. colored("x" .. l.count, C.fgMuted)) or ""))
-        r.c.item:SetTextColor(unpack(qColor(l.q)))
-        r.c.src:SetText(l.src and stripLink(l.src) or "-")
-        r.c.price:SetText(it.price > 0 and UI.money(it.price * math.max(1, n0(l.count))) or "-")
-        if it.price <= 0 then UI.SetColor(r.c.price, "fgMuted") end
-      end)
-    end
-    local g = run.gold or {}
-    -- (a zero coin line is filler: it shows only when there is coin or a priced item to name)
-    local coinParts = {}
-    if n0(g.looted) > 0 then coinParts[#coinParts + 1] = "Coin looted " .. UI.money(n0(g.looted)) end
-    if n0(g.quests) > 0 then coinParts[#coinParts + 1] = "quest rewards " .. UI.money(g.quests) end
-    -- ("known" only when a row's price is not known: the run's gold block counts the items it could not price; a row
-    -- at 0 with no such count is an item no vendor buys)
-    local unknown = n0(g.unpriced) > 0 or (g.lootValue == nil and unpriced > 0)
-    -- (with no row left in the loot log there is no row price to disagree with: the gold block's own value)
-    if #items == 0 and n0(g.lootValue) > 0 then priced = n0(g.lootValue) end
-    if priced > 0 then coinParts[#coinParts + 1] = (unknown and "vendor price of known items " or "vendor price of items ") .. UI.money(priced) end
-    if run.coinPerHour and n0(run.coin) > 0 then coinParts[#coinParts + 1] = UI.money(math.floor(run.coinPerHour), true) .. " per hour" end
-    if #coinParts > 0 then coinParts[1] = coinParts[1]:sub(1, 1):upper() .. coinParts[1]:sub(2) end
-    v.lootLine = #coinParts > 0 and table.concat(coinParts, SEP) or nil
+    v.lootItems = shown
+    local more = white + grey
+    local moreParts = {}
+    if white > 0 then moreParts[#moreParts + 1] = white .. " white" end
+    if grey > 0 then moreParts[#moreParts + 1] = grey .. " grey" end
+    v.lootMore = more > 0 and ((#shown > 0 and "%d more: %s" or "%d looted: %s"):format(more, table.concat(moreParts, ", "))) or nil
+    -- (with no row left in the loot log the run's own count is all there is to say)
+    local stored = n0(run.items)
+    if #items == 0 and stored > 0 then v.lootMore = UI.plural(stored, "item") end
     v.lootFS = nil
-    if v.lootLine then
-      y = y + S.S1
-      v.lootFS = text(line("META", "fgMuted"), v.lootLine)
+    if #shown > 0 or v.lootMore then
+      section("loot", #shown > 0 and (#shown .. " green or better") or nil)
+      if #shown > 0 then
+        tableAt(v.tables.loot, shown, function(r, it)
+          local l = it.row
+          -- (the stack count in fgMuted right after the name, as Loot > Auctions writes it)
+          r.c.ic:SetTexture(l.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+          r.c.item:SetText(stripLink(l.item) .. (n0(l.count) > 1 and (" " .. colored("x" .. l.count, C.fgMuted)) or ""))
+          r.c.item:SetTextColor(unpack(qColor(l.q)))
+          r.c.src:SetText(it.from or "")
+          r.c.at:SetText(UI.fmtClock(l.t))
+        end)
+      end
+      if v.lootMore then
+        y = y + S.S1
+        v.lootFS = text(line("META", "fgMuted"), v.lootMore)
+      end
     end
     v.purseLine = run.gold and Runs.purseLine(run) or nil
     v.purseFS = nil
     if v.purseLine then v.purseFS = text(line("META", "fgMuted"), v.purseLine) end
-    y = y + S.S5 - S.S1
+    if #shown > 0 or v.lootMore or v.purseLine then y = y + S.S5 - S.S1 end
 
-    -- 3 DEATHS: the character's own, and the party's when the run recorded them
-    section("deaths", deathCount(run) > 0 and UI.plural(deathCount(run), "death") or nil)
-    local drows = run.deathRows or {}
-    v.deathRows = drows
-    if #drows == 0 and deathCount(run) == 0 then v.empties.deaths = empty("Nobody died. Clean run.")
-    elseif #drows == 0 then v.empties.deaths = empty(UI.plural(deathCount(run), "death") .. " in this run. The game did not say who killed whom.")
-    else
-      local anyBack = false
-      for _, dd in ipairs(drows) do if dd.back then anyBack = true end end
+    -- 3 DEATHS: a table only when a row names the killer or the party member who died
+    if named then
+      section("deaths", UI.plural(deathCount(run), "death"))
       -- (Where is a place: the boss the party was fighting, by its number in the kill order, never the killer again)
       local bossNo = {}
       for i, b in ipairs(kills) do bossNo[b.enc] = i end
@@ -807,23 +899,23 @@ local function buildDetail(content, list)
         for _, mm in ipairs(run.group or {}) do if (who and mm.name == who) or (not who and mm.me) then cls = mm.class end end
         r.c.who:SetText(who or "You")
         if cls then r.c.who:SetTextColor(UI.ClassColor(cls)) else UI.SetColor(r.c.who, who and "fgSubtle" or "fg") end
-        r.c.foe:SetText(dd.foe or "-"); if not dd.foe then UI.SetColor(r.c.foe, "fgMuted") end
+        r.c.foe:SetText(dd.foe or "")
         local where = type(dd.sub) == "string" and dd.sub ~= "" and dd.sub or (dd.enc and bossNo[dd.enc] and ("at boss " .. bossNo[dd.enc])) or nil
         if where == dd.foe then where = nil end
-        r.c.where:SetText(where or "-"); if not where then UI.SetColor(r.c.where, "fgMuted") end
-        r.c.back:SetText(dd.back and UI.fmtDur(dd.back) or (anyBack and "-" or ""))
+        r.c.where:SetText(where or "")
+        r.c.back:SetText(dd.back and UI.fmtDur(dd.back) or "")
       end)
       if deathCount(run) > #drows then text(line("META", "fgMuted"), ("and %d more"):format(deathCount(run) - #drows)) end
+      y = y + S.S5
     end
-    y = y + S.S5
 
     -- 4 XP: what the run paid, kills and quests apart, then the rate and the levels
-    section("xp", nil)
     local xa, xb, xc = nil, nil, nil
     if run.xp then xa, xb, xc = Runs.xpLine(run) end
     local xp = type(run.xp) == "table" and run.xp or nil
     v.xpFS = {}
     if xp and n0(run.xpGain) > 0 then
+      section("xp", nil)
       local quest, kill = n0(xp.quest), math.max(0, n0(run.xpGain) - n0(xp.quest))
       local main = UI.fmtNum(run.xpGain) .. " XP"
       if quest > 0 and kill > 0 then main = main .. (": %s from kills, %s from quests"):format(UI.fmtNum(kill), UI.fmtNum(quest))
@@ -834,7 +926,8 @@ local function buildDetail(content, list)
       local rest = {}
       for part in tostring(xa or ""):gmatch("[^\194\183]+") do
         part = part:gsub("^%s+", ""):gsub("%s+$", "")
-        if part ~= "" and not part:find(" XP$") then rest[#rest + 1] = part end
+        -- (the rate is the XP card's, per hour of time inside: the line does not repeat it on another clock)
+        if part ~= "" and not part:find(" XP$") and not part:find(" per hour$") then rest[#rest + 1] = part end
       end
       -- (and the kills the client let the addon read: "at least 45 kills" when it hid XP lines)
       local k = xb and xb:match("([%w ,]*kills?)$")
@@ -843,15 +936,12 @@ local function buildDetail(content, list)
       if v.xpMore then v.xpFS[#v.xpFS + 1] = text(line("META", "fgMuted"), v.xpMore) end
       v.xpHidden = xc
       if xc then v.xpFS[#v.xpFS + 1] = text(line("META", "fgMuted"), xc) end
-    else
-      v.xpLine, v.xpMore, v.xpHidden = nil, nil, nil
-      v.empties.xp = empty((ns.Now and ns.Now.atMax and ns.Now.atMax()) and "Max level: no XP to earn." or "No XP in this run.")
-    end
-    y = y + S.S5
+      y = y + S.S5
+    else v.xpLine, v.xpMore, v.xpHidden = nil, nil, nil end
 
     -- 5 PARTY: the largest group a pull of the run recorded, in class colours
-    section("party", grp > 1 and UI.plural(grp, "player") or nil)
     if grp > 1 then
+      section("party", UI.plural(grp, "player"))
       -- one cell per member, joined with " · ": the name in class colour, then level and role in fgMuted
       local ROLE = { TANK = "tank", HEALER = "healer", DAMAGER = "damage" }
       local nm = {}
@@ -865,18 +955,18 @@ local function buildDetail(content, list)
         nm[#nm + 1] = colored(mm.name or "?", { r2, g2, b2 }) .. (#tail > 0 and (" " .. colored(table.concat(tail, " "), C.fgMuted)) or "")
       end
       v.partyFS = text(line("BODY", "fg"), table.concat(nm, colored(SEP, C.fgMuted)), UI.LINE_H.BODY + S.S1)
-    else v.partyFS = nil; v.empties.party = empty(run.fights and #run.fights > 0 and "You ran it alone." or "No fight of this run is stored, so the party is not known.") end
-    y = y + S.S5
+      y = y + S.S5
+    else v.partyFS = nil end
 
     -- 6 PACE: against the best of the route
-    section("pace", nil)
     local p1, p2 = D.paceLines(run)
     v.paceLine, v.paceLine2 = p1, p2
     if p1 then
+      section("pace", nil)
       text(line("BODY", "fg"), p1, UI.LINE_H.BODY + S.S1)
       if p2 then text(line("META", "fgMuted"), p2) end
-    else v.empties.pace = empty("Kill the same bosses twice to see your pace.") end
-    y = y + S.S5
+      y = y + S.S5
+    end
 
     -- 7 ENTERED AND LEFT: where the time went, then one row per visit (Split here where a run can be split)
     section("visits", UI.plural(#(run.visits or {}), "visit"))
@@ -914,9 +1004,9 @@ local function buildDetail(content, list)
 
     -- 8 ALL FIGHTS IN THIS RUN: the fights still stored, the same list Home > Fights groups under the run (A21, B23)
     v.encounters = #(run.fights or {})
-    section("pulls", v.encounters > 0 and UI.plural(v.encounters, "fight") or nil)
-    if v.encounters == 0 then v.empties.pulls = empty("No fight of this run is stored any more. The desktop app saved them.")
-    else
+    -- (shown only while pulls of this run are stored: the desktop app picks them up, and then the section goes)
+    if v.encounters > 0 then
+      section("pulls", UI.plural(v.encounters, "pull"))
       local prow = {}
       for i = #run.fights, 1, -1 do prow[#prow + 1] = { f = run.fights[i] } end
       v.pullRows = prow
@@ -928,8 +1018,8 @@ local function buildDetail(content, list)
         local rc = ns.FightResult and ns.FightResult(f) or { "-", C.fgSubtle }
         r.c.re:SetText(rc[1]); r.c.re:SetTextColor(rc[2][1], rc[2][2], rc[2][3])
       end)
+      y = y + S.S5
     end
-    y = y + S.S5
 
     -- 9 EDIT THIS RUN: Keep, End run now (the open run), Join with the run before, Delete run
     section("edit", nil)
@@ -963,7 +1053,6 @@ local function buildDetail(content, list)
     if not q and not v.refused then text(line("META", "fgMuted"), run.keep and "Kept: never removed when the list is full." or "Keep a run so it is never removed when the list is full.") end
     for i = ln + 1, #v.lines do v.lines[i]:Hide() end
     for i = bn + 1, #v.btns do v.btns[i]:Hide() end
-    for k, sec in pairs(v.sections) do if not sec:IsShown() then sec:Hide() end end
     y = y + S.S4
     col:SetHeight(y)
     v.sf:SetContentHeight(y)
@@ -971,10 +1060,70 @@ local function buildDetail(content, list)
     v.sigLists, v.sigPage = nil, nil
     if run.inProgress and type(run.rec) == "table" then v.sigLists, v.sigPage = v.signature(run.rec) end
   end
+  -- A row from before the run store (RunsLegacy.lua): the time in the dungeon and what it was worth, the two facts
+  -- the gold run kept. Nothing else is on the page, and nothing says what is absent.
+  local function renderLegacy(run)
+    v.pending, v.refused = nil, nil
+    v.run = run
+    ln, bn = 0, 0
+    v.renders = (v.renders or 0) + 1
+    local W = G.mainW(G.winW())
+    v.renderedW = W
+    col:SetWidth(W)
+    for _, sec in pairs(v.sections) do sec:Hide() end
+    for _, t in pairs(v.tables) do t.frame:Hide() end
+    v.empties, v.bossRows, v.lootItems, v.lootAll, v.deathRows = {}, {}, {}, {}, {}
+    v.lootMore, v.lootFS, v.deathLine, v.deathFS, v.purseLine, v.xpLine, v.xpMore, v.paceLine, v.paceLine2, v.partyFS = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
+    v.deltaText, v.encounters, v.timeLine, v.timeLine2 = nil, 0, nil, nil
+    live.time, live.line1, live.line2 = nil, nil, nil
+    local title = run.name or "Dungeon"
+    v.titleFS:ClearAllPoints(); v.titleFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, 0); v.titleFS:SetText(title)
+    local b = v.badges[1] or UI.Badge(col, "PARTIAL"); v.badges[1] = b
+    b:SetBadge("PARTIAL"); b:Show()
+    UI.SetTip(b, { title = "Partial", text = "Time and loot only" })
+    for i = 2, #v.badges do v.badges[i]:Hide() end
+    local tw = math.min(UI.TextWidth("TITLE", title), W - 2 * S.S3 - b:GetWidth() - S.S2)
+    v.titleFS:SetWidth(math.max(1, tw))
+    b:ClearAllPoints(); b:SetPoint("LEFT", v.titleFS, "RIGHT", S.S2, 0)
+    v.metaFS:ClearAllPoints(); v.metaFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, -22); v.metaFS:SetWidth(W - 2 * S.S3)
+    v.metaFS:SetText(UI.fmtWhen(run.startT))
+    v.metaText = v.metaFS:GetText()
+    local y = 48
+    local worth = D.worth(run)
+    local row = v.cardRow(worth > 0 and 2 or 1)
+    row:ClearAllPoints(); row:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); row:SetWidth(W); row:SetHeight(H.STAT); pcall(row.layout)
+    local cards = row.cards
+    v.cards, v.card = cards, { time = cards[1], worth = cards[2] }
+    cards[1]:Set("Time", UI.fmtDur(run.inside), "in the dungeon")
+    UI.SetTip(cards[1], { title = "Time", text = "Time in the dungeon and at its entrance, counted in steps of 10 seconds." })
+    if cards[2] then
+      local full = D.worthParts(run)
+      local metaW = full
+      if UI.TextWidth("META", full) > (tonumber(cards[2]:GetWidth()) or 0) - 2 * S.S3 then metaW = D.worthParts(run, true) end
+      cards[2]:Set("Worth", UI.money(worth), metaW)
+      local g0 = run.gold
+      UI.SetTip(cards[2], function(tip)
+        tip:AddLine("Worth", 1, 1, 1)
+        tip:AddLine(full:sub(1, 1):upper() .. full:sub(2) .. ".", 0.78, 0.79, 0.80, true)
+        if n0(g0.items) > 0 then tip:AddLine(UI.plural(g0.items, "item") .. " looted.", 0.78, 0.79, 0.80, true) end
+        if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
+        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+      end)
+    end
+    v.worthText = cards[2] and cards[2].value:GetText() or nil
+    y = y + H.STAT + S.S4
+    for i = ln + 1, #v.lines do v.lines[i]:Hide() end
+    for i = bn + 1, #v.btns do v.btns[i]:Hide() end
+    col:SetHeight(y)
+    v.sf:SetContentHeight(y)
+    v.contentH = y
+    v.sigLists, v.sigPage = nil, nil
+  end
   -- the clocks of the TIME tooltip, as one sentence
   v.clockSentence = nil
   local baseRender = v.render
   v.render = function(run)
+    if run and run.legacy then return renderLegacy(run) end
     if run then
       local bits = { "entered " .. UI.fmtClock(run.startT) }
       local rec = run.rec or {}
@@ -1084,13 +1233,17 @@ local SORT_VAL = {
   name = function(r) return (r.name or ""):lower() end,
   dur = function(r) return n0(r.inside) end,
   vs = function(r) local c = r.cmp; return (c and c.mode == "same" and c.delta) or 1e9 end,
-  boss = function(r) return n0(r.bossesDown) end,
-  death = function(r) return deathCount(r) end,
-  xp = function(r) return n0(r.xpGain) end,
-  coin = function(r) return n0(r.coin) end,
-  xph = function(r) return n0(r.xpPerHour) end,
-  loot = function(r) return n0(r.items) end,
+  boss = function(r) return r.legacy and -1 or n0(r.bossesDown) end,
+  death = function(r) return r.legacy and -1 or deathCount(r) end,
+  worth = function(r) return (D.worth(r)) end,
 }
+-- every run the list shows: the run records (the open one last) and the rows from before the run store
+function D.allRuns()
+  local out = Runs.views()
+  local L = ns.RunsLegacy
+  for _, r in ipairs(L and L.views() or {}) do out[#out + 1] = r end
+  return out
+end
 -- the runs the filter keeps, sorted by `key`; ties and the default newest first
 local function listRows(runs, inst, key, asc)
   local rows = {}
@@ -1105,7 +1258,7 @@ local function listRows(runs, inst, key, asc)
   return rows
 end
 D.listRows = listRows
--- the rows with their day rows ("TODAY · 1 RUN") while the list is in time order
+-- the rows with their day rows ("TODAY") while the list is in time order
 local function withDays(rows, grouped)
   if not grouped then return rows end
   local out, i = {}, 1
@@ -1113,7 +1266,8 @@ local function withDays(rows, grouped)
     local day = UI.fmtDay(rows[i].startT)
     local j = i
     while j + 1 <= #rows and UI.fmtDay(rows[j + 1].startT) == day do j = j + 1 end
-    out[#out + 1] = { ebSection = day .. SEP .. UI.plural(j - i + 1, "run") }
+    -- (the day alone: a count would claim the runs of a day whose earlier runs were never stored)
+    out[#out + 1] = { ebSection = day }
     for k = i, j do out[#out + 1] = rows[k] end
     i = j + 1
   end
@@ -1139,21 +1293,9 @@ local function placeBadge(tbl, row)
     if b then b:Hide() end
     fs:SetWidth(cw.w); UI.Fit(fs, 10)
   end
-  -- the LOOT cell: the best drop's icon as its own 20 px texture at the column's left edge, centred on the row, and
-  -- "+N" after it on the BODY line of the other cells (never an inline |T|t in a 12 px line)
-  local lc, lf, ic = tbl.cols and tbl.cols.loot, row.c and row.c.loot, row.ebLootIc
-  if lc and lf then
-    lf:ClearAllPoints()
-    if ic and ic:IsShown() and not (row.item and row.item.ebSection) then
-      ic:ClearAllPoints(); ic:SetPoint("LEFT", row, "LEFT", lc.x, 0)
-      lf:SetPoint("LEFT", ic, "RIGHT", S.S1, 0); lf:SetWidth(math.max(1, lc.w - 20 - S.S1))
-    else
-      if ic then ic:Hide() end
-      lf:SetPoint("LEFT", row, "LEFT", lc.x, 0); lf:SetWidth(lc.w)
-    end
-  end
 end
 local function badgeOf(run)
+  if run.legacy then return nil end
   if run.inProgress then return "LIVE" end   -- (the short live marker in a row; the hero and the page say IN PROGRESS)
   local _, _, kind = vsBest(run)
   if kind == "best" then return "BEST" end
@@ -1172,16 +1314,16 @@ local function buildList(content)
   v.col = col
   v.summary = UI.Summary(col)
   v.hero = UI.Hero(col, {})
-  v.empty = UI.Empty(col, { icon = "Interface\\Icons\\INV_Misc_Map_01", title = "No dungeon runs yet",
-    text = "Enter any dungeon and your run is recorded: time, bosses, deaths, loot and XP, against your best." })
+  v.empty = UI.Empty(col, { icon = "Interface\\Icons\\INV_Misc_Map_01", title = "No run stored yet",
+    text = "Enter any dungeon and your run is recorded: time, bosses, deaths and loot." })
   v.empty:Hide()
-  v.section = UI.Section(col, "All runs")
+  v.section = UI.Section(col, "Runs")
   -- the dungeon filter: a filter button at the right of the control row
   local controls = content.ebControls or v
   v.filter = UI.FilterButton(controls, { default = "", label = "All dungeons",
     items = function()
       local names, seen = {}, {}
-      for _, r in ipairs(Runs.views(nil, true)) do
+      for _, r in ipairs(D.allRuns()) do
         if r.name and not seen[r.name] then seen[r.name] = true; names[#names + 1] = r.name end
       end
       table.sort(names)
@@ -1200,16 +1342,17 @@ local function buildList(content)
   -- the list
   local spec = {
     { key = "time", label = "When", kind = "tag", min = 40, sort = true },
-    { key = "name", label = "Dungeon", flex = 1, min = 140, max = 360, sort = true },
-    { key = "dur", label = "Time", kind = "num", min = 56, sort = true, tip = "Time inside the dungeon, entrance to exit" },
-    { key = "vs", label = "Vs best", kind = "tag", min = 88, justify = "RIGHT", sort = true, tip = "Against your fastest run with the same bosses, first pull to last kill" },
+    -- (the name takes the width the other columns leave, so the list ends on the hero's right edge)
+    { key = "name", label = "Dungeon", flex = 1, min = 140, sort = true },
+    { key = "dur", label = "Time", kind = "num", min = 56, sort = true, tip = "Time inside the dungeon" },
+    { key = "vs", label = "Vs best", kind = "tag", min = 88, justify = "RIGHT", sort = true, tip = "Compared from first pull to last kill, against your fastest run with the same bosses" },
     { key = "boss", label = "Bosses", kind = "num", min = 40, sort = true },
     { key = "death", label = "Deaths", kind = "num", min = 48, sort = true },
-    { key = "xp", label = "XP", kind = "num", min = 56, wide = true, sort = true },
-    { key = "coin", label = "Coin looted", kind = "money", min = 72, wide = true, sort = true },
-    { key = "xph", label = "XP per hour", kind = "num", min = 64, wide = true, sort = true },
-    { key = "loot", label = "Loot", kind = "tag", min = 72, sort = true, measure = { "99 items" } },
+    { key = "worth", label = "Worth", kind = "money", min = 72, sort = true, tip = "Coin looted plus the vendor value of the items" },
+    { key = "drop", label = "Best drop", min = 160, max = 260, wide = true },
   }
+  local specOf = {}
+  for _, c in ipairs(spec) do specOf[c.key] = c end
   local tbl
   tbl = UI.KitTable(col, spec, {
     sortKey = st.sortKey, sortAsc = st.sortAsc,
@@ -1225,6 +1368,13 @@ local function buildList(content)
   v.tbl = tbl
   -- the lines of a row's tooltip (and of the run page's TIME card): the clocks, the state, the best, XP and loot
   v.tipLines = function(run)
+    if run.legacy then
+      local out = { "Time and loot only", "Time " .. UI.fmtDur(run.inside) }
+      local parts = D.worthParts(run)
+      if parts ~= "" then out[#out + 1] = "Worth " .. UI.money((D.worth(run))) .. ": " .. parts end
+      if n0(run.items) > 0 then out[#out + 1] = UI.plural(run.items, "item") end
+      return out
+    end
     local out = { "Inside " .. UI.fmtDur(run.inside) }
     if n0(run.ghost) > 0 then out[#out + 1] = "Run back " .. UI.fmtDur(run.ghost) end
     if n0(run.outside) > 0 then out[#out + 1] = "Outside " .. UI.fmtDur(run.outside) end
@@ -1255,7 +1405,7 @@ local function buildList(content)
     end
     local names = deathNames(run)
     if deathCount(run) > 0 then out[#out + 1] = UI.plural(deathCount(run), "death") .. (#names > 0 and (": " .. table.concat(names, ", ")) or "") end
-    if n0(run.xpGain) > 0 then out[#out + 1] = UI.fmtNum(run.xpGain) .. " XP" .. (run.xpPerHour and (SEP .. UI.fmtNum(run.xpPerHour) .. " XP per hour") or "") end
+    if n0(run.xpGain) > 0 then out[#out + 1] = UI.fmtNum(run.xpGain) .. " XP" end
     local drop = v.drops and v.drops[run.id]
     if drop then
       for i, it in ipairs(drop.items) do
@@ -1263,7 +1413,8 @@ local function buildList(content)
         out[#out + 1] = colored(stripLink(it.row.item), qColor(it.row.q)) .. (n0(it.row.count) > 1 and (" x" .. it.row.count) or "")
       end
     end
-    out[#out + 1] = "Coin looted " .. UI.money(n0(run.coin))
+    local parts = D.worthParts(run)
+    if parts ~= "" then out[#out + 1] = "Worth " .. UI.money((D.worth(run))) .. ": " .. parts end
     return out
   end
 
@@ -1273,7 +1424,8 @@ local function buildList(content)
     col:SetWidth(w)
     local y = 0
     local function put(f, h) f:ClearAllPoints(); f:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); f:SetWidth(w); if h then f:SetHeight(h) end end
-    put(v.summary, H.SUMMARY); pcall(v.summary.layout); y = y + H.SUMMARY + S.S3
+    -- (the summary line and its gap only while it has something to say)
+    if n0(v.summaryN) > 0 then put(v.summary, H.SUMMARY); pcall(v.summary.layout); y = y + H.SUMMARY + S.S3 end
     if v.empty:IsShown() then
       -- (the big empty block's top at CONTENT_TOP + S7, 2.7: 48 under the column's top, the summary above it)
       UI.PlaceEmpty(v.empty)
@@ -1314,41 +1466,31 @@ local function buildList(content)
       -- (the run in progress opens its page as every other run does, A10; a ghost: no primary while it runs)
       h:SetButton("Open run", function() v.open(run) end, "ghost")
     else
-      if kind == "first" then
-        local total = totalOf(run)
-        verdict = (total > 0 and (D.bossCount(run) .. " bosses") or "No boss killed") .. " in " .. UI.fmtDur(run.inside)
-      elseif kind == "best" then
-        if word == "best" then verdict = (cmp.runs and cmp.runs > 1) and "Your best for these bosses" or "No best for these bosses yet"
-        else verdict, vkey = word .. " than your best", wkey end
-      elseif kind == "slower" then
-        if word == "same as best" then verdict = "Same as your best" else verdict, vkey = word .. " than your best", wkey end
-      else verdict = n0(run.bossesDown) == 0 and "No boss killed" or "No best for these bosses yet" end
-      if kind == "first" then
-        -- (the HERO has the count and the time: META has the day, the word and what was missed)
-        local missed = missedNames(run)
-        local tail = #missed > 0 and ("missed " .. fitNames(missed, math.max(80, w - 260))) or (run.total and n0(run.bossesDown) >= run.total and "full clear" or nil)
-        h:SetMeta(UI.fmtWhen(run.startT) .. SEP .. "first run" .. (tail and (SEP .. tail) or ""), nil)
+      -- (the answer is the result, "7 bosses in 1h 9m"; a comparison leads only when there is a best to compare with)
+      local compared = (kind == "best" and word ~= "best" and word ~= "") or kind == "slower"
+      if compared and word == "same as best" then verdict = "Same as your best"
+      elseif compared then verdict, vkey = word .. " than your best", wkey
+      else verdict = ((n0(run.bossesDown) > 0 or totalOf(run)) and D.bossWord(run) or "No boss killed") .. " in " .. UI.fmtDur(run.inside) end
+      local m1 = { UI.fmtWhen(run.startT) }
+      if compared then m1[#m1 + 1] = UI.fmtDur(run.inside); m1[#m1 + 1] = bossLine(run, w - 200)
       else
-        h:SetMeta(UI.fmtWhen(run.startT) .. SEP .. UI.fmtDur(run.inside) .. SEP .. bossLine(run, w - 200), nil)
+        local missed = missedNames(run)
+        if #missed > 0 then m1[#m1 + 1] = "missed " .. fitNames(missed, math.max(80, w - 260))
+        elseif run.total and n0(run.bossesDown) >= run.total then m1[#m1 + 1] = "full clear" end
       end
+      h:SetMeta(table.concat(m1, SEP), nil)
       h:SetButton("Open run", function() v.open(run) end)
     end
     verdict = verdict:sub(1, 1):upper() .. verdict:sub(2)
     h:SetHero(withDot(verdict, vkey, UI.DOT_SIZE.HERO), vkey == "good" and "good" or (vkey == "warn" and "warn") or "fg")
     v.heroVerdict = verdict
-    -- META line 2: the best drop, the item count and who died
+    -- META line 2: the deaths (a count, only when there were any) and the best drop
     local drop = v.drops and v.drops[run.id]
     local best = drop and drop.best
     local parts = {}
-    if best then parts[#parts + 1] = "Best drop: " .. icon(best.icon, 12) .. (best.icon and " " or "") .. colored(stripLink(best.item), qColor(best.q)) end
-    local nIt = itemCount(run, drop and drop.items)
-    if nIt > 0 then parts[#parts + 1] = UI.plural(nIt, "item") elseif not best then parts[#parts + 1] = "Nothing looted" end
-    local names = deathNames(run)
-    if deathCount(run) == 0 then parts[#parts + 1] = "nobody died"
-    elseif #names > 0 then
-      for i, n in ipairs(names) do if n == "you" then names[i] = "You" end end
-      parts[#parts + 1] = fitNames(names, 160) .. (#names == 1 and names[1] == "You" and " died" or " died")
-    else parts[#parts + 1] = UI.plural(deathCount(run), "death") end
+    if deathCount(run) > 0 then parts[#parts + 1] = UI.plural(deathCount(run), "death") end
+    if best and Runs.qRank(best.q) >= 2 then parts[#parts + 1] = "best drop " .. icon(best.icon, 12) .. (best.icon and " " or "") .. colored(stripLink(best.item), qColor(best.q)) end
+    if #parts > 0 then parts[1] = parts[1]:sub(1, 1):upper() .. parts[1]:sub(2) end
     h:SetMeta2(table.concat(parts, SEP))
     v.heroRun = run
     pcall(h.layout)
@@ -1369,13 +1511,19 @@ local function buildList(content)
     if listRebuild then listRebuild() end
   end
 
+  -- the line under the hero's place: the instances this hour and the lockouts, each only with something to say
   v.summarySegments = function()
-    local segs = { D.instanceSegment(), D.lockSegment() }
+    local segs = {}
+    local a, b = D.instanceSegment(), D.lockSegment()
+    if a then segs[#segs + 1] = a end
+    if b then segs[#segs + 1] = b end
     v.summary:SetSegments(segs)
+    v.summaryN = #segs
+    if #segs == 0 then v.summary:Hide() else v.summary:Show() end
   end
 
   listRebuild = function()
-    local runs = Runs.views()
+    local runs = D.allRuns()
     v.drops = bestDrops(runs)
     v.summarySegments()
     local rows = listRows(runs, st.inst, st.sortKey, st.sortAsc)
@@ -1389,47 +1537,62 @@ local function buildList(content)
       return
     end
     v.empty:Hide(); v.section:Show(); tbl.frame:Show()
-    -- the hero: the newest run the filter keeps
+    -- the hero: the newest run record the filter keeps (a partial row has no result to lead with)
     local newest
-    for _, r in ipairs(rows) do if not newest or n0(r.startT) > n0(newest.startT) then newest = r end end
+    for _, r in ipairs(rows) do if not r.legacy and (not newest or n0(r.startT) > n0(newest.startT)) then newest = r end end
     v.heroRefresh(newest)
-    -- (filtered to one dungeon, the section is named after it; a list with no row says no "0 runs", B24)
-    v.section:SetLabel(st.inst or "All runs")
-    v.section:SetMeta(#rows > 0 and UI.plural(#rows, "run") or nil)
+    -- (filtered to one dungeon, the section is named after it; the screen claims no count of runs: the runs from
+    -- before the run store are not all here)
+    v.section:SetLabel(st.inst or "Runs")
+    v.section:SetMeta(nil)
+    -- A column is left out while no listed row has a value for it, or fewer than a third have one (0.3): Vs best,
+    -- Bosses and Deaths are blank on the partial rows, and Vs best on a run with nothing to compare.
+    local has = { vs = 0, boss = 0, death = 0, drop = 0 }
+    local words = {}
+    for _, r in ipairs(rows) do
+      local word, wkey = vsBest(r)
+      words[r] = { word, wkey }
+      if word ~= "" then has.vs = has.vs + 1 end
+      if not r.legacy then has.boss = has.boss + 1; has.death = has.death + 1 end
+      local dr = v.drops[r.id]
+      if dr and dr.best and Runs.qRank(dr.best.q) >= 2 then has.drop = has.drop + 1 end
+    end
+    local changed = false
+    for k, n in pairs(has) do
+      local hide = n == 0 or n * 3 < #rows
+      if (specOf[k].hide or false) ~= hide then specOf[k].hide = hide; changed = true end
+    end
+    v.colHidden = { vs = specOf.vs.hide, boss = specOf.boss.hide, death = specOf.death.hide, drop = specOf.drop.hide }
+    if changed then tbl.relayout(G.mainW(G.winW())) end
     v.place()
     local grouped = st.sortKey == "time"
     tbl.setRows(withDays(rows, grouped), function(row, run)
       row.run = run
       row.c.time:SetText(grouped and UI.fmtClock(run.startT) or UI.fmtDate(run.startT))
-      row.c.name:SetText(run.name or "?")
+      -- (a row from before the run store carries a muted "partial": its tooltip says "Time and loot only")
+      row.c.name:SetText((run.name or "?") .. (run.legacy and (" " .. colored("partial", C.fgMuted)) or ""))
       local b = badgeOf(run)
       if b then
         if not row.ebBadge then row.ebBadge = UI.Badge(row, b) end
         row.ebBadge:SetBadge(b); row.ebBadge:Show()
       elseif row.ebBadge then row.ebBadge:Hide() end
       row.c.dur:SetText(UI.fmtDur(run.inside))
-      local word, wkey = vsBest(run)
-      row.c.vs:SetText(word ~= "" and withDot(word, wkey) or "-")
-      UI.SetColor(row.c.vs, (wkey == "good" and "good") or (wkey == "warn" and "warn") or (word == "" and "fgMuted") or "fgSubtle")
-      row.c.boss:SetText(bossText(run))
-      row.c.death:SetText(tostring(deathCount(run)))
-      row.c.xp:SetText(n0(run.xpGain) > 0 and UI.fmtNum(run.xpGain) or "-")
-      row.c.coin:SetText(n0(run.coin) > 0 and UI.money(run.coin) or "-")
-      row.c.xph:SetText(run.xpPerHour and UI.fmtNum(run.xpPerHour) or "-")
-      local drop = v.drops[run.id]
-      local nItems = itemCount(run, drop and drop.items)
-      if not row.ebLootIc then
-        row.ebLootIc = row:CreateTexture(nil, "ARTWORK"); row.ebLootIc:SetSize(20, 20); row.ebLootIc:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      -- (a cell with nothing recorded is blank, never "-" and never 0)
+      local word, wkey = words[run][1], words[run][2]
+      if row.c.vs then
+        row.c.vs:SetText(word ~= "" and withDot(word, wkey) or "")
+        UI.SetColor(row.c.vs, (wkey == "good" and "good") or (wkey == "warn" and "warn") or "fgSubtle")
       end
-      -- (one format in every row: the best drop's icon, a bag when its row is no longer stored, then "N items")
-      if nItems > 0 then
-        row.ebLootIc:SetTexture((drop and drop.best and drop.best.icon) or D.BAG_ICON); row.ebLootIc:Show()
-        row.c.loot:SetText(UI.plural(nItems, "item"))
-      else
-        row.ebLootIc:Hide()
-        row.c.loot:SetText("-"); UI.SetColor(row.c.loot, "fgMuted")
+      if row.c.boss then row.c.boss:SetText(run.legacy and "" or bossText(run)) end
+      if row.c.death then row.c.death:SetText(run.legacy and "" or tostring(deathCount(run))) end
+      local worth = D.worth(run)
+      row.c.worth:SetText(worth > 0 and UI.money(worth) or "")
+      if row.c.drop then
+        local dr = v.drops[run.id]
+        local best = dr and dr.best
+        if best and Runs.qRank(best.q) >= 2 then row.c.drop:SetText(stripLink(best.item)); row.c.drop:SetTextColor(unpack(qColor(best.q)))
+        else row.c.drop:SetText("") end
       end
-      for _, k in ipairs({ "xp", "coin", "xph" }) do if row.c[k]:GetText() == "-" then UI.SetColor(row.c[k], "fgMuted") end end
     end)
     for i = 1, tbl.shownN do
       local r = tbl.rows[i]
@@ -1441,7 +1604,7 @@ local function buildList(content)
     for _, r in ipairs(rows) do if r.id == v.selectedId then sel = r end end
     tbl.setSelected(sel)
     if #rows == 0 then
-      tbl.setState(("No run of %s yet."):format(st.inst or "this dungeon"), "Show all dungeons", function() v.pickInst(nil) end, true)
+      tbl.setState(("No run of %s stored."):format(st.inst or "this dungeon"), "Show all dungeons", function() v.pickInst(nil) end, true)
       v.hero:Hide()
     end
     v.place()
@@ -1470,7 +1633,14 @@ function D.deathsPerRun()
   return out
 end
 
--- ══ BY DUNGEON (4.7) ═══════════════════════════════════════════════════════════════════════════════════════════════
+-- ══ BY DUNGEON (docs/UX_PRAGMATIC.md 2.3) ═════════════════════════════════════════════════════════════════════════
+-- The page exists only once two dungeons have two stored runs each: before that a best is the only run and an
+-- average is one number. Only dungeons with run records are listed (the statistics count nothing else).
+function D.byVisible()
+  local n = 0
+  for _, d in ipairs(Runs.dungeonRows()) do if not d.other and n0(d.n) >= 2 then n = n + 1 end end
+  return n >= 2
+end
 local function buildBy(content)
   local v = CreateFrame("Frame", nil, content); v:SetAllPoints(content)
   local st = { sortKey = nil, sortAsc = false }
@@ -1479,20 +1649,15 @@ local function buildBy(content)
   v.sf = sf
   local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
   v.col = col
-  v.summary = UI.Summary(col)
-  v.section = UI.Section(col, "All dungeons")   -- (the list-page structure of Runs and Items)
-  local BEST_TIP = "First pull to last kill, on the route of your best."
+  v.section = UI.Section(col, "Dungeons")
+  local BEST_TIP = "Boss clock: first pull to last kill, on the route of your best."
   local dtbl = UI.KitTable(col, {
     { key = "name", label = "Dungeon", flex = 1, min = 140, max = 360, sort = true },
     { key = "n", label = "Runs", kind = "num", min = 40, sort = true },
     { key = "best", label = "Best", kind = "num", min = 56, sort = true, tip = BEST_TIP },
     { key = "avg", label = "Average", kind = "num", min = 56, sort = true, tip = BEST_TIP },
-    { key = "xp", label = "XP per hour", kind = "num", min = 64, sort = true, tip = "XP per hour of active time inside" },
-    { key = "coin", label = "Gold per hour", kind = "money", min = 72, sort = true, tip = "Looted coin and quest rewards per hour of active time inside" },
-    { key = "dpr", label = "Deaths/run", kind = "num", min = 64, sort = true, tip = "Deaths per run, yours and your party's, as the Deaths column of Runs counts them" },
-    { key = "lvl", label = "Level", kind = "num", min = 48, sort = true, tip = "Your level on your last run" },
-    { key = "full", label = "Full clears", kind = "num", min = 64, wide = true, sort = true },
-    { key = "last", label = "Last", kind = "tag", min = 72, wide = true, sort = true },
+    { key = "dpr", label = "Deaths per run", kind = "num", min = 88, sort = true, tip = "Yours and your party's, as the Deaths column of Runs counts them" },
+    { key = "worth", label = "Worth per run", kind = "money", min = 88, sort = true, tip = "Coin looted plus the vendor value of the items, per run" },
   }, {
     onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; v.rebuild() end,
     onHeight = function() pcall(v.place) end,
@@ -1504,7 +1669,7 @@ local function buildBy(content)
     tooltip = function(row, d, tip)
       if not d then return end
       tip:AddLine(d.name, 1, 1, 1)
-      tip:AddLine(("%s, %s"):format(UI.plural(d.n, "run"), UI.plural(d.full, "full clear")), 0.78, 0.79, 0.80)
+      tip:AddLine(UI.plural(d.n, "run"), 0.78, 0.79, 0.80)
       if d.other then tip:AddLine("Dungeons run least recently, counted together once 80 dungeons have numbers of their own.", 0.78, 0.79, 0.80, true)
       elseif d.best then tip:AddLine("Best and Average: " .. BEST_TIP, 0.78, 0.79, 0.80, true) end
     end })
@@ -1513,8 +1678,6 @@ local function buildBy(content)
     local w = G.mainW(G.winW())
     col:SetWidth(w)
     local y = 0
-    v.summary:ClearAllPoints(); v.summary:SetPoint("TOPLEFT", col, "TOPLEFT", 0, 0); v.summary:SetWidth(w); pcall(v.summary.layout)
-    y = H.SUMMARY + S.S3
     v.section:ClearAllPoints(); v.section:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); v.section:SetWidth(w); y = y + H.SECTION
     dtbl.frame:ClearAllPoints(); dtbl.frame:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); dtbl.frame:SetWidth(w)
     if dtbl.width ~= math.min(w, G.TABLE_MAX) then dtbl.relayout(w) end
@@ -1523,33 +1686,21 @@ local function buildBy(content)
     v.contentH = y
   end
   content:HookScript("OnSizeChanged", function() pcall(v.place) end)
-  -- your level on your last run of each dungeon
-  local function levels()
-    local c = ns.char and ns.char() or nil
-    local out = {}
-    for _, r in ipairs(c and type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do
-      if type(r) == "table" and type(r.xp) == "table" and r.xp.l0 then out[Runs.keyOf(r)] = math.floor(r.xp.l0) end
-    end
-    return out
-  end
   local VAL = {
     name = function(d) return (d.name or ""):lower() end, n = function(d) return n0(d.n) end,
-    best = function(d) return d.best or 1e12 end, avg = function(d) return d.avg or 1e12 end,
-    xp = function(d) return n0(d.xpPerHour) end, coin = function(d) return n0(d.coinPerHour) end,
-    dpr = function(d) return n0(d.deathsPerRun) end, lvl = function(d) return n0(d.level) end,
-    full = function(d) return n0(d.full) end, last = function(d) return n0(d.last) end,
+    best = function(d) return d.best or 1e12 end, avg = function(d) return (n0(d.n) >= 2 and d.avg) or 1e12 end,
+    dpr = function(d) return n0(d.deathsPerRun) end, worth = function(d) return n0(d.worthPerRun) end,
+    last = function(d) return n0(d.last) end,
   }
   v.rebuild = function()
     local rows = Runs.dungeonRows()
-    local lv = levels()
     local dpr = D.deathsPerRun()
-    for _, d in ipairs(rows) do d.level = lv[d.key]; if dpr[d.key] then d.deathsPerRun = dpr[d.key] end end
-    local atMax = (ns.Now and ns.Now.atMax and ns.Now.atMax()) or false
-    v.atMax = atMax
-    local key = st.sortKey or (atMax and "coin" or "xp")
+    for _, d in ipairs(rows) do if dpr[d.key] then d.deathsPerRun = dpr[d.key] end end
+    -- (the dungeon run last comes first until a column is picked)
+    local key = st.sortKey or "last"
     local asc = st.sortKey and st.sortAsc or false
-    dtbl.setSort(key, asc)
-    local val = VAL[key] or VAL.xp
+    if st.sortKey then dtbl.setSort(key, asc) end
+    local val = VAL[key] or VAL.last
     table.sort(rows, function(a, b)
       if a.other ~= b.other then return b.other end
       local x, y = val(a), val(b)
@@ -1557,39 +1708,20 @@ local function buildBy(content)
       return n0(a.last) > n0(b.last)
     end)
     v.dshown = rows
-    -- the answer: the dungeon that pays best
-    local top
-    for _, d in ipairs(rows) do
-      local r = atMax and d.coinPerHour or d.xpPerHour
-      if not d.other and r and (not top or r > (atMax and top.coinPerHour or top.xpPerHour)) then top = d end
-    end
-    local first
-    if top then first = atMax and { text = ("Best gold per hour: %s, **%s**"):format(top.name, UI.money(math.floor(top.coinPerHour), true)) }
-      or { text = ("Best XP per hour: %s, **%s**"):format(top.name, UI.fmtNum(top.xpPerHour)) }
-    elseif #rows > 0 then first = { text = "Pay per hour shows after 5 minutes inside a dungeon" } end
-    local segs = {}
-    -- (the line too long at 900: the pay segment goes first, the lockout keeps its one wording)
-    if first then first.optional = true; segs[#segs + 1] = first end
-    segs[#segs + 1] = D.instanceSegment(); segs[#segs + 1] = D.lockSegment()
-    v.summary:SetSegments(segs)
-    -- (the measure of Best and Average in the copy, not only in a header tooltip: Runs' TIME is the time inside)
-    v.section:SetMeta(#rows > 0 and (UI.plural(#rows, "dungeon") .. SEP .. "best and average: first pull to last kill") or nil)
+    v.section:SetMeta(nil)
     dtbl.setRows(rows, function(row, d)
       row.drow = d
       row.c.name:SetText(d.name .. (d.kind == "raid" and " (raid)" or ""))
       row.c.n:SetText(tostring(d.n))
-      row.c.best:SetText(d.best and UI.fmtDur(d.best) or "-")
-      row.c.avg:SetText(d.avg and UI.fmtDur(d.avg) or "-")
-      row.c.xp:SetText(d.xpPerHour and UI.fmtNum(d.xpPerHour) or "-")
-      row.c.coin:SetText(d.coinPerHour and UI.money(math.floor(d.coinPerHour), true) or "-")
-      row.c.dpr:SetText(("%.1f"):format(n0(d.deathsPerRun)))
-      row.c.lvl:SetText(d.level and tostring(d.level) or "-")
-      row.c.full:SetText(d.kind == "raid" and "-" or tostring(n0(d.full)))
-      row.c.last:SetText(n0(d.last) > 0 and UI.fmtDate(d.last) or "-")
-      for _, k in ipairs({ "best", "avg", "xp", "coin", "lvl", "full", "last" }) do if row.c[k]:GetText() == "-" then UI.SetColor(row.c[k], "fgMuted") end end
+      row.c.best:SetText(d.best and UI.fmtDur(d.best) or "")
+      -- (an average of one run is that run: shown from two)
+      row.c.avg:SetText((d.avg and n0(d.n) >= 2) and UI.fmtDur(d.avg) or "")
+      -- (one decimal from two runs, the plain count for one)
+      row.c.dpr:SetText(n0(d.n) >= 2 and ("%.1f"):format(n0(d.deathsPerRun)) or tostring(math.floor(n0(d.deathsPerRun) + 0.5)))
+      row.c.worth:SetText(n0(d.worthPerRun) > 0 and UI.money(math.floor(d.worthPerRun)) or "")
       row.item.ebNoOpen = d.other or nil
     end)
-    if #rows == 0 then dtbl.setState("Run a dungeon and its best, average and pay show here.") end
+    if #rows == 0 then dtbl.setState("No run stored yet.") end
     v.place()
   end
   return v
@@ -1623,7 +1755,7 @@ end, "Your dungeon runs against your best: time, bosses, deaths, loot and XP.")
 UI.registerPane("Dungeons", 2, "By dungeon", function(content)
   byView = buildBy(content)
 end, function() if byView then byView.rebuild() end end,
-  "Which dungeon is worth your time: your best, your average, and what each pays.")
+  "Your dungeons side by side: runs, best, average, deaths and worth per run.", function() return D.byVisible() end)
 
 -- the runs of the logged-in character as the Fights list groups by them, oldest first: the light read (name, start,
 -- bosses down, deaths and the record), nothing from the statistics (its list is drawn again every 2 s)
@@ -1649,7 +1781,7 @@ ns.Dungeons.D = D
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}
 ns._test.runViews = function(full) return Runs.views(full) end
-ns._test.dungeonsLockText = function() return D.lockSegment().text end
+ns._test.dungeonsLockText = function() local sg = D.lockSegment(); return sg and sg.text or nil end
 ns._test.renderRun = function(run) if detailView then detailView.render(run) end end
 ns._test.dungeonDetail = function() return detailView end
 ns._test.dungeonList = function() if listRebuild then listRebuild() end; return listView end

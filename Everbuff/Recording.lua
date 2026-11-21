@@ -741,9 +741,9 @@ local function buildList(content)
   v:SetAllPoints(content)
   local st = { filter = "all", sortKey = "time", sortAsc = false }
   v.st = st
-  local FILTERS = { { "all", "All fights" }, { "notable", "Important" }, { "kill", "Kills" }, { "wipe", "Wipes" }, { "death", "Deaths" } }
-  local function filterLabel(key) for _, x in ipairs(FILTERS) do if x[1] == key then return x[2] end end return "All fights" end
-  -- (Important: bosses, wipes and your deaths, the pulls worth a second look)
+  local FILTERS = { { "all", "All pulls" }, { "notable", "Bosses, wipes and deaths" }, { "kill", "Kills" }, { "wipe", "Wipes" }, { "death", "Deaths" } }
+  local function filterLabel(key) for _, x in ipairs(FILTERS) do if x[1] == key then return x[2] end end return "All pulls" end
+  -- (bosses, wipes and your deaths: the pulls worth a second look)
   local search
   local function matches(f)
     if not fightMatchesText(f, search and search:GetText()) then return false end
@@ -756,7 +756,7 @@ local function buildList(content)
   local col = CreateFrame("Frame", nil, child); col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0); col:SetSize(1, 1)
   v.sf, v.col = sf, col
   v.summary = UI.Summary(col)
-  v.section = UI.Section(col, "All fights")
+  v.section = UI.Section(col, "Pulls")
   -- the control row, right to left: the filter, then the search S2 left of it. They belong to the list: the fight's
   -- page hides them with it.
   local controls = content.ebControls or v
@@ -764,7 +764,7 @@ local function buildList(content)
   v.controls = ctl
   v:HookScript("OnShow", function() ctl:Show() end)
   v:HookScript("OnHide", function() ctl:Hide() end)
-  v.filter = UI.FilterButton(ctl, { default = "all", label = "All fights",
+  v.filter = UI.FilterButton(ctl, { default = "all", label = "All pulls",
     items = function()
       local out = {}
       for _, x in ipairs(FILTERS) do out[#out + 1] = { x[1], x[2], st.filter == x[1] } end
@@ -772,12 +772,12 @@ local function buildList(content)
     end,
     onPick = function(key) v.setFilter(key) end })
   v.filter:SetPoint("TOPRIGHT", ctl, "TOPRIGHT", 0, 0)
-  search = UI.Search(ctl, "Search fights")
+  search = UI.Search(ctl, "Search pulls")
   search:SetPoint("TOPRIGHT", v.filter, "TOPLEFT", -S.S2, 0)
   search:HookScript("OnTextChanged", function() if listRebuild then listRebuild() end end)
   v.search = search
   function v.setFilter(key)
-    st.filter = filterLabel(key) ~= "All fights" and key or "all"
+    st.filter = filterLabel(key) ~= "All pulls" and key or "all"
     v.filter:SetValue(st.filter, filterLabel(st.filter))
     if listRebuild then listRebuild() end
   end
@@ -873,11 +873,20 @@ local function buildList(content)
       if f.outcome == "wipe" then wipes = wipes + 1 elseif f.outcome == "death" then deaths = deaths + 1 end
       secs = secs + (f.duration or 0)
     end
-    -- the answer: every stored fight, what went wrong, and the time in combat (a duration, never a clock)
-    local segs = { { text = ("**%s**"):format(UI.plural(#fights, "fight")) } }
-    segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(wipes, "wipe")) }
-    segs[#segs + 1] = { text = deaths == 0 and "you did not die" or ("you died **%s**"):format(UI.plural(deaths, "time")) }
-    segs[#segs + 1] = { text = ("**%s** in combat"):format(UI.fmtDur(secs)) }
+    -- The pulls stored in the addon are the ones the desktop app has not picked up yet: the list is that stretch,
+    -- never the character's history. So the section header says where it starts, the line under it counts only what
+    -- is listed, and with nothing stored nothing is counted (no "0 wipes", no "you did not die").
+    local oldest
+    for _, f in ipairs(fights) do local t = tonumber(f.startEpoch); if t and (not oldest or t < oldest) then oldest = t end end
+    v.oldest = oldest
+    v.section:SetLabel(oldest and ("Pulls since " .. UI.fmtStamp(oldest)) or "Pulls")
+    local segs = {}
+    if #fights > 0 then
+      segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(#fights, "pull")) }
+      segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(wipes, "wipe")) }
+      segs[#segs + 1] = { text = ("**%s**"):format(UI.plural(deaths, "death")) }
+      segs[#segs + 1] = { text = ("**%s** in combat"):format(UI.fmtDur(secs)) }
+    end
     v.summary:SetSegments(segs)
     -- dungeon runs, so the fights of a run sit under a group row. A fight is the run's only when it began inside one of
     -- the run's visits and in the run's instance (Runs.rowsOf with Runs.inInstance, the run page's own list): an
@@ -897,7 +906,7 @@ local function buildList(content)
         local day = date("%Y-%m-%d", f.startEpoch or 0)
         if day ~= lastDay then                          -- "TODAY · 82 FIGHTS"
           lastDay = day; lastRun = nil
-          items[#items + 1] = { ebSection = UI.fmtDay(f.startEpoch) .. " \194\183 " .. UI.plural(perDay[day], "fight") }
+          items[#items + 1] = { ebSection = UI.fmtDay(f.startEpoch) .. " \194\183 " .. UI.plural(perDay[day], "pull") }
         end
         local run = runOf(f)
         if run ~= lastRun then                          -- a dungeon run's own fights: one group row over them
@@ -907,8 +916,8 @@ local function buildList(content)
           if not run and closing then items[#items + 1] = { ebSection = f.zone or "Open world" } end
           if run then
             local nd = (tonumber(run.deaths) or 0) + (tonumber(run.partyDeaths) or 0)
-            items[#items + 1] = { ebRun = true, ebSection = ("%s \194\183 %s \194\183 %s down \194\183 %s"):format(run.name or "Dungeon", UI.fmtClock(run.startT or 0),
-              UI.plural(run.bossesDown or 0, "boss"), nd == 0 and "nobody died" or (UI.plural(nd, "death") .. " in the party")) }
+            items[#items + 1] = { ebRun = true, ebSection = ("%s \194\183 %s \194\183 %s down"):format(run.name or "Dungeon", UI.fmtClock(run.startT or 0),
+              UI.plural(run.bossesDown or 0, "boss")) .. (nd > 0 and (" \194\183 " .. UI.plural(nd, "death")) or "") }
           end
         end
       end
@@ -918,14 +927,16 @@ local function buildList(content)
     tbl.setRows(items, fill)
     for _, row in ipairs(tbl.rows) do if row.item and row.item.ebSection then row.fight = nil end end
     for i = 1, tbl.shownN do pcall(v.placeBadge, tbl, tbl.rows[i]) end
-    v.section:SetMeta(#list > 0 and UI.plural(#list, "fight") or nil)
+    v.section:SetMeta((#list > 0 and #list ~= #fights) and (UI.fmtNum(#list) .. " shown") or nil)
     if #items == 0 then
       local q = search:GetText() or ""
-      if q ~= "" then tbl.setState(('No fight matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
-      elseif #fights == 0 then tbl.setState("Fight anything and the pull shows up here, with a replay you can scrub.")
+      if q ~= "" then tbl.setState(('No pull matches "%s". '):format(q), "Clear search", function() search:SetText("") end)
+      elseif #fights == 0 then tbl.setState("No pull stored.")
       else
-        local none = { notable = "No bosses, wipes or deaths yet.", kill = "No kills yet.", wipe = "No wipes yet.", death = "You have not died yet." }
-        tbl.setState(none[st.filter] or "No fight here yet.", "Show all fights", function() v.setFilter("all") end)
+        -- (scoped to what is stored: an empty filter says nothing about the pulls already picked up)
+        local none = { notable = "No boss, wipe or death among the stored pulls.", kill = "No kill among the stored pulls.",
+          wipe = "No wipe among the stored pulls.", death = "No death among the stored pulls." }
+        tbl.setState(none[st.filter] or "No pull stored.", "Show all pulls", function() v.setFilter("all") end)
       end
     end
     v.place()
@@ -948,7 +959,9 @@ UI.registerPane("Home", 4, "Fights", build, function()
     -- (on screen: IsShown is the frame's own flag, and a pane hides its parent, never this list)
     if listView and (listView.IsVisible and listView:IsVisible() or (not listView.IsVisible and listView:IsShown())) and listRebuild then listRebuild() end
   end) end
-end, "Every pull: bosses, wipes and deaths first, with a replay of each.")
+end, "The pulls stored since the desktop app last picked them up, with a replay of each.",
+  -- (the tab exists only while this character has pulls stored: between two pickups, docs/UX_PRAGMATIC.md 1.4)
+  function() return #ns.mine(ns.Fights and ns.Fights.list and ns.Fights.list()) > 0 end)
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

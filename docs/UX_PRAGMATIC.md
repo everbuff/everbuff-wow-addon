@@ -2,6 +2,14 @@
 
 Status: proposal for approval issue #57. Nothing here is built before the founder's yes.
 
+Built on the draft branch `ux-overhaul` (not pushed to main, not installed), so the founder can judge it on real
+shots: sections 1.4, 1.5, 2.1 to 2.3 and the rows of section 5 about the pickup and the pulls, with gate A (the
+rebuilt rows from the gold runs, `Everbuff/RunsLegacy.lua`) and gate B (loot source by boss kill timing). Both gates
+still need their own yes on #57 before a release; refusing B means one constant (`D.PLACEHOLDER` rows show blank).
+Not built: gates C, D, I and J (acked session records, party size, lifetime counters, the boss reference table), so
+the 13 older clears and the party of a run are not shown. The expected values of this document for those screens are
+asserted by `tests/real_truth.lua` on the save of 21 Nov 2026.
+
 Revision 2 answers the founder review of revision 1. The short version: fewer screens, fewer columns, no sentences about why data is missing, and the fix for missing history (gates C and I) is built before anything is worded around it. Section 7 lists the few points where this document does not follow the review, and why.
 
 This document sits on top of `docs/UX_OVERHAUL.md`. The design system there (section 2) and the navigation pattern (sub-tab row, detail page with Back) stay. This document decides, per screen, what is shown and what is cut. Where the two disagree on content, this one wins and `UX_OVERHAUL.md` sections 3 and 4 are updated in the same change that builds it.

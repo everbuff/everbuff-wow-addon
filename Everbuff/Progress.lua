@@ -438,7 +438,18 @@ function V.renderLeveling()
     if ns.Gold and ns.Gold.metric then local ok, a = pcall(ns.Gold.metric, "perHour", "char", "session"); perHour = ok and a or nil end
     cards[2]:Set("Gold per hour", type(perHour) == "number" and UI.money(math.floor(perHour + 0.5), true) or "-", "this session")
     cards[3]:Set("Quests", UI.fmtNum(qsum.done), "turned in, all time")
-    cards[4]:Set("Dungeon runs", UI.fmtNum(nRuns), "all time")
+    -- (the run store is not the character's history: it starts with the oldest run it holds, and the card says so)
+    local firstRun
+    for _, r in ipairs(type(db.dungeonRuns) == "table" and db.dungeonRuns or {}) do
+      if type(r) == "table" and type(r.t) == "number" and (not firstRun or r.t < firstRun) then firstRun = r.t end
+    end
+    for _, r in ipairs(type(db.dungeonLegacy) == "table" and db.dungeonLegacy or {}) do
+      if type(r) == "table" and type(r.t) == "number" then
+        nRuns = nRuns + 1
+        if not firstRun or r.t < firstRun then firstRun = r.t end
+      end
+    end
+    cards[4]:Set("Dungeon runs", UI.fmtNum(nRuns), firstRun and ("stored since " .. tostring(tonumber(date("%d", firstRun))) .. date(" %b", firstRun)) or "none stored yet")
   else
     cards[1]:Set("Time at level " .. lvl, atLevel and UI.fmtDur(atLevel, { minutes = true }) or "-", "so far")
     UI.SetTip(cards[1], { title = "Time at level " .. lvl, text = atLevel and "Played time at this level, from the game's /played." or "Shows once the game answers /played." })
