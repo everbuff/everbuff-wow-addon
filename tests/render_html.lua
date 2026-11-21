@@ -20,17 +20,30 @@
 -- SetAllPoints, anchors to any region, nested frames), with text widths from the fonts' real advance widths
 -- (tests/geometry.lua over tests/fontmetrics.lua), so GetWidth, GetStringWidth and IsTruncated answer the addon's
 -- layout code as in game.
+-- A real save instead of the fixtures (tests/real_save.lua): with EB_SAVE=<SavedVariables file> the window is the
+-- player's own, on the data of that file and nothing else (no suite, no story, no dungeon fixture, no long variant).
+--   EB_SAVE=<path> [EB_NOW=<unix time>] [EB_CHAR=<name>] [EB_BOOT=resume|login] [EB_RACE=<race>] [EB_ZONE=<zone>]
+--     luajit tests/render_html.lua outdir [page ...]
+-- The pages are named <page>-<w>x<h>-real, at the window size the save holds and at 900x580 and 1600x1000. A page
+-- state only the fixtures can build ("home/now:next", "dungeons/runs:limit4") is skipped and said so;
+-- "dungeons/run" is the newest stored run, "dungeons/run:2" the one before it. tests/dump_real.lua prints the same
+-- pages as text.
 -- Every element carries data-src (the Lua file and line that created it) and data-pane. Each page also gets
 -- <page>.layout.json: structural findings Lua can see (rows narrower than 3 px holding text, regions it could not place).
 package.path = "tests/?.lua;" .. package.path
 local M = require("wow_stub")
 local Lay = dofile("tests/layout.lua")
 
+local REAL = os.getenv("EB_SAVE")
+if REAL == "" then REAL = nil end
+local Pages = dofile("tests/real_save.lua")
+local Real = REAL and Pages or nil
 local OUT = arg[1] or "tests/render_out"
 local PAGES = {}
 for i = 2, #arg do PAGES[#PAGES + 1] = arg[i] end
-if #PAGES == 0 then PAGES = { "loot/items", "loot/gold", "home/now", "home/activity" } end
+if #PAGES == 0 then PAGES = REAL and Real.PAGES or { "loot/items", "loot/gold", "home/now", "home/activity" } end
 local SIZES = { { 900, 580 }, { 1600, 1000 } }
+local SIZES_SET = os.getenv("EVERBUFF_RENDER_SIZES") ~= nil
 -- EVERBUFF_RENDER_SIZES="900x580,1250x760" renders other window sizes
 if os.getenv("EVERBUFF_RENDER_SIZES") then
   SIZES = {}
@@ -46,21 +59,36 @@ local FONT_DIR, FACES = G.FONT_DIR, G.FACES
 local fontOf, parse, textSize, lineHeight, resolve = G.fontOf, G.parse, G.textSize, G.lineHeight, G.resolve
 G.install(M, { src = true })
 
--- ── the suite's data ────────────────────────────────────────────────────────────────────────────────────────────
+-- ── the data: a real save (EB_SAVE), else the suite's ───────────────────────────────────────────────────────────
 local realPrint = print
-print = function() end
-EVERBUFF_RENDER_SETUP = true
-local S = dofile("tests/run_tests.lua")
-local ns = S.ns
-M.inCombat = false
-if ns.DB and ns.DB.settings then ns.DB.settings.winPos = nil end
+local ns, RS
+if REAL then
+  RS = Real.boot(M, { save = REAL, now = os.getenv("EB_NOW"), char = os.getenv("EB_CHAR"), boot = os.getenv("EB_BOOT"),
+    race = os.getenv("EB_RACE"), zone = os.getenv("EB_ZONE") })
+  ns = RS.ns
+  print = function() end   -- (the addon's chat lines while the pages render)
+  realPrint(("real save: %s"):format(REAL))
+  for _, f in ipairs(RS.facts) do realPrint(("  %-22s %s   [%s]"):format(f.k, f.v, f.from)) end
+  for _, n in ipairs(RS.notes) do realPrint("  note: " .. n) end
+  -- the window at the size the player keeps it, first
+  if RS.winSize and tonumber(RS.winSize.w) and tonumber(RS.winSize.h) and not SIZES_SET then
+    table.insert(SIZES, 1, { math.floor(RS.winSize.w + 0.5), math.floor(RS.winSize.h + 0.5) })
+  end
+else
+  print = function() end
+  EVERBUFF_RENDER_SETUP = true
+  local S = dofile("tests/run_tests.lua")
+  ns = S.ns
+  M.inCombat = false
+  if ns.DB and ns.DB.settings then ns.DB.settings.winPos = nil end
 
--- the suite ends on a nearly empty character: tests/play_session.lua plays one more session through the REAL
--- handlers (loot of every quality, coin, fights, quests, a vendor, a repair, the mailbox, the auction house, a trade)
-dofile("tests/play_session.lua")(M, ns)
--- and two evenings of gold with a name behind every row (quests, merchants, mail, trades), for the gold surfaces
-dofile("tests/play_gold.lua")(M, ns)
-print = realPrint
+  -- the suite ends on a nearly empty character: tests/play_session.lua plays one more session through the REAL
+  -- handlers (loot of every quality, coin, fights, quests, a vendor, a repair, the mailbox, the auction house, a trade)
+  dofile("tests/play_session.lua")(M, ns)
+  -- and two evenings of gold with a name behind every row (quests, merchants, mail, trades), for the gold surfaces
+  dofile("tests/play_gold.lua")(M, ns)
+  print = realPrint
+end
 
 -- ── HTML ───────────────────────────────────────────────────────────────────────────────────────────────────────
 local function esc(s) return (tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;")) end
@@ -314,9 +342,11 @@ local sep = package.config:sub(1, 1)
 os.execute((sep == "\\" and 'mkdir "%s\\fonts" 2>nul' or 'mkdir -p "%s/fonts"'):format(sep == "\\" and OUT:gsub("/", "\\") or OUT))
 for face in pairs(FACES) do copy(FONT_DIR .. face .. ".ttf", OUT .. "/fonts/" .. face .. ".ttf") end
 
-DUNGEON_FIXTURE = dofile("tests/dungeon_fixture.lua")
--- one character's story in every shot: an Orc at level 18 in Orgrimmar and The Barrens (tests/story_fixture.lua)
-dofile("tests/story_fixture.lua").apply(ns, M)
+if not REAL then
+  DUNGEON_FIXTURE = dofile("tests/dungeon_fixture.lua")
+  -- one character's story in every shot: an Orc at level 18 in Orgrimmar and The Barrens (tests/story_fixture.lua)
+  dofile("tests/story_fixture.lua").apply(ns, M)
+end
 local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
 -- the Home > Now states: set the readings, return the function that puts them back
 function NOW_STATE(state)
@@ -357,7 +387,31 @@ local manifest = {}
 -- the long shots must differ from the normal ones: a long variant that renders the same page means the long data
 -- never reached it (every page with data; Settings and the empty and first-run states have none to stretch)
 local normalHTML, sameAsNormal = {}, {}
-for _, dataTag in ipairs({ "normal", "long" }) do
+local skipped = {}
+-- a real save: every page once per size, on the save's data
+if REAL then
+  for _, sz in ipairs(SIZES) do
+    ns.UI.SetWindowSize(sz[1], sz[2])
+    _G.UIParent._w, _G.UIParent._h = sz[1], sz[2]
+    VIEW.w, VIEW.h = sz[1], sz[2]
+    for _, key in ipairs(PAGES) do
+      local ok, why = Real.open(RS, key)
+      if not ok then
+        if sz == SIZES[1] then skipped[#skipped + 1] = key .. ": " .. tostring(why) end
+      else
+        iconQualities()
+        local html, info = renderPage(key, sz[1], sz[2], "real")
+        Real.close(RS)
+        local name = ("%s-%dx%d-real"):format(key:gsub("[/:]", "-"), sz[1], sz[2])
+        write(OUT .. "/" .. name .. ".html", html)
+        write(OUT .. "/" .. name .. ".layout.json", json(info))
+        manifest[#manifest + 1] = { name = name, w = sz[1] + 2 * MARGIN, h = sz[2] + 2 * MARGIN }
+        realPrint(("%-44s %4d texts  %3d unplaced  %2d structural"):format(name, info.texts, info.unplaced, #info.structural))
+      end
+    end
+  end
+end
+for _, dataTag in ipairs(REAL and {} or { "normal", "long" }) do
   if dataTag == "long" then Lay.stretch(ns.DB) end
   for _, sz in ipairs(SIZES) do
     ns.UI.SetWindowSize(sz[1], sz[2])
@@ -403,37 +457,10 @@ for _, dataTag in ipairs({ "normal", "long" }) do
         ns._test.dungeonList()
         ns.Dungeons.openRun(rec)
       end
-      if host == "loot" and pane == "gold" then
-        if state == "" then ns.Gold.open("session")
-        elseif state == "journal" then ns.Gold.open("session", "journal")
-        elseif state == "flagged" then ns.Gold.open("session", "journal", true)
-        elseif state == "all" then ns.Gold.open("all", "journal")
-        elseif state == "previous" then ns.Gold.open("previous")
-        elseif state == "today" then ns.Gold.open("today")
-        elseif state == "days" then ns.Gold.open("all", "days")
-        elseif state == "chars" then ns.Gold.open("today", "chars")
-        elseif state == "week" then ns.Gold.open("week")
-        elseif state == "zones" or state == "runs" then ns.Gold.open("all", state)
-        elseif state == "auctions" then ns.UI.Open("Loot", "auctions")
-        elseif state == "empty" then ns.Gold.open("day:" .. ns.Gold.dayKey(GetServerTime() - 400 * 86400, ns.Gold.baseStored()))
-        else ns.Gold.open("session"); ns.Gold.filter(state) end
-      end
-      if host == "loot" and pane == "items" and state ~= "" then
-        local ic = ns._test.lootContent and ns._test.lootContent()
-        if ic then
-          if state == "byitem" then ic.setLootMode("byitem")
-          elseif state == "all" then ic.setLootQuality("all")
-          elseif state == "nomatch" then ic.search:SetText("zzzz"); ic.search.scripts.OnTextChanged(ic.search) end
-          undo = function()
-            ic.search:SetText(""); ic.search.scripts.OnTextChanged(ic.search)
-            ic.setLootMode("newest"); ic.setLootQuality("green")
-          end
-        end
-      end
-      if host == "settings" then                  -- Settings is a tab with its own sub-tabs (general, golddisplay, data)
-        for _, t in ipairs(ns._test.tabs or {}) do
-          if t.name == "Settings" and t.content and t.content.subtabs then t.content.subtabs.select(pane) end
-        end
+      -- the Gold pane, the Items pane or a Settings sub-tab in its state (tests/real_save.lua holds the one list of them)
+      do
+        local back = Pages.view(ns, host, pane, state)
+        if back then undo = back end
       end
       M.settle()                                  -- OnSizeChanged to every list whose size the open changed
       iconQualities()
@@ -455,4 +482,8 @@ if #sameAsNormal > 0 then
   realPrint("long shots identical to the normal ones: " .. table.concat(sameAsNormal, ", "))
   os.exit(1)
 end
-if #M.errors > 0 then realPrint("addon errors while rendering: " .. #M.errors .. "  first: " .. tostring(M.errors[1])) end
+for _, s in ipairs(skipped) do realPrint("skipped  " .. s) end
+if #M.errors > 0 then
+  realPrint("addon errors while rendering: " .. #M.errors .. "  first: " .. tostring(M.errors[1]))
+  if REAL then for i = 2, math.min(#M.errors, 20) do realPrint("  " .. tostring(M.errors[i])) end end
+end
