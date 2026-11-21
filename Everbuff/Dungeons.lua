@@ -242,13 +242,29 @@ local function runItems(run)
   return out
 end
 D.runItems = runItems
--- What a run was worth (2.1): the coin looted and the vendor value of its items. Quest reward coin is not loot and
--- is not in it. Returns the sum, the coin and the item value.
+-- The coin of a run, and where the figure comes from. The coin the addon books as looted misses the shares of group
+-- loot the client pays without a loot window (Blackrock Spire, 20 Nov: 1g 16s booked, 1g 88s paid), so:
+--   a run record whose purse gained more inside (quest coin aside) than was booked: the purse figure, "purse"
+--   any other run record: the booked coin, "looted"
+--   a rebuilt row: nil. It stores the booked coin only and no purse figure, so its coin is not known and is
+--   never shown as a fact (D.PARTIAL_COIN = true would count the booked coin, a lower bound, again).
+D.PARTIAL_COIN = false
+function D.coinOf(run)
+  local g = type(run) == "table" and type(run.gold) == "table" and run.gold or {}
+  if run and run.legacy and not D.PARTIAL_COIN then return nil, "none" end
+  local looted, purse = n0(g.looted), n0(g.purse)
+  if purse > looted then return purse, "purse" end
+  return looted, "looted"
+end
+-- What a run was worth (2.1): its coin (D.coinOf) and the vendor value of its items. Quest reward coin is not loot
+-- and is not in it. Returns the sum, the coin and the item value.
 function D.worth(run)
   local g = type(run.gold) == "table" and run.gold or {}
-  return n0(g.looted) + n0(g.lootValue), n0(g.looted), n0(g.lootValue)
+  local coin = n0((D.coinOf(run)))
+  return coin + n0(g.lootValue), coin, n0(g.lootValue)
 end
--- "1g 16s coin · 18g 3s items at vendor prices" (the meta of a WORTH card, the tooltip of a Worth cell)
+-- "1g 88s coin · 18g 3s items at vendor prices" (the meta of a WORTH card, the tooltip of a Worth cell). A rebuilt
+-- row has no coin part: "items at vendor prices" under the card, "9g 34s items at vendor prices" in a tooltip.
 function D.worthParts(run, short)
   local _, coin, value = D.worth(run)
   local parts = {}
@@ -263,12 +279,17 @@ end
 -- the tooltip line.
 D.PLACEHOLDER = { ["Creature"] = "enemy", ["an enemy"] = "enemy", ["Picked up"] = "none", ["Unknown source"] = "none" }
 D.BOSS_WINDOW = 90
--- The purse beside the looted coin, for the WORTH card's hover and only when the two differ: what the purse itself
--- gained inside (less quest coin), a stored figure of the run's gold block. Exact amounts, as every hover has them.
+-- How the coin of a WORTH card was derived, for its hover and only when the purse and the booked coin differ. Exact
+-- amounts, as every hover has them. The purse gained more: the coin is the purse figure, and the hover says so and
+-- what was booked. The purse gained less (coin was spent inside): the coin is the booked figure.
+D.NO_COIN = "The coin of this run was not recorded in full, so it is not counted."
 function D.purseTip(run)
   local g = type(run) == "table" and type(run.gold) == "table" and run.gold or nil
   local looted, purse = n0(g and g.looted), n0(g and g.purse)
-  if not g or purse <= 0 or purse == looted then return nil end
+  if not g or run.legacy or purse <= 0 or purse == looted then return nil end
+  if purse > looted then
+    return ("Coin is what your purse gained inside, quest rewards aside: %s. Of it %s was seen as loot when it was picked up."):format(ns.fmtMoney(purse), ns.fmtMoney(looted))
+  end
   return ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(ns.fmtMoney(purse), ns.fmtMoney(looted))
 end
 function D.sourceOf(run, l)
@@ -624,17 +645,11 @@ local function buildDetail(content, list)
     if ok then showId(id) else v.pending = nil; v.refused = REFUSED[why] or tostring(why); v.render(v.run) end
   end
 
-  -- what a second changes on the page of a run in progress: the TIME card and the two clock lines
+  -- what a second changes on the page of a run in progress: the TIME card. The page names two clocks, time inside
+  -- (this card) and the boss clock (the BOSSES card); where the rest of the time went is the card's hover.
   local live = {}
   local function clocks(run)
     if live.time then live.time.value:SetText(D.fmtLen(run.inside)) end
-    -- (a view built by hand can lack a clock: every missing one is 0)
-    local cl = {}
-    for _, k in ipairs({ "inside", "ghost", "outside", "offline", "active", "combat", "boss" }) do cl[k] = n0(run[k]) end
-    local a, b = Runs.timeLine(cl)
-    v.timeLine, v.timeLine2 = (a:gsub("  \194\183  ", SEP)), (b:gsub("  \194\183  ", SEP))
-    if live.line1 then live.line1:SetText(v.timeLine) end
-    if live.line2 then live.line2:SetText(v.timeLine2) end
   end
 
   v.render = function(run)
@@ -986,39 +1001,41 @@ local function buildDetail(content, list)
       y = y + S.S5
     end
 
-    -- 7 ENTERED AND LEFT: where the time went, then one row per visit (Split here where a run can be split)
-    section("visits", UI.plural(#(run.visits or {}), "visit"))
-    live.line1 = text(line("BODY", "fg"), "", UI.LINE_H.BODY + S.S1)
-    live.line2 = text(line("META", "fgMuted"), "")
+    -- 7 ENTERED AND LEFT: only on a run marked "possibly two runs", whose note points at Split here on a visit.
+    -- Every other run has no such section (2.2): the TIME card carries inside and dead or outside, its hover the
+    -- rest, and no visit count, third clock or combat total is on the page.
     clocks(run)
-    v.timeFS = { live.line1, live.line2 }
-    y = y + S.S1
-    local visits = run.visits or {}
-    local canSplit = Runs.visitClocks(run.rec or run) ~= nil
-    local HOW = { zone = "entered", login = "logged in inside", reload = "after a reload", ghost = "back after a run back", boss = "at a boss pull", split = "after a split" }
-    local vrows = {}
-    for k, xv in ipairs(visits) do vrows[#vrows + 1] = { k = k, x = xv } end
-    local splitAt = {}
-    tableAt(v.tables.visits, vrows, function(r, it)
-      local xv = it.x
-      r.c.n:SetText(tostring(it.k)); if run.repull == it.k then UI.SetColor(r.c.n, "warn") end
-      r.c.at:SetText(UI.fmtClock(n0(run.startT) + n0(xv.i)))
-      r.c.len:SetText(UI.fmtDur(n0(xv.secs)))
-      r.c.how:SetText((HOW[xv.how] or tostring(xv.how or "")) .. (n0(xv.n) > 0 and (SEP .. ("and %d more"):format(xv.n)) or ""))
-      r.c.act:SetText("")
-      if it.k >= 2 and canSplit and xv.i ~= nil and visits[it.k - 1].o ~= nil then splitAt[#splitAt + 1] = { row = r, k = it.k } end
-    end)
-    for _, sa in ipairs(splitAt) do
-      local key = "split" .. sa.k
-      local ac = v.tables.visits.cols.act
-      local asking = v.pending and v.pending.key == key
-      local b = actBtn(asking and v.YES.split or "Split here", "ghost", function()
-        ask(key, function() local id = run.id; local ok, why = Runs.split(id, sa.k); result(ok, why, id) end)
+    local visits = run.repull and (run.visits or {}) or {}
+    v.visitsShown = run.repull ~= nil and #visits > 0
+    if v.visitsShown then
+      section("visits", nil)
+      y = y + S.S1
+      local canSplit = Runs.visitClocks(run.rec or run) ~= nil
+      local HOW = { zone = "entered", login = "logged in inside", reload = "after a reload", ghost = "back after a run back", boss = "at a boss pull", split = "after a split" }
+      local vrows = {}
+      for k, xv in ipairs(visits) do vrows[#vrows + 1] = { k = k, x = xv } end
+      local splitAt = {}
+      tableAt(v.tables.visits, vrows, function(r, it)
+        local xv = it.x
+        r.c.n:SetText(tostring(it.k)); if run.repull == it.k then UI.SetColor(r.c.n, "warn") end
+        r.c.at:SetText(UI.fmtClock(n0(run.startT) + n0(xv.i)))
+        r.c.len:SetText(UI.fmtDur(n0(xv.secs)))
+        r.c.how:SetText((HOW[xv.how] or tostring(xv.how or "")) .. (n0(xv.n) > 0 and (SEP .. ("and %d more"):format(xv.n)) or ""))
+        r.c.act:SetText("")
+        if it.k >= 2 and canSplit and xv.i ~= nil and visits[it.k - 1].o ~= nil then splitAt[#splitAt + 1] = { row = r, k = it.k } end
       end)
-      b.visit = sa.k
-      b:ClearAllPoints(); b:SetPoint("LEFT", sa.row, "LEFT", ac and ac.x or S.S3, 0)
-    end
-    y = y + S.S5
+      for _, sa in ipairs(splitAt) do
+        local key = "split" .. sa.k
+        local ac = v.tables.visits.cols.act
+        local asking = v.pending and v.pending.key == key
+        local b = actBtn(asking and v.YES.split or "Split here", "ghost", function()
+          ask(key, function() local id = run.id; local ok, why = Runs.split(id, sa.k); result(ok, why, id) end)
+        end)
+        b.visit = sa.k
+        b:ClearAllPoints(); b:SetPoint("LEFT", sa.row, "LEFT", ac and ac.x or S.S3, 0)
+      end
+      y = y + S.S5
+      end
 
     -- 8 ALL FIGHTS IN THIS RUN: the fights still stored, the same list Home > Fights groups under the run (A21, B23)
     v.encounters = #(run.fights or {})
@@ -1092,8 +1109,8 @@ local function buildDetail(content, list)
     for _, t in pairs(v.tables) do t.frame:Hide() end
     v.empties, v.bossRows, v.lootItems, v.lootAll, v.deathRows = {}, {}, {}, {}, {}
     v.lootMore, v.lootFS, v.deathLine, v.deathFS, v.xpTip, v.purseTip, v.paceLine, v.paceLine2, v.partyFS = nil, nil, nil, nil, nil, nil, nil, nil, nil
-    v.deltaText, v.encounters, v.timeLine, v.timeLine2 = nil, 0, nil, nil
-    live.time, live.line1, live.line2 = nil, nil, nil
+    v.deltaText, v.encounters, v.visitsShown = nil, 0, false
+    live.time = nil
     local title = run.name or "Dungeon"
     v.titleFS:ClearAllPoints(); v.titleFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, 0); v.titleFS:SetText(title)
     local b = v.badges[1] or UI.Badge(col, "PARTIAL"); v.badges[1] = b
@@ -1116,13 +1133,17 @@ local function buildDetail(content, list)
     UI.SetTip(cards[1], { title = "Time", text = "Time in the dungeon and at its entrance, counted in steps of 10 seconds." })
     if cards[2] then
       local full = D.worthParts(run)
+      local _, coin = D.worth(run)
       local metaW = full
-      if UI.TextWidth("META", full) > (tonumber(cards[2]:GetWidth()) or 0) - 2 * S.S3 then metaW = D.worthParts(run, true) end
+      if coin == 0 then metaW = "items at vendor prices"
+      elseif UI.TextWidth("META", full) > (tonumber(cards[2]:GetWidth()) or 0) - 2 * S.S3 then metaW = D.worthParts(run, true) end
       cards[2]:Set("Worth", UI.money(worth), metaW)
       local g0 = run.gold
+      v.coinTip = select(2, D.coinOf(run)) == "none" and D.NO_COIN or nil
       UI.SetTip(cards[2], function(tip)
         tip:AddLine("Worth", 1, 1, 1)
         tip:AddLine(full:sub(1, 1):upper() .. full:sub(2) .. ".", 0.78, 0.79, 0.80, true)
+        if v.coinTip then tip:AddLine(v.coinTip, 0.78, 0.79, 0.80, true) end
         if n0(g0.items) > 0 then tip:AddLine(UI.plural(g0.items, "item") .. " looted.", 0.78, 0.79, 0.80, true) end
         if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
         if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
@@ -1366,7 +1387,7 @@ local function buildList(content)
     { key = "vs", label = "Vs best", kind = "tag", min = 88, justify = "RIGHT", sort = true, tip = "Compared from first pull to last kill, against your fastest run with the same bosses" },
     { key = "boss", label = "Bosses", kind = "num", min = 40, sort = true },
     { key = "death", label = "Deaths", kind = "num", min = 48, sort = true },
-    { key = "worth", label = "Worth", kind = "money", min = 72, sort = true, tip = "Coin looted plus the vendor value of the items" },
+    { key = "worth", label = "Worth", kind = "money", min = 72, sort = true, tip = "Coin plus the vendor value of the items. Partial runs: items only." },
     { key = "drop", label = "Best drop", min = 160, max = 260, wide = true },
   }
   local specOf = {}
@@ -1389,7 +1410,8 @@ local function buildList(content)
     if run.legacy then
       local out = { "Time and loot only", "Time " .. UI.fmtDur(run.inside) }
       local parts = D.worthParts(run)
-      if parts ~= "" then out[#out + 1] = "Worth " .. UI.money((D.worth(run))) .. ": " .. parts end
+      if parts ~= "" then out[#out + 1] = "Worth: " .. parts end
+      if select(2, D.coinOf(run)) == "none" then out[#out + 1] = D.NO_COIN end
       if n0(run.items) > 0 then out[#out + 1] = UI.plural(run.items, "item") end
       return out
     end
@@ -1397,12 +1419,10 @@ local function buildList(content)
     if n0(run.ghost) > 0 then out[#out + 1] = "Run back " .. UI.fmtDur(run.ghost) end
     if n0(run.outside) > 0 then out[#out + 1] = "Outside " .. UI.fmtDur(run.outside) end
     if n0(run.offline) > 0 then out[#out + 1] = "Offline " .. UI.fmtDur(run.offline) end
-    out[#out + 1] = "Active " .. UI.fmtDur(run.active)
     if run.inProgress then out[#out + 1] = "In progress" else out[#out + 1] = "Ended: " .. (Runs.WHY[run.why] or "left the dungeon") end
     if run.edited then out[#out + 1] = "Corrected by hand" end
     if run.repull then out[#out + 1] = "Possibly two runs: a boss killed before was pulled again" end
     if run.keep then out[#out + 1] = "Kept: never removed when the list is full" end
-    if n0(run.reentries) > 0 then out[#out + 1] = "Re-entered " .. UI.plural(run.reentries, "time") end
     local partial = Runs.partialLine(run)
     if partial then out[#out + 1] = partial end
     local cmp = run.cmp
@@ -1463,7 +1483,9 @@ local function buildList(content)
   -- the Last run hero: the verdict a row cannot hold
   v.heroRefresh = function(run)
     local h = v.hero
-    if not run then h:Hide(); return end
+    -- (no run to lead with: the card goes and so does the run it showed, or the 1 s ticker of a run in progress
+    -- would draw it again over a list filtered to another dungeon)
+    if not run then v.heroRun = nil; h:Hide(); return end
     h:Show()
     h:SetKicker(run.inProgress and "In this dungeon" or "Last run")
     h:SetTitle(run.name or "Dungeon")
@@ -1550,6 +1572,7 @@ local function buildList(content)
     -- (no runs: nothing to filter, so no filter)
     if #runs == 0 then v.filter:Hide() else v.filter:Show() end
     if #runs == 0 then
+      v.heroRun = nil
       v.hero:Hide(); v.section:Hide(); tbl.frame:Hide(); v.empty:Show()
       v.place()
       return
@@ -1625,6 +1648,7 @@ local function buildList(content)
     tbl.setSelected(sel)
     if #rows == 0 then
       tbl.setState(("No run of %s stored."):format(st.inst or "this dungeon"), "Show all dungeons", function() v.pickInst(nil) end, true)
+      v.heroRun = nil
       v.hero:Hide()
     end
     v.place()
@@ -1687,7 +1711,7 @@ local function buildBy(content)
     { key = "best", label = "Best", kind = "num", min = 56, sort = true, tip = BEST_TIP },
     { key = "avg", label = "Average", kind = "num", min = 56, sort = true, tip = BEST_TIP },
     { key = "dpr", label = "Deaths per run", kind = "num", min = 88, sort = true, tip = "Yours and your party's, as the Deaths column of Runs counts them" },
-    { key = "worth", label = "Worth per run", kind = "money", min = 88, sort = true, tip = "Coin looted plus the vendor value of the items, per run" },
+    { key = "worth", label = "Worth per run", kind = "money", min = 88, sort = true, tip = "Coin plus the vendor value of the items, per run" },
   }, {
     onSort = function(key, asc) st.sortKey, st.sortAsc = key, asc; v.rebuild() end,
     onHeight = function() pcall(v.place) end,
@@ -1775,7 +1799,7 @@ end, function()
     -- the page of the run in progress, and the hero of a run in progress, tick every second
     C_Timer.NewTicker(1, function()
       if onScreen(detailView) and detailView.refresh then pcall(detailView.refresh) end
-      if onScreen(listView) and listView.heroRun and listView.heroRun.inProgress then
+      if onScreen(listView) and listView.heroRun and listView.heroRun.inProgress and listView.hero:IsShown() then
         local rec = openRec()
         if rec and rec.id == listView.heroRun.id then pcall(listView.heroRefresh, Runs.view(rec, true, false)) end
       end

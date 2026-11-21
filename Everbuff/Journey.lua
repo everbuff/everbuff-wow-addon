@@ -161,6 +161,7 @@ UI.KIND_ICON = {
   bags = "Interface\\Icons\\INV_Misc_Bag_08", instance = "Interface\\Icons\\INV_Misc_PocketWatch_01",
   loot = "Interface\\Icons\\INV_Misc_Bag_10",     -- (a loot row shows the item's own icon; this one only without it)
   session = "Interface\\Icons\\INV_Misc_PocketWatch_02",
+  gold = "Interface\\Icons\\INV_Misc_Coin_01",
 }
 local Now = { CAP_COMPACT = 4, CAP_WIDE = 12, NEXT_CAP = 3, REPAIR_WARN = 45, REPAIR_BAD = 20, BAGS_BAD = 2 }
 ns.Now = Now
@@ -489,6 +490,81 @@ function Now.lookItems(now)
   return out, extra, ev
 end
 
+-- A per hour figure needs this much play behind it (docs/UX_PRAGMATIC.md 1.1, 4.2): 9 minutes of play gave
+-- "-198g 87s per hour", a number that says nothing.
+Now.RATE_FLOOR = 30 * 60
+-- The session's gold as the max level hero reads it: whether any moved, the net, and the rate only from
+-- Now.RATE_FLOOR of play on. Every figure is the session ledger's (Gold.metric); nil when the ledger cannot be read.
+function Now.sessionGold()
+  if not (ns.Gold and ns.Gold.metric) then return nil end
+  local function m(id) local ok, v = pcall(ns.Gold.metric, id, "char", "session"); return (ok and type(v) == "number") and v or nil end
+  local gained, spent, net, played = m("gained"), m("spent"), m("net"), m("played")
+  if not (gained and spent and net) then return nil end
+  local out = { moved = gained > 0 or spent > 0, net = net, gained = gained, spent = spent, played = num(played) }
+  if out.moved and out.played >= Now.RATE_FLOOR then out.perHour = math.floor(net * 3600 / out.played + 0.5) end
+  return out
+end
+-- The newest stored run record as the LAST RUN card reads it: { name, meta, rec }, or nil with none stored.
+-- "Fri 20 Nov · 1h 9m · 7 bosses · 2 deaths": the day, the time inside, the bosses killed, your deaths. A card too
+-- narrow for the line (`width`, in px of META text) gets the day without its weekday, then the line without the day:
+-- the run's page has it. No part is ever cut mid-word.
+function Now.lastRun(now, width)
+  if not (ns.Runs and ns.Runs.views and ns.Dungeons and ns.Dungeons.D) then return nil end
+  local ok, vs = pcall(ns.Runs.views, false)
+  local last
+  for _, v in ipairs(ok and vs or {}) do
+    if not v.inProgress and v.rec and num(v.startT) > 0 and (not last or num(v.startT) > num(last.startT)) then last = v end
+  end
+  if not last then return nil end
+  local D = ns.Dungeons.D
+  local rest = { D.fmtLen(last.inside) }
+  if num(last.bossesDown) > 0 then rest[#rest + 1] = UI.plural(last.bossesDown, "boss", "bosses") end
+  if num(last.deaths) > 0 then rest[#rest + 1] = UI.plural(last.deaths, "death") end
+  local tail = table.concat(rest, " \194\183 ")
+  local day = UI.fmtSince(last.startT, now)
+  local meta = day .. " \194\183 " .. tail
+  if width and UI.TextWidth("META", meta) > width then meta = (day:gsub("^%a+ ", "")) .. " \194\183 " .. tail end
+  if width and UI.TextWidth("META", meta) > width then meta = tail end
+  -- (still too long: whole parts go from the end, the time inside stays)
+  while width and #rest > 1 and UI.TextWidth("META", meta) > width do
+    table.remove(rest)
+    meta = table.concat(rest, " \194\183 ")
+  end
+  return { name = last.name or "Dungeon", meta = meta, rec = last.rec }
+end
+-- WORTH A LOOK at the level cap: the up to 3 largest gold lines of the session, largest first. Each is a journal row
+-- of the session (Gold.entries): what it was, then the amount, its source and the time. None: an empty list, and
+-- the section is not shown.
+Now.GOLD_LINES = 3
+function Now.goldLines()
+  local ses = curSession()
+  if not (ses and ns.Gold and ns.Gold.entries) then return {} end
+  local ok, rows = pcall(ns.Gold.entries, ses)
+  if not (ok and type(rows) == "table") then return {} end
+  local list = {}
+  for _, r in ipairs(rows) do if type(r.delta) == "number" and r.delta ~= 0 then list[#list + 1] = r end end
+  table.sort(list, function(a, b)
+    if math.abs(a.delta) ~= math.abs(b.delta) then return math.abs(a.delta) > math.abs(b.delta) end
+    return num(a.t) > num(b.t)
+  end)
+  local out = {}
+  for i = 1, math.min(Now.GOLD_LINES, #list) do
+    local r = list[i]
+    local label = ns.Gold.LABEL and ns.Gold.LABEL[r.src] or nil
+    local word = ns.Gold.WORD and ns.Gold.WORD[r.src] or nil
+    local title = (type(r.detail) == "string" and r.detail ~= "") and r.detail or word or label or "Gold"
+    -- (a flight or a training row's detail is only the name of who was paid: "Flight: Tal")
+    if (r.src == "flights" or r.src == "training") and word and title ~= word then title = word .. ": " .. title end
+    local parts = { UI.money(r.delta, true) }
+    if label and label ~= title then parts[#parts + 1] = label end
+    parts[#parts + 1] = UI.fmtClock(r.t)
+    out[#out + 1] = { kind = "gold", rank = 1, t = num(r.t), icon = UI.KIND_ICON.gold or UI.KIND_ICON.session, title = title,
+      meta = table.concat(parts, " \194\183 "),
+      onClick = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session", "journal") else UI.Open("Loot", "gold") end end }
+  end
+  return out
+end
+
 local nowView
 local noticeOff = false   -- the combat-log notice was dismissed (until the next /reload)
 
@@ -645,13 +721,23 @@ function Now.build(content)
     { onClick = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session") else UI.Open("Loot", "gold") end end },
     { onClick = function() if Now.deathsOpen() then UI.Open("Home", "deaths") end end },
   })
+  -- (at the level cap the cards are a list of up to 4, each only when it has a value: one row per count)
+  content.maxRows = {}
+  content.maxRow = function(n)
+    local row = content.maxRows[n]
+    if not row then
+      local opts = {}
+      for i = 1, n do opts[i] = { onClick = function(card) if card.ebClick then card.ebClick() end end } end
+      row = UI.StatRow(col, n, opts)
+      content.maxRows[n] = row
+    end
+    for k, r in pairs(content.maxRows) do if k == n then r:Show() else r:Hide() end end
+    return row
+  end
   content.nextHead = UI.Section(col, "Next")
   content.nextRows = {}
-  content.allClear = UI.EmptyLine(col)
   content.lookHead = UI.Section(col, "Worth a look")
-  content.lookHead:SetLink("See all activity \226\128\186", function() UI.Open("Home", "activity") end)
   content.lookRows = {}
-  content.lookEmpty = UI.EmptyLine(col)
   local function linkRow(fn)
     local f = CreateFrame("Frame", nil, col); f:SetHeight(H.DAY_ROW)
     f.link = UI.KitButton(f, "", "link", fn, { role = "BODY" })
@@ -660,7 +746,6 @@ function Now.build(content)
   end
   -- (the rest of the deaths: their list while Deaths has a page, else Sessions, which counts them per session)
   content.moreDeaths = linkRow(function() if Now.deathsOpen() then UI.Open("Home", "deaths") else UI.Open("Home", "sessions") end end)
-  content.more = linkRow(function() UI.Open("Home", "activity") end)
   Welcome.build(content)
   content:HookScript("OnSizeChanged", function() if nowView then pcall(Now.place, nowView) end end)
   Now.refresh(content)
@@ -683,18 +768,21 @@ function Now.place(content)
     if h then f:SetHeight(h) end
   end
   if content.notice:IsShown() then put(content.notice, H.NOTICE); y = y + H.NOTICE + S.S3 end
-  put(content.hero, H.HERO); y = y + H.HERO + S.S5   -- (S5 between the hero and THIS SESSION, as between groups, A11)
-  put(content.sesHead, H.SECTION); y = y + H.SECTION
-  put(content.cards, H.STAT); pcall(content.cards.layout); y = y + H.STAT + S.S5
-  put(content.nextHead, H.SECTION); y = y + H.SECTION
-  for _, r in ipairs(content.nextRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
-  if content.allClear:IsShown() then put(content.allClear, H.SECTION); y = y + H.SECTION end
-  y = y + S.S5
-  put(content.lookHead, H.SECTION); y = y + H.SECTION
-  for _, r in ipairs(content.lookRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
-  if content.lookEmpty:IsShown() then put(content.lookEmpty, H.SECTION); y = y + H.SECTION end
-  if content.moreDeaths:IsShown() then put(content.moreDeaths, H.DAY_ROW); y = y + H.DAY_ROW end
-  if content.more:IsShown() then put(content.more, H.DAY_ROW); y = y + H.DAY_ROW end
+  -- (a block with nothing to say is not there, heading and all: no sentence takes its place, 0.3)
+  put(content.hero, H.HERO); y = y + H.HERO + (content.sesHead:IsShown() and S.S5 or S.S3)
+  if content.sesHead:IsShown() then put(content.sesHead, H.SECTION); y = y + H.SECTION end
+  local cardRow = content.cardRow
+  if cardRow and cardRow:IsShown() then put(cardRow, H.STAT); pcall(cardRow.layout); y = y + H.STAT + S.S5 end
+  if content.nextHead:IsShown() then
+    put(content.nextHead, H.SECTION); y = y + H.SECTION
+    for _, r in ipairs(content.nextRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
+    y = y + S.S5
+  end
+  if content.lookHead:IsShown() then
+    put(content.lookHead, H.SECTION); y = y + H.SECTION
+    for _, r in ipairs(content.lookRows) do if r:IsShown() then put(r, H.ROW2); y = y + H.ROW2 end end
+    if content.moreDeaths:IsShown() then put(content.moreDeaths, H.DAY_ROW); y = y + H.DAY_ROW end
+  end
   y = y + S.S4
   col:SetHeight(y)
   pcall(content.hero.layout)
@@ -731,12 +819,15 @@ function Now.refresh(content)
   local classN, classFile = call(UnitClass, "player")
   local zone = call(GetRealZoneText) or call(GetZoneText)
   local maxLvl = plain(call(GetMaxPlayerLevel)) or 60
-  hero:SetTitle(type(name) == "string" and name or "", { UI.ClassColor(classFile) })
   local who = ("Level %d"):format(lvl)
   if type(race) == "string" and race ~= "" then who = who .. " " .. race end
   if type(classN) == "string" and classN ~= "" then who = who .. " " .. classN end
   if type(zone) == "string" and zone ~= "" then who = who .. " \194\183 " .. zone end
-  hero:SetTitleMeta(who)
+  -- (the whole name, "Iron Hart", then who that is; with half a name known the title is the class line alone)
+  name = ns.fullName and ns.fullName() or nil
+  content.fullName = name
+  if name then hero:SetTitle(name, { UI.ClassColor(classFile) }); hero:SetTitleMeta(who)
+  else hero:SetTitle(who); hero:SetTitleMeta(nil) end
   if hero.image and type(SetPortraitTexture) == "function" then pcall(SetPortraitTexture, hero.image, "player") end
   local cur, mx = readXP()
   if not cur then local x = type(db.xp) == "table" and db.xp or {}; cur, mx = num(x.cur), num(x.max) end
@@ -746,8 +837,27 @@ function Now.refresh(content)
   local atMax = lvl >= maxLvl
   local remaining = (not atMax) and Pace.remaining(cur, mx, pace.rate) or nil
   content.remaining = remaining
+  local db0 = type(db.gold) == "table" and db.gold or {}
+  local bal = num(db0.balance)
+  local allChars
+  if ns.Gold and ns.Gold.roster then
+    local ok, ro = pcall(ns.Gold.roster, "all")
+    if ok and type(ro) == "table" and num(ro.count) > 1 then allChars = num(ro.total) end
+  end
+  local sg = Now.sessionGold()
+  content.sessionGold = sg
+  content.heroIsBalance = false
   if atMax then
-    hero:SetHero("Level " .. lvl); hero:SetMeta("Max level", nil); hero:SetBar(nil); hero:SetMeta2(nil)
+    -- the level cap: the hero is the session's gold once any moved, else the balance (Leveling owns the level)
+    hero:SetBar(nil); hero:SetMeta2(nil)
+    if sg and sg.moved then
+      hero:SetHero(UI.money(sg.net, true) .. " this session")
+      hero:SetMeta(sg.perHour and (UI.money(sg.perHour, true) .. " per hour") or "", nil)
+    else
+      content.heroIsBalance = true
+      hero:SetHero(UI.money(bal))
+      hero:SetMeta(allChars and ("all characters " .. UI.money(allChars)) or "", nil)
+    end
   else
     hero:SetHero(remaining and (UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1)) or ("Level " .. lvl))
     local pct = mx > 0 and math.floor(cur / mx * 100) or 0
@@ -759,6 +869,14 @@ function Now.refresh(content)
   pcall(hero.layout)
   content.heroTip = function(tip)
     tip:AddLine(type(name) == "string" and name or "Your character", 1, 1, 1)
+    if atMax then
+      if sg and sg.moved then
+        tip:AddLine("What your gold did this session: earned less spent. Per hour shows after 30 minutes of play.", 0.78, 0.79, 0.80, true)
+        tip:AddDoubleLine("Earned", ns.fmtMoney(sg.gained, { icons = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1)
+        tip:AddDoubleLine("Spent", ns.fmtMoney(sg.spent, { icons = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1)
+      else tip:AddLine("Your gold. No gold has moved this session.", 0.78, 0.79, 0.80, true) end
+      return
+    end
     tip:AddLine("At your XP per hour over the last 30 minutes of active play. It already includes the rested bonus you earned in that time.", 0.78, 0.79, 0.80, true)
     local pl = type(db.played) == "table" and db.played or {}
     if num(pl.total) > 0 then tip:AddDoubleLine("Played in all", UI.fmtDur(pl.total, { minutes = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
@@ -769,69 +887,107 @@ function Now.refresh(content)
     end
   end
 
+  local elapsed = start and math.max(0, now - start) or 0
+  local sdeaths = num(ses and ses.deaths)
+  local deathsOpen = Now.deathsOpen()
+  content.deathsOpen = deathsOpen
+  if atMax then
+    -- THE CARDS at the level cap (1.1): BALANCE, PLAYED, LAST RUN, SAVED TO EVERBUFF.GG, DEATHS; each only when it
+    -- has a value, at most 4 in this order. No XP per hour, no kills, no count of 0.
+    content.sesHead:Hide(); content.cards:Hide()
+    local defs = {}
+    -- (the META room of one of 4 cards, the most the row can hold: a line then reads the same at every count)
+    local metaW = math.floor((w - 3 * S.S3) / 4) - 2 * S.S3 - S.S2
+    if not content.heroIsBalance then
+      -- (a total too long for the card says "all" for "all characters": never cut mid-amount)
+      local allText = allChars and ("all characters " .. UI.money(allChars)) or ""
+      if allChars and UI.TextWidth("META", allText) > metaW then allText = "all " .. UI.money(allChars) end
+      defs[#defs + 1] = { key = "balance", label = "Balance", value = UI.money(bal), meta = allText,
+        tip = { title = "Balance", text = "Your gold on this character. Opens Loot > Gold." },
+        click = function() if ns.Gold and ns.Gold.open then ns.Gold.open("session") else UI.Open("Loot", "gold") end end }
+    end
+    if start then
+      defs[#defs + 1] = { key = "played", label = "Played", value = (elapsed < 30 and UI.fmtDur(elapsed) or UI.fmtPlayed(elapsed)), meta = "",
+        tip = { title = "Played", text = "How long this session has run. Opens your sessions." }, click = function() UI.Open("Home", "sessions") end }
+    end
+    local lr = Now.lastRun(now, metaW)
+    if lr then
+      defs[#defs + 1] = { key = "run", label = "Last run", value = lr.name, meta = lr.meta, tip = { title = "Last run", text = "Your newest stored dungeon run. Opens its page." },
+        click = function() UI.Open("Dungeons", "runs"); if ns.Dungeons and ns.Dungeons.openRun then pcall(ns.Dungeons.openRun, lr.rec) end end }
+    end
+    local sync = ns.SyncState and ns.SyncState() or {}
+    if sync.lastAck then
+      defs[#defs + 1] = { key = "saved", label = "Saved to everbuff.gg", value = UI.fmtStamp(sync.ackAt or 0, now),
+        meta = (sync.ackFights and sync.ackFights > 0) and UI.plural(sync.ackFights, "pull") or "",
+        tip = { title = "Saved to everbuff.gg", text = "When the desktop app last picked your data up, and how many pulls it took." } }
+    else
+      defs[#defs + 1] = { key = "saved", label = "Saved to everbuff.gg", value = "Not seen yet", meta = "", muted = true,
+        tip = { title = "Not seen yet", text = "Install the desktop app from everbuff.gg to keep your history and watch your recordings." } }
+    end
+    if sdeaths > 0 then
+      defs[#defs + 1] = { key = "deaths", label = "Deaths", value = UI.fmtNum(sdeaths), meta = "",
+        tip = { title = "Deaths this session", text = deathsOpen and "Opens every death." or nil }, click = deathsOpen and function() UI.Open("Home", "deaths") end or nil }
+    end
+    while #defs > 4 do table.remove(defs) end
+    local row = content.maxRow(#defs)
+    content.cardRow, content.cardDefs = row, defs
+    for i, d in ipairs(defs) do
+      local card = row.cards[i]
+      card.ebKey = d.key
+      card:Set(d.label, d.value, d.meta, d.muted and "fgMuted" or nil)
+      card.ebClick = d.click
+      if card.SetClickable then card:SetClickable(d.click ~= nil) end
+      UI.SetTip(card, d.tip)
+    end
+  else
+  for _, r in pairs(content.maxRows) do r:Hide() end
+  content.cardRow, content.cardDefs = content.cards, nil
+  content.sesHead:Show(); content.cards:Show()
   -- THIS SESSION: played, XP per hour, gold, deaths
   content.sesHead:SetMeta(nil)   -- (the PLAYED card says when the session started: no second "since")
   local cards = content.cards.cards
-  local elapsed = start and math.max(0, now - start) or 0
-  cards[1]:Set("Played", start and UI.fmtPlayed(elapsed) or "-", start and (UI.fmtClock(start) .. " to now") or "no session yet")
+  cards[1]:Set("Played", start and (elapsed < 30 and UI.fmtDur(elapsed) or UI.fmtPlayed(elapsed)) or "Not known yet", start and (UI.fmtClock(start) .. " to now") or "")
   UI.SetTip(cards[1], { title = "Played", text = "How long this session has run. Opens your sessions." })
-  if atMax then
-    cards[2]:Set("XP per hour", "-", "max level")
-    UI.SetTip(cards[2], { title = "XP per hour", text = "You are at the level cap." })
-  elseif pace.rate then
+  if pace.rate then
     cards[2]:Set("XP per hour", UI.fmtNum(pace.rate), ("last %dm of play"):format(pace.used))
     UI.SetTip(cards[2], { title = "XP per hour", text = ("+%s XP this session"):format(UI.fmtNum(pace.xp)) })
   else
-    cards[2]:Set("XP per hour", "-", "after 10m of play")
+    cards[2]:Set("XP per hour", "Not known yet", "after 10m of play", "fgMuted")
     UI.SetTip(cards[2], { title = "XP per hour", text = "Shows after 10 minutes of play" })
   end
-  local net, perHour
-  if ns.Gold and ns.Gold.metric then
-    local ok1, a = pcall(ns.Gold.metric, "net", "char", "session"); net = ok1 and a or nil
-    local ok2, b = pcall(ns.Gold.metric, "perHour", "char", "session"); perHour = ok2 and b or nil
-  end
-  cards[3]:Set("Gold", type(net) == "number" and UI.money(net, true) or "-",
-    type(perHour) == "number" and (UI.money(math.floor(perHour + 0.5), true) .. " per hour") or "per hour after 5m")
-  local bal = num(type(db.gold) == "table" and db.gold.balance)
+  -- (the rate only from Now.RATE_FLOOR of play on; before it the card has no second line)
+  cards[3]:Set("Gold", sg and UI.money(sg.net, true) or "Not known yet", (sg and sg.perHour) and (UI.money(sg.perHour, true) .. " per hour") or "", (not sg) and "fgMuted" or nil)
   local goldPairs = { { "Balance", ns.fmtMoney(bal, { icons = true }) } }
-  if ns.Gold and ns.Gold.roster then
-    local ok, ro = pcall(ns.Gold.roster, "all")
-    if ok and type(ro) == "table" and num(ro.count) > 1 then goldPairs[2] = { "All characters", ns.fmtMoney(num(ro.total), { icons = true }) } end
-  end
-  UI.SetTip(cards[3], { title = "Gold this session", text = "What you made this session, and per hour of play.", pairs = goldPairs })
-  local kills, sdeaths, items = num(ses and ses.kills), num(ses and ses.deaths), num(ses and ses.items)
-  local lk, ld = 0, 0
-  for _, s in pairs((ns.DB and ns.DB.sessions) or {}) do if type(s) == "table" and ns.isMySession(s) then lk, ld = lk + num(s.kills), ld + num(s.deaths) end end
-  -- (the META is this session's other counts, as the card's period; the lifetime counts are in the tooltip)
-  cards[4]:Set("Deaths", UI.fmtNum(sdeaths), UI.plural(kills, "kill") .. " \194\183 " .. UI.plural(items, "item"))
-  local deathsOpen = Now.deathsOpen()
-  content.deathsOpen = deathsOpen
+  if allChars then goldPairs[2] = { "All characters", ns.fmtMoney(allChars, { icons = true }) } end
+  UI.SetTip(cards[3], { title = "Gold this session", text = "What you made this session. Per hour shows after 30 minutes of play.", pairs = goldPairs })
+  -- (a true stored count, 0 included; no kills or items line under it)
+  cards[4]:Set("Deaths", UI.fmtNum(sdeaths), "")
   if cards[4].SetClickable then cards[4]:SetClickable(deathsOpen) end
-  UI.SetTip(cards[4], { title = "Deaths this session", text = deathsOpen and "Opens every death." or nil, pairs = { { "Lifetime", UI.plural(lk, "kill") .. " \194\183 " .. UI.plural(ld, "death") } } })
+  UI.SetTip(cards[4], { title = "Deaths this session", text = deathsOpen and "Opens every death." or nil })
+  end
 
   -- NEXT
   local nx = Now.nextItems(w - (S.S3 + 24 + S.S2) - S.S3, now)
   content.nextList = nx
   for i, it in ipairs(nx) do row2(content, content.nextRows, i):Set(it):Show() end
   for i = #nx + 1, #content.nextRows do content.nextRows[i]:Hide() end
-  if #nx == 0 then content.allClear:Set("Nothing needs you. Go have fun.", nil, nil, "good"); content.allClear:Show() else content.allClear:Hide() end
+  -- (nothing needs attention: no section and no sentence)
+  if #nx == 0 then content.nextHead:Hide() else content.nextHead:Show() end
 
-  -- WORTH A LOOK
-  local look, extra, ev = Now.lookItems(now)
+  -- WORTH A LOOK: at the level cap the session's largest gold lines; while leveling what happened this session in
+  -- rank order. With nothing to list the section is not there (no "so far" row, no sentence).
+  local look, extra = {}, {}
+  if atMax then look = Now.goldLines()
+  else look, extra = Now.lookItems(now) end
   local cap = G.isWide(G.winW()) and Now.CAP_WIDE or Now.CAP_COMPACT
-  if #look == 0 and (#ev > 0 or kills > 0 or items > 0) then
-    look = { { kind = "session", icon = UI.KIND_ICON.session, title = ("%s and %s so far"):format(UI.plural(kills, "kill"), UI.plural(items, "item")),
-      meta = "No deaths and no level yet. Keep going." } }
-  end
   local shown = math.min(#look, cap)
   content.lookList = look
   for i = 1, shown do row2(content, content.lookRows, i):Set(look[i]):Show() end
   for i = shown + 1, #content.lookRows do content.lookRows[i]:Hide() end
-  if #look == 0 then content.lookEmpty:Set("Nothing yet. Run a dungeon, ding, or loot something green and it shows here."); content.lookEmpty:Show() else content.lookEmpty:Hide() end
-  if extra.deaths and extra.deaths > 0 then
+  if #look == 0 then content.lookHead:Hide() else content.lookHead:Show() end
+  if #look > 0 and extra.deaths and extra.deaths > 0 then
     content.moreDeaths.link:SetLabel(UI.plural(extra.deaths, "more death") .. " \226\128\186"); content.moreDeaths:Show()
   else content.moreDeaths:Hide() end
-  if #look > cap then content.more.link:SetLabel(("+%d more \226\128\186"):format(#look - cap)); content.more:Show() else content.more:Hide() end
 
   Now.place(content)
 end

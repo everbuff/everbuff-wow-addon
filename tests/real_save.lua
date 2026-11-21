@@ -428,7 +428,7 @@ end
 -- ── pages ───────────────────────────────────────────────────────────────────────────────────────────────────────
 R.HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
 -- every page a real save can show (the fixture-only states of tests/render_html.lua are not among them)
-R.PAGES = { "home/now", "home/sessions", "home/activity", "home/fights", "home/deaths",
+R.PAGES = { "home/now", "home/sessions", "home/fights", "home/deaths",
   "dungeons/runs", "dungeons/bydungeon", "dungeons/run",
   "loot/items", "loot/items:all", "loot/items:byitem",
   "loot/gold", "loot/gold:today", "loot/gold:week", "loot/gold:all", "loot/gold:journal", "loot/gold:days", "loot/gold:zones",

@@ -124,6 +124,49 @@ local function dotRow(col)
     r.plain = text
     r.label:SetText(UI.dot(color or "accent") .. text)
     r.label:SetTextColor(C.fg[1], C.fg[2], C.fg[3])
+    if r.value then r.value:Hide() end
+    r.pairLabel, r.pairValue = nil, nil
+    if r.btn then if button then r.btn:Show() else r.btn:Hide() end end
+    pcall(r.layout)
+  end
+  return r
+end
+-- The rows of CAPTURE HEALTH are a two column list: the dot and the label at the left, every value on one shared x
+-- (the widest label of the list plus a gap), so the values line up and one separator is not mixed with another.
+-- `plain` is the row as one text, "Pulls waiting: 0".
+local HEALTH_LABELS = { "Status", "Saved to everbuff.gg", "Pulls waiting", "Loot", "Combat log", "Advanced combat logging" }
+local function pairRow(col)
+  local r = dotRow(col)
+  r.value = UI.Text(r, "BODY", "fg")
+  r.value:SetJustifyH("LEFT"); r.value:SetWordWrap(true)
+  local function valueX()
+    local x = 0
+    for _, l in ipairs(HEALTH_LABELS) do x = math.max(x, UI.TextWidth("BODY", UI.dot("accent") .. l)) end
+    return S.S3 + math.ceil(x) + S.S5
+  end
+  SET.healthValueX = valueX
+  function r.layout()
+    local w = tonumber(r:GetWidth()) or 0
+    local cw = (r.btn and r.btn:IsShown()) and ((tonumber(r.btn:GetWidth()) or 0) + S.S2) or 0
+    local x = valueX()
+    local room = math.max(1, w - x - S.S3 - cw)
+    local tw = UI.TextWidth("BODY", r.value:GetText())
+    r.label:SetWidth(x - S.S3)
+    r.value:ClearAllPoints(); r.value:SetPoint("TOPLEFT", r, "TOPLEFT", x, -((H.SETTING - UI.LINE_H.BODY) / 2))
+    r.value:SetWidth(math.min(room, tw + 1))
+    local lines = math.max(1, math.ceil(tw / room))
+    r.ebH = math.max(H.SETTING, lines * UI.LINE_H.BODY + (H.SETTING - UI.LINE_H.BODY))
+    r:SetHeight(r.ebH)
+  end
+  -- label, value, the dot's colour, whether the row's button shows, the value's colour role (fg when nil)
+  function r.SetPair(_, label, value, color, button, valueColor)
+    r.pairLabel, r.pairValue = label, value
+    r.plain = label .. ": " .. value
+    r.label:SetWordWrap(false)
+    r.label:SetText(UI.dot(color or "accent") .. label)
+    r.label:SetTextColor(C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3])
+    r.value:SetText(value); r.value:Show()
+    UI.SetColor(r.value, valueColor or "fg")
     if r.btn then if button then r.btn:Show() else r.btn:Hide() end end
     pcall(r.layout)
   end
@@ -284,8 +327,8 @@ local function buildData(pane)
   -- The page is one answer, CAPTURE HEALTH (docs/UX_PRAGMATIC.md 5): is the addon capturing, did the desktop app
   -- pick the data up, what is still waiting, what is stored. The paste code (a fallback: the pickup is automatic)
   -- and the Clear buttons are under Advanced, collapsed.
-  d.syncStatus = dotRow(col)
-  d.syncStatus.text = d.syncStatus.label
+  d.syncStatus = pairRow(col)
+  d.syncStatus.text = d.syncStatus.value
   d.pasteRow = CreateFrame("Frame", nil, col); d.pasteRow.ebH = UI.H.CONTROL + S.S2; d.pasteRow:SetHeight(d.pasteRow.ebH)
   local box = CreateFrame("EditBox", nil, d.pasteRow, "BackdropTemplate")
   box:SetHeight(UI.H.CONTROL)
@@ -310,10 +353,10 @@ local function buildData(pane)
   d.syncDesc = note(col, "Only if the desktop app asks for it: the pickup is automatic.")
   -- CAPTURE HEALTH (the addon captures data; only the desktop app knows about video)
   local health = { head = UI.Section(col, "Capture health"), items = {} }
-  d.rec = dotRow(col)
-  d.combat = dotRow(col)
+  d.rec = pairRow(col)
+  d.combat = pairRow(col)
   d.combat.btn = UI.KitButton(d.combat, "Turn on", "ghost", function() SET.turnOn() end); d.combat:SetControl(d.combat.btn)
-  d.acl = dotRow(col)
+  d.acl = pairRow(col)
   d.acl.btn = UI.KitButton(d.acl, "Turn on", "ghost", function() SET.turnOn() end); d.acl:SetControl(d.acl.btn)
   d.remind = UI.SettingRow(col, "Remind me to /reload before I log out", "Saves your data even if the game disconnects you.")
   d.remindCb = UI.Checkbox(d.remind, { onChange = function(on) if ns.DB and ns.DB.settings then ns.DB.settings.autoSave = on and true or false end end })
@@ -332,12 +375,12 @@ local function buildData(pane)
   sv:HookScript("OnLeave", function(s) UI.BoxColors(s, nil, "lineStrong"); svt:SetTextColor(C.fgSubtle[1], C.fgSubtle[2], C.fgSubtle[3]) end)
   d.save:SetControl(sv)
   d.saveBtn = sv
-  -- what is stored: one status row each in CAPTURE HEALTH ("Pulls waiting · 0"), and its Clear on a row of its own
+  -- what is stored: one status row each in CAPTURE HEALTH ("Pulls waiting", "0"), and its Clear on a row of its own
   -- under Advanced (d.clear), there only while the store holds something
   d.stored, d.clear = {}, {}
   local clearRows = {}
   for _, it in ipairs(STORED) do
-    local r = dotRow(col)
+    local r = pairRow(col)
     r.key = it[1]
     d.stored[it[1]] = r
     local cr = UI.SettingRow(col, it[7], "Cannot be undone.")
@@ -420,11 +463,11 @@ function SET.refreshData()
   if la then
     -- (the pickup as a fixed moment and what it took, both from combat.lastAck: "Sat 21 Nov 11:45, 142 pulls")
     local took = (sync.ackFights and sync.ackFights > 0) and (", " .. UI.plural(sync.ackFights, "pull")) or ""
-    d.syncStatus:SetState("Saved to everbuff.gg: " .. UI.fmtStamp(sync.ackAt or 0) .. took, "accent")
+    d.syncStatus:SetPair("Saved to everbuff.gg", UI.fmtStamp(sync.ackAt or 0) .. took, "accent")
     UI.SetTip(d.syncStatus, { title = "Saved to everbuff.gg", text = "When the desktop app last picked your data up, and how many pulls it took." })
   else
     -- (never seen: said plainly; what to do about it is the hover, not a sentence on the page)
-    d.syncStatus:SetState("Saved to everbuff.gg: not seen yet", "fgFaint")
+    d.syncStatus:SetPair("Saved to everbuff.gg", "Not seen yet", "fgFaint", nil, "fgMuted")
     UI.SetTip(d.syncStatus, { title = "Not seen yet", text = "The desktop app has not picked your data up. Install it from everbuff.gg to keep your history and watch your video." })
   end
   pcall(d.placeholderSync)
@@ -433,10 +476,10 @@ function SET.refreshData()
   local aclOn, combatOn = false, false
   if ns.Logging and ns.Logging.state then aclOn, combatOn = ns.Logging.state() end
   local zone = (GetRealZoneText and GetRealZoneText()) or nil
-  if sess then d.rec:SetState("CAPTURING" .. ((type(zone) == "string" and zone ~= "") and (" in " .. zone) or ""), "accent")
-  else d.rec:SetState("Standing by", "fgFaint") end
-  d.combat:SetState(combatOn and "Combat log: on" or "Combat log: off", combatOn and "accent" or "warn", not combatOn)
-  d.acl:SetState(aclOn and "Advanced combat logging: on" or "Advanced combat logging: off", aclOn and "accent" or "warn", not aclOn)
+  if sess then d.rec:SetPair("Status", "CAPTURING" .. ((type(zone) == "string" and zone ~= "") and (" in " .. zone) or ""), "accent")
+  else d.rec:SetPair("Status", "Standing by", "fgFaint") end
+  d.combat:SetPair("Combat log", combatOn and "on" or "off", combatOn and "accent" or "warn", not combatOn)
+  d.acl:SetPair("Advanced combat logging", aclOn and "on" or "off", aclOn and "accent" or "warn", not aclOn)
   d.remindCb:SetChecked(st.autoSave == nil or st.autoSave == true)
   -- stored data
   local db = ns.DB or { combat = {}, loot = {}, story = {} }
@@ -446,10 +489,10 @@ function SET.refreshData()
     local extra, near = "", false
     if it[1] == "fights" and ns.Fights and ns.Fights.capInfo then
       local nF, cap = ns.Fights.capInfo()
-      if nF >= cap - 25 then near = true; extra = (" \194\183 near the limit of %s: the oldest roll off"):format(UI.fmtNum(cap)) end
+      if nF >= cap - 25 then near = true; extra = (", near the limit of %s: the oldest roll off"):format(UI.fmtNum(cap)) end
     end
     -- (a true stored count, 0 included; no sentence restates it)
-    r:SetState(it[2] .. " \194\183 " .. it[4](n) .. extra, near and "warn" or "accent")
+    r:SetPair(it[2], it[4](n) .. extra, near and "warn" or "accent")
     r.count = n
   end
   -- advanced

@@ -72,7 +72,8 @@ return function(P)
   eq("Runs: Time is the time inside", row and row.c.dur.text, "1h 9m")
   eq("Runs: Bosses is the kills alone, never \"7/7\" from one run", row and row.c.boss.text, "7")
   eq("Runs: Deaths", row and row.c.death.text, "2")
-  eq("Runs: Worth is the looted coin plus the items' vendor value, without the quest coin", row and row.c.worth.text, UI.money(11612 + 180399))
+  -- (the purse gained 18,835 inside, quest coin aside; 11,612 of it was booked as looted. The coin is the 18,835.)
+  eq("Runs: Worth is the run's coin plus the items' vendor value, without the quest coin", row and row.c.worth.text, UI.money(18835 + 180399))
   check("Runs: Vs best is left out with nothing to compare", lv.colHidden.vs == true and lv.tbl.cols.vs == nil)
   eq("Runs: the hero's answer is the result", lv.heroVerdict, "7 bosses in 1h 9m")
   check("Runs: no summary line with no instance this hour and no lockout", lv.summaryN == 0 and lv.summary.shown == false, tostring(lv.summaryN))
@@ -98,8 +99,8 @@ return function(P)
   eq("Run: BOSSES meta is the boss clock, first pull to last kill (4143 - 348 s)", dv.card.bosses.meta.text, "boss clock 1h 3m")
   eq("Run: XP", dv.card.xp.value.text, "62,388")
   eq("Run: XP per hour of the 4148 s inside", dv.card.xp.meta.text, "54,146 per hour")
-  eq("Run: WORTH", dv.card.worth.value.text, UI.money(192011))
-  eq("Run: WORTH names its two parts", D.worthParts(rec and R.view(rec, false, false)), ("%s coin \194\183 %s items at vendor prices"):format(UI.money(11612), UI.money(180399)))
+  eq("Run: WORTH (19g 92s)", dv.card.worth.value.text, UI.money(199234))
+  eq("Run: WORTH names its two parts, the coin 1g 88s", D.worthParts(rec and R.view(rec, false, false)), ("%s coin \194\183 %s items at vendor prices"):format(UI.money(18835), UI.money(180399)))
   check("Run: no card says Coin looted 3g (looted and quest coin together)", (function() for _, cd in ipairs(dv.cards) do if tostring(cd.value.text) == UI.money(11612 + 18400) then return false end end return true end)())
   -- bosses: boss 1 since entering, the others since the kill before
   local br = shown(dv.tables.bosses)
@@ -263,7 +264,14 @@ return function(P)
   for _, r in ipairs(rows) do if r.run.id == ("g%d"):format(G0 + 65059) then brd = r end end
   check("Runs: a rebuilt row is marked partial after its name", brd and strip(brd.c.name.text) == "Blackrock Depths partial", brd and brd.c.name.text)
   eq("Runs: its Time is the gold run's seconds", brd and brd.c.dur.text, "2h 33m")
-  eq("Runs: its Worth is coin plus item value (the quest coin is not loot)", brd and brd.c.worth.text, UI.money(53083 + 518686))
+  -- (a rebuilt row stores the booked coin, 53,083, and no purse figure; the run paid 75,411 by the chat log. The coin is
+  -- not known from the save, so Worth is the items' vendor value and no coin amount is printed anywhere.)
+  eq("Runs: a rebuilt row's Worth is its items' vendor value alone", brd and brd.c.worth.text, UI.money(518686))
+  do
+    local tips = brd and table.concat(lv.tipLines(brd.run), " | ") or ""
+    check("Runs: its hover says the coin is not counted and names no coin amount", tips:find(D.NO_COIN, 1, true) ~= nil and tips:find(UI.money(53083), 1, true) == nil
+      and select(2, D.coinOf(brd.run)) == "none", tips)
+  end
   check("Runs: with one full run in six, Vs best, Bosses and Deaths are left out (under a third of the rows have a value)", lv.colHidden.vs == true and lv.colHidden.boss == true
     and lv.colHidden.death == true and lv.tbl.cols.boss == nil and lv.tbl.cols.death == nil and lv.tbl.cols.worth ~= nil)
   eq("Runs: the hero is the newest run record, not a partial row", lv.heroRun and lv.heroRun.id, rec.id)
@@ -275,7 +283,9 @@ return function(P)
     check("Rebuilt run: its page opens", dv:IsShown() and dv.run.legacy == true)
     eq("Rebuilt run: two cards", #dv.cards, 2)
     eq("Rebuilt run: Time", dv.cards[1].value.text, "2h 33m")
-    eq("Rebuilt run: Worth", dv.cards[2].value.text, UI.money(53083 + 518686))
+    eq("Rebuilt run: Worth", dv.cards[2].value.text, UI.money(518686))
+    eq("Rebuilt run: the card says what the figure is, and no coin", dv.cards[2].meta.text, "items at vendor prices")
+    eq("Rebuilt run: the hover says the coin is not counted", dv.coinTip, D.NO_COIN)
     local any = {}
     for k, sec in pairs(dv.sections) do if sec.shown ~= false then any[#any + 1] = k end end
     check("Rebuilt run: nothing else is on the page, and no sentence says what is absent", #any == 0 and #dv.actBtns() == 0 and dv.deathLine == nil and dv.lootMore == nil, table.concat(any, ","))

@@ -19,6 +19,10 @@ for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "R
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
 end
 local T = ns._test or {}
+-- Home > Activity is removed (docs/UX_PRAGMATIC.md 0.5, 1.3): its tab is not shown and nothing links to it. The page's
+-- code is still loaded until the Activity work deletes it, and its own tests below open it behind this switch.
+check("Activity: the tab is off unless switched on", ns.ACTIVITY_TAB == nil and ns.UI.SubVisible("Home", "activity") == false)
+ns.ACTIVITY_TAB = true
 
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
@@ -1190,11 +1194,13 @@ do
   local pr2 = T.buildProfessions()
   local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
   check("professions: a skill-up without a prof field still counts this session", fa and fa.session == 1, fa and fa.session)
+  -- (the played stamps are overwritten at every login: no level row is built from them, docs/UX_PRAGMATIC.md 3.1)
   ns.char().playedAtLevel = { [11] = 3600, [12] = 7200 }
   L[#L + 1] = { s = ns.DB.active, kind = "LEVELUP", t = t0 + 700, text = "Ding!  Level 12" }
-  local lv = T.buildLevels(12, t0 + 800)
+  local lv, lvMissing = T.buildLevels(12)
   local l11; for _, r in ipairs(lv) do if r.level == 11 then l11 = r end end
-  check("levels: newest level first, the time at a level from the played stamps", lv[1].level == 12 and l11 and l11.at == 3600, lv[1] and lv[1].level)
+  check("levels: newest level first, each from its recorded level-up; the played stamps make no row and no time at a level",
+    lv[1].level == 12 and lv[1].t <= t0 + 700 and lv[1].at == nil and (l11 == nil or l11.t ~= nil) and lvMissing == 11 - #lv, lv[1] and lv[1].level)
   -- founder 2026-09-30: nothing opens or moves in combat, so the desktop never loses the flag mid-fight
   do
     local corner0 = ns.DB.settings.emitCorner
@@ -2084,8 +2090,10 @@ do
   local ovc = T.journeyRefresh()
   local function goldTip() local t = ovc.cards.cards[3].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
   check("#23 Home GOLD names the logged-in character's balance", ovc and goldTip() == ns.fmtMoney(123456, { icons = true }), ovc and goldTip())
-  local function lifetime() local t = ovc.cards.cards[4].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
-  local before = lifetime()
+  -- (the DEATHS card is the session's own count; lifetime kills and deaths are on no card or hover: they are
+  -- counters of gate I, docs/UX_PRAGMATIC.md 1.5, and a sum over the stored sessions is not a lifetime)
+  local function deathsCard() return tostring(ovc.cards.cards[4].value.text) .. "/" .. tostring(ovc.cards.cards[4].ebTip and ovc.cards.cards[4].ebTip.pairs) end
+  local before = deathsCard()
   ns.DB.sessions["other-23"] = { guid = "Player-1-000002", startedEpoch = 1 }
   local ev = ns.DB.story.events
   ev[#ev + 1] = { kind = "KILL", text = "Kill: Wolf", s = "other-23", t = 1 }
@@ -2095,15 +2103,11 @@ do
   T.journeyRefresh()
   ns.DB.sessions["other-23"].kills, ns.DB.sessions["other-23"].deaths = 1, 1
   T.journeyRefresh()
-  check("#23 Home's lifetime kills and deaths leave out another character's sessions", lifetime() == before, lifetime())
+  check("#23 Home's DEATHS card leaves out another character's sessions, and sums no lifetime", deathsCard() == before and before:find("/nil$") ~= nil, deathsCard())
   check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
-  _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
-  T.journeyRefresh()
-  check("#23 on the other character Home's lifetime counts its own kill and death", lifetime() == "1 kill \194\183 1 death", lifetime())
-  _G.UnitGUID = realGUID
   table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
   T.journeyRefresh()
-  check("#23 Home is back to the first character's counts", lifetime() == before, lifetime())
+  check("#23 Home is back to the first character's counts", deathsCard() == before, deathsCard())
 end
 -- ── #23 every pane shows the logged-in character only: a two-character save (Hart and Undertaker) ──
 do

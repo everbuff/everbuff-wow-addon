@@ -240,7 +240,9 @@ local function buildDetail(content)
     ns.OpenTimelineWindow(s0 - 5, s0 + (f.duration or 0) + 20, foesText(f) .. "  " .. date("%H:%M", s0))
   end)
   v.tlBtn:SetPoint("RIGHT", v.delBtn, "LEFT", -8, 0)
-  v.titleFS:SetPoint("RIGHT", v.tlBtn, "LEFT", -UI.SP.M, 0)
+  -- (the button opens Home > Activity on the fight's span: with that tab gone there is no button)
+  if UI.SubVisible and UI.SubVisible("Home", "activity") then v.titleFS:SetPoint("RIGHT", v.tlBtn, "LEFT", -UI.SP.M, 0)
+  else v.tlBtn:Hide(); v.titleFS:SetPoint("RIGHT", v.delBtn, "LEFT", -UI.SP.M, 0) end
 
   -- scrubber: drag to inspect the character's state at any moment of the fight
   local slider = CreateFrame("Slider", "EverbuffFightScrubber", v, "OptionsSliderTemplate")

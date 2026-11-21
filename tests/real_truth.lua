@@ -54,14 +54,26 @@ do
   eq("Runs: the Time column, every cell in minutes (2,010 s is 33m, never 33m 30s)", table.concat(cells, " | "), "1h 9m | 1h 14m | 33m | 2h 33m | 2h 20m | 1h 10m")
 end
 local top = rows[1]
-check("Runs: the stored run: Blackrock Spire, 1h 9m, worth 19g 20s 11c (11,612 + 180,399 copper)", top and top.run.name == "Blackrock Spire" and not top.run.legacy and top.c.dur.text == "1h 9m"
-  and top.c.worth.text == UI.money(192011), top and top.c.worth.text)
-local want = { { "Blackrock Spire", 4490, 14926 + 159344 }, { "Blackrock Depths", 2010, 795 + 30204 }, { "Blackrock Depths", 9220, 53083 + 518686 },
-  { "Blackrock Depths", 8430, 38404 + 438828 }, { "Maraudon", 4250, 365 + 93437 } }
+-- (the coin of the stored run is what the purse gained inside, quest coin aside: 18,835 copper, which is the sum of
+-- the 97 "Your share of the loot is" lines of the chat log in the run's window. The addon booked 11,612 as looted.)
+check("Runs: the stored run: Blackrock Spire, 1h 9m, worth 19g 92s 34c (18,835 + 180,399 copper)", top and top.run.name == "Blackrock Spire" and not top.run.legacy and top.c.dur.text == "1h 9m"
+  and top.c.worth.text == UI.money(199234) and UI.money(199234) == UI.money(199200) and UI.money(199234) ~= UI.money(192011), top and top.c.worth.text)
+-- (a rebuilt row stores the booked coin only and no purse figure. The chat log says the runs paid 23,469, 7,930,
+-- 75,411, 58,655 and 11,421 copper where 14,926, 795, 53,083, 38,404 and 365 were booked: the coin is not known from
+-- the save, so Worth is the vendor value of the items alone and the hover says the coin is not counted.)
+local want = { { "Blackrock Spire", 4490, 159344 }, { "Blackrock Depths", 2010, 30204 }, { "Blackrock Depths", 9220, 518686 },
+  { "Blackrock Depths", 8430, 438828 }, { "Maraudon", 4250, 93437 } }
 for i, w in ipairs(want) do
   local r = rows[i + 1]
   check(("Runs: rebuilt row %d: %s, %d s, worth %d copper"):format(i, w[1], w[2], w[3]), r and r.run.legacy and r.run.name == w[1] and r.run.inside == w[2] and (D.worth(r.run)) == w[3]
     and r.c.worth.text == UI.money(w[3]) and strip(r.c.name.text) == w[1] .. " partial", r and (r.run.name .. " " .. tostring(r.run.inside)))
+  local tips = r and table.concat(lv.tipLines(r.run), " | ") or ""
+  check(("Runs: rebuilt row %d: the hover names no coin amount and says the coin is not counted"):format(i), tips:find(D.NO_COIN, 1, true) ~= nil and tips:find(" coin \194\183", 1, true) == nil
+    and tips:find("Worth: " .. UI.money(w[3]) .. " items at vendor prices", 1, true) ~= nil, tips)
+end
+do
+  local m = rows[6] and rows[6].run
+  check("Runs: Maraudon never prints its booked 3s 65c as the run's coin", m and select(2, D.coinOf(m)) == "none" and D.worthParts(m) == UI.money(93437) .. " items at vendor prices", m and D.worthParts(m))
 end
 check("Runs: Vs best, Bosses and Deaths are left out while five of six rows are partial", lv.colHidden.vs and lv.colHidden.boss and lv.colHidden.death)
 check("Runs: there is no By dungeon tab", D.byVisible() == false and hostOf("Dungeons").ctl.hidden.bydungeon == true)
@@ -77,7 +89,7 @@ eq("Run: BOSSES", dv.card.bosses.value.text, "7")
 eq("Run: BOSSES meta", dv.card.bosses.meta.text, "boss clock 1h 3m")
 eq("Run: XP", dv.card.xp.value.text, "62,388")
 eq("Run: XP meta", dv.card.xp.meta.text, "54,146 per hour")
-eq("Run: WORTH", dv.card.worth.value.text, UI.money(192011))
+eq("Run: WORTH is 19g 92s (18,835 + 180,399 copper)", dv.card.worth.value.text, UI.money(199234))
 -- The page under the cards: no XP section, no purse line. The character is level 60 on this save: "about 7 more runs
 -- to level 60" was a forecast from the kill XP (ceil(209,800 x (1 - 0.029) / 30,716) = 7), false since 20 Nov 22:49.
 do
@@ -89,10 +101,21 @@ do
   check("Run: the page forecasts no runs to a level", page:find("more run", 1, true) == nil, page)
   check("Run: no XP section, no kill count, no second XP figure", dv.sections.xp == nil and page:find("[xp]", 1, true) == nil and page:find("243", 1, true) == nil
     and page:find("from kills", 1, true) == nil and select(2, page:gsub("62,388", "")) == 1, page)
-  check("Run: no purse line under the loot (the WORTH card has the coin)", dv.purseLine == nil and page:find("gained inside", 1, true) == nil and page:find("1g 88s", 1, true) == nil, page)
+  check("Run: no purse line under the loot (the WORTH card has the coin)", dv.purseLine == nil and page:find("gained inside", 1, true) == nil, page)
+  check("Run: the WORTH card's coin is 1g 88s, never the booked 1g 16s", tostring(dv.card.worth.meta.text):find(UI.money(18835) .. " coin", 1, true) == 1 and page:find(UI.money(11612), 1, true) == nil, dv.card.worth.meta.text)
+  eq("Run: the coin is the purse figure", select(2, D.coinOf(dv.run)), "purse")
+  check("Run: no ENTERED AND LEFT section, no visit count, no third clock, no combat total", dv.sections.visits.shown == false and dv.visitsShown == false and dv.tables.visits.frame.shown == false
+    and page:find("[visits]", 1, true) == nil and page:find("Active", 1, true) == nil and page:find("in combat", 1, true) == nil and page:find("visit", 1, true) == nil
+    and page:find("running back", 1, true) == nil, page)
+  do
+    local tl = table.concat(lv.tipLines(dv.run), " | ")
+    check("Run: the TIME hover splits the 7m 59s (running back 2m 38s, outside 5m 21s) and names no Active clock or re-entry count",
+      tl:find("Inside 1h 9m | Run back 2m 38s | Outside 5m 21s | Ended", 1, true) == 1 and tl:find("Active", 1, true) == nil and tl:find("Re-entered", 1, true) == nil, tl)
+  end
   eq("Run: the XP hover has the split and the levels (30,716 + 31,672 = 62,388; 58.7 to 59.0)", table.concat(dv.xpTip, " | "),
     "XP earned inside, and per hour of the time inside. | 30,716 from kills, 31,672 from quests. | Level 58.7 to 59.0.")
-  eq("Run: the WORTH hover has the purse (18,835 copper) beside the looted coin (11,612)", dv.purseTip, "Your purse grew by " .. ns.fmtMoney(18835) .. " inside, quest rewards aside. Looted coin was " .. ns.fmtMoney(11612) .. ".")
+  eq("Run: the WORTH hover says where the coin comes from (18,835 copper) and what was booked as loot (11,612)", dv.purseTip,
+    "Coin is what your purse gained inside, quest rewards aside: " .. ns.fmtMoney(18835) .. ". Of it " .. ns.fmtMoney(11612) .. " was seen as loot when it was picked up.")
 end
 local br = shown(dv.tables.bosses)
 local BOSS = { { "Highlord Omokk", "19m 39s", "19m 39s", "43s" }, { "War Master Voone", "23m 50s", "4m 11s", "28s" }, { "Shadow Hunter Vosh'gajin", "28m 36s", "4m 46s", "1m 26s" },
@@ -125,10 +148,37 @@ eq("Home: a hidden tab falls back to Now, whatever was open", home.ctl.active, "
 UI.Open("Home", "sessions"); M.settle()
 eq("Home: Open on the hidden Deaths tab reports false", UI.Open("Home", "deaths"), false); M.settle()
 eq("Home: and lands on Now from Sessions too", home.ctl.active, "now")
+eq("Home: no Activity tab (0.5, 1.3)", home.ctl.hidden.activity, true)
+eq("Home: Open on Activity reports false and lands on Now", UI.Open("Home", "activity"), false); M.settle()
+eq("Home: Activity falls back to Now", home.ctl.active, "now")
+-- ── Home > Now at the level cap (1.1) ──
 do
   local nv = T.journeyRefresh(); M.settle()
-  local card = nv.cards.cards[4]
-  check("Now: the DEATHS card is not a link while Deaths has no page", card.ebNoClick == true and card.chev.shown == false)
+  eq("Now: the title is the whole name", nv.hero.title.text, "Iron Hart")
+  check("Now: who that is, beside the name", tostring(nv.hero.titleMeta.text):find("^Level 60 ") ~= nil and tostring(nv.hero.titleMeta.text):find("Orgrimmar", 1, true) ~= nil, nv.hero.titleMeta.text)
+  -- (the session of 11:47: 281,985 + 27,880 + 45 = 309,910 copper spent, nothing earned)
+  eq("Now: the hero is the session's gold, -30g 99s", nv.hero.hero.text, UI.money(-309910, true) .. " this session")
+  eq("Now: no per hour figure 9 minutes into the session", strip(nv.hero.meta1.text), "")
+  check("Now: the session ledger behind it", nv.sessionGold.gained == 0 and nv.sessionGold.spent == 309910 and nv.sessionGold.played < 1800 and nv.sessionGold.perHour == nil, nv.sessionGold.played)
+  local labels, byKey = {}, {}
+  for i, d in ipairs(nv.cardDefs) do labels[i] = d.label; byKey[d.key] = nv.cardRow.cards[i] end
+  eq("Now: the cards, each with a value: no XP per hour, no DEATHS at 0", table.concat(labels, " | "), "Balance | Played | Last run | Saved to everbuff.gg")
+  check("Now: BALANCE 12s 19c of 1,219 copper, all characters 120,078", byKey.balance.value.text == UI.money(1219) and byKey.balance.meta.text == "all characters " .. UI.money(120078), byKey.balance.meta.text)
+  check("Now: PLAYED has no second line", strip(byKey.played.meta.text) == "" and tostring(byKey.played.value.text):find("^%d+m$") ~= nil, byKey.played.value.text)
+  check("Now: LAST RUN is the stored Blackrock Spire run", byKey.run.value.text == "Blackrock Spire" and ns.Now.lastRun().meta == "Fri 20 Nov \194\183 1h 9m \194\183 7 bosses \194\183 2 deaths", ns.Now.lastRun().meta)
+  check("Now: the card's line is never cut: it fits the card or drops the day", not byKey.run.meta:IsTruncated(), byKey.run.meta.text)
+  check("Now: SAVED TO EVERBUFF.GG is the last pickup and its pulls", byKey.saved.value.text == "Sat 21 Nov 11:45" and byKey.saved.meta.text == "142 pulls", byKey.saved.value.text)
+  check("Now: no NEXT section with nothing to do", nv.nextHead.shown == false)
+  local titles = {}
+  for i, it in ipairs(nv.lookList) do titles[i] = it.title .. " / " .. strip(it.meta) end
+  eq("Now: WORTH A LOOK is the session's three gold lines, largest first", #nv.lookList, 3)
+  check("Now: the largest is the 28g 19s buyout at 11:48", nv.lookList[1].title == "Buyout" and nv.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 11:48", titles[1])
+  check("Now: the flight names what it is", nv.lookList[3].title == "Flight: Tal", titles[3])
+  local words = {}
+  for _, r in ipairs(nv.lookRows) do if r.shown ~= false then words[#words + 1] = tostring(r.title.text) .. " " .. tostring(r.meta.text) end end
+  local page = table.concat(words, "\n") .. "\n" .. tostring(nv.hero.hero.text) .. "\n" .. tostring(nv.hero.meta1.text)
+  check("Now: none of the lines the founder listed", page:find("Keep going", 1, true) == nil and page:find("kills", 1, true) == nil and page:find("Max level", 1, true) == nil
+    and page:find("per hour", 1, true) == nil and page:find("Go have fun", 1, true) == nil, page)
 end
 -- ── the window chrome: the brand and the status word ──
 do
@@ -156,13 +206,27 @@ if d then
   -- one CAPTURE HEALTH block, the four facts first and in this order (docs/UX_PRAGMATIC.md 5)
   local items = ns.SettingsView.data.sections[1].items
   eq("Data: the first section", ns.SettingsView.data.sections[1].head.label.text, "CAPTURE HEALTH")
-  check("Data: row 1 is the status, CAPTURING with its place", items[1] == d.rec and tostring(d.rec.plain):find("^CAPTURING") ~= nil, d.rec.plain)
+  check("Data: row 1 is the status, CAPTURING with its place", items[1] == d.rec and d.rec.pairLabel == "Status" and tostring(d.rec.pairValue):find("^CAPTURING") ~= nil, d.rec.plain)
   check("Data: row 2 is the pickup", items[2] == d.syncStatus)
   eq("Data: the pickup", d.syncStatus.plain, "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls")
   check("Data: row 3 is the pulls waiting", items[3] == d.stored.fights)
-  eq("Data: pulls waiting", d.stored.fights.plain, "Pulls waiting \194\183 0")
+  eq("Data: pulls waiting", d.stored.fights.plain, "Pulls waiting: 0")
   check("Data: row 4 is the loot", items[4] == d.stored.loot)
-  eq("Data: loot", d.stored.loot.plain, "Loot \194\183 1,539 pickups")
+  eq("Data: loot", d.stored.loot.plain, "Loot: 1,539 pickups")
+  do
+    -- one format for the six rows: label left, every value on one shared x, no separator mixed with another
+    local rowsD = { d.rec, d.syncStatus, d.stored.fights, d.stored.loot, d.combat, d.acl }
+    local x0, same, clean = nil, true, true
+    for _, r in ipairs(rowsD) do
+      local bx = G.resolve(r.value).l - G.resolve(r).l
+      x0 = x0 or bx
+      if math.abs(bx - x0) > 0.5 then same = false end
+      if tostring(r.pairLabel):find("\194\183", 1, true) or tostring(r.pairLabel):find(":", 1, true) or r.value.shown == false then clean = false end
+    end
+    check("Data: the six CAPTURE HEALTH values start on one x", same, x0)
+    check("Data: no label carries a separator", clean)
+    eq("Data: the combat log rows read on", d.combat.pairValue .. " | " .. d.acl.pairValue, "on | on")
+  end
   check("Data: no Events row; the paste box and the Clears are under Advanced, collapsed", d.stored.events == nil and #ns.SettingsView.data.sections == 2
     and d.pasteRow.shown == false and d.clear.fights.shown == false and d.clear.loot.shown == false and d.stored.fights.btn == nil)
   ns.DB.settings.advancedOpen = true; ns.SettingsView.refreshData(); M.settle()
@@ -171,10 +235,32 @@ if d then
   eq("Data: the count of pulls ever recorded is untouched", ns.DB.combat.fightSeq, 6879)
 else check("Data: the settings page was built", false) end
 
--- ── Character > Leveling: the dungeon runs card never says all time ──
+-- ── Character > Leveling at the level cap (3.1) ──
 Real.open(S, "character/leveling"); M.settle()
-local card
-for _, cd in ipairs(ns.Progress.leveling.cards.cards) do if tostring(cd.label.text) == "DUNGEON RUNS" then card = cd end end
-check("Leveling: the dungeon runs card counts the six stored runs and says since when, never all time", card and card.value.text == "6" and card.meta.text == "stored since 18 Nov", card and (tostring(card.value.text) .. " / " .. tostring(card.meta.text)))
+do
+  local v = ns.Progress.leveling
+  eq("Leveling: the title is the whole name", v.hero.title.text, "Iron Hart")
+  eq("Leveling: Level 60, once", v.hero.hero.text, "Level 60")
+  eq("Leveling: when and where it was reached (session LEVEL_UP row, t = 1795211357)", v.hero.meta1.text, "Reached Fri 20 Nov 22:49 in Mount Hyjal")
+  -- (played.total 589,870 and played.level 3,968 answered at 1795258032; the clock of the save is 550 s later:
+  -- 590,420 s is 6d 20h, 4,518 s is 1h 15m)
+  eq("Leveling: the played time, total and at 60, each plus the time since /played answered", v.hero.meta2.text, "6d 20h played, 1h 15m at 60")
+  check("Leveling: no cards and no Quests table at the level cap", v.cardsShown == false and v.cards.shown == false and v.questsShown == false and v.quests.head.shown == false and v.quests.tbl.frame.shown == false)
+  local cols = {}
+  for _, c in ipairs(v.levels.tbl.spec) do cols[#cols + 1] = c.label end
+  eq("Leveling: the Levels columns: no Time at level, Played by then or Vs previous", table.concat(cols, " | "), "Level | Reached | Zone")
+  local got = {}
+  for _, r in ipairs(shown(v.levels.tbl)) do got[#got + 1] = r.c.level.text .. " " .. r.c.reached.text .. " " .. r.c.zone.text end
+  eq("Leveling: 21 levels have a recorded moment, and only they are listed", #got, 21)
+  local lv2 = {}
+  for _, r in ipairs(v.levelRows) do lv2[#lv2 + 1] = r.level end
+  eq("Leveling: which levels", table.concat(lv2, " "), "60 59 58 57 54 53 51 50 49 47 46 45 44 41 40 39 29 28 27 3 2")
+  eq("Leveling: row 1", got[1], "60 Fri 20 Nov, 22:49 Mount Hyjal")
+  eq("Leveling: row 2", got[2], "59 Fri 20 Nov, 16:05 Blackrock Spire")
+  eq("Leveling: row 3 (58, from a session record: the event list no longer has it)", got[3], "58 Thu 19 Nov, 21:58 Mulgore")
+  eq("Leveling: the last row", got[21], "2 Thu 5 Nov, 03:13 Tirisfal Glades")
+  eq("Leveling: one muted line counts the 38 other levels", v.noteText, "38 levels have no recorded date.")
+  check("Leveling: no dash stands for a date", (table.concat(got, "\n") .. "\n"):find(" %- ") == nil)
+end
 say(("real_truth: %d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

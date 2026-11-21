@@ -279,10 +279,12 @@ return function(P)
     if first and ns._test.dungeonDetail() then
       ns._test.renderRun(first)
       local dv = ns._test.dungeonDetail()
-      -- (WORTH is the coin looted plus the vendor value of the items; the quest coin is not loot and is only in the hover)
-      check("dungeons: the run's page reads coin and loot value from that block, as its WORTH", dv and dv.card.worth and dv.card.worth.value.text == ns.UI.money(2100 + 1200)
-        and ns.Dungeons.D.worthParts(first) == ("%s coin · %s items at vendor prices"):format(ns.UI.money(2100), ns.UI.money(1200)), dv and dv.worthText)
-      check("dungeons: and its WORTH hover says when the looted coin is not what the purse gained", dv and dv.purseLine == nil and dv.purseTip == ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(fmt(2600), fmt(2100)), dv and dv.purseTip)
+      -- (WORTH is the run's coin plus the vendor value of the items; the quest coin is not loot and is only in the hover.
+      -- The purse gained 2,600 inside, quest coin aside, where 2,100 was booked as looted: the coin is the 2,600.)
+      check("dungeons: the run's page reads coin and loot value from that block, as its WORTH", dv and dv.card.worth and dv.card.worth.value.text == ns.UI.money(2600 + 1200)
+        and ns.Dungeons.D.worthParts(first) == ("%s coin · %s items at vendor prices"):format(ns.UI.money(2600), ns.UI.money(1200)), dv and dv.worthText)
+      check("dungeons: and its WORTH hover says the coin is the purse figure and what was booked as loot", dv and dv.purseLine == nil
+        and dv.purseTip == ("Coin is what your purse gained inside, quest rewards aside: %s. Of it %s was seen as loot when it was picked up."):format(fmt(2600), fmt(2100)), dv and dv.purseTip)
     end
     check("dungeons: Gold.runFor is gone with the view-time runs it matched", G.runFor == nil)
   end

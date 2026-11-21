@@ -2422,21 +2422,6 @@ function Runs.views(full, light)
   if run and Runs.valid(run) then out[#out + 1] = Runs.view(run, true, full, light) end
   return out
 end
--- Two lines, so that no clock is cut at the narrowest window:
---   "Inside 31m 10s · running back 2m 05s · outside 4m 30s · offline 1h 56m"   where the wall time went
---   "Active 28m 40s · in combat 14m 2s (bosses 3m 10s)"                        what was done inside
-function Runs.timeLine(v)
-  local SEP = "  ·  "
-  local a = { "Inside " .. fmtDur(v.inside) }
-  if v.ghost > 0 then a[#a + 1] = "running back " .. fmtDur(v.ghost) end
-  if v.outside > 0 then a[#a + 1] = "outside " .. fmtDur(v.outside) end
-  if v.offline > 0 then a[#a + 1] = "offline " .. fmtDur(v.offline) end
-  local b = { "Active " .. fmtDur(v.active) }
-  if v.combat > 0 or v.boss > 0 then
-    b[#b + 1] = "in combat " .. fmtDur(v.combat) .. (v.boss > 0 and (" (bosses " .. fmtDur(v.boss) .. ")") or "")
-  end
-  return table.concat(a, SEP), table.concat(b, SEP)
-end
 -- "12,300 XP · 23,000 per hour · level 23.4 to 24.1", then on a line of their own the quest XP and the kills the
 -- client let the addon read, then what it hid. Returns the three (the last two or nil). Stored facts only: there is
 -- no "about N more runs to level L" (a forecast from kill XP, false the moment the character levels another way).

@@ -252,7 +252,8 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
       return found and not cutOff
     end
     check("Dungeons: no purse note while the looted coin is what the purse gained", dv.purseLine == nil and dv.purseTip == nil)
-    check("Dungeons: the clocks of the run are two lines, in full", dv.timeLine == "Inside 30m 0s" and dv.timeLine2 == "Active 30m 0s" and onPage(dv.timeLine) and onPage(dv.timeLine2), dv.timeLine)
+    check("Dungeons: the run's page has no clock lines and no ENTERED AND LEFT section: the TIME card has the time", dv.timeLine == nil and dv.timeLine2 == nil and dv.visitsShown == false
+      and dv.sections.visits.shown == false and not onPage("Inside 30m 0s") and not onPage("Active 30m 0s") and dv.card.time.value.text == "30m", dv.card.time.value.text)
     -- the list row of the run reads the same block as its page
     local function listRow()
       local lv = ns._test.dungeonList(); M.settle()
@@ -269,8 +270,25 @@ c.goldRunsEvicted = { n = 4, looted = 9000, quests = 1000, secs = 7200, lootValu
     rec.hidden = { xp = 12 }
     ns._test.renderRun(view()); M.settle()
     -- (the purse against the looted coin is a hover of the WORTH card, never a line: the card already has the coin)
-    eq("Dungeons: the WORTH hover says when the looted coin is not what the purse gained", dv.purseTip,
-      ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(fmt(11253), fmt(365)))
+    -- (Maraudon, 18 Nov: 3s 65c booked, 1g 12s 53c gained. The card's coin is the purse figure, the hover says so.)
+    eq("Dungeons: WORTH counts the purse figure when it is more than the booked coin", dv.card.worth.value.text, ns.UI.money(11253 + 51000))
+    eq("Dungeons: and names it as the coin", ns.Dungeons.D.worthParts(view()), ("%s coin · %s items at vendor prices"):format(ns.UI.money(11253), ns.UI.money(51000)))
+    eq("Dungeons: the WORTH hover says where the coin comes from and what was booked as loot", dv.purseTip,
+      ("Coin is what your purse gained inside, quest rewards aside: %s. Of it %s was seen as loot when it was picked up."):format(fmt(11253), fmt(365)))
+    eq("Dungeons: the list row reads the same worth as the page", listRow() and listRow().c.worth.text, ns.UI.money(11253 + 51000))
+    do
+      -- the purse gained less than was booked (coin was spent inside): the coin stays the booked figure
+      local keepP = rec.gold.purse
+      rec.gold.looted, rec.gold.purse = 5000, 3000
+      local D = ns.Dungeons.D
+      local c1, how1 = D.coinOf(view())
+      check("Dungeons: a purse that gained less than was booked leaves the booked coin", c1 == 5000 and how1 == "looted" and (D.worth(view())) == 5000 + 51000
+        and D.purseTip(view()) == ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(fmt(3000), fmt(5000)), tostring(c1))
+      rec.gold.purse = nil
+      local c2, how2 = D.coinOf(view())
+      check("Dungeons: a record with no purse figure reads its booked coin, and has no hover line", c2 == 5000 and how2 == "looted" and D.purseTip(view()) == nil)
+      rec.gold.looted, rec.gold.purse = 365, keepP
+    end
     check("Dungeons: and the hover carries it", tipOf(dv.card.worth):find(dv.purseTip, 1, true) ~= nil, tipOf(dv.card.worth))
     local pageText = {}
     for _, fs in ipairs(dv.lines) do if fs.shown ~= false then pageText[#pageText + 1] = tostring(fs.text) end end

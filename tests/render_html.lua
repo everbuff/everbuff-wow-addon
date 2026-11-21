@@ -3,7 +3,7 @@
 -- Usage, from the repo root:
 --   luajit tests/render_html.lua [outdir] [page ...]
 --     outdir   where the pages go (default tests/render_out, which git ignores); fonts are copied to outdir/fonts
---     page     host/pane keys to render (default: loot/items loot/gold home/now home/activity);
+--     page     host/pane keys to render (default: loot/items loot/gold home/now);
 --              settings/general, settings/golddisplay and settings/data open a Settings sub-tab
 --   then, on a machine with Chrome (never next to a running WoW client):
 --   node tests/render_shot.js outdir   (puppeteer-core; screenshots every page and writes <page>.findings.json)
@@ -41,7 +41,7 @@ local Real = REAL and Pages or nil
 local OUT = arg[1] or "tests/render_out"
 local PAGES = {}
 for i = 2, #arg do PAGES[#PAGES + 1] = arg[i] end
-if #PAGES == 0 then PAGES = REAL and Real.PAGES or { "loot/items", "loot/gold", "home/now", "home/activity" } end
+if #PAGES == 0 then PAGES = REAL and Real.PAGES or { "loot/items", "loot/gold", "home/now" } end
 local SIZES = { { 900, 580 }, { 1600, 1000 } }
 local SIZES_SET = os.getenv("EVERBUFF_RENDER_SIZES") ~= nil
 -- EVERBUFF_RENDER_SIZES="900x580,1250x760" renders other window sizes

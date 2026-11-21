@@ -74,15 +74,25 @@ return function(P)
         eq(tag .. ": the cards at 244", wy(c.cards), 244)
         local cw = math.floor((mainW - 3 * S.S3) / 4)
         eq(tag .. ": four cards of (main - 36) / 4", P.box(c.cards.cards[1]).w, cw)
-        eq(tag .. ": the NEXT header at 348 (S5 under the hero, A11)", wy(c.nextHead), 348)
+        -- (NEXT only when something needs attention, WORTH A LOOK only with rows: the first of them shown is at 348)
+        local firstBlock = (c.nextHead:IsShown() and c.nextHead) or (c.lookHead:IsShown() and c.lookHead) or nil
+        if firstBlock then eq(tag .. ": the block under the cards at 348 (S5 under them, A11)", wy(firstBlock), 348) end
+        check(tag .. ": NEXT is on the page exactly when it has a row", c.nextHead:IsShown() == (#c.nextList > 0))
+        check(tag .. ": WORTH A LOOK is on the page exactly when it has a row", c.lookHead:IsShown() == (#c.lookList > 0))
         check(tag .. ": the cards' last box edge is the main column's", near(P.box(c.cards.cards[4]).l + P.box(c.cards.cards[4]).w, P.box(c.hero).l + mainW))
         -- every card's period is on the card or its group header
         -- (the PLAYED card names the period, "21:35 to now"; the group header has no META)
         local p1 = tostring(c.cards.cards[1].meta.text or "")
         check(tag .. ": the PLAYED card names the period, the header no second one", p1:find("^%d%d:%d%d to now$") ~= nil and c.sesHead.meta.shown == false, p1)
-        local d4 = tostring(c.cards.cards[4].meta.text or "")
-        -- (B8: the META is this session's kills and items, "26 kills · 3 items"; the lifetime counts are in the tooltip)
-        check(tag .. ": the DEATHS card's META is the session's kills and items", d4:find("^[%d,]+ kills? \194\183 [%d,]+ items?$") ~= nil, d4)
+        -- (1.1: no kills and items line; the card is the session's stored death count)
+        eq(tag .. ": the DEATHS card has no kills and items line", tostring(c.cards.cards[4].meta.text or ""), "")
+        check(tag .. ": the GOLD card has no per hour figure before 30 minutes of play, and one after", (function()
+          local sg, meta = c.sessionGold, tostring(c.cards.cards[3].meta.text or "")
+          if not sg then return meta == "" end
+          if sg.played < Now.RATE_FLOOR or not sg.moved then return meta == "" and sg.perHour == nil end
+          return meta:find(" per hour$") ~= nil
+        end)(), tostring(c.cards.cards[3].meta.text))
+        check(tag .. ": no link to Activity on the page", c.more == nil and c.lookHead.link.shown == false)
         for i, card in ipairs(c.cards.cards) do
           check(tag .. ": card " .. i .. " label fits", not card.label:IsTruncated(), card.label.text)
           check(tag .. ": card " .. i .. " value is never cut", not card.value:IsTruncated(), card.value.text)
@@ -97,9 +107,7 @@ return function(P)
         -- WORTH A LOOK: capped, and never the empty sentence while the session has events
         local cap = G.isWide(W) and Now.CAP_WIDE or Now.CAP_COMPACT
         check(tag .. ": WORTH A LOOK shows at most its cap", shown(c.lookRows) <= cap, shown(c.lookRows))
-        local ev = Now.sessionEvents(ns.Recorder.current())
-        if #ev > 0 then check(tag .. ": no 'Nothing yet' while the session has events", not c.lookEmpty:IsShown()) end
-        check(tag .. ": the +N more row shows exactly when the list is past its cap", c.more:IsShown() == (#c.lookList > cap))
+        check(tag .. ": no empty sentence, no all-clear line and no +N more link exist on the page", c.lookEmpty == nil and c.allClear == nil and c.more == nil)
         eq(tag .. ": one primary on the view", UI.CountPrimaries(c), c.notice:IsShown() and 1 or 0)
         check(tag .. ": the page's height is what it holds", c.sf.contentH and c.sf.contentH >= 348 - G.CONTENT_TOP + H.SECTION)
       end
@@ -171,14 +179,91 @@ return function(P)
     st.xpm, st.ev, st.afk, st.total = {}, {}, {}, 0
   end
 
+  -- ── at the level cap (docs/UX_PRAGMATIC.md 1.1): the hero is gold, the cards are a list of what has a value ──
+  do
+    local keepMax, keepMetric, keepName, keepPI = _G.GetMaxPlayerLevel, ns.Gold.metric, _G.UnitName, _G.C_PlayerInfo
+    local lvl = UnitLevel("player")
+    _G.GetMaxPlayerLevel = function() return lvl end
+    local led = { gained = 5000, spent = 2000, net = 3000, played = 1799 }
+    ns.Gold.metric = function(id, who, when) if when == "session" and led[id] ~= nil then return led[id] end return keepMetric(id, who, when) end
+    -- (P.open puts a fresh copy of the data in place: the data is changed after it, then the page drawn again)
+    local c = P.open("home", "now", 900, 580)
+    local ses = ns.Recorder.current()
+    local keepAck, keepDeaths = ns.DB.combat.lastAck, ses.deaths
+    ses.deaths = 0
+    ns.DB.combat.lastAck = nil
+    reopen()
+    local function labels() local t = {}; for i, d in ipairs(c.cardDefs or {}) do t[i] = d.label end return table.concat(t, " | ") end
+    local function card(key) for i, d in ipairs(c.cardDefs or {}) do if d.key == key then return c.cardRow.cards[i] end end end
+    eq("Now at the cap: the hero is the session's net gold", c.hero.hero.text, UI.money(3000, true) .. " this session")
+    eq("Now at the cap: no per hour figure one second under 30 minutes of play", tostring(c.hero.meta1.text or ""), "")
+    check("Now at the cap: the level is not the hero and Max level is not on the page", not tostring(c.hero.hero.text):find("Level", 1, true) and not tostring(c.hero.meta1.text):find("Max level", 1, true))
+    check("Now at the cap: no XP bar", c.hero.track.shown == false)
+    check("Now at the cap: no THIS SESSION header and no XP PER HOUR card", not c.sesHead:IsShown() and not c.cards:IsShown() and not labels():find("XP", 1, true), labels())
+    check("Now at the cap: BALANCE, PLAYED, then LAST RUN when a run is stored, then SAVED TO EVERBUFF.GG; no DEATHS at 0",
+      labels() == (Now.lastRun() and "Balance | Played | Last run | Saved to everbuff.gg" or "Balance | Played | Saved to everbuff.gg"), labels())
+    check("Now at the cap: with no pickup seen the card says Not seen yet, muted, and the hover says what to do", card("saved").value.text == "Not seen yet"
+      and near(card("saved").value._color[1], UI.C.fgMuted[1], 0.01) and card("saved").ebTip.text:find("Install the desktop app from everbuff.gg", 1, true) ~= nil, card("saved").value.text)
+    check("Now at the cap: PLAYED has no second line", tostring(card("played").meta.text or "") == "")
+    for i, d in ipairs(c.cardDefs) do
+      local cd = c.cardRow.cards[i]
+      check("Now at the cap: card " .. d.key .. " has a value, never a dash, and nothing is cut", tostring(cd.value.text) ~= "-" and tostring(cd.value.text) ~= "" and not cd.value:IsTruncated() and not cd.meta:IsTruncated(), tostring(cd.value.text) .. " / " .. tostring(cd.meta.text))
+    end
+    eq("Now at the cap: the cards are S3 under the hero, with no header between", wy(c.cardRow) - wy(c.hero), H.HERO + S.S3)
+    eq("Now at the cap: the last card ends on the main column's edge", P.box(c.cardRow.cards[#c.cardDefs]).l + P.box(c.cardRow.cards[#c.cardDefs]).w, P.box(c.hero).l + G.mainW(900))
+    led.played = 1800; reopen()
+    eq("Now at the cap: from 30 minutes on the hero names the rate", c.hero.meta1.text, UI.money(6000, true) .. " per hour")
+    ns.DB.combat.lastAck = { at = GetServerTime() - 120, fights = 2, source = "file" }
+    ses.deaths = 3; reopen()
+    check("Now at the cap: a pickup seen reads its moment and its pulls", card("saved").value.text == UI.fmtStamp(GetServerTime() - 120) and card("saved").meta.text == "2 pulls", card("saved").value.text)
+    check("Now at the cap: DEATHS only above 0, and at most 4 cards", (card("deaths") ~= nil) == (#c.cardDefs < 4 or labels():find("Deaths", 1, true) ~= nil) and #c.cardDefs <= 4
+      and (Now.lastRun() ~= nil or (card("deaths") and card("deaths").value.text == "3")), labels())
+    -- no gold moved: the hero is the balance, and BALANCE is not a card too
+    led.gained, led.spent, led.net = 0, 0, 0
+    ns.char().gold.balance = 1219; reopen()
+    eq("Now at the cap: with no gold moved the hero is the balance", c.hero.hero.text, UI.money(1219))
+    check("Now at the cap: and BALANCE is not shown twice", card("balance") == nil and c.heroIsBalance == true, labels())
+    -- WORTH A LOOK: the session's largest gold lines, or no section
+    local keepEntries = ns.Gold.entries
+    ns.Gold.entries = function() return {} end; reopen()
+    check("Now at the cap: with no gold line the WORTH A LOOK section is not there, and no kills line stands in", #c.lookList == 0 and not c.lookHead:IsShown() and shown(c.lookRows) == 0)
+    ns.Gold.entries = function() return {
+      { delta = -45, src = "flights", detail = "Tal", t = 1800000100 }, { delta = -281985, src = "auctions", detail = "Buyout", t = 1800000000 },
+      { delta = 120, src = "looted", detail = "", t = 1800000200 }, { delta = -27880, src = "auctions", detail = "Buyout", t = 1800000050 }, { delta = 0, src = "other", detail = "", t = 1 } } end
+    reopen()
+    check("Now at the cap: WORTH A LOOK lists the 3 largest gold lines, largest first", #c.lookList == 3 and c.lookList[1].title == "Buyout" and c.lookList[1].meta == UI.money(-281985, true) .. " \194\183 Auction house \194\183 " .. UI.fmtClock(1800000000)
+      and c.lookList[2].meta:find(UI.money(-27880, true), 1, true) == 1 and c.lookList[3].title == "Loot" and c.lookHead:IsShown() and shown(c.lookRows) == 3, c.lookList[1] and c.lookList[1].meta)
+    ns.Gold.entries = keepEntries
+    -- the name: whole, or not at all
+    local first = (keepName("player"))
+    _G.C_PlayerInfo = { ShouldDisplaySurname = function() return true end }
+    _G.UnitName = function(u) if u == "player" then return first, "Hart" end return keepName(u) end
+    reopen()
+    eq("Now: the title is the whole name", c.hero.title.text, first .. " Hart")
+    check("Now: who that is stands beside it", tostring(c.hero.titleMeta.text):find("^Level " .. lvl) ~= nil and c.hero.titleMeta:IsShown())
+    local keepSur = ns.char().surname
+    _G.UnitName = function(u) if u == "player" then return first, nil end return keepName(u) end
+    ns.char().surname = "Stored"; reopen()
+    eq("Now: the second name falls back to the stored one", c.hero.title.text, first .. " Stored")
+    ns.char().surname = nil; reopen()
+    check("Now: with half a name the name is left out and the title is the class line", ns.fullName() == nil and tostring(c.hero.title.text):find("^Level " .. lvl) ~= nil and not c.hero.titleMeta:IsShown()
+      and not tostring(c.hero.title.text):find(first, 1, true), c.hero.title.text)
+    _G.C_PlayerInfo = keepPI
+    eq("Now: a client with no second names shows the one name it has", ns.fullName(), first)
+    ns.char().surname = keepSur
+    _G.UnitName, _G.GetMaxPlayerLevel, ns.Gold.metric = keepName, keepMax, keepMetric
+    ses.deaths, ns.DB.combat.lastAck = keepDeaths, keepAck
+    reopen()
+    check("Now: a leveling character keeps THIS SESSION and its four cards", c.sesHead:IsShown() and c.cards:IsShown() and c.cardRow == c.cards and c.cards.cards[2].label.text == "XP PER HOUR")
+  end
+
   -- ── NEXT: the live readings, their order and the cap; the all-clear line when nothing needs you ──
   do
     local keepDur, keepCont = M.dur, _G.C_Container.GetContainerNumFreeSlots
     local keepQ, keepN, keepLim = _G.GetQuestLogTitle, _G.GetNumQuestLogEntries, ns.DB.settings.instanceLimit
     M.dur = {}
     local c = P.open("home", "now", 900, 580)
-    check("Now: nothing needs you, the all-clear line", c.allClear:IsShown() and shown(c.nextRows) == 0 and tostring(c.allClear.text.text) == "Nothing needs you. Go have fun.")
-    eq("Now: the all-clear line is 24 px under its header", wy(c.allClear) - wy(c.nextHead), H.SECTION)
+    check("Now: nothing needs you: no NEXT section and no sentence", not c.nextHead:IsShown() and shown(c.nextRows) == 0 and c.allClear == nil)
     M.dur = { [1] = { 18, 100 }, [5] = { 60, 100 }, [7] = { 40, 100 } }
     _G.C_Container.GetContainerNumFreeSlots = function(bag) return bag == 0 and 2 or 0, 0 end
     _G.GetNumQuestLogEntries = function() return 3 end
@@ -246,8 +331,7 @@ return function(P)
     local lockouts = 0
     for _, it in ipairs(c.lookList) do if it.kind == "lockout" then lockouts = lockouts + 1 end end
     if lockouts == 0 then
-      check("Now: an empty session says how to fill WORTH A LOOK", c.lookEmpty:IsShown() and tostring(c.lookEmpty.text.text):find("^Nothing yet%.") ~= nil)
-      eq("Now: the empty sentence is right under its header", wy(c.lookEmpty) - wy(c.lookHead), H.SECTION)
+      check("Now: an empty session has no WORTH A LOOK section, no 'so far' row and no sentence", #c.lookList == 0 and not c.lookHead:IsShown() and shown(c.lookRows) == 0 and c.lookEmpty == nil)
     end
     ses.id, ses.kills, ses.items = keepId, keepK, keepI
     for k in pairs(pst) do pst[k] = nil end

@@ -91,64 +91,61 @@ local function buildQuests()
   return rows, { done = #rows, xp = num(x.fromQuests), kills = num(x.fromKills) }
 end
 
--- LEVELS: every level the character reached (the LEVELUP rows) and the levels /played was stamped at
+-- LEVELS: every level with a recorded moment (docs/UX_PRAGMATIC.md 3.1). Two sources, both exact: the LEVELUP story
+-- event, and the LEVEL_UP row of a stored session record ("seq, server time, clock, LEVEL_UP, level, zone"), which
+-- outlives the event list. A level with neither has no row: nothing is worked out from the /played stamps
+-- (playedAtLevel), which were overwritten at every login, so no time at a level but the current one is shown.
 local function levelOf(e) return tonumber(tostring(e.text or ""):match("(%d+)")) end
-local function timeAtLevel(L, cur, now)
-  local db = charDB()
-  local pal = type(db.playedAtLevel) == "table" and db.playedAtLevel or {}
-  local pl = type(db.played) == "table" and db.played or {}
-  if L == cur and num(pl.level) > 0 then
-    -- the played time since /played answered counts only while it is the same login (this session), never the time
-    -- logged out
-    local ses = curSession()
-    local st = ses and tonumber(ses.startedEpoch)
-    local since = (st and num(pl.atEpoch) >= st) and math.max(0, (now or nowT()) - num(pl.atEpoch)) or 0
-    return num(pl.level) + since, true
-  end
-  local a, b = num(pal[L]), num(pal[L + 1])
-  if a > 0 and b > a then return b - a, false end
-  return nil
+-- seconds played since /played last answered, counted only while that answer is of this login (never time logged out)
+local function sinceAnswer(pl, now)
+  local ses = curSession()
+  local st = ses and tonumber(ses.startedEpoch)
+  return (st and num(pl.atEpoch) >= st) and math.max(0, (now or nowT()) - num(pl.atEpoch)) or 0
 end
-local function buildLevels(cur, now)
-  now = now or nowT()
-  local reached = {}
-  for _, e in ipairs(events()) do
-    if e.kind == "LEVELUP" then local L = levelOf(e); if L and (not reached[L] or num(e.t) < reached[L]) then reached[L] = num(e.t) end end
-  end
+-- the played time at the level the character is on, nil while the game has not answered /played
+local function timeAtLevel(now)
   local db = charDB()
-  local pal = type(db.playedAtLevel) == "table" and db.playedAtLevel or {}
   local pl = type(db.played) == "table" and db.played or {}
-  local seen = {}
-  for L in pairs(reached) do seen[L] = true end
-  for L in pairs(pal) do if tonumber(L) then seen[tonumber(L)] = true end end
-  if cur and cur > 0 and next(seen) then seen[cur] = true end
-  local rows = {}
-  for L in pairs(seen) do
-    if not cur or L <= cur then
-      local at, live = timeAtLevel(L, cur, now)
-      -- (played by then: the /played total stamped when the level was reached; for the level you are on without a
-      -- stamp, the total less the time at this level)
-      local playedBy
-      if num(pal[L]) > 0 then playedBy = num(pal[L])
-      elseif L == cur and num(pl.total) > 0 and num(pl.level) > 0 then playedBy = math.max(0, num(pl.total) - num(pl.level)) end
-      -- (reached: the LEVELUP row; for the level you are on with none, the moment this session's played time at the
-      -- level began, when all of it was played in this session)
-      local t = reached[L]
-      if not t and live and at then
-        local ses = curSession()
-        local st = ses and tonumber(ses.startedEpoch)
-        if st and (now - at) >= st then t = now - at end
+  if num(pl.level) <= 0 then return nil end
+  return num(pl.level) + sinceAnswer(pl, now)
+end
+-- the character's played time in all, nil while the game has not answered /played
+local function playedTotal(now)
+  local db = charDB()
+  local pl = type(db.played) == "table" and db.played or {}
+  if num(pl.total) <= 0 then return nil end
+  return num(pl.total) + sinceAnswer(pl, now)
+end
+-- Rows { level, t, zone }, highest level first, and how many of the levels 2 to `cur` have no recorded moment.
+local function buildLevels(cur)
+  local reached = {}
+  local function note(L, t, zone)
+    L, t = tonumber(L), tonumber(t)
+    if not (L and t and t > 0 and L >= 2 and L == math.floor(L)) then return end
+    if cur and L > cur then return end
+    local r = reached[L]
+    if not r or t < r.t then
+      reached[L] = { level = L, t = t, zone = (type(zone) == "string" and zone ~= "") and zone or (r and r.zone) or nil }
+    elseif not r.zone and type(zone) == "string" and zone ~= "" then r.zone = zone end
+  end
+  for _, e in ipairs(events()) do
+    if e.kind == "LEVELUP" then note(levelOf(e), e.t, e.zone) end
+  end
+  for _, sess in pairs((ns.DB and ns.DB.sessions) or {}) do
+    if type(sess) == "table" and ns.isMySession(sess) and type(sess.segments) == "table" then
+      for _, seg in ipairs(sess.segments) do
+        if type(seg) == "string" and seg:find("\tLEVEL_UP\t", 1, true) then
+          local t, L, zone = seg:match("^%d+\t(%d+)\t[%d%.]+\tLEVEL_UP\t(%d+)\t?(.*)$")
+          note(L, t, zone)
+        end
       end
-      rows[#rows + 1] = { level = L, t = t, at = at, live = live, playedBy = playedBy }
     end
   end
+  local rows = {}
+  for _, r in pairs(reached) do rows[#rows + 1] = r end
   table.sort(rows, function(a, b) return a.level > b.level end)
-  for i, r in ipairs(rows) do
-    local prev = rows[i + 1]
-    -- (the level you are on is not finished: the hero compares its pace, the table only finished levels)
-    if r.at and not r.live and prev and prev.level == r.level - 1 and prev.at then r.vs = r.at - prev.at end
-  end
-  return rows
+  local missing = (cur and cur >= 2) and math.max(0, (cur - 1) - #rows) or 0
+  return rows, missing
 end
 
 -- reputation: the snapshot Emitter keeps (faction -> standing) merged with the live bars the client answers now
@@ -318,25 +315,33 @@ local function setTable(b, rows, fill, emptyText)
 end
 local COORDS = { key = "coords", label = "Coords", kind = "num", min = 72, measure = { "100.0, 100.0" }, wide = true }
 
--- ── Leveling ──
+-- ── Leveling ── (docs/UX_PRAGMATIC.md 3.1)
+-- At the level cap the page is short: the level, when and where it was reached, the played time, and the levels
+-- that have a recorded moment. A leveling character has the time to the next level with the XP bar, the cards
+-- PLAYED and TIME AT LEVEL, the same Levels table and the quests turned in.
+-- "Fri 20 Nov, 22:49": a fixed moment in a table cell (never "Yesterday": the row is read days later too)
+local function fmtReached(t, now)
+  if date("%Y", t) == date("%Y", now) then return UI.fmtSince(t, now) .. ", " .. UI.fmtClock(t) end
+  return UI.fmtStamp(t, now)
+end
 local function buildLeveling(content)
   local v = { content = content }
   V.leveling = v
   v.pg = UI.Page(content)
   local col = v.pg.col
   v.hero = UI.Hero(col, {})
-  v.cards = UI.StatRow(col, 4)
+  v.cards = UI.StatRow(col, 2)
   v.levels = block(col, "Levels", {
     { key = "level", label = "Level", kind = "num", min = 48 },
-    { key = "reached", label = "Reached", flex = 1, min = 120 },
-    { key = "at", label = "Time at level", kind = "num", min = 104, measure = { "10h 59m so far" } },
-    { key = "played", label = "Played by then", kind = "num", min = 112 },
-    { key = "vs", label = "Vs previous", kind = "tag", min = 104, justify = "RIGHT" },
+    { key = "reached", label = "Reached", kind = "tag", min = 136, measure = { "Wed 28 Nov, 23:59" } },
+    { key = "zone", label = "Zone", flex = 1, min = 120 },
   }, { tooltip = function(row, item, tip)
       tip:AddLine(("Level %d"):format(item.level), 1, 1, 1)
-      tip:AddLine(item.t and ("Reached " .. UI.fmtWhen(item.t)) or "Reached before everbuff.gg captured this character.", 0.78, 0.79, 0.80, true)
+      tip:AddLine("Reached " .. UI.fmtStamp(item.t) .. (item.zone and (" in " .. item.zone) or ""), 0.78, 0.79, 0.80, true)
     end })
-  v.quests = block(col, "Quests turned in", {
+  -- (the one muted line of the screen about what is not stored, 0.2.2)
+  v.levelNote = UI.EmptyLine(col)
+  v.quests = block(col, "Quests", {
     { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
     { key = "name", label = "Quest", flex = 1, min = 120 },
     { key = "place", label = "Place", kind = "tag", min = 140, max = 160 },
@@ -347,7 +352,7 @@ local function buildLeveling(content)
       if item.unnamed then tip:AddLine("The game did not give the quest name when you turned it in.", 0.78, 0.79, 0.80, true) end
       tip:AddLine(UI.fmtWhen(item.t), 0.78, 0.79, 0.80)
       if item.gold then tip:AddDoubleLine("Gold", ns.fmtMoney(item.gold, { icons = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1)
-      else tip:AddLine("No gold was recorded for this quest.", 0.78, 0.79, 0.80, true) end
+      else tip:AddLine("Gold: Not recorded", 0.78, 0.79, 0.80, true) end
     end })
   UI.SetTip(v.hero, function(tip) if v.heroTip then v.heroTip(tip) end end)
   content:HookScript("OnSizeChanged", function() pcall(V.placeLeveling) end)
@@ -355,12 +360,18 @@ local function buildLeveling(content)
 end
 function V.placeLeveling()
   local v = V.leveling; if not v then return end
-  v.pg.place({
-    { v.hero, H.HERO, gap = S.S3 },
-    { v.cards, H.STAT, gap = S.S5 },
-    { v.levels.head, H.SECTION }, { v.levels.tbl.frame, v.levels.tbl.height, gap = S.S5 },
-    { v.quests.head, H.SECTION }, { v.quests.tbl.frame, v.quests.tbl.height },
-  })
+  local items = { { v.hero, H.HERO, gap = v.cardsShown and S.S3 or S.S5 } }
+  if v.cardsShown then items[#items + 1] = { v.cards, H.STAT, gap = S.S5 } end
+  if v.levelsShown then
+    items[#items + 1] = { v.levels.head, H.SECTION }
+    items[#items + 1] = { v.levels.tbl.frame, v.levels.tbl.height, gap = v.noteShown and 0 or S.S5 }
+  end
+  if v.noteShown then items[#items + 1] = { v.levelNote, H.SECTION, gap = S.S5 } end
+  if v.questsShown then
+    items[#items + 1] = { v.quests.head, H.SECTION }
+    items[#items + 1] = { v.quests.tbl.frame, v.quests.tbl.height }
+  end
+  v.pg.place(items)
   pcall(v.cards.layout); pcall(v.hero.layout)
 end
 function V.renderLeveling()
@@ -375,134 +386,109 @@ function V.renderLeveling()
   local rested = plain(call(GetXPExhaustion)) or 0
   local pace = ns.Pace and ns.Pace.compute(now) or {}
   local remaining = (not atMax and ns.Pace) and ns.Pace.remaining(cur, mx, pace.rate) or nil
-  local levels = buildLevels(lvl, now)
-  local atLevel = timeAtLevel(lvl, lvl, now)
-  local prevAt = timeAtLevel(lvl - 1, lvl, now)
-  v.atLevel, v.remaining, v.pace = atLevel, remaining, pace
-  -- hero: the comparison only Leveling has
+  local levels, missing = buildLevels(lvl)
+  local atLevel = timeAtLevel(now)
+  local played = playedTotal(now)
+  v.atLevel, v.remaining, v.pace, v.atMax = atLevel, remaining, pace, atMax
+  v.levelRows, v.levelsMissing = levels, missing
   local hero = v.hero
+  hero:SetKicker(nil); hero:SetTitleMeta(nil)
+  -- (the title line is who this is: the full name, else the class; the level is said once, as the hero)
+  local classN = plainStr((call(UnitClass, "player")))
+  hero:SetTitle((ns.fullName and ns.fullName()) or classN or "")
   if atMax then
-    hero:SetTitle("Level " .. lvl); hero:SetHero(("Level %d \194\183 max level"):format(lvl)); hero:SetMeta("No XP to earn at the level cap.", nil); hero:SetBar(nil)
+    -- the level once, when and where it was reached (left out when not stored), and the played time
+    local top = levels[1] and levels[1].level == lvl and levels[1] or nil
+    hero:SetHero("Level " .. lvl)
+    v.reachedLine = top and ("Reached " .. UI.fmtStamp(top.t, now) .. (top.zone and (" in " .. top.zone) or "")) or nil
+    local pl = {}
+    if played then pl[#pl + 1] = UI.fmtDur(played, { minutes = true }) .. " played" end
+    if atLevel then pl[#pl + 1] = UI.fmtDur(atLevel, { minutes = true }) .. " at " .. lvl end
+    v.playedLine = #pl > 0 and table.concat(pl, ", ") or nil
+    hero:SetBar(nil)
+    -- (two lines when both are known; one known line sits right under the level)
+    hero:SetMeta(v.reachedLine or v.playedLine or "", nil)
+    hero:SetMeta2(v.reachedLine and v.playedLine or nil)
     v.verdict = nil
   else
-    hero:SetTitle("Level " .. lvl)
-    local verdict, color
-    if remaining and atLevel and prevAt then
-      local d = (atLevel + remaining) - prevAt
-      local word = UI.fmtDelta(d)
-      if word == "same as best" then verdict = ("On pace to match level %d"):format(lvl - 1)
-      else
-        verdict = ("On pace to be %s than level %d"):format(word, lvl - 1)
-        color = d < 0 and "good" or "warn"
-        if d > 0 then verdict = UI.dot("warn", UI.DOT_SIZE.META) .. verdict end
-      end
-    elseif atLevel then verdict = ("%s at level %d so far"):format(UI.fmtDur(atLevel, { minutes = true }), lvl)
-    else verdict = "Level " .. lvl end
-    v.verdict = verdict
-    -- (the HERO is the answer in fg, "15m to level 13"; the comparison with the level before is the META at the
-    -- right, a 6 px warn dot when it is slower)
+    v.reachedLine, v.playedLine = nil, nil
+    hero:SetMeta2(nil)
     local pct = mx > 0 and math.floor(cur / mx * 100) or 0
     local left = ("XP %s / %s \194\183 %d%%"):format(UI.fmtNum(cur), UI.fmtNum(mx), pct)
     if rested > 0 then left = left .. " \194\183 rested " .. UI.fmtNum(rested) end
     if remaining then
-      hero:SetHero(UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1), "fg")
-      local note = verdict
-      if color then note = note:gsub("On pace to be ", "on pace to be ", 1) end
-      hero:SetMeta(left, (remaining and atLevel and prevAt) and note or nil)
+      v.verdict = UI.fmtDur(remaining, { minutes = true }) .. " to level " .. (lvl + 1)
+      hero:SetHero(v.verdict, "fg")
+      hero:SetMeta(left, pace.rate and ("at " .. UI.fmtNum(pace.rate) .. " XP per hour") or nil)
     else
-      hero:SetHero(verdict, color)
+      v.verdict = "Level " .. lvl
+      hero:SetHero(v.verdict, "fg")
       hero:SetMeta(left, "Pace shows after 10 minutes of play")
     end
     hero:SetBar(mx > 0 and cur / mx or 0, (mx > 0 and rested > 0) and math.min(1, (cur + rested) / mx) or nil)
   end
   v.heroTip = function(tip)
     tip:AddLine("Level " .. lvl, 1, 1, 1)
-    tip:AddLine("Your time at this level so far plus the time left at your XP per hour over the last 30 minutes of active play, against your time at the level before.", 0.78, 0.79, 0.80, true)
-    if atLevel then tip:AddDoubleLine("At this level", UI.fmtDur(atLevel, { minutes = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
-    if prevAt then tip:AddDoubleLine("At level " .. (lvl - 1), UI.fmtDur(prevAt, { minutes = true }), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
-    if pace.rate then tip:AddDoubleLine("XP per hour", UI.fmtNum(pace.rate), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
-  end
-
-  -- the cards
-  local cards = v.cards.cards
-  local quests, qsum = buildQuests()
-  local xpAll = qsum.xp + qsum.kills
-  local runXP, nRuns = 0, 0
-  for _, r in ipairs(type(db.dungeonRuns) == "table" and db.dungeonRuns or {}) do
-    if type(r) == "table" then nRuns = nRuns + 1; runXP = runXP + num(type(r.xp) == "table" and r.xp.gain) end
-  end
-  if atMax then
-    local pl = type(db.played) == "table" and db.played or {}
-    cards[1]:Set("Played", num(pl.total) > 0 and UI.fmtDur(pl.total, { minutes = true }) or "-", "on this character")
-    local perHour
-    if ns.Gold and ns.Gold.metric then local ok, a = pcall(ns.Gold.metric, "perHour", "char", "session"); perHour = ok and a or nil end
-    cards[2]:Set("Gold per hour", type(perHour) == "number" and UI.money(math.floor(perHour + 0.5), true) or "-", "this session")
-    cards[3]:Set("Quests", UI.fmtNum(qsum.done), "turned in, all time")
-    -- (the run store is not the character's history: it starts with the oldest run it holds, and the card says so)
-    local firstRun
-    for _, r in ipairs(type(db.dungeonRuns) == "table" and db.dungeonRuns or {}) do
-      if type(r) == "table" and type(r.t) == "number" and (not firstRun or r.t < firstRun) then firstRun = r.t end
-    end
-    for _, r in ipairs(type(db.dungeonLegacy) == "table" and db.dungeonLegacy or {}) do
-      if type(r) == "table" and type(r.t) == "number" then
-        nRuns = nRuns + 1
-        if not firstRun or r.t < firstRun then firstRun = r.t end
-      end
-    end
-    cards[4]:Set("Dungeon runs", UI.fmtNum(nRuns), firstRun and ("stored since " .. tostring(tonumber(date("%d", firstRun))) .. date(" %b", firstRun)) or "none stored yet")
-  else
-    cards[1]:Set("Time at level " .. lvl, atLevel and UI.fmtDur(atLevel, { minutes = true }) or "-", "so far")
-    UI.SetTip(cards[1], { title = "Time at level " .. lvl, text = atLevel and "Played time at this level, from the game's /played." or "Shows once the game answers /played." })
-    local best
-    for _, r in ipairs(levels) do if r.at and r.level < lvl and (not best or r.at < best.at) then best = r end end
-    cards[2]:Set("Best level time", best and UI.fmtDur(best.at, { minutes = true }) or "-", best and ("level " .. best.level) or "after your next level")
-    UI.SetTip(cards[2], { title = "Best level time", text = "Your fastest level on this character, in played time." })
-    if xpAll > 0 then
-      local q = math.floor(qsum.xp / xpAll * 100 + 0.5)
-      cards[3]:Set("Quest XP share", q .. "%", ("kills %d%%, all time"):format(100 - q))
-      cards[4]:Set("XP in dungeons", math.min(100, math.floor(runXP / xpAll * 100 + 0.5)) .. "%", "of all XP, all time")
+    if atMax then
+      tip:AddLine("Played time is the game's own /played, plus the time since it last answered in this login.", 0.78, 0.79, 0.80, true)
     else
-      cards[3]:Set("Quest XP share", "-", "after your first XP")
-      cards[4]:Set("XP in dungeons", "-", "after your first XP")
+      tip:AddLine("The time left at your XP per hour over the last 30 minutes of active play.", 0.78, 0.79, 0.80, true)
+      if pace.rate then tip:AddDoubleLine("XP per hour", UI.fmtNum(pace.rate), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
     end
-    UI.SetTip(cards[3], { title = "Quest XP share", text = "Of all the XP everbuff.gg captured on this character, the part quests gave. Kills give the rest; dungeon XP counts in both.",
-      pairs = { { "From quests", UI.fmtNum(qsum.xp) .. " XP" }, { "From kills", UI.fmtNum(qsum.kills) .. " XP" } } })
-    UI.SetTip(cards[4], { title = "XP in dungeons", text = "The XP your recorded dungeon runs gave, of all the XP everbuff.gg captured on this character.",
-      pairs = { { "In dungeons", UI.fmtNum(runXP) .. " XP" }, { "Runs", UI.fmtNum(nRuns) } } })
   end
 
-  -- LEVELS (a column with no value in any row is left out)
-  local anyT, anyVs, anyPl = false, false, false
-  for _, r in ipairs(levels) do anyT = anyT or r.t ~= nil; anyVs = anyVs or r.vs ~= nil; anyPl = anyPl or r.playedBy ~= nil end
-  for _, c in ipairs(v.levels.tbl.spec or {}) do
-    if c.key == "reached" then c.hide = not anyT elseif c.key == "vs" then c.hide = not anyVs elseif c.key == "played" then c.hide = not anyPl end
-  end
-  setTable(v.levels, levels, function(row, r)
-    row.c.level:SetText(tostring(r.level))
-    row.c.reached:SetText(r.t and UI.fmtWhen(r.t, now) or "-")
-    if not r.t then row.c.reached:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
-    row.c.at:SetText(r.at and (UI.fmtDur(r.at, { minutes = true }) .. (r.live and " so far" or "")) or "-")
-    row.c.played:SetText(r.playedBy and UI.fmtDur(r.playedBy, { minutes = true }) or "-")
-    if r.vs then
-      local word = UI.fmtDelta(r.vs)
-      if word == "same as best" then word = "same" end
-      row.c.vs:SetText((r.vs > 0 and UI.dot("warn") or "") .. word)
-      local col = r.vs < 0 and C.good or (r.vs > 0 and C.warn or C.fgSubtle)
-      row.c.vs:SetTextColor(col[1], col[2], col[3])
-    else row.c.vs:SetText("-") end
-  end, "Your first level-up is timed from now.")
-  -- QUESTS TURNED IN
-  v.quests.head:SetMeta(#quests > 0 and UI.plural(#quests, "quest") or nil)
-  local qrows = withDays(quests, "quest")
-  setTable(v.quests, qrows, function(row, r)
-    row.c.when:SetText(UI.fmtClock(r.t))
-    row.c.name:SetText(r.name or "")
-    if r.unnamed then row.c.name:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
-    row.c.place:SetText(UI.fmtPlace(r.zone, r.sub))
-    row.c.gold:SetText(r.gold and UI.money(r.gold) or "-")
-    row.c.coords:SetText(UI.fmtCoords(r.x, r.y))
-  end, "Turn in a quest and it shows here with its gold.")
+  -- the cards: none at the level cap (the hero has the played time); PLAYED and TIME AT LEVEL while leveling, each
+  -- only once the game has answered /played
+  local cards = v.cards.cards
+  v.cardsShown = false
+  if not atMax and (played or atLevel) then
+    v.cardsShown = true
+    if played then cards[1]:Set("Played", UI.fmtDur(played, { minutes = true }), "on this character")
+    else cards[1]:Set("Played", "Not known yet", "") end
+    if atLevel then cards[2]:Set("Time at level " .. lvl, UI.fmtDur(atLevel, { minutes = true }), "so far")
+    else cards[2]:Set("Time at level " .. lvl, "Not known yet", "") end
+    UI.SetTip(cards[1], { title = "Played", text = "Played time on this character, from the game's /played." })
+    UI.SetTip(cards[2], { title = "Time at level " .. lvl, text = "Played time at this level, from the game's /played." })
+    v.cards:Show()
+  else v.cards:Hide() end
+
+  -- LEVELS: only the levels with a recorded moment; one muted line counts the rest
+  v.levelsShown = #levels > 0
+  if v.levelsShown then
+    v.levels.head:Show(); v.levels.tbl.frame:Show()
+    v.levels.tbl.setRows(levels, function(row, r)
+      row.c.level:SetText(tostring(r.level))
+      row.c.reached:SetText(fmtReached(r.t, now))
+      row.c.zone:SetText(r.zone or "")
+    end)
+  else v.levels.head:Hide(); v.levels.tbl.frame:Hide() end
+  v.noteShown = missing > 0
+  v.noteText = v.noteShown and (missing == 1 and "1 level has no recorded date." or ("%d levels have no recorded date."):format(missing)) or nil
+  if v.noteShown then
+    v.levelNote:Set(v.noteText); v.levelNote:Show()
+    UI.SetTip(v.levelNote, { title = "Not recorded", text = "A level is listed when its level-up was captured and is still stored." })
+  else v.levelNote:Hide() end
+
+  -- QUESTS: a leveling character's list, named after where it starts (the list is capped: never "all time")
+  local quests = atMax and {} or (buildQuests())
+  v.questsShown = #quests > 0
   v.questRows = quests
+  if v.questsShown then
+    local first
+    for _, q in ipairs(quests) do if q.t > 0 and (not first or q.t < first) then first = q.t end end
+    v.questLabel = "Quests" .. (first and (" since " .. UI.fmtSince(first, now)) or "")
+    v.quests.head:SetLabel(v.questLabel)
+    v.quests.head:SetMeta(nil)
+    v.quests.head:Show(); v.quests.tbl.frame:Show()
+    v.quests.tbl.setRows(withDays(quests, "quest"), function(row, r)
+      row.c.when:SetText(UI.fmtClock(r.t))
+      row.c.name:SetText(r.name or "")
+      if r.unnamed then row.c.name:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
+      row.c.place:SetText(UI.fmtPlace(r.zone, r.sub))
+      row.c.gold:SetText(r.gold and UI.money(r.gold) or "")
+      row.c.coords:SetText(UI.fmtCoords(r.x, r.y))
+    end)
+  else v.questLabel = nil; v.quests.head:Hide(); v.quests.tbl.frame:Hide() end
   V.placeLeveling()
 end
 

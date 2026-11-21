@@ -2993,7 +2993,9 @@ if ns.UI and ns.UI.registerTab then
         if eventsView and eventsView:IsShown() and eventsRebuild then eventsRebuild() end
       end)
     end
-  end, "Everything you did, newest first: quests, kills, loot, travel and town visits.")
+  -- (docs/UX_PRAGMATIC.md 0.5, 1.3: Home > Activity is removed. The tab is not shown and no link opens it; the page
+  -- is kept only until its code is deleted with the Activity work, behind ns.ACTIVITY_TAB for its own tests.)
+  end, "Everything you did, newest first: quests, kills, loot, travel and town visits.", function() return ns.ACTIVITY_TAB == true end)
   ns._test = ns._test or {}; ns._test.eventMatches, ns._test.fmtWhere = eventMatches, fmtWhere
   ns._test.safeStr, ns._test.plainNum = safeStr, plainNum
 

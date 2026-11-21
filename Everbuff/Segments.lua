@@ -46,6 +46,26 @@ function ns.surname()
   return (type(sur) == "string" and sur ~= "") and sur or nil
 end
 
+-- The character's name as a screen shows it, "Iron Hart", or nil when only half of it is known: a half name is never
+-- shown (docs/UX_PRAGMATIC.md 1.1). The second name is the client's (ns.surname), else the one stored on the
+-- character's block. A client with no second names (ns.surname has no function to ask) gives the one name it has.
+function ns.fullName()
+  local okN, name = pcall(UnitName, "player")
+  if not okN or type(name) ~= "string" or (issecretvalue and issecretvalue(name)) or name == "" then return nil end
+  local okS, sur = pcall(ns.surname)
+  sur = okS and sur or nil
+  if not sur then
+    local c = ns.DB and ns.charGuid and ns.charGuid() and ns.char and ns.char() or nil
+    sur = c and type(c.surname) == "string" and c.surname ~= "" and c.surname or nil
+  end
+  if sur then return name .. " " .. sur end
+  if C_PlayerInfo and C_PlayerInfo.ShouldDisplaySurname then
+    local ok, show = pcall(C_PlayerInfo.ShouldDisplaySurname, "player")
+    if ok and show then return nil end
+  end
+  return name
+end
+
 -- The session's gold ledger (everbuff-backend #46): the keys of the character's lifetime gold ledger (characters[guid].gold) except balance, in copper,
 -- all present from the start so a zero is a known zero. Emitter's money handler credits it.
 R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",

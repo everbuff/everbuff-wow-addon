@@ -165,7 +165,7 @@ return function(P)
             if lr then lasts[#lasts + 1] = key .. "=" .. lr end
           end
         end
-        local function same(list) local v; for _, s in ipairs(list) do local x = tonumber(s:match("=(%-?[%d.]+)$")); if v and math.abs(v - x) > 0.5 then return false end; v = v or x end return #list > 1 end
+        local function same(list) local v; for _, s in ipairs(list) do local x = tonumber(s:match("=(%-?[%d.]+)$")); if v and math.abs(v - x) > 0.5 then return false end; v = v or x end return #list >= 1 end
         table.sort(firsts); table.sort(lasts)
         check("Run page " .. rec.inst .. " " .. tag .. ": every table's first text column starts at x 60", same(firsts) and tonumber(firsts[1]:match("=(%-?[%d.]+)$")) == 60, table.concat(firsts, " "))
         check("Run page " .. rec.inst .. " " .. tag .. ": every table's last numeric column ends on one right edge", same(lasts), table.concat(lasts, " "))

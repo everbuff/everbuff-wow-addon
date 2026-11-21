@@ -190,7 +190,7 @@ return function(P)
     local d = SET.data
     local keepAck = ns.DB.combat.lastAck
     ns.DB.combat.lastAck = nil; SET.refreshData()
-    eq("Data: before any sync it says so, and nothing more on the page", d.syncStatus.plain, "Saved to everbuff.gg: not seen yet")
+    eq("Data: before any sync it says so, and nothing more on the page", d.syncStatus.plain, "Saved to everbuff.gg: Not seen yet")
     check("Data: what to do about it is the hover", type(d.syncStatus.ebTip) == "table" and d.syncStatus.ebTip.text:find("Install it from everbuff.gg", 1, true) ~= nil)
     ns.DB.combat.lastAck = { at = (GetServerTime and GetServerTime() or time()) - 120, fights = 2, source = "file" }
     SET.refreshData()
@@ -213,10 +213,31 @@ return function(P)
     -- recording health
     local keepCombat = ns.Logging._combat
     ns.Logging._combat = false; SET.refreshData()
-    check("Data: Combat log off shows Turn on", d.combat.label.text:find("Combat log: off", 1, true) ~= nil and d.combat.btn.shown ~= false)
+    check("Data: Combat log off shows Turn on", d.combat.plain == "Combat log: off" and d.combat.value.text == "off" and d.combat.btn.shown ~= false, d.combat.plain)
     click(d.combat.btn)
-    check("Data: Turn on turns combat logging on", ns.Logging._combat == true and d.combat.label.text:find("Combat log: on", 1, true) ~= nil and d.combat.btn.shown == false)
+    check("Data: Turn on turns combat logging on", ns.Logging._combat == true and d.combat.plain == "Combat log: on" and d.combat.btn.shown == false, d.combat.plain)
     ns.Logging._combat = keepCombat; SET.refreshData()
+    -- CAPTURE HEALTH is a two column list: a label, then its value, every value on one x (no "·" on one row and ":"
+    -- on the next)
+    do
+      local rowsD = { d.rec, d.syncStatus, d.stored.fights, d.stored.loot, d.combat, d.acl }
+      local labels, x0, same, clean, apart = {}, nil, true, true, true
+      for i, r in ipairs(rowsD) do
+        labels[i] = tostring(r.pairLabel)
+        local rb, vb, lb = P.box(r), P.box(r.value), P.box(r.label)
+        local vx = vb.l - rb.l
+        x0 = x0 or vx
+        if not near(vx, x0) then same = false end
+        if labels[i]:find("\194\183", 1, true) or labels[i]:find(":", 1, true) or tostring(r.value.text):find("^%s*\194\183") or tostring(r.value.text):find("^%s*:") then clean = false end
+        if lb.l + P.G.naturalWidth(r.label) > vb.l - 0.5 then apart = false end
+        if not near(vb.t, lb.t) then apart = false end
+      end
+      eq("Data: the six rows of CAPTURE HEALTH, each a label", table.concat(labels, " | "), "Status | Saved to everbuff.gg | Pulls waiting | Loot | Combat log | Advanced combat logging")
+      check("Data: every value starts on one shared x", same and x0 == SET.healthValueX(), x0)
+      check("Data: no row carries a separator of its own", clean)
+      check("Data: no label runs into its value, and both sit on one line", apart)
+      check("Data: the status row reads CAPTURING or Standing by, never Recording", d.rec.pairValue:find("^CAPTURING") ~= nil or d.rec.pairValue == "Standing by", d.rec.pairValue)
+    end
     click(d.remindCb)
     check("Data: the reminder checkbox writes autoSave", ns.DB.settings.autoSave == false)
     click(d.remindCb)
@@ -229,8 +250,8 @@ return function(P)
     SET.refreshData()
     local keepSeq = ns.DB.combat.fightSeq
     ns.DB.combat.fightSeq = 6879
-    check("Data: the stored rows read Pulls waiting · 2 and Loot · 1 pickup; the events have no row",
-      d.stored.fights.plain == "Pulls waiting \194\183 2" and d.stored.loot.plain == "Loot \194\183 1 pickup" and d.stored.events == nil,
+    check("Data: the stored rows read Pulls waiting, 2 and Loot, 1 pickup; the events have no row",
+      d.stored.fights.plain == "Pulls waiting: 2" and d.stored.fights.value.text == "2" and d.stored.loot.plain == "Loot: 1 pickup" and d.stored.loot.value.text == "1 pickup" and d.stored.events == nil,
       d.stored.fights.plain .. " | " .. d.stored.loot.plain)
     check("Data: the rows carry no sentence and no Clear of their own", d.stored.fights.desc == nil and d.stored.loot.desc == nil and d.stored.fights.btn == nil and not P.visible(d.clear.fights))
     ns.DB.settings.advancedOpen = true; SET.refreshData(); M.settle()
@@ -244,7 +265,7 @@ return function(P)
     click(btn); click(btn)
     check("Data: the second click clears the pulls and nothing else", #ns.DB.combat.fights == 0 and #ns.DB.loot.log == 1 and #ns.DB.story.events == 3)
     eq("Data: the count of pulls ever recorded is not reset (the pull ids stay monotonic)", ns.DB.combat.fightSeq, 6879)
-    check("Data: with nothing stored the row reads a plain 0 and its Clear is gone, Advanced open or not", d.stored.fights.plain == "Pulls waiting \194\183 0" and not P.visible(d.clear.fights)
+    check("Data: with nothing stored the row reads a plain 0 and its Clear is gone, Advanced open or not", d.stored.fights.plain == "Pulls waiting: 0" and d.stored.fights.value.text == "0" and not P.visible(d.clear.fights)
       and not P.visible(btn) and P.visible(d.clear.loot), d.stored.fights.plain)
     ns.DB.settings.advancedOpen = nil; SET.refreshData(); M.settle()
     ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events = keepF, keepL, keepE

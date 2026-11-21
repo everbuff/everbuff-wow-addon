@@ -1803,13 +1803,12 @@ return function(P)
     M.xp = M.xp + 300; M.fire("PLAYER_XP_UPDATE")
     local v = R.views()[1]
     check("21: the open run is a row in progress, with its clocks", v.inProgress == true and v.endT == nil and v.state == "in" and v.duration == 660 and v.inside == 540 and v.ghost == 120 and v.kind == "raid", v.duration)
-    local tl1, tl2 = R.timeLine(v)
-    check("21: the time lines read the clocks in words: where the time went, then what was done inside", tl1 == ("Inside 9m 0s%srunning back 2m 0s"):format(SEP)
-      and tl2 == ("Active 9m 0s%sin combat 0s (bosses 30s)"):format(SEP), tl1 .. " | " .. tl2)
+    check("21: no screen text is built from the third clock or the combat totals", R.timeLine == nil)
     if lv then
       local tips = lv.tipLines(v)
-      check("21: the row's tooltip lists inside, run back, active and the state", tips[1] == "Inside 9m" and tips[2] == "Run back 2m" and tips[3] == "Active 9m" and tips[4] == "In progress"
-        and tips[5] == "Re-entered 1 time", table.concat(tips, " | "))
+      local all = table.concat(tips, " | ")
+      check("21: the row's tooltip lists inside, run back and the state: no Active clock, no re-entry count", tips[1] == "Inside 9m" and tips[2] == "Run back 2m" and tips[3] == "In progress"
+        and all:find("Active", 1, true) == nil and all:find("Re-entered", 1, true) == nil, all)
     end
     check("contract: characters[guid].dungeonRun, every key typed, the open-only keys present only here", contract(open(), true) == nil and open().st == "in" and open().mark and open().beat and open().g0 and open().m0, contract(open(), true))
     leave()

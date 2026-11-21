@@ -116,14 +116,22 @@ return function(P)
     T.openRun(byName[fx.wc2.id].run); M.settle()
     check(tag .. ": the run page opens over the list", dv:IsShown() and not lv:IsShown() and dv.run.id == fx.wc2.id)
     local missing = {}
-    for _, k in ipairs({ "bosses", "party", "pace", "visits", "pulls", "edit" }) do if dv.sections[k].shown == false then missing[#missing + 1] = k end end
+    for _, k in ipairs({ "bosses", "party", "pace", "pulls", "edit" }) do if dv.sections[k].shown == false then missing[#missing + 1] = k end end
     check(tag .. ": the sections with something in them are on the page", #missing == 0, table.concat(missing, ","))
+    -- (2.2: no re-entry count, no third clock, no combat total; the TIME card and its hover carry the time)
+    do
+      local words = {}
+      for _, fs in ipairs(dv.lines) do if fs.shown ~= false and type(fs.text) == "string" then words[#words + 1] = fs.text end end
+      local page = table.concat(words, "\n")
+      check(tag .. ": no ENTERED AND LEFT section on a run that is one run: no visit count, no Active clock, no combat total", dv.sections.visits.shown == false and dv.visitsShown == false
+        and not P.visible(dv.tables.visits.frame) and page:find("Active ", 1, true) == nil and page:find("in combat", 1, true) == nil and page:find("^Inside ") == nil and page:find("\nInside ") == nil, page)
+    end
     check(tag .. ": a run nobody died in has no Deaths section and no death line", dv.sections.deaths.shown == false and dv.deathLine == nil)
     local order, lastY = true, -1
     for _, k in ipairs(dv.SECTION_KEYS) do
       if dv.sections[k].shown ~= false then local b = P.box(dv.sections[k]); if not b or b.t <= lastY then order = false end; lastY = b and b.t or lastY end
     end
-    check(tag .. ": the sections run Bosses, Loot, Deaths, XP, Party, Pace, Entered and left, Pulls, Edit", order)
+    check(tag .. ": the sections run Bosses, Loot, Deaths, Party, Pace, Pulls, Edit", order)
     eq(tag .. ": the best run's comparison: how much it beat the best before it", dv.deltaText, "42s faster")
     check(tag .. ": and the META line says it", dv.metaText:find("42s faster than your best before", 1, true) ~= nil, dv.metaText)
     -- (TIME and BOSSES always; XP and WORTH only with a value: at most four, at every size)
@@ -234,6 +242,27 @@ return function(P)
     check(tag .. ": the live row keeps its whole dungeon name next to the marker", liveRow and liveRow.c.name.IsTruncated and liveRow.c.name:IsTruncated() == false, liveRow and liveRow.c.name.text)
     eq(tag .. ": the live row counts against the dungeon's 4 bosses, not its kills so far", liveRow and liveRow.c.boss.text, "1/4")
     check(tag .. ": the live hero says 1 of 4 bosses", lv.hero and tostring(lv.hero.meta1.text or ""):find("1 of 4 bosses", 1, true) ~= nil, lv.hero.meta1.text)
+    -- the list filtered to a dungeon with partial rows only: no hero, and the 1 s ticker of the run in progress does
+    -- not draw the hero of another dungeon's run back over the list
+    do
+      local cdb = ns.char()
+      local keepLegacy = cdb.dungeonLegacy
+      cdb.dungeonLegacy = { { id = "g1", src = "gold", inst = "Maraudon", t = GetServerTime() - 3 * 86400, secs = 4250, looted = 365, lootValue = 93437, items = 36 } }
+      lv.pickInst("Maraudon"); M.settle()
+      check(tag .. ": filtered to a dungeon with a partial row only: the row, no hero, no run kept for the ticker", #lv.shown == 1 and lv.shown[1].legacy == true and not P.visible(lv.hero) and lv.heroRun == nil,
+        tostring(lv.heroRun and lv.heroRun.name))
+      local secY = P.box(lv.section).t
+      M.tick(); M.tick()
+      check(tag .. ": and a second later the hero is still not there and the list has not moved", not P.visible(lv.hero) and lv.heroRun == nil and P.box(lv.section).t == secY)
+      local prow = shown(lv.tbl)[1]
+      check(tag .. ": the partial row's Worth is its items' vendor value, the booked coin is not counted", prow and prow.c.worth.text == UI.money(93437), prow and prow.c.worth.text)
+      lv.pickInst("No Such Dungeon"); M.settle()
+      M.tick()
+      check(tag .. ": a filter that keeps no row: no hero either, ticker or not", not P.visible(lv.hero) and lv.heroRun == nil)
+      cdb.dungeonLegacy = keepLegacy
+      lv.pickInst(nil); M.settle()
+      check(tag .. ": the filter cleared, the run in progress is the hero again and the ticker follows it", lv.heroRun and lv.heroRun.inProgress == true and P.visible(lv.hero))
+    end
     -- one kill count on every surface of the live run: the summary's lockout counts the run's kills too
     local lsum = lv.summary.Text()
     check(tag .. ": the live summary's lockout reads the run's 1 of 4, with no \"(about)\"", lsum:find("Ragefire Chasm: 1 of 4", 1, true) ~= nil and lsum:find("(about)", 1, true) == nil, lsum)
@@ -255,8 +284,8 @@ return function(P)
     local renders = dv.renders
     M.epoch = M.epoch + 5
     M.tick()
-    check(tag .. ": the ticker moves the clocks; a second in which only they moved lays nothing out again", dv.timeLine:find("^Inside 12m 45s") ~= nil and dv.renders == renders
-      and dv.cards[1].value.text == "12m", dv.timeLine)
+    check(tag .. ": the ticker moves the TIME card; a second in which only the clock moved lays nothing out again", dv.run.inside == 765 and dv.renders == renders
+      and dv.cards[1].value.text == "12m", dv.run.inside)
     -- with the window closed the ticker does nothing
     local calls, realRefresh = 0, dv.refresh
     dv.refresh = function() calls = calls + 1; return realRefresh() end

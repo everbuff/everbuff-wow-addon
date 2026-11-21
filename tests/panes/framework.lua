@@ -318,9 +318,12 @@ return function(P)
       local ctl = home.ctl
       x, y, bw, bh = rel(ctl.tabs[1])
       check(tag .. "the first sub-tab starts at TEXT_L on the control row", x == 204 and y == 52 and bh == 28, x .. "," .. y)
-      for k = 2, #ctl.tabs do
-        local x1, _, w1 = rel(ctl.tabs[k - 1]); local x2 = rel(ctl.tabs[k])
-        check(tag .. "sub-tabs are 24 px apart (" .. ctl.tabs[k].key .. ")", x2 - (x1 + w1) == 24, x2 - (x1 + w1))
+      -- (a sub-tab with no page now is not in the row: the ones shown follow each other)
+      local shownTabs = {}
+      for _, b in ipairs(ctl.tabs) do if not (ctl.hidden and ctl.hidden[b.key]) then shownTabs[#shownTabs + 1] = b end end
+      for k = 2, #shownTabs do
+        local x1, _, w1 = rel(shownTabs[k - 1]); local x2 = rel(shownTabs[k])
+        check(tag .. "sub-tabs are 24 px apart (" .. shownTabs[k].key .. ")", x2 - (x1 + w1) == 24, x2 - (x1 + w1))
       end
       local last = ctl.tabs[#ctl.tabs]; local lx, _, lw = rel(last)
       check(tag .. "the sub-tabs fit on the control row", lx + lw <= W - 36, lx + lw)

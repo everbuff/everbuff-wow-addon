@@ -10,6 +10,8 @@ Not built: gates C, D, I and J (acked session records, party size, lifetime coun
 the 13 older clears and the party of a run are not shown. The expected values of this document for those screens are
 asserted by `tests/real_truth.lua` on the save of 21 Nov 2026.
 
+Review round 2 (21 Nov) also built, on the same draft branch: the coin rule of 2.1, the run page without Entered and left (2.2), Leveling as 3.1 has it with exact dates only (a level bound to a day or a range of days by its session records is not built), Home > Now at the level cap as 1.1 has it, the Activity tab hidden with every link to it gone (1.3; its code is deleted with the Activity work), and the two column CAPTURE HEALTH list (5). Not built on Now: the 5 minute join of logins into one session (1.2), so "this session" is the stored session record, -30g 99s on the save and not -22g 51s; the item name on an auction line ("Bought Black Lotus x3"), which needs the auction join of 4.2; and the card list for a leveling character, who keeps the four THIS SESSION cards.
+
 Revision 2 answers the founder review of revision 1. The short version: fewer screens, fewer columns, no sentences about why data is missing, and the fix for missing history (gates C and I) is built before anything is worded around it. Section 7 lists the few points where this document does not follow the review, and why.
 
 This document sits on top of `docs/UX_OVERHAUL.md`. The design system there (section 2) and the navigation pattern (sub-tab row, detail page with Back) stay. This document decides, per screen, what is shown and what is cut. Where the two disagree on content, this one wins and `UX_OVERHAUL.md` sections 3 and 4 are updated in the same change that builds it.
@@ -208,8 +210,10 @@ Under the hero, one line only when it has something to say: "2 instances this ho
 | Vs best | `fmtDelta` on the boss clock; shown only for a dungeon with 2 or more full runs; tooltip "Compared from first pull to last kill" | `dungeonStats` |
 | Bosses | "7", or "7 of 9" with a real total | `rec.bosses` |
 | Deaths | "2" | record |
-| Worth | "19g 20s"; tooltip "1g 16s coin plus 18g 3s of items at vendor prices" | `gold.looted` + `gold.lootValue` (11,612 + 180,399 copper) |
+| Worth | "19g 92s"; tooltip "1g 88s coin plus 18g 3s of items at vendor prices" | the run's coin (below) + `gold.lootValue` (18,835 + 180,399 copper) |
 | Best drop | item name in its quality colour (WIDE) | highest quality looted row of the run, green or better |
+
+**The coin of a run.** `gold.looted` misses the shares of group loot the client pays without a loot window: on the stored run 11,612 copper was booked and 18,835 was paid (the 97 "Your share of the loot is" lines of the chat log; the same figure as `gold.purse`, what the purse gained inside less quest coin). So the coin of a run record is `gold.purse` when it is more than `gold.looted`, else `gold.looted`; the hover says which and names both figures. A rebuilt row stores the booked coin only and no purse figure (Maraudon: 3s 65c booked, 1g 14s paid), so its coin is not known: its Worth is the vendor value of its items alone, the card says "items at vendor prices" and the hover "The coin of this run was not recorded in full, so it is not counted." The other wording, the booked coin as a lower bound ("at least"), is one constant (`D.PARTIAL_COIN`) and the founder's pick. Limits: the purse figure also holds a trade or a vendor sale made inside, and By dungeon still sums the booked coin from `dungeonStats`; gate H (group shares booked as looted at capture) is the fix for both and for new runs.
 
 Rule 0.3 applies: while most rows are partial (1 full and 5 rebuilt on the save), Vs best, Bosses and Deaths are hidden and live on the hero and the run page. They appear on their own once a third of the rows are full runs.
 
@@ -243,7 +247,7 @@ Rule 0.3 applies: while most rows are partial (1 full and 5 rebuilt on the save)
 | TIME | "1h 9m" | "7m 59s dead or outside" | `secs.inside`; `secs.ghost` + `secs.outside` (158 + 321 s) |
 | BOSSES | "7" | "boss clock 1h 3m" | `rec.bosses` |
 | XP | "62,388" | "54,146 per hour" on time inside | `xp.gain`, `secs.inside`; hidden when the run started at the cap |
-| WORTH | "19g 20s" | "1g 16s coin · 18g 3s items at vendor prices" | `gold.looted`, `gold.lootValue` |
+| WORTH | "19g 92s" | "1g 88s coin · 18g 3s items at vendor prices" | the run's coin (2.1), `gold.lootValue` |
 
 Revision 1 showed 54,686 XP per hour on a third clock (`secs.active`). It is now 62,388 over 4,148 s.
 
@@ -254,6 +258,8 @@ Revision 1 showed 54,686 XP per hour on a third clock (`secs.active`). It is now
 **Loot table.** Item (with "x3"), From, When. Header meta "8 green or better". One muted line under it: "29 more: 21 white, 8 grey".
 - From **[gate B, inference]**: a stored name is shown as stored. A row whose stored source is a placeholder gets the boss of this run killed at most 90 s before it, tooltip "Looted 13s after Gizrul the Slavener died. The game hides enemy names in dungeons." "Trash" is the same kind of inference (an enemy placeholder with no boss kill in range) and carries the tooltip "No boss died in the 90s before this. The game hides enemy names in dungeons." Every other placeholder is blank. If the founder refuses the inference, every placeholder is blank.
 - On the save: Slamshot Shoulders Highlord Omokk, Talisman of Evasion War Master Voone, Slashclaw Bracers Halycon, Rhombeard Protector Gizrul the Slavener, 2 Trash, 2 blank.
+
+**Entered and left.** Not on the page: no visit count, no third clock ("Active"), no combat totals. The split of the TIME card's "dead or outside" (running back, outside) is in its hover. One exception: a run marked "possibly two runs" lists its visits, because its note points at Split here on one of them.
 
 **Pulls section.** Shown only while pulls of this run are stored. Otherwise hidden, no sentence.
 
@@ -415,6 +421,8 @@ General and Gold display: unchanged from `UX_OVERHAUL.md` 4.12.
 | Saved to everbuff.gg | "Sat 21 Nov 11:45, 142 pulls" (the same fact as the card on Now) | `combat.lastAck` |
 | Pulls waiting | "0" | `combat.fights` not yet picked up |
 | Loot | "1,539 pickups" | `loot.log` |
+
+The rows are a two column list: the label at the left, every value on one shared x. No row carries a separator of its own. Combat log and Advanced combat logging follow in the same form ("on", "off").
 
 Never seen a pickup: "Not seen yet", tooltip as on Now.
 
