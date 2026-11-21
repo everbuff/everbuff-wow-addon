@@ -2917,7 +2917,8 @@ local function chipTip(tip)
   end
   tip:AddLine(first, 1, 1, 1)
   if st.lastAck and st.lastAck.at then
-    tip:AddLine("Desktop app picked up your data " .. UI.fmtDur(math.max(0, st.now - st.lastAck.at), { minutes = true }) .. " ago", 0.78, 0.79, 0.80, true)
+    -- (lastAck.at is when the addon saw the confirmation, not when the app saved the data: Sync.lua, ns.AckWords)
+    tip:AddLine("Desktop app's save confirmed " .. UI.fmtDur(math.max(0, st.now - st.lastAck.at), { minutes = true }) .. " ago", 0.78, 0.79, 0.80, true)
   else tip:AddLine("Desktop app: not seen yet", 0.78, 0.79, 0.80, true) end
   tip:AddLine(UI.plural(st.waiting, "pull") .. " not saved yet by the desktop app", 0.78, 0.79, 0.80, true)
   if st.sess and st.combat and not st.acl then tip:AddLine("Advanced combat logging is off", 0.78, 0.79, 0.80, true) end

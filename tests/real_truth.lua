@@ -129,7 +129,15 @@ for i, b in ipairs(BOSS) do
 end
 -- (the run record's own times down are 165 s and 74 s; the story event of the second death says 73 s)
 eq("Run: the deaths line", dv.deathLine, "Deaths: 16:12 (2m 45s down) \194\183 16:30 (1m 14s down)")
-eq("Run: 8 green or better", #dv.lootItems, 8)
+-- (8 rows green or better: 6 with a source, and Prismcharm and Engraved Cape of the Gorilla stored "Picked up" with no
+-- boss kill near. By the chat log the first was the reward of "Urok Doomhowl" at 15:29:43 and the second a drop won
+-- by roll at 16:01:39; the save cannot tell them apart, so the header counts neither as a drop.)
+eq("Run: 8 rows green or better", #dv.lootItems, 8)
+eq("Run: the LOOT header claims 6 drops and names the 2 it cannot source", dv.sections.loot.meta.text, "6 drops green or better, 2 with no recorded source")
+eq("Run: Killed at says it is on the run's clock, which stood still for the 5m 21s outside (Omokk: 25m 0s after entering)", dv.tables.bosses.spec[3].tip, D.KILL_TIP)
+eq("Run: the wall time of Omokk's kill is 15:39:01", ns.Runs.wallOf(c.dungeonRuns[1], c.dungeonRuns[1].bosses[1].kill), 1795184041 + 1500)
+check("Run: the TIME hover's last kill is 16:28 on the wall clock, not 16:23 (entry plus the run's clock)", tostring(dv.clockSentence):find("last kill 16:28", 1, true) ~= nil
+  and tostring(dv.clockSentence):find("first pull 15:25", 1, true) ~= nil, dv.clockSentence)
 eq("Run: the rest is one line", dv.lootMore, "29 more: 21 white, 8 grey")
 local from = {}
 for _, it in ipairs(dv.lootItems) do from[strip(ns.Now.stripLink(it.row.item))] = it.from or "" end
@@ -167,7 +175,11 @@ do
   check("Now: PLAYED has no second line", strip(byKey.played.meta.text) == "" and tostring(byKey.played.value.text):find("^%d+m$") ~= nil, byKey.played.value.text)
   check("Now: LAST RUN is the stored Blackrock Spire run", byKey.run.value.text == "Blackrock Spire" and ns.Now.lastRun().meta == "Fri 20 Nov \194\183 1h 9m \194\183 7 bosses \194\183 2 deaths", ns.Now.lastRun().meta)
   check("Now: the card's line is never cut: it fits the card or drops the day", not byKey.run.meta:IsTruncated(), byKey.run.meta.text)
-  check("Now: SAVED TO EVERBUFF.GG is the last pickup and its pulls", byKey.saved.value.text == "Sat 21 Nov 11:45" and byKey.saved.meta.text == "142 pulls", byKey.saved.value.text)
+  -- (lastAck.at = 1795257911 is when the addon applied the confirmation at the 11:45 login. The desktop's copy of
+  -- the save with these 142 pulls is from 20 Nov 23:54, a time the save does not hold: the card never calls 11:45
+  -- the time of the save.)
+  check("Now: SAVED TO EVERBUFF.GG is the 142 pulls, and 11:45 is when that was confirmed", byKey.saved.value.text == "142 pulls" and byKey.saved.meta.text == "confirmed Sat 21 Nov 11:45"
+    and not byKey.saved.meta:IsTruncated(), tostring(byKey.saved.value.text) .. " / " .. tostring(byKey.saved.meta.text))
   check("Now: no NEXT section with nothing to do", nv.nextHead.shown == false)
   local titles = {}
   for i, it in ipairs(nv.lookList) do titles[i] = it.title .. " / " .. strip(it.meta) end
@@ -208,7 +220,7 @@ if d then
   eq("Data: the first section", ns.SettingsView.data.sections[1].head.label.text, "CAPTURE HEALTH")
   check("Data: row 1 is the status, CAPTURING with its place", items[1] == d.rec and d.rec.pairLabel == "Status" and tostring(d.rec.pairValue):find("^CAPTURING") ~= nil, d.rec.plain)
   check("Data: row 2 is the pickup", items[2] == d.syncStatus)
-  eq("Data: the pickup", d.syncStatus.plain, "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls")
+  eq("Data: the pickup", d.syncStatus.plain, "Saved to everbuff.gg: 142 pulls, confirmed Sat 21 Nov 11:45")
   check("Data: row 3 is the pulls waiting", items[3] == d.stored.fights)
   eq("Data: pulls waiting", d.stored.fights.plain, "Pulls waiting: 0")
   check("Data: row 4 is the loot", items[4] == d.stored.loot)

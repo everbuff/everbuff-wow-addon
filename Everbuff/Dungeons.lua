@@ -277,6 +277,19 @@ end
 -- the row is named (an inference by timing, said so in the tooltip), an enemy placeholder with no boss kill in
 -- range is "Trash" (the same inference), and every other placeholder is blank. Returns the text (nil: blank) and
 -- the tooltip line.
+-- Killed at and Split are on the run's clock (the stored b.kill): it runs inside the dungeon and while running back
+-- dead, and stands still while the character is outside alive or offline. So a kill clock is less than the time since
+-- entering on a run that was left and entered again (Blackrock Spire, 20 Nov: 5m 21s outside before boss 1, Highlord
+-- Omokk 19m 39s on the clock, 25m 0s after entering). The headers say which clock it is.
+D.KILL_TIP = "The run's clock when the boss died. It stops while you are outside the dungeon alive or offline, so it can be less than the time since you entered."
+D.SPLIT_TIP = "Boss 1: the run's clock at its kill. Others: since the previous kill. Time outside the dungeon alive or offline is not counted."
+-- The time of a partial row (2.1): the gold run counted it by the zone's name in steps of 10 s, and the land in front
+-- of some dungeons has the dungeon's name (Maraudon, 18 Nov: 1h 10m stored, 1h 8m 16s inside by the combat log).
+D.ZONE_TIME = "in the dungeon's zone"
+D.ZONE_TIP = "Counted by zone name to 10 s, so it can include time at the entrance."
+D.ZONE_WHEN = "reached the dungeon's zone"
+-- the item part of a Worth: the capture prices every item that reaches the bags inside, a quest's reward item too
+D.ITEMS_TIP = "Item value counts every item that reached your bags inside, quest reward items too."
 D.PLACEHOLDER = { ["Creature"] = "enemy", ["an enemy"] = "enemy", ["Picked up"] = "none", ["Unknown source"] = "none" }
 D.BOSS_WINDOW = 90
 -- How the coin of a WORTH card was derived, for its hover and only when the purse and the booked coin differ. Exact
@@ -292,15 +305,41 @@ function D.purseTip(run)
   end
   return ("Your purse grew by %s inside, quest rewards aside. Looted coin was %s."):format(ns.fmtMoney(purse), ns.fmtMoney(looted))
 end
+-- A row whose source the capture did not record ("Picked up", "Unknown source", none at all) and that no boss kill
+-- of the run names by timing: an item that reached the bags with no loot window and nothing to name. It can be a
+-- drop won by roll after the window closed or a quest reward that arrived before its turn-in (Blackrock Spire, 20
+-- Nov: Engraved Cape of the Gorilla and Prismcharm), and the save cannot tell the two apart. So it is never counted
+-- as a drop and its From cell says "Not recorded".
+D.NO_SOURCE = "Not recorded"
+D.NO_SOURCE_TIP = "Where this item came from was not recorded, so it is not counted as a drop."
+function D.unsourced(l)
+  local src = type(l.src) == "string" and stripLink(l.src) or nil
+  return src == nil or src == "" or D.PLACEHOLDER[src] == "none"
+end
+-- the meta of the LOOT section: "8 green or better" when every row has a source, else what is known of each part
+-- ("6 drops green or better, 2 with no recorded source", "2 green or better with no recorded source"). `shown` are
+-- the rows with their `from` (D.sourceOf) set.
+function D.lootMeta(shown)
+  local none = 0
+  for _, it in ipairs(shown) do if it.from == nil and D.unsourced(it.row) then none = none + 1 end end
+  local n = #shown
+  if n == 0 then return nil end
+  if none == 0 then return n .. " green or better" end
+  if none == n then return n .. " green or better with no recorded source" end
+  return ("%s green or better, %d with no recorded source"):format(UI.plural(n - none, "drop"), none)
+end
 function D.sourceOf(run, l)
   local src = type(l.src) == "string" and stripLink(l.src) or nil
   if src == "" then src = nil end
   local kind = src and D.PLACEHOLDER[src]
   if src and not kind then return src, nil end
-  if not src then return nil, "Not recorded" end
+  -- (what the hover of a row with nothing to name says: an enemy's drop whose enemy is not known, or a row that may
+  -- be no drop at all)
+  local blank = kind == "enemy" and "Not recorded" or D.NO_SOURCE_TIP
+  if not src then return nil, blank end
   local rec, t = run.rec, tonumber(l.t)
   -- (without the record or the row's own time nothing can be said about the kills around it)
-  if type(rec) ~= "table" or not t then return nil, "Not recorded" end
+  if type(rec) ~= "table" or not t then return nil, blank end
   local best, bestD, unknown
   for _, b in ipairs(type(rec.bosses) == "table" and rec.bosses or {}) do
     if b.kill then
@@ -316,14 +355,14 @@ function D.sourceOf(run, l)
       end
     end
   end
-  if unknown then return nil, "Not recorded" end
+  if unknown then return nil, blank end
   if best then
     return best.name, ("Looted %s after %s died. The game hides enemy names in dungeons."):format(UI.fmtDur(math.floor(bestD)), best.name)
   end
   if kind == "enemy" then
     return "Trash", ("No boss died in the %ds before this. The game hides enemy names in dungeons."):format(D.BOSS_WINDOW)
   end
-  return nil, "Not recorded"
+  return nil, blank
 end
 -- the best drop of every stored run, worked out once per change of the loot log or the runs (the list draws every
 -- run again every 3 s)
@@ -518,8 +557,8 @@ local function buildDetail(content, list)
   v.tables.bosses = UI.KitTable(col, {
     { key = "n", label = "#", kind = "tag", fixed = LEAD },
     { key = "boss", label = "Boss" },
-    { key = "at", label = "Killed at", kind = "num", min = 64, measure = { "1h 59m 59s" } },
-    { key = "since", label = "Split", kind = "num", min = 64, measure = { "1h 59m 59s" }, tip = "Boss 1: since entering. Others: since the previous kill." },
+    { key = "at", label = "Killed at", kind = "num", min = 64, measure = { "1h 59m 59s" }, tip = D.KILL_TIP },
+    { key = "since", label = "Split", kind = "num", min = 64, measure = { "1h 59m 59s" }, tip = D.SPLIT_TIP },
     { key = "vs", label = "Vs best", kind = "tag", min = 88, justify = "RIGHT" },
     { key = "len", label = "Fight length", kind = "num", min = 88, measure = { "wipe, 10s" } },
   }, { onClick = function(row) if row.item and row.item.fight then fight(row.item.fight) end end,
@@ -783,7 +822,8 @@ local function buildDetail(content, list)
         tip:AddLine("Worth", 1, 1, 1)
         tip:AddLine(full:sub(1, 1):upper() .. full:sub(2) .. ".", 0.78, 0.79, 0.80, true)
         if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
-        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more coin. It is not loot and is not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+        if n0(g0.lootValue) > 0 then tip:AddLine(D.ITEMS_TIP, 0.78, 0.79, 0.80, true) end
         if v.purseTip then tip:AddLine(v.purseTip, 0.78, 0.79, 0.80, true) end
       end)
     end
@@ -837,8 +877,8 @@ local function buildDetail(content, list)
       local res = Runs.bossResult(b)
       local tip = { res .. (n0(b.wipes) > 0 and (", " .. UI.plural(b.wipes, "wipe")) or "") .. (n0(b.pulls) > 1 and (" in " .. UI.plural(b.pulls, "fight")) or "") }
       if b.kill and vs[b.enc] and vsAgainst then tip[#tip + 1] = "Vs best: " .. vsAgainst end
-      -- (Split is on the clock of Killed at: the first boss since entering, so the two cells of its row agree; the
-      -- others since the kill before. Bests still measure from the first pull, Runs.splits.)
+      -- (Split is on the clock of Killed at, the run's clock: the first boss its kill clock, so the two cells of its
+      -- row agree; the others since the kill before. Bests still measure from the first pull, Runs.splits.)
       local sp = run.splits and run.splits[b.enc]
       local since = sp and b.kill and (sp.prevKey == "start" and b.kill or sp.seg) or nil
       brows[#brows + 1] = { name = b.name or "Boss", kill = b.kill, n = order[b], since = since, d = b.kill and vs[b.enc], len = b.combat, tip = tip,
@@ -924,7 +964,7 @@ local function buildDetail(content, list)
     if #items == 0 and stored > 0 then v.lootMore = UI.plural(stored, "item") end
     v.lootFS = nil
     if #shown > 0 or v.lootMore then
-      section("loot", #shown > 0 and (#shown .. " green or better") or nil)
+      section("loot", D.lootMeta(shown))
       if #shown > 0 then
         tableAt(v.tables.loot, shown, function(r, it)
           local l = it.row
@@ -932,7 +972,8 @@ local function buildDetail(content, list)
           r.c.ic:SetTexture(l.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
           r.c.item:SetText(stripLink(l.item) .. (n0(l.count) > 1 and (" " .. colored("x" .. l.count, C.fgMuted)) or ""))
           r.c.item:SetTextColor(unpack(qColor(l.q)))
-          r.c.src:SetText(it.from or "")
+          -- (a row with no name to show says so, muted: a blank among named drops would read as one of them)
+          r.c.src:SetText(it.from or D.NO_SOURCE); UI.SetColor(r.c.src, it.from and "fgSubtle" or "fgMuted")
           r.c.at:SetText(UI.fmtClock(l.t))
         end)
       end
@@ -1115,13 +1156,13 @@ local function buildDetail(content, list)
     v.titleFS:ClearAllPoints(); v.titleFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, 0); v.titleFS:SetText(title)
     local b = v.badges[1] or UI.Badge(col, "PARTIAL"); v.badges[1] = b
     b:SetBadge("PARTIAL"); b:Show()
-    UI.SetTip(b, { title = "Partial", text = "Time and loot only" })
+    UI.SetTip(b, { title = "Partial", text = "Time and loot only. " .. D.ZONE_TIP })
     for i = 2, #v.badges do v.badges[i]:Hide() end
     local tw = math.min(UI.TextWidth("TITLE", title), W - 2 * S.S3 - b:GetWidth() - S.S2)
     v.titleFS:SetWidth(math.max(1, tw))
     b:ClearAllPoints(); b:SetPoint("LEFT", v.titleFS, "RIGHT", S.S2, 0)
     v.metaFS:ClearAllPoints(); v.metaFS:SetPoint("TOPLEFT", col, "TOPLEFT", S.S3, -22); v.metaFS:SetWidth(W - 2 * S.S3)
-    v.metaFS:SetText(UI.fmtWhen(run.startT))
+    v.metaFS:SetText(UI.fmtWhen(run.startT) .. SEP .. D.ZONE_WHEN)
     v.metaText = v.metaFS:GetText()
     local y = 48
     local worth = D.worth(run)
@@ -1129,8 +1170,9 @@ local function buildDetail(content, list)
     row:ClearAllPoints(); row:SetPoint("TOPLEFT", col, "TOPLEFT", 0, -y); row:SetWidth(W); row:SetHeight(H.STAT); pcall(row.layout)
     local cards = row.cards
     v.cards, v.card = cards, { time = cards[1], worth = cards[2] }
-    cards[1]:Set("Time", D.fmtLen(run.inside), "in the dungeon")
-    UI.SetTip(cards[1], { title = "Time", text = "Time in the dungeon and at its entrance, counted in steps of 10 seconds." })
+    cards[1]:Set("Time", D.fmtLen(run.inside), D.ZONE_TIME)
+    v.timeTip = "Time " .. D.ZONE_TIME .. ". " .. D.ZONE_TIP
+    UI.SetTip(cards[1], { title = "Time", text = v.timeTip })
     if cards[2] then
       local full = D.worthParts(run)
       local _, coin = D.worth(run)
@@ -1146,7 +1188,8 @@ local function buildDetail(content, list)
         if v.coinTip then tip:AddLine(v.coinTip, 0.78, 0.79, 0.80, true) end
         if n0(g0.items) > 0 then tip:AddLine(UI.plural(g0.items, "item") .. " looted.", 0.78, 0.79, 0.80, true) end
         if n0(g0.unpriced) > 0 then tip:AddLine(("%s had no vendor price yet and %s not counted."):format(UI.plural(g0.unpriced, "item"), g0.unpriced == 1 and "is" or "are"), 0.78, 0.79, 0.80, true) end
-        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more. They are not loot and are not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+        if n0(g0.quests) > 0 then tip:AddLine(("Quest rewards paid %s more coin. It is not loot and is not counted here."):format(UI.money(g0.quests)), 0.78, 0.79, 0.80, true) end
+        if n0(g0.lootValue) > 0 then tip:AddLine(D.ITEMS_TIP, 0.78, 0.79, 0.80, true) end
       end)
     end
     v.worthText = cards[2] and cards[2].value:GetText() or nil
@@ -1166,10 +1209,14 @@ local function buildDetail(content, list)
     if run then
       local bits = { "entered " .. UI.fmtClock(run.startT) }
       local rec = run.rec or {}
-      if n0(rec.firstPull) > 0 then bits[#bits + 1] = "first pull " .. UI.fmtClock(n0(run.startT) + rec.firstPull) end
+      -- (the first pull and the kills are stored on the run's clock, which stands still outside: their time of day
+      -- goes through the visits, Runs.wallOf, and is left out when the record cannot place it)
+      local wPull = n0(rec.firstPull) > 0 and Runs.wallOf(rec, rec.firstPull) or nil
+      if wPull then bits[#bits + 1] = "first pull " .. UI.fmtClock(wPull) end
       local last
       for _, b in ipairs(run.bosses or {}) do if b.kill and (not last or b.kill > last) then last = b.kill end end
-      if last then bits[#bits + 1] = "last kill " .. UI.fmtClock(n0(run.startT) + last) end
+      local wLast = last and Runs.wallOf(rec, last) or nil
+      if wLast then bits[#bits + 1] = "last kill " .. UI.fmtClock(wLast) end
       if run.endT then bits[#bits + 1] = "left " .. UI.fmtClock(run.endT) end
       v.clockSentence = "Your clocks: " .. table.concat(bits, ", ") .. "."
     end
@@ -1408,7 +1455,7 @@ local function buildList(content)
   -- the lines of a row's tooltip (and of the run page's TIME card): the clocks, the state, the best, XP and loot
   v.tipLines = function(run)
     if run.legacy then
-      local out = { "Time and loot only", "Time " .. UI.fmtDur(run.inside) }
+      local out = { "Time and loot only", ("Time %s %s, from when you %s"):format(UI.fmtDur(run.inside), D.ZONE_TIME, D.ZONE_WHEN), D.ZONE_TIP }
       local parts = D.worthParts(run)
       if parts ~= "" then out[#out + 1] = "Worth: " .. parts end
       if select(2, D.coinOf(run)) == "none" then out[#out + 1] = D.NO_COIN end
@@ -1686,6 +1733,28 @@ function D.deathsPerRun()
   for k, s in pairs(sum) do out[k] = s / n[k] end
   return out
 end
+-- Worth per run of BY DUNGEON, on the coin the Runs list shows (D.coinOf). The statistics sum the booked coin only;
+-- every stored run they count whose purse gained more than was booked adds the difference, so a dungeon whose runs
+-- are all stored reads the mean of its Worth cells. A run no longer stored stays at its booked coin (all that is
+-- left of it). Returns key -> copper per run for the rows it changes.
+function D.worthPerRun(rows)
+  local c = ns.char and ns.char() or nil
+  local extra = {}
+  for _, r in ipairs(c and type(c.dungeonRuns) == "table" and c.dungeonRuns or {}) do
+    -- (the runs the statistics count: a partial record and one folded into `other` are not in a dungeon's sums)
+    if type(r) == "table" and Runs.valid(r) and not r.partial and not (type(r.notIn) == "table" and r.notIn.dungeon) then
+      local g = type(r.gold) == "table" and r.gold or {}
+      local coin = D.coinOf({ gold = g })
+      local more = n0(coin) - n0(g.looted)
+      if more > 0 then local k = Runs.keyOf(r); extra[k] = (extra[k] or 0) + more end
+    end
+  end
+  local out = {}
+  for _, d in ipairs(rows) do
+    if not d.other and extra[d.key] and n0(d.n) > 0 then out[d.key] = n0(d.worthPerRun) + extra[d.key] / d.n end
+  end
+  return out
+end
 
 -- ══ BY DUNGEON (docs/UX_PRAGMATIC.md 2.3) ═════════════════════════════════════════════════════════════════════════
 -- The page exists only once two dungeons have two stored runs each: before that a best is the only run and an
@@ -1750,6 +1819,8 @@ local function buildBy(content)
     local rows = Runs.dungeonRows()
     local dpr = D.deathsPerRun()
     for _, d in ipairs(rows) do if dpr[d.key] then d.deathsPerRun = dpr[d.key] end end
+    local wpr = D.worthPerRun(rows)
+    for _, d in ipairs(rows) do if wpr[d.key] then d.worthPerRun = wpr[d.key] end end
     -- (the dungeon run last comes first until a column is picked)
     local key = st.sortKey or "last"
     local asc = st.sortKey and st.sortAsc or false

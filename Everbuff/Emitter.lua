@@ -703,12 +703,58 @@ local pushed = {
   obj = nil,        -- { name, at }: the world object last opened
   turnIn = 0,       -- GetTime() of the last quest turn-in
 }
-local function pushedSource()
+-- A quest reward can reach the bags before QUEST_TURNED_IN (Blackrock Spire, 20 Nov: Prismcharm at 15:29:42, the
+-- turn-in after it), when the 5 s test below cannot know it yet. A reward reads "You receive item:"
+-- (LOOT_ITEM_PUSHED_SELF); a drop reads "You receive loot:", also when a roll is won after the loot window closed. So
+-- a pushed line that was given the last kill's name or none is remembered for a moment with the source it was
+-- stored under, and the turn-in then names it (pushed.request). A line that named a world object keeps it.
+pushed.PRE = {}
+for _, g in ipairs({ "LOOT_ITEM_PUSHED_SELF", "LOOT_ITEM_PUSHED_SELF_MULTIPLE" }) do
+  local s = _G[g]; local pre = s and s:match("^(.-)%%s")
+  if pre and pre ~= "" then pushed.PRE[#pushed.PRE + 1] = pre end
+end
+if #pushed.PRE == 0 then pushed.PRE = { "You receive item:" } end
+pushed.recent = {}   -- { at = GetTime(), item = name, src = stored source }: the pushed lines of the last seconds
+pushed.REQUEST_S = 3
+local function pushedSource(msg, item)
   local now = GetTime()
+  local line = false
+  if type(msg) == "string" then
+    for _, pre in ipairs(pushed.PRE) do if msg:sub(1, #pre) == pre then line = true end end
+  end
   if pushed.obj and (now - pushed.obj.at) < 15 then return pushed.obj.name or "Object", nil end
   if (now - pushed.turnIn) < 5 then return "Quest reward", nil end
-  if lastKillName and (now - lastKillAt) < 15 then return lastKillName, nil end
-  return "Picked up", nil
+  local src = (lastKillName and (now - lastKillAt) < 15) and lastKillName or "Picked up"
+  if line and item then
+    local keep = {}
+    for _, r in ipairs(pushed.recent) do if now - r.at <= pushed.REQUEST_S then keep[#keep + 1] = r end end
+    keep[#keep + 1] = { at = now, item = item, src = src }
+    pushed.recent = keep
+  end
+  return src, nil
+end
+-- QUEST_TURNED_IN: the pushed items of the last pushed.REQUEST_S seconds that named no world object are this
+-- turn-in's reward. Only rows written a moment ago by this session are touched, never older data. Returns how many
+-- rows of the loot log changed.
+function pushed.request()
+  local now, n = GetTime(), 0
+  local log = ns.DB and ns.DB.loot and ns.DB.loot.log
+  for _, r in ipairs(pushed.recent) do
+    if now - r.at <= pushed.REQUEST_S then
+      for _, list in ipairs({ sessionLoot, type(log) == "table" and log or {} }) do
+        for i = #list, math.max(1, #list - 20), -1 do
+          local e = list[i]
+          if type(e) == "table" and not e.money and e.item == r.item and e.src == r.src and (list == sessionLoot or e.s == ns.DB.active) then
+            e.src, e.guid = "Quest reward", nil
+            if list ~= sessionLoot then n = n + 1 end
+            break
+          end
+        end
+      end
+    end
+  end
+  pushed.recent = {}
+  return n
 end
 -- gold SINK context: which window was open when the purse went down decides what the gold went to
 local merchantOpen, trainerOpen, taxiUntil, repairUntil = false, false, 0, 0
@@ -2480,6 +2526,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
     if a1 == "player" and pushed.OPEN[a4] then pushed.obj = { name = safeStr(a2), at = GetTime() } end
   elseif event == "QUEST_TURNED_IN" then
     pushed.turnIn = GetTime()
+    pcall(pushed.request)
     local qxp = plainNum(a2)                              -- (questID, xpReward, moneyReward)
     Emitter.event("QUESTDONE", { name = questTitle(a1, nil), xp = qxp })
     Emitter.questMoney(plainNum(a3), plainNum(a1))
@@ -2689,7 +2736,7 @@ ef:SetScript("OnEvent", function(_, event, a1, a2, a3, a4, a5)
       local tnow = (GetServerTime and GetServerTime()) or time()
       -- no loot window in the last ~15s: the item was pushed, attribute it to what just happened instead
       local src, srcGUID = lootSource, lootSourceGUID
-      if GetTime() > lootWindowUntil + 12 then src, srcGUID = pushedSource() end
+      if GetTime() > lootWindowUntil + 12 then src, srcGUID = pushedSource(msg, item) end
       local quest = nil
       if id and GetItemInfoInstant then local _, _, _, _, _, classID = GetItemInfoInstant(id); if classID == 12 then quest = true end end
       local entry = { t = tnow, item = item, count = count, q = q, icon = icon, src = src, quest = quest, id = id }

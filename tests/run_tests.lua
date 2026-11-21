@@ -330,6 +330,65 @@ M.itemQuality[3014] = 4
 local fixedRows = ns.Emitter.backfillLootQuality()
 local old = ns.DB.loot.log[#ns.DB.loot.log]
 check("backfill resolves old white rows by item id", fixedRows >= 1 and old.q == "ffa335ee", old.q)
+-- A pushed item ("You receive item:") is never a kill's drop, and a quest reward that reaches the bags before
+-- QUEST_TURNED_IN is named by the turn-in (Blackrock Spire, 20 Nov 15:29: Prismcharm, then "Urok Doomhowl completed").
+do
+  local log = ns.DB.loot.log
+  local function green(id, name) return ("|cff1eff00|Hitem:%d::::::::60:::::|h[%s]|h|r"):format(id, name) end
+  local function pass(s) M.now = M.now + s; M.epoch = M.epoch + s end
+  local xpQ = ns.char().xp and ns.char().xp.fromQuests
+  pass(60)                                                              -- no loot window, no object, no turn-in near
+  ns.Emitter.event("KILL", { name = "Urok Doomhowl" }, true)
+  pass(2)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15867, "Prismcharm") .. ".")
+  local prism = log[#log]
+  check("pushed item: before the turn-in it is stored as every pushed item after a kill is, under the kill's name", prism.item == "Prismcharm" and prism.src == "Urok Doomhowl", prism.src)
+  pass(1)
+  M.fire("QUEST_TURNED_IN", 4867, 0, 0)
+  check("pushed item: the turn-in a second later names it a quest reward", prism.src == "Quest reward" and prism.guid == nil, prism.src)
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15868, "Prismcharm Two") .. ".")
+  local prism2 = log[#log]
+  check("pushed item: with no kill near it is stored Picked up", prism2.src == "Picked up", prism2.src)
+  pass(2)
+  M.fire("QUEST_TURNED_IN", 4870, 0, 0)
+  check("pushed item: and the turn-in 2 s later names that one too", prism2.src == "Quest reward", prism2.src)
+  check("pushed item: the turn-in changes those rows only", log[#log - 2].src ~= "Quest reward", log[#log - 2].src)
+  -- an item pushed off a world object keeps the object's name through a turn-in
+  pass(30)
+  M.fire("UNIT_SPELLCAST_SENT", "player", "Urok's Tribute Pile", "cast-9", 6478)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15869, "Tribute Thing") .. ".")
+  local trib = log[#log]
+  M.fire("QUEST_TURNED_IN", 4871, 0, 0)
+  check("pushed item: one that named a world object keeps it through a turn-in", trib.src == "Urok's Tribute Pile", trib.src)
+  pass(30)
+  -- a drop won by roll after the loot window closed reads "You receive loot:": it keeps the kill's name
+  pass(30)
+  ns.Emitter.event("KILL", { name = "Spire Spiderling" }, true)
+  pass(14)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. green(10231, "Engraved Cape of the Gorilla") .. ".")
+  local cape = log[#log]
+  check("pushed item: a \"You receive loot:\" line with no loot window still takes the kill's name", cape.src == "Spire Spiderling", cape.src)
+  -- a drop with nothing to name it, then a turn-in in the same second: a loot line is never a quest reward
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. green(10232, "Engraved Cape of the Whale") .. ".")
+  local whale = log[#log]
+  M.fire("QUEST_TURNED_IN", 4868, 0, 0)
+  check("pushed item: a drop stored as \"Picked up\" is not re-sourced by a turn-in", whale.src == "Picked up", whale.src)
+  -- a pushed item 4 s before a turn-in is too old to be its reward
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(10233, "Vial of Something") .. ".")
+  local vial = log[#log]
+  pass(4)
+  M.fire("QUEST_TURNED_IN", 4869, 0, 0)
+  check("pushed item: one that arrived 4 s before a turn-in stays as it was stored", vial.src == "Picked up", vial.src)
+  -- the usual order, turn-in first, is as before
+  pass(1)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(10234, "Reward After") .. ".")
+  check("pushed item: an item after its turn-in is a quest reward at once", log[#log].src == "Quest reward", log[#log].src)
+  pass(30)
+  if ns.char().xp then ns.char().xp.fromQuests = xpQ end
+end
 check("backfill leaves a true white row white", qunknown.q == "ffffffff", qunknown.q)
 -- ── aura timelines (player + enemy) through the REAL recorder ──
 M.auras.player = { HELPFUL = { { name = "Power Word: Fortitude", icon = 135987, spellId = 1243 } }, HARMFUL = {} }

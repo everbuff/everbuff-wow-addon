@@ -341,7 +341,7 @@ All measurements are in window units. "y" is relative to the component's own top
     "Desktop app not seen" shows only when `ns.DB.combat.lastAck` exists, its time is more than 3 days old, and at least 1 fight is waiting. A player who never installed the app sees plain "Recording".
   - Tooltip, three lines:
     - "Recording · The Barrens · session 38m";
-    - "Desktop app picked up your data 2m ago" (or "Desktop app: not seen yet");
+    - "Desktop app's save confirmed 2m ago" (or "Desktop app: not seen yet");
     - "4 fights not yet saved by the desktop app".
 
     The count comes from the one `Sync` function (§5 step 3a).
@@ -1112,7 +1112,7 @@ The BEST badge belongs in the first column only. The wireframe's placement is in
 > of N" only from a stored pull's group, "solo" only from a stored size of 1, the comparison when there is one. Cards,
 > each only with a value: TIME (meta "7m 59s dead or outside"), BOSSES (meta "boss clock 1h 3m"), XP (per hour of
 > time inside), WORTH ("1g 16s coin · 18g 3s items at vendor prices"; quest coin only in the hover). Bosses table:
-> Boss, Killed at, Split, Fight length; boss 1's split is since entering, the others since the kill before, and kill
+> Boss, Killed at, Split, Fight length; boss 1's split is its kill clock (the run's clock, which stands still outside: UX_PRAGMATIC.md 2.2), the others since the kill before, and kill
 > clocks keep their seconds past the hour. The deaths are one line under the table ("Deaths: 16:12 (2m 45s down) ·
 > 16:30 (1m 14s down)") unless a row names a killer or a party member. Loot: green and better as rows (Item, From,
 > When), then "29 more: 21 white, 8 grey"; From names the boss of the run killed at most 90 s before a row whose
@@ -1463,7 +1463,7 @@ These controls are built from WHITE8x8 and text only, so the renderer shows them
 > Revised by `docs/UX_PRAGMATIC.md` 5 (built on the draft branch); the copy below replaces the 0.9.51 one.
 
 - `CAPTURE HEALTH`, one block, the four facts first:
-  - Dot rows in this order: "CAPTURING in Orgrimmar" ("Standing by" with no session); "Saved to everbuff.gg: Sat 21 Nov 11:45, 142 pulls" (when the desktop app last picked data up and how many pulls it took; never seen: "Saved to everbuff.gg: not seen yet", and what to do about it is the row's tooltip); "Pulls waiting · 0"; "Loot · 1,539 pickups". No sentence under a row.
+  - Dot rows in this order: "CAPTURING in Orgrimmar" ("Standing by" with no session); "Saved to everbuff.gg: 142 pulls, confirmed Sat 21 Nov 11:45" (how many pulls the desktop app saved and when the addon saw its confirmation, which is not when they were saved; never seen: "Saved to everbuff.gg: not seen yet", and what to do about it is the row's tooltip); "Pulls waiting · 0"; "Loot · 1,539 pickups". No sentence under a row.
   - Then "Combat log: on" and "Advanced combat logging: on", each with a [Turn on] ghost button only when off.
   - Setting row "Remind me to /reload before I log out", with "Saves your data even if the game disconnects you.", and "Save now".
 - `ADVANCED` (collapsed by default via `advancedOpen`; header "ADVANCED ›")

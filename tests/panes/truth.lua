@@ -102,17 +102,25 @@ return function(P)
   eq("Run: WORTH (19g 92s)", dv.card.worth.value.text, UI.money(199234))
   eq("Run: WORTH names its two parts, the coin 1g 88s", D.worthParts(rec and R.view(rec, false, false)), ("%s coin \194\183 %s items at vendor prices"):format(UI.money(18835), UI.money(180399)))
   check("Run: no card says Coin looted 3g (looted and quest coin together)", (function() for _, cd in ipairs(dv.cards) do if tostring(cd.value.text) == UI.money(11612 + 18400) then return false end end return true end)())
-  -- bosses: boss 1 since entering, the others since the kill before
+  -- bosses: Killed at and Split are on the run's clock (the stored kill), boss 1 its kill clock, the others since the
+  -- kill before. The clock stood still for the 321 s outside, so Omokk's 19m 39s is not the 25m 0s since entering:
+  -- the headers say which clock it is and never "since entering".
   local br = shown(dv.tables.bosses)
   eq("Run: seven boss rows", #br, 7)
   eq("Run: boss 1 Killed at", br[1] and br[1].c.at.text, "19m 39s")
-  eq("Run: boss 1 Split is since entering, the same clock as Killed at (not 13m 51s from the first pull)", br[1] and br[1].c.since.text, "19m 39s")
+  eq("Run: boss 1 Split is its kill clock, the same clock as Killed at (not 13m 51s from the first pull)", br[1] and br[1].c.since.text, "19m 39s")
+  eq("Run: that kill was 25m 0s after entering by the wall clock (321 s outside are not on the run's clock)", R.wallOf(rec, 1179) - T0, 1500)
   eq("Run: boss 2 Split is since the kill before (1430 - 1179 s)", br[2] and br[2].c.since.text, "4m 11s")
   eq("Run: boss 6 Split", br[6] and br[6].c.since.text, "51s")
   eq("Run: a kill clock past the hour keeps its seconds (3884 s)", br[5] and br[5].c.at.text, "1h 4m 44s")
   eq("Run: boss 5 fight length", br[5] and br[5].c.len.text, "27s")
   eq("Run: the column is named Split", dv.tables.bosses.spec[4].label, "Split")
-  eq("Run: its header says what it measures", dv.tables.bosses.spec[4].tip, "Boss 1: since entering. Others: since the previous kill.")
+  eq("Run: its header says what it measures", dv.tables.bosses.spec[4].tip, "Boss 1: the run's clock at its kill. Others: since the previous kill. Time outside the dungeon alive or offline is not counted.")
+  eq("Run: Killed at says which clock it is on", dv.tables.bosses.spec[3].tip, "The run's clock when the boss died. It stops while you are outside the dungeon alive or offline, so it can be less than the time since you entered.")
+  check("Run: neither header claims a time since entering as its value", dv.tables.bosses.spec[4].tip:find("since entering", 1, true) == nil and dv.tables.bosses.spec[3].label == "Killed at")
+  -- (the TIME hover's times of day go through the visits: first pull clock 348 is T + 669, last kill clock 4143 is T + 4464)
+  check("Run: the TIME hover places the first pull and the last kill on the wall clock, not at entry plus the run's clock",
+    dv.clockSentence == ("Your clocks: entered %s, first pull %s, last kill %s, left %s."):format(UI.fmtClock(T0), UI.fmtClock(T0 + 669), UI.fmtClock(T0 + 4464), UI.fmtClock(T0 + 4627)), dv.clockSentence)
   check("Run: no Vs best column with nothing to compare", dv.bossVsShown == false)
   check("Run: the bests still measure from the first pull", R.splits(rec)[267].seg == 1179 - 348 and R.measure(rec) == 4143 - 348)
   eq("Run: the deaths are one line, each at its wall time with the time down",
@@ -120,7 +128,14 @@ return function(P)
   check("Run: no Deaths table when no row names a killer", dv.sections.deaths.shown == false)
   -- loot: green and better as rows, the rest one line, no vendor price column
   eq("Run: the Loot table lists the 8 green and better drops (no quest reward, no white, no grey)", #dv.lootItems, 8)
-  eq("Run: the section says so", dv.sections.loot.meta.text, "8 green or better")
+  -- (Prismcharm and Engraved Cape of the Gorilla are stored "Picked up" with no boss kill near: one was a quest
+  -- reward and one a drop won by roll, and the save cannot say which. Neither is counted as a drop.)
+  eq("Run: the section counts as drops only the rows with a source", dv.sections.loot.meta.text, "6 drops green or better, 2 with no recorded source")
+  eq("lootMeta: every row sourced", D.lootMeta({ { from = "Trash", row = { src = "Creature" } }, { from = "Halycon", row = { src = "Picked up" } } }), "2 green or better")
+  eq("lootMeta: one drop", D.lootMeta({ { from = "Trash", row = { src = "Creature" } }, { row = { src = "Picked up" } } }), "1 drop green or better, 1 with no recorded source")
+  eq("lootMeta: none sourced claims no drop", D.lootMeta({ { row = { src = "Picked up" } }, { row = {} } }), "2 green or better with no recorded source")
+  eq("lootMeta: an enemy's drop whose enemy cannot be named is still a drop", D.lootMeta({ { row = { src = "Creature" } } }), "1 green or better")
+  eq("lootMeta: no row, no meta", D.lootMeta({}), nil)
   eq("Run: the rest is one line", dv.lootMore, "3 more: 2 white, 1 grey")
   check("Run: the Loot table has no vendor price column", dv.tables.loot.cols.price == nil and dv.tables.loot.cols.src ~= nil and dv.tables.loot.cols.at ~= nil)
   local from, tip = {}, {}
@@ -130,7 +145,79 @@ return function(P)
     ["Prismcharm"] = "", ["Engraved Cape of the Gorilla"] = "" }
   local bad = {}
   for item, src in pairs(want) do if from[item] ~= src then bad[#bad + 1] = item .. "=" .. tostring(from[item]) end end
-  check("Run: From names the boss killed at most 90 s before the row, Trash for an enemy with none, blank otherwise", #bad == 0, table.concat(bad, " | "))
+  check("Run: From names the boss killed at most 90 s before the row, Trash for an enemy with none, nothing otherwise", #bad == 0, table.concat(bad, " | "))
+  do
+    local cell = {}
+    for _, r in ipairs(shown(dv.tables.loot)) do cell[r.item.row.item] = r.c.src end
+    local pc, ec, sc = cell["Prismcharm"], cell["Engraved Cape of the Gorilla"], cell["Slamshot Shoulders"]
+    check("Run: a row with no recorded source says so in From, muted, never a blank among the drops", pc and pc.text == "Not recorded" and ec and ec.text == "Not recorded"
+      and math.abs(pc._color[1] - UI.C.fgMuted[1]) < 0.01 and sc and math.abs(sc._color[1] - UI.C.fgMuted[1]) > 0.01, pc and pc.text)
+    eq("Run: its hover says it is not counted as a drop", tip["Prismcharm"], "Where this item came from was not recorded, so it is not counted as a drop.")
+  end
+  -- the WORTH hover says what the item value holds (the capture prices a quest's reward item too)
+  do
+    local tipW = _G.GameTooltip
+    dv.card.worth:GetScript("OnEnter")(dv.card.worth)
+    local tl = table.concat(tipW.lines or {}, " | ")
+    dv.card.worth:GetScript("OnLeave")(dv.card.worth)
+    check("Run: the WORTH hover says the item value includes quest reward items, and that quest coin is not counted",
+      tl:find("Item value counts every item that reached your bags inside, quest reward items too.", 1, true) ~= nil and tl:find("more coin. It is not loot and is not counted here.", 1, true) ~= nil, tl)
+  end
+  -- a quest reward pushed into the bags before its turn-in event (the real handlers): the turn-in names it, so the
+  -- run's LOOT section never lists it
+  do
+    local log = ns.DB.loot.log
+    local keepNow, keepEpoch = M.now, M.epoch
+    local xpQ = c.xp and c.xp.fromQuests
+    M.now = M.now + 120
+    M.fire("CHAT_MSG_LOOT", "You receive item: |cff1eff00|Hitem:15867::::::::58:::::|h[Prismcharm]|h|r.")
+    local row = log[#log]
+    check("capture: a pushed item with nothing to name it is stored Picked up", row.item == "Prismcharm" and row.src == "Picked up", tostring(row.src))
+    M.now = M.now + 1
+    M.fire("QUEST_TURNED_IN", 4867, 0, 0)
+    eq("capture: the turn-in a second later makes it a quest reward", row.src, "Quest reward")
+    row.t = T0 + 945
+    R._gen = (R._gen or 0) + 1
+    T.openRun(rec); M.settle()
+    local listed = false
+    for _, it in ipairs(dv.lootItems) do if it.row == row then listed = true end end
+    check("capture: and the run page does not list it as loot", listed == false and #dv.lootItems == 8)
+    table.remove(log)
+    if c.xp then c.xp.fromQuests = xpQ end
+    M.now, M.epoch = keepNow, keepEpoch
+    R._gen = (R._gen or 0) + 1
+    T.openRun(rec); M.settle()
+  end
+  -- Worth per run of By dungeon is on the coin the Runs list shows: the statistics hold the booked 11,612, the run
+  -- paid 18,835 by its purse
+  do
+    local drows = R.dungeonRows()
+    local brs
+    for _, d in ipairs(drows) do if d.name == "Blackrock Spire" then brs = d end end
+    eq("By dungeon: the statistics alone give the booked coin plus the items", brs and brs.worthPerRun, 11612 + 180399)
+    local wpr = D.worthPerRun(drows)
+    eq("By dungeon: Worth per run of a dungeon with one stored run is that run's Worth", brs and wpr[brs.key], (D.worth(R.view(rec, false, false))))
+    -- two more stored runs, one whose purse gained more than was booked and one whose purse gained less
+    local a = T.runRecord("Blackrock Spire", T0 - 30000, 3000, { v = 2, gold = { looted = 5000, quests = 0, lootValue = 20000, items = 4, purse = 9000 } })
+    local b = T.runRecord("Blackrock Spire", T0 - 60000, 3000, { v = 2, gold = { looted = 7000, quests = 0, lootValue = 1000, items = 2, purse = 6000 } })
+    table.insert(c.dungeonRuns, 1, a); table.insert(c.dungeonRuns, 1, b)
+    R.statsRebuild(c)
+    drows = R.dungeonRows()
+    for _, d in ipairs(drows) do if d.name == "Blackrock Spire" then brs = d end end
+    wpr = D.worthPerRun(drows)
+    local sum = 0
+    for _, v in ipairs(R.views()) do if v.name == "Blackrock Spire" then sum = sum + (D.worth(v)) end end
+    eq("By dungeon: three stored runs", brs and brs.n, 3)
+    eq("By dungeon: the sum of the Worth cells of Runs (199,234 + 29,000 + 8,000)", sum, 199234 + 29000 + 8000)
+    check("By dungeon: Worth per run times the runs is that sum", brs and math.abs(wpr[brs.key] * brs.n - sum) < 0.001, brs and wpr[brs.key])
+    -- a run no longer stored stays at its booked coin: only what is stored can be corrected
+    table.remove(c.dungeonRuns, 2)
+    R._gen = (R._gen or 0) + 1
+    wpr = D.worthPerRun(drows)
+    check("By dungeon: a run no longer stored counts with its booked coin", brs and math.abs(wpr[brs.key] * 3 - (199234 + 25000 + 8000)) < 0.001, brs and wpr[brs.key])
+    table.remove(c.dungeonRuns, 1)
+    R.statsRebuild(c)
+  end
   eq("Run: the hover says how a boss was derived (the row is 29 s after his death at T + 1500)", tip["Slamshot Shoulders"], "Looted 29s after Highlord Omokk died. The game hides enemy names in dungeons.")
   eq("Run: and how Trash was", tip["Bracers of Valor"], "No boss died in the 90s before this. The game hides enemy names in dungeons.")
   local words = {}
@@ -271,6 +358,8 @@ return function(P)
     local tips = brd and table.concat(lv.tipLines(brd.run), " | ") or ""
     check("Runs: its hover says the coin is not counted and names no coin amount", tips:find(D.NO_COIN, 1, true) ~= nil and tips:find(UI.money(53083), 1, true) == nil
       and select(2, D.coinOf(brd.run)) == "none", tips)
+    check("Runs: its hover says the time and the start are counted by zone name", tips:find("Time 2h 33m in the dungeon's zone, from when you reached the dungeon's zone", 1, true) ~= nil
+      and tips:find("Counted by zone name to 10 s, so it can include time at the entrance.", 1, true) ~= nil, tips)
   end
   check("Runs: with one full run in six, Vs best, Bosses and Deaths are left out (under a third of the rows have a value)", lv.colHidden.vs == true and lv.colHidden.boss == true
     and lv.colHidden.death == true and lv.tbl.cols.boss == nil and lv.tbl.cols.death == nil and lv.tbl.cols.worth ~= nil)
@@ -283,6 +372,15 @@ return function(P)
     check("Rebuilt run: its page opens", dv:IsShown() and dv.run.legacy == true)
     eq("Rebuilt run: two cards", #dv.cards, 2)
     eq("Rebuilt run: Time", dv.cards[1].value.text, "2h 33m")
+    -- (the gold run counted by the zone's name to its 10 s tick: Maraudon, 18 Nov, stored 1h 10m for 1h 8m 16s inside)
+    eq("Rebuilt run: the card does not say the time was all in the dungeon", dv.cards[1].meta.text, "in the dungeon's zone")
+    eq("Rebuilt run: the Time hover says how it was counted", dv.timeTip, "Time in the dungeon's zone. Counted by zone name to 10 s, so it can include time at the entrance.")
+    eq("Rebuilt run: the PARTIAL hover says so too", dv.badges[1].ebTip and dv.badges[1].ebTip.text, "Time and loot only. Counted by zone name to 10 s, so it can include time at the entrance.")
+    eq("Rebuilt run: the line under the title says what its time of day is", dv.metaText, UI.fmtWhen(G0 + 65059) .. " \194\183 reached the dungeon's zone")
+    check("Rebuilt run: nothing on the page says \"in the dungeon\" as a fact", (function()
+      for _, fs in ipairs(P.descendants(dv)) do if P.visible(fs) and type(fs.text) == "string" and fs.text:find("in the dungeon", 1, true) and not fs.text:find("in the dungeon's zone", 1, true) then return false end end
+      return true
+    end)())
     eq("Rebuilt run: Worth", dv.cards[2].value.text, UI.money(518686))
     eq("Rebuilt run: the card says what the figure is, and no coin", dv.cards[2].meta.text, "items at vendor prices")
     eq("Rebuilt run: the hover says the coin is not counted", dv.coinTip, D.NO_COIN)

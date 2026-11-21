@@ -23,6 +23,16 @@ function ns.SyncState()
   local la = combat and type(combat.lastAck) == "table" and combat.lastAck or nil
   return { lastAck = la, waiting = waiting, stored = stored, ackAt = la and tonumber(la.at) or nil, ackFights = la and tonumber(la.fights) or nil }
 end
+-- What the save knows of the last pickup, in words (Home > Now's card, Settings > Data and sync). `combat.lastAck.at`
+-- is when the addon applied the desktop app's confirmation (at the next login, or when a code was pasted), never
+-- when the app saved the data: the confirmation carries no time of its own. So the time is always worded
+-- "confirmed", and the count leads. Returns the count text (nil when the confirmation named no pull), the
+-- "confirmed Sat 21 Nov 11:45" text and the hover.
+ns.ACK_TIP = "The desktop app saved this data earlier. The time is when the addon saw its confirmation, not when it was saved."
+function ns.AckWords(sync, now)
+  local n = sync.ackFights and sync.ackFights > 0 and ns.UI.plural(sync.ackFights, "pull") or nil
+  return n, "confirmed " .. ns.UI.fmtStamp(sync.ackAt or 0, now), ns.ACK_TIP
+end
 
 local SET = {}          -- the Settings panes and their state (ns.SettingsView for the tests)
 ns.SettingsView = SET
@@ -461,10 +471,11 @@ function SET.refreshData()
   local sync = ns.SyncState()
   local la, waiting = sync.lastAck, sync.waiting
   if la then
-    -- (the pickup as a fixed moment and what it took, both from combat.lastAck: "Sat 21 Nov 11:45, 142 pulls")
-    local took = (sync.ackFights and sync.ackFights > 0) and (", " .. UI.plural(sync.ackFights, "pull")) or ""
-    d.syncStatus:SetPair("Saved to everbuff.gg", UI.fmtStamp(sync.ackAt or 0) .. took, "accent")
-    UI.SetTip(d.syncStatus, { title = "Saved to everbuff.gg", text = "When the desktop app last picked your data up, and how many pulls it took." })
+    -- (what was saved and when the addon saw it confirmed, both from combat.lastAck: "142 pulls, confirmed Sat 21
+    -- Nov 11:45". The save holds no time of the pickup itself, ns.AckWords.)
+    local n, confirmed, tipText = ns.AckWords(sync)
+    d.syncStatus:SetPair("Saved to everbuff.gg", n and (n .. ", " .. confirmed) or (confirmed:sub(1, 1):upper() .. confirmed:sub(2)), "accent")
+    UI.SetTip(d.syncStatus, { title = "Saved to everbuff.gg", text = tipText })
   else
     -- (never seen: said plainly; what to do about it is the hover, not a sentence on the page)
     d.syncStatus:SetPair("Saved to everbuff.gg", "Not seen yet", "fgFaint", nil, "fgMuted")

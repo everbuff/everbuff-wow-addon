@@ -215,7 +215,12 @@ return function(P)
     eq("Now at the cap: from 30 minutes on the hero names the rate", c.hero.meta1.text, UI.money(6000, true) .. " per hour")
     ns.DB.combat.lastAck = { at = GetServerTime() - 120, fights = 2, source = "file" }
     ses.deaths = 3; reopen()
-    check("Now at the cap: a pickup seen reads its moment and its pulls", card("saved").value.text == UI.fmtStamp(GetServerTime() - 120) and card("saved").meta.text == "2 pulls", card("saved").value.text)
+    -- (lastAck.at is when the addon saw the confirmation, not when the desktop app saved: the count leads and the
+    -- time is worded "confirmed")
+    check("Now at the cap: a save seen reads its pulls, and the time as when it was confirmed", card("saved").value.text == "2 pulls"
+      and (card("saved").meta.text == "confirmed " .. UI.fmtStamp(GetServerTime() - 120) or card("saved").meta.text == "confirmed " .. UI.fmtStamp(GetServerTime() - 120):gsub("^%a+ ", ""))
+      and card("saved").meta.text:find("^confirmed .*%d%d:%d%d$") ~= nil and not card("saved").meta:IsTruncated(), tostring(card("saved").value.text) .. " / " .. tostring(card("saved").meta.text))
+    eq("Now at the cap: its hover says the time is the confirmation's", card("saved").ebTip.text, "The desktop app saved this data earlier. The time is when the addon saw its confirmation, not when it was saved.")
     check("Now at the cap: DEATHS only above 0, and at most 4 cards", (card("deaths") ~= nil) == (#c.cardDefs < 4 or labels():find("Deaths", 1, true) ~= nil) and #c.cardDefs <= 4
       and (Now.lastRun() ~= nil or (card("deaths") and card("deaths").value.text == "3")), labels())
     -- no gold moved: the hero is the balance, and BALANCE is not a card too

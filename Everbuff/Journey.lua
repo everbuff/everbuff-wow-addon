@@ -917,9 +917,13 @@ function Now.refresh(content)
     end
     local sync = ns.SyncState and ns.SyncState() or {}
     if sync.lastAck then
-      defs[#defs + 1] = { key = "saved", label = "Saved to everbuff.gg", value = UI.fmtStamp(sync.ackAt or 0, now),
-        meta = (sync.ackFights and sync.ackFights > 0) and UI.plural(sync.ackFights, "pull") or "",
-        tip = { title = "Saved to everbuff.gg", text = "When the desktop app last picked your data up, and how many pulls it took." } }
+      -- (the count is the fact; the time is when the addon saw the confirmation, and says so: ns.AckWords)
+      local n, confirmed, tipText = ns.AckWords(sync, now)
+      -- (a card too narrow for "confirmed Sat 21 Nov 11:45" drops the weekday: never cut mid-date)
+      if UI.TextWidth("META", confirmed) > metaW then confirmed = confirmed:gsub("^confirmed %a+ ", "confirmed ") end
+      defs[#defs + 1] = { key = "saved", label = "Saved to everbuff.gg", value = n or "Confirmed",
+        meta = n and confirmed or confirmed:gsub("^confirmed ", ""),
+        tip = { title = "Saved to everbuff.gg", text = tipText } }
     else
       defs[#defs + 1] = { key = "saved", label = "Saved to everbuff.gg", value = "Not seen yet", meta = "", muted = true,
         tip = { title = "Not seen yet", text = "Install the desktop app from everbuff.gg to keep your history and watch your recordings." } }

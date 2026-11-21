@@ -1785,7 +1785,8 @@ function Runs.dungeonRows()
       row.coinPerHour = warm and (num(s.looted) + num(s.quests)) * 3600 / s.active or nil
       row.xpPerHour = (warm and num(s.xp) > 0) and s.xp * 3600 / s.active or nil
       row.deathsPerRun = num(s.deaths) / s.n
-      -- (what a run of the dungeon was worth: looted coin and the vendor value of its items, never quest coin)
+      -- (what a run of the dungeon was worth: booked coin and the vendor value of its items, never quest coin. By
+      -- dungeon adds what the purse of each stored run gained beyond the booked coin: Dungeons.lua, D.worthPerRun.)
       row.worthPerRun = (num(s.looted) + num(s.lootValue)) / s.n
       out[#out + 1] = row
     end

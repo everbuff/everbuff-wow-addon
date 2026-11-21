@@ -41,6 +41,7 @@ A screen that answers none of these for the logged-in character is not shown.
    | Where | What shows |
    |---|---|
    | A table cell | Blank. Tooltip "Not recorded". Never "0", never "-". |
+   | A cell in a column whose other rows name a confirmed fact (From on a run's Loot table) | "Not recorded", muted: a blank there would read as one more confirmed row |
    | A hero, card or single line | "Not recorded", muted. Or the element is hidden when it has nothing else to say. |
    | A value the client has not answered yet (live reputation) | "Not known yet", muted |
    | A true stored zero | "0" |
@@ -117,9 +118,11 @@ On the save: session of 21 Nov 11:45 (two logins, 11:45 and 11:47, joined): +8g 
 | BALANCE | "12s 19c" | "all characters 12g 0s" | `characters[guid].gold.balance` (1,219 and 118,859 copper on the save). Not shown when the hero already is the balance; then only the meta moves to the hero. |
 | PLAYED | "10m" | none | session start to now |
 | LAST RUN | "Blackrock Spire" | "Fri 20 Nov · 1h 9m · 7 bosses · 2 deaths" | newest `dungeonRuns` record; click opens the run page |
-| SAVED TO EVERBUFF.GG | "Sat 21 Nov 11:45" | "142 pulls" | `combat.lastAck.at`, `.fights` |
+| SAVED TO EVERBUFF.GG | "142 pulls" | "confirmed Sat 21 Nov 11:45" | `combat.lastAck.fights`, `.at` |
 | DEATHS | count | none | `sessions[id].deaths`; only when above 0 |
 | XP PER HOUR | leveling only | "last 30m of play" | `ns.Pace` |
+
+`combat.lastAck.at` is when the addon applied the desktop app's confirmation (at the next login, or when a code was pasted), never when the app saved the data: the confirmation file carries no time. On the save it is 21 Nov 11:45:11, 14 s before the session starts; the desktop's copy with those 142 pulls is from 20 Nov 23:54. So the count leads, the time is always worded "confirmed", and the hover says "The desktop app saved this data earlier. The time is when the addon saw its confirmation, not when it was saved." The real time of the save needs the desktop to write it into the confirmation (a contract change, not made).
 
 At most 4 cards, in this order of priority. SAVED TO EVERBUFF.GG with no pickup ever seen reads "Not seen yet", tooltip "Install the desktop app from everbuff.gg to keep your history and watch your recordings."
 
@@ -205,7 +208,7 @@ Under the hero, one line only when it has something to say: "2 instances this ho
 | Column | Content | Source |
 |---|---|---|
 | When | "Fri 20 Nov, 15:14" | `rec.t` |
-| Dungeon | name; rebuilt rows carry a muted "partial" tag, tooltip "Time and loot only" | `rec.inst` |
+| Dungeon | name; rebuilt rows carry a muted "partial" tag, tooltip "Time and loot only", then how its time was counted (below) | `rec.inst` |
 | Time | "1h 9m" inside | `secs.inside` (4,148 s) |
 | Vs best | `fmtDelta` on the boss clock; shown only for a dungeon with 2 or more full runs; tooltip "Compared from first pull to last kill" | `dungeonStats` |
 | Bosses | "7", or "7 of 9" with a real total | `rec.bosses` |
@@ -213,13 +216,15 @@ Under the hero, one line only when it has something to say: "2 instances this ho
 | Worth | "19g 92s"; tooltip "1g 88s coin plus 18g 3s of items at vendor prices" | the run's coin (below) + `gold.lootValue` (18,835 + 180,399 copper) |
 | Best drop | item name in its quality colour (WIDE) | highest quality looted row of the run, green or better |
 
-**The coin of a run.** `gold.looted` misses the shares of group loot the client pays without a loot window: on the stored run 11,612 copper was booked and 18,835 was paid (the 97 "Your share of the loot is" lines of the chat log; the same figure as `gold.purse`, what the purse gained inside less quest coin). So the coin of a run record is `gold.purse` when it is more than `gold.looted`, else `gold.looted`; the hover says which and names both figures. A rebuilt row stores the booked coin only and no purse figure (Maraudon: 3s 65c booked, 1g 14s paid), so its coin is not known: its Worth is the vendor value of its items alone, the card says "items at vendor prices" and the hover "The coin of this run was not recorded in full, so it is not counted." The other wording, the booked coin as a lower bound ("at least"), is one constant (`D.PARTIAL_COIN`) and the founder's pick. Limits: the purse figure also holds a trade or a vendor sale made inside, and By dungeon still sums the booked coin from `dungeonStats`; gate H (group shares booked as looted at capture) is the fix for both and for new runs.
+**The coin of a run.** `gold.looted` misses the shares of group loot the client pays without a loot window: on the stored run 11,612 copper was booked and 18,835 was paid (the 97 "Your share of the loot is" lines of the chat log; the same figure as `gold.purse`, what the purse gained inside less quest coin). So the coin of a run record is `gold.purse` when it is more than `gold.looted`, else `gold.looted`; the hover says which and names both figures. A rebuilt row stores the booked coin only and no purse figure (Maraudon: 3s 65c booked, 1g 14s paid), so its coin is not known: its Worth is the vendor value of its items alone, the card says "items at vendor prices" and the hover "The coin of this run was not recorded in full, so it is not counted." The other wording, the booked coin as a lower bound ("at least"), is one constant (`D.PARTIAL_COIN`) and the founder's pick. By dungeon's Worth per run is on the same coin: `dungeonStats` sums the booked coin, and every stored run it counts adds what its purse gained beyond that (`D.worthPerRun`), so a dungeon whose runs are all stored reads the mean of its Worth cells on Runs (Blackrock Spire, one run: 19g 92s on both, not 19g 20s). A run no longer stored stays at its booked coin. Limits: the purse figure also holds a trade or a vendor sale made inside; gate H (group shares booked as looted at capture) is the fix for it and for new runs. The item value counts every item that reached the bags inside, a quest's reward item too (Prismcharm on the stored run); the WORTH hover says so.
 
 Rule 0.3 applies: while most rows are partial (1 full and 5 rebuilt on the save), Vs best, Bosses and Deaths are hidden and live on the hero and the run page. They appear on their own once a third of the rows are full runs.
 
 **Boss total [gate J].** "N of M" needs M from the boss to dungeon reference table (J) or a lockout count. Until J lands the cell is "7". With one run "7 of 7" is a circle: the same dungeon gave 9 kills that morning.
 
 **Rebuilt runs [gate A].** Rows from `characters[guid].dungeonLegacy` (built from `goldRuns`; never from timing or gaps). They never enter bests or averages. On the save: 5 rows (Maraudon 18 Nov, Blackrock Depths x3 19 Nov, Blackrock Spire 20 Nov 10:06). Gate J adds the 13 older clears by name. Until A lands the table lists the 1 stored run and the screen claims no count.
+
+**The time of a rebuilt run.** The gold run counted by the zone's name, in steps of 10 s, and the land in front of some dungeons carries the dungeon's name. Maraudon, 18 Nov: stored start 21:32:58 and 4,250 s; by the combat log the character entered the instance at 21:34:20 and was inside 4,096 s (the rest was 146 s at the entrance). The addon cannot correct a stored row, so every partial row says what its figures are: the TIME card's meta is "in the dungeon's zone", never "in the dungeon"; the line under the title is "Wed 18 Nov 21:32 · reached the dungeon's zone"; the PARTIAL badge, the TIME hover and the row's hover on Runs carry "Counted by zone name to 10 s, so it can include time at the entrance."
 
 **Cut.** The "BEFORE RUN TRACKING (VERSION ...)" section and title. The footer about unrecorded runs. The Items count (it counted 29 whites and greys). "first run" as a Vs best value. Coin as its own column.
 
@@ -251,13 +256,14 @@ Rule 0.3 applies: while most rows are partial (1 full and 5 rebuilt on the save)
 
 Revision 1 showed 54,686 XP per hour on a third clock (`secs.active`). It is now 62,388 over 4,148 s.
 
-**Bosses table.** Boss, Killed at, Split, Fight. Split tip "Boss 1: since entering. Others: since the previous kill." Boss 1 split equals its kill clock: Highlord Omokk 19m 39s, 19m 39s, 43s. Bests keep measuring from the first pull.
+**Bosses table.** Boss, Killed at, Split, Fight. Killed at and Split are on the run's clock (the stored `kill`): it runs inside and while running back dead, and stands still while the character is outside alive or offline. It is not the time since entering on a run that was left and entered again: on the save Highlord Omokk died 25m 0s after entering (15:39:01) and reads 19m 39s, because 5m 21s outside came before him. The headers say so. Killed at tip: "The run's clock when the boss died. It stops while you are outside the dungeon alive or offline, so it can be less than the time since you entered." Split tip: "Boss 1: the run's clock at its kill. Others: since the previous kill. Time outside the dungeon alive or offline is not counted." Boss 1 split equals its kill clock: Highlord Omokk 19m 39s, 19m 39s, 43s. Bests keep measuring from the first pull. Open founder decision: show Killed at as the time since entering instead (`Runs.wallOf(rec, kill) - rec.t`, Omokk 25m 0s), which would agree with the header and the Loot table's When. The TIME hover's "first pull" and "last kill" times of day go through `Runs.wallOf` (last kill 16:28, not entry plus the run's clock, 16:23).
 
 **Deaths line** under the Bosses table when the run has deaths: "Deaths: 16:12 (2m 45s down) · 16:30 (1m 13s down)". No killer, no gear column.
 
-**Loot table.** Item (with "x3"), From, When. Header meta "8 green or better". One muted line under it: "29 more: 21 white, 8 grey".
-- From **[gate B, inference]**: a stored name is shown as stored. A row whose stored source is a placeholder gets the boss of this run killed at most 90 s before it, tooltip "Looted 13s after Gizrul the Slavener died. The game hides enemy names in dungeons." "Trash" is the same kind of inference (an enemy placeholder with no boss kill in range) and carries the tooltip "No boss died in the 90s before this. The game hides enemy names in dungeons." Every other placeholder is blank. If the founder refuses the inference, every placeholder is blank.
-- On the save: Slamshot Shoulders Highlord Omokk, Talisman of Evasion War Master Voone, Slashclaw Bracers Halycon, Rhombeard Protector Gizrul the Slavener, 2 Trash, 2 blank.
+**Loot table.** Item (with "x3"), From, When. Header meta "6 drops green or better, 2 with no recorded source" on the save ("8 green or better" when every row has a source). One muted line under it: "29 more: 21 white, 8 grey".
+- From **[gate B, inference]**: a stored name is shown as stored. A row whose stored source is a placeholder gets the boss of this run killed at most 90 s before it, tooltip "Looted 13s after Gizrul the Slavener died. The game hides enemy names in dungeons." "Trash" is the same kind of inference (an enemy placeholder with no boss kill in range) and carries the tooltip "No boss died in the 90s before this. The game hides enemy names in dungeons." Every other placeholder reads "Not recorded", muted, tooltip "Where this item came from was not recorded, so it is not counted as a drop.", and the header counts it apart. If the founder refuses the inference, every placeholder reads so.
+- On the save: Slamshot Shoulders Highlord Omokk, Talisman of Evasion War Master Voone, Slashclaw Bracers Halycon, Rhombeard Protector Gizrul the Slavener, 2 Trash, 2 "Not recorded". The two are Prismcharm (15:29, by the chat log the reward of the quest "Urok Doomhowl": "You receive item:", not a drop) and Engraved Cape of the Gorilla (16:01, a drop won by roll 14 s after the loot window). Both are stored "Picked up", and the save cannot tell them apart.
+- Capture, from this version on: an item pushed into the bags ("You receive item:") in the 3 s before `QUEST_TURNED_IN` that named no world object becomes "Quest reward" (the reward reached the bags before the event on 20 Nov). Rows already stored are not changed.
 
 **Entered and left.** Not on the page: no visit count, no third clock ("Active"), no combat totals. The split of the TIME card's "dead or outside" (running back, outside) is in its hover. One exception: a run marked "possibly two runs" lists its visits, because its note points at Split here on one of them.
 
@@ -418,7 +424,7 @@ General and Gold display: unchanged from `UX_OVERHAUL.md` 4.12.
 | Row | Text | Source |
 |---|---|---|
 | Status | "CAPTURING in Orgrimmar" | live |
-| Saved to everbuff.gg | "Sat 21 Nov 11:45, 142 pulls" (the same fact as the card on Now) | `combat.lastAck` |
+| Saved to everbuff.gg | "142 pulls, confirmed Sat 21 Nov 11:45" (the same fact and the same hover as the card on Now, 1.1: the time is the confirmation's, never the save's) | `combat.lastAck` |
 | Pulls waiting | "0" | `combat.fights` not yet picked up |
 | Loot | "1,539 pickups" | `loot.log` |
 
