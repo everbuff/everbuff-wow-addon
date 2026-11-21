@@ -366,17 +366,37 @@ local function sessionIds()
   return ids
 end
 local function dayKey(t) return date("%Y%m%d", t) end
+-- story.rep is one list for every character and holds Rep.CAP rows: Emitter.repGain drops the oldest row for every
+-- row past that. A list that has reached the cap has therefore lost rows, all of them older than its first row or
+-- of the same moment. Rep.cut() is nil while the list is under the cap, else the time of its first row and the day
+-- of that time: the stored gains of that day (and of any day before it) are not all there, so a sum over them is a
+-- lower bound, never the day's sum. Every gain after that moment is stored.
+Rep.CAP = 2000
+function Rep.cut()
+  local list = ns.DB and ns.DB.story and ns.DB.story.rep
+  if type(list) ~= "table" or #list < Rep.CAP then return nil end
+  for _, r in ipairs(list) do
+    local t = type(r) == "table" and tonumber(r.t) or nil
+    if t and t > 0 then return t, dayKey(t) end
+  end
+  return nil
+end
 -- Rows { name, standing, label, progress, need (live, nil when the client has not answered), hasGains (a stored
 -- gain of this character: the row opens), ownLast (the time of this character's newest stored gain), lastGain (the
 -- same time, only while its day is certainly the last day the faction gained), dayGain (this character's stored
--- gains on that day), atLeast, uncertain, partial, session (what it gained this session, nil when nothing) }.
+-- gains on that day), atLeast, uncertain, partial, cut, session (what it gained this session, nil when nothing),
+-- sessionAtLeast }.
 -- A stored gain of the faction that names no character (a loose row) may be this character's or another's. Two
 -- facts are kept apart, the day and the day's sum:
 --   no loose row on the day of ownLast or later: the day and its sum are exact;
 --   a loose row on that same day, none later: the day is certain, the sum is a lower bound (`atLeast`);
 --   a loose row on a later day, or no gain of this character at all: the last day cannot be said (`uncertain`),
 --     lastGain and dayGain are nil.
--- `partial` is true in the last two cases and in the lower-bound case. Order: factions with a certain last day
+-- The list is capped (Rep.cut): when it is full and the day of ownLast is the day of its first row or an earlier
+-- one, rows of that day were dropped, so the day's sum is a lower bound too (`atLeast`, and `cut` names the reason).
+-- The same holds for this session: when the full list starts at or after the start of the session (or the start is
+-- not stored, or the first row is a row of the session), `sessionAtLeast` is set on every row with a session sum.
+-- `partial` is true in the last two cases and in the lower-bound cases. Order: factions with a certain last day
 -- first, by that day (newest first), then by what the day brought, largest first; then the rest by standing, and a
 -- Neutral faction with no stored gain last.
 local function buildReputation()
@@ -385,6 +405,14 @@ local function buildReputation()
   local session, last, day = {}, {}, {}
   local ids = sessionIds()
   local gains, loose = repGains()
+  local cutT, cutDay = Rep.cut()
+  local sesCut = false
+  if cutT then
+    local ok, start = pcall(function() return ns.Gold and ns.Gold.joinedStart and ns.Gold.joinedStart() end)
+    start = ok and tonumber(start) or nil
+    local first = ns.DB.story.rep[1]
+    sesCut = start == nil or start <= cutT or (type(first) == "table" and first.s ~= nil and ids[first.s] == true)
+  end
   local oldest
   for _, g in ipairs(gains) do
     if g.faction then
@@ -406,11 +434,13 @@ local function buildReputation()
     local st = tonumber(lr.standing) or tonumber(sr.standing) or 0
     local own, lt = last[name], loose[name]
     local uncertain = lt ~= nil and (own == nil or dayKey(lt) > dayKey(own))
-    local atLeast = lt ~= nil and own ~= nil and dayKey(lt) == dayKey(own)
+    local cut = (not uncertain) and cutDay ~= nil and own ~= nil and dayKey(own) <= cutDay
+    local atLeast = cut or (lt ~= nil and own ~= nil and dayKey(lt) == dayKey(own))
     local shown = (not uncertain) and own or nil
+    local ses = (num(session[name]) > 0) and session[name] or nil
     local r = { name = name, standing = st, label = STANDINGS[st] or sr.label or _G["FACTION_STANDING_LABEL" .. st] or "Neutral",
-      session = (num(session[name]) > 0) and session[name] or nil, hasGains = own ~= nil, ownLast = own,
-      partial = (uncertain or atLeast) or nil, uncertain = uncertain or nil, atLeast = atLeast or nil,
+      session = ses, sessionAtLeast = (ses and sesCut) or nil, hasGains = own ~= nil, ownLast = own,
+      partial = (uncertain or atLeast) or nil, uncertain = uncertain or nil, atLeast = atLeast or nil, cut = cut or nil,
       lastGain = shown, dayGain = shown and day[name] or nil }
     if lr.min and lr.max and lr.value and lr.max > lr.min then r.progress, r.need = lr.value - lr.min, lr.max - lr.min end
     gained = gained + num(r.session)
@@ -427,7 +457,7 @@ local function buildReputation()
     elseif a.standing ~= b.standing then return a.standing > b.standing end
     return a.name < b.name
   end)
-  return rows, { factions = #rows, gained = gained, since = oldest }
+  return rows, { factions = #rows, gained = gained, gainedAtLeast = (sesCut and gained > 0) or nil, since = oldest }
 end
 -- every reputation gain and every new standing, newest first; `only` limits it to one faction
 local function buildRepHistory(only)
@@ -804,6 +834,12 @@ end
 -- "+1,005 · Yesterday", "at least +50 · Yesterday" (a lower bound), "Not certain", "" (no stored gain at all)
 local REP_UNCERTAIN = "Not certain"
 local function repSum(r) return (r.atLeast and "at least +" or "+") .. UI.fmtNum(num(r.dayGain)) end
+-- "+75", "at least +75" (the full list starts inside this session), nil when the faction gained nothing this session
+local function repSession(r)
+  if not r.session then return nil end
+  return (r.sessionAtLeast and "at least +" or "+") .. UI.fmtNum(r.session)
+end
+V.REP_CUT = "The list of stored gains is full and has dropped its oldest ones"
 local function repLast(r, now)
   if r.lastGain then return ("%s \194\183 %s"):format(repSum(r), UI.fmtDate(r.lastGain, now)) end
   return r.uncertain and REP_UNCERTAIN or ""
@@ -812,6 +848,10 @@ end
 function V.repLastTip(r)
   if r.lastGain and not r.atLeast then
     return { ("+%s in all on that day. Newest gain %s."):format(UI.fmtNum(num(r.dayGain)), UI.fmtStamp(r.lastGain)) }
+  end
+  if r.lastGain and r.cut then
+    return { ("Newest gain of this character: %s."):format(UI.fmtStamp(r.ownLast)),
+      ("%s, some of that day among them, so the day's total cannot be said: it is at least +%s."):format(V.REP_CUT, UI.fmtNum(num(r.dayGain))) }
   end
   if r.lastGain then
     return { ("Newest gain of this character: %s."):format(UI.fmtStamp(r.ownLast)),
@@ -843,8 +883,9 @@ local function buildRep(content)
     prog = { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = REP_BAR + S.S2, min = REP_BAR + S.S2,
       tip = "What is left to the next standing. The numbers come from the game while you are logged in." },
     last = { key = "last", label = "Last day gained", kind = "tag", min = 96, justify = "RIGHT", measure = { "+10,005 \194\183 Wed 28 Nov" },
-      tip = "The sum of the faction's gains on the last day it gained, and that day. \"At least\" when a stored gain of that day names no character. \"Not certain\" when such a gain lies on a later day. Blank with no stored gain." },
-    ses = { key = "ses", label = "This session", kind = "num", min = 88, hide = true },
+      tip = "The sum of the faction's gains on the last day it gained, and that day. \"At least\" when a stored gain of that day names no character, or when the list of stored gains is full and has dropped gains of that day. \"Not certain\" when such a gain lies on a later day. Blank with no stored gain." },
+    ses = { key = "ses", label = "This session", kind = "num", min = 88, hide = true,
+      tip = "What the faction gained this session. \"At least\" when the list of stored gains is full and has dropped gains of this session." },
   }
   v.tbl = UI.KitTable(col, { v.spec.name, v.spec.standing, v.spec.prog, v.spec.last, v.spec.ses },
     { onClick = function(row) if row.item and row.item.hasGains then V.openFaction(row.item) end end,
@@ -951,7 +992,7 @@ function V.renderRep()
     V.placeRepBar(row)
     row.c.last:SetText(repLast(r, now))
     if not r.lastGain then UI.SetColor(row.c.last, "fgMuted") end
-    row.c.ses:SetText(r.session and ("+" .. UI.fmtNum(r.session)) or "")
+    row.c.ses:SetText(repSession(r) or "")
     -- (only a faction with stored gains opens)
     row.ebNoOpen = not r.hasGains
   end)
@@ -1011,7 +1052,7 @@ function V.renderFaction(item, child)
   local parts = { (item.standing == 1 or item.standing == 2) and (UI.dot("bad") .. item.label) or item.label }
   local left = repLeft(item)
   if left then parts[#parts + 1] = left end
-  if item.session then parts[#parts + 1] = ("+%s this session"):format(UI.fmtNum(item.session)) end
+  if item.session then parts[#parts + 1] = repSession(item) .. " this session" end
   f.meta:SetText(table.concat(parts, " \194\183 ")); f.meta:SetWidth(w - 2 * S.S3)
   local hist = buildRepHistory(item.name)
   -- the list is capped: its header says where this faction's stored gains start, and how much they add up to
@@ -1022,10 +1063,13 @@ function V.renderFaction(item, child)
     if h.source ~= "" then named = named + 1 end
   end
   -- (a stored gain of the faction that names no character, on the first listed day or later, could belong in this
-  -- list: then neither a start nor a sum is said, the header is "GAINS" alone)
+  -- list: then neither a start nor a sum is said, the header is "GAINS" alone. The same when the list is full and
+  -- the first listed day is the day of its first row or an earlier one: gains of that day were dropped, Rep.cut)
   local _, loose = repGains()
   local lt = loose[item.name]
-  f.partial = (lt ~= nil and (first == nil or dayKey(lt) >= dayKey(first))) or nil
+  local _, cutDay = Rep.cut()
+  f.cut = (cutDay ~= nil and first ~= nil and dayKey(first) <= cutDay) or nil
+  f.partial = (f.cut or (lt ~= nil and (first == nil or dayKey(lt) >= dayKey(first)))) or nil
   f.label = "Gains" .. ((first and not f.partial) and (" since " .. UI.fmtSince(first)) or "")
   f.head:SetLabel(f.label)
   f.head:SetMeta((total > 0 and not f.partial) and ("+" .. UI.fmtNum(total)) or nil)

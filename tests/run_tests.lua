@@ -1853,6 +1853,23 @@ do
   local row = ns.DB.story.rep and ns.DB.story.rep[#ns.DB.story.rep]
   check("rep gain: the row carries the character's GUID beside its session", #ns.DB.story.rep == rep0 + 1 and row.g == ns.charGuid() and row.s == ns.DB.active and row.amount == 25, row and row.g)
   table.remove(ns.DB.story.rep)
+  -- the cap of the list is one constant (ns.Rep.CAP): the Emitter trims to it and the Reputation page reads it
+  check("rep cap: one constant", ns.Rep.CAP == 2000)
+  local keepRep, keepCap = ns.DB.story.rep, ns.Rep.CAP
+  ns.Rep.CAP = 40
+  ns.DB.story.rep = {}
+  check("rep cap: a list under the cap is not cut", ns.Rep.cut() == nil)
+  for i = 1, 55 do M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", ("Reputation with Stormwind increased by %d."):format(i)) end
+  local R = ns.DB.story.rep
+  check("rep cap: the Emitter keeps the newest CAP rows", #R == 40 and R[1].amount == 16 and R[40].amount == 55, #R)
+  local cutT, cutDay = ns.Rep.cut()
+  check("rep cap: a full list is cut at its first row", cutT == R[1].t and cutDay == os.date("%Y%m%d", R[1].t), cutT)
+  local sw
+  for _, r in ipairs((T.buildReputation())) do if r.name == "Stormwind" then sw = r end end
+  -- (55 gains, 1 to 55, add up to 1,540; the 40 left add up to 1,420)
+  check("rep cap: what the page says of the gains left is a lower bound, for the day and for the session",
+    sw ~= nil and sw.dayGain == 1420 and sw.atLeast == true and sw.cut == true and sw.partial == true and sw.session == 1420 and sw.sessionAtLeast == true, sw and sw.dayGain)
+  ns.DB.story.rep, ns.Rep.CAP = keepRep, keepCap
 end
 do
   -- ns.Rep.harvest: a row from before 0.9.52 gets its character from its session record or from a craft of the same

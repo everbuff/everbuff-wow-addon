@@ -529,6 +529,98 @@ return function(P)
       check("Reputation: old rows still show after applyAck deleted their session record", ns.DB.sessions["old-1"] == nil and r.tbl.rows[1].item.name == "Stormwind" and r.tbl.rows[1].c.last.text == "+325 \194\183 " .. UI.fmtDate(D - 86400, now), r.tbl.rows[1].c.last.text)
       ns.DB.combat.lastAck = lastAck
     end
+    -- The cap: story.rep holds ns.Rep.CAP rows for every character together and drops its oldest ones. A full list
+    -- is cut on the day of its first row: a sum over that day is a lower bound, never the day's sum.
+    do
+      local cap = ns.Rep.CAP
+      local D = now - (now % 86400) + 43200
+      local DAY0 = D - 3 * 86400
+      local function byName()
+        V.renderRep(); M.settle()
+        local by = {}
+        for i = 1, r.tbl.shownN do by[r.tbl.rows[i].item.name] = r.tbl.rows[i] end
+        return by
+      end
+      -- 25 rows left of a longer day for Stormwind, one of that day for Ironforge, then whole days
+      local full = {}
+      for i = 0, 24 do full[#full + 1] = { s = "gone-7", g = g, t = DAY0 + i * 3, faction = "Stormwind", amount = 10 } end
+      full[#full + 1] = { s = "gone-7", g = g, t = DAY0 + 100, faction = "Ironforge", amount = 7 }
+      full[#full + 1] = { s = "gone-7", g = g, t = DAY0 + 86400, faction = "Ironforge", amount = 5 }
+      while #full < cap do full[#full + 1] = { s = "gone-7", g = g, t = DAY0 + 86400 + #full, faction = "Gnomeregan Exiles", amount = 1 } end
+      ns.DB.story.rep = full
+      local t, day = ns.Rep.cut()
+      check("Reputation at the cap: the fixture is full and the list says where it is cut", #full == cap and t == DAY0 and day == os.date("%Y%m%d", DAY0), #full)
+      local by = byName()
+      local swi = by.Stormwind.item
+      eq("Reputation at the cap: a faction whose last day is the cut day shows a lower bound, never the bare sum of the rows left",
+        by.Stormwind.c.last.text, "at least +250 \194\183 " .. UI.fmtDate(DAY0, now))
+      check("Reputation at the cap: the row says so in its data", swi.atLeast == true and swi.partial == true and swi.cut == true and swi.uncertain == nil and swi.dayGain == 250 and swi.lastGain == DAY0 + 72)
+      eq("Reputation at the cap: its hover names the reason", table.concat(V.repLastTip(swi), " "),
+        "Newest gain of this character: " .. UI.fmtStamp(DAY0 + 72) .. ". The list of stored gains is full and has dropped its oldest ones, some of that day among them, so the day's total cannot be said: it is at least +250.")
+      check("Reputation at the cap: a faction whose last day lies after the cut day is exact", by["Gnomeregan Exiles"].c.last.text == "+" .. UI.fmtNum(cap - 27) .. " \194\183 " .. UI.fmtDate(DAY0 + 86400, now)
+        and by["Gnomeregan Exiles"].item.atLeast == nil and by["Gnomeregan Exiles"].item.partial == nil, by["Gnomeregan Exiles"].c.last.text)
+      check("Reputation at the cap: so is one that also gained on the cut day", by.Ironforge.c.last.text == "+5 \194\183 " .. UI.fmtDate(DAY0 + 86400, now) and by.Ironforge.item.atLeast == nil, by.Ironforge.c.last.text)
+      check("Reputation at the cap: no session sum is made up from rows of another session", by.Stormwind.item.session == nil and r.tbl.cols.ses == nil)
+      click(by.Stormwind); M.settle()
+      check("Reputation at the cap: the page of a faction whose list starts on the cut day says no start and no sum",
+        r.detail.IsOpen() and #V.FACTION.hist == 25 and V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta) and V.FACTION.partial == true and V.FACTION.cut == true, V.FACTION.head.label.text)
+      r.detail.Close(); M.settle()
+      click(by.Ironforge); M.settle()
+      check("Reputation at the cap: the same for a faction with gains on the cut day and later", #V.FACTION.hist == 2 and V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta) and V.FACTION.partial == true, V.FACTION.head.label.text)
+      r.detail.Close(); M.settle()
+      click(by["Gnomeregan Exiles"]); M.settle()
+      eq("Reputation at the cap: a page that starts after the cut day keeps its start and its sum", V.FACTION.head.label.text .. " | " .. V.FACTION.head.meta.text,
+        ("GAINS SINCE " .. UI.fmtSince(DAY0 + 86400)):upper() .. " | +" .. UI.fmtNum(cap - 27))
+      check("Reputation at the cap: and is whole", V.FACTION.partial == nil and V.FACTION.cut == nil)
+      r.detail.Close(); M.settle()
+      -- one row under the cap: nothing was dropped, the first day is whole
+      table.remove(full)
+      by = byName()
+      check("Reputation below the cap: the list is not cut", ns.Rep.cut() == nil)
+      check("Reputation below the cap: the first day's sum is exact", by.Stormwind.c.last.text == "+250 \194\183 " .. UI.fmtDate(DAY0, now) and by.Stormwind.item.atLeast == nil and by.Stormwind.item.cut == nil, by.Stormwind.c.last.text)
+      click(by.Stormwind); M.settle()
+      eq("Reputation below the cap: its page says the start and the sum", V.FACTION.head.label.text .. " | " .. V.FACTION.head.meta.text, ("GAINS SINCE " .. UI.fmtSince(DAY0)):upper() .. " | +250")
+      r.detail.Close(); M.settle()
+
+      -- a session that overflows the cap: 2,500 gains of +5, written the way Emitter.repGain writes them
+      local list = {}
+      for i = 1, cap + 500 do
+        list[#list + 1] = { s = ns.DB.active, g = g, t = now - 25 + math.floor(i / 100), faction = "Stormwind", amount = 5 }
+        while #list > cap do table.remove(list, 1) end
+      end
+      ns.DB.story.rep = list
+      by = byName()
+      swi = by.Stormwind.item
+      check("Reputation, a session past the cap: the session sum is a lower bound", swi.session == cap * 5 and swi.sessionAtLeast == true, swi.session)
+      eq("Reputation, a session past the cap: the cell says at least", by.Stormwind.c.ses.text, "at least +" .. UI.fmtNum(cap * 5))
+      check("Reputation, a session past the cap: the day's sum is a lower bound too", swi.atLeast == true and swi.cut == true and swi.dayGain == cap * 5
+        and by.Stormwind.c.last.text == "at least +" .. UI.fmtNum(cap * 5) .. " \194\183 Today", by.Stormwind.c.last.text)
+      eq("Reputation, a session past the cap: the answer says at least", r.answer, "Stormwind at least +" .. UI.fmtNum(cap * 5) .. " today")
+      local _, sum = ns._test.buildReputation()
+      check("Reputation, a session past the cap: the summed session figure is flagged", sum.gained == cap * 5 and sum.gainedAtLeast == true, sum.gained)
+      local sesCol = r.tbl.cols.ses
+      check("Reputation, a session past the cap: the cell is whole in its column", sesCol ~= nil and UI.TextWidth("BODY", by.Stormwind.c.ses.text) <= sesCol.w + 0.5, sesCol and sesCol.w)
+      click(by.Stormwind); M.settle()
+      check("Reputation, a session past the cap: the faction page says at least, no start and no sum",
+        V.FACTION.meta.text:find("at least +" .. UI.fmtNum(cap * 5) .. " this session", 1, true) ~= nil and V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta), V.FACTION.meta.text)
+      r.detail.Close(); M.settle()
+      -- a full list whose first row is older than the session: every gain of the session is stored, the sum is exact
+      local start = ns.Gold.joinedStart()
+      check("Reputation at the cap: the running session has a stored start", type(start) == "number" and start <= now, start)
+      if type(start) == "number" then
+        list = {}
+        for i = 1, cap - 10 do list[#list + 1] = { s = "gone-7", g = g, t = start - 3 * 86400 + i, faction = "Gnomeregan Exiles", amount = 1 } end
+        for i = 1, 10 do list[#list + 1] = { s = ns.DB.active, g = g, t = math.max(start + 1, now - 10 + i), faction = "Stormwind", amount = 5 } end
+        ns.DB.story.rep = list
+        by = byName()
+        check("Reputation at the cap: a session that started after the first stored row has an exact sum", #list == cap and by.Stormwind.item.session == 50 and by.Stormwind.item.sessionAtLeast == nil
+          and by.Stormwind.c.ses.text == "+50", by.Stormwind.c.ses.text)
+        -- the first stored row is a row of the session: rows of the session were dropped
+        list[1].s = ns.DB.active
+        by = byName()
+        check("Reputation at the cap: a list that starts with a row of the session makes the session sum a lower bound", by.Stormwind.item.sessionAtLeast == true and by.Stormwind.c.ses.text == "at least +50", by.Stormwind.c.ses.text)
+      end
+    end
     -- 900x580 with live bars (the in-game state: Faction, Standing, Progress, Last day gained): the longest faction
     -- name is whole, and the bar is what gives way
     do

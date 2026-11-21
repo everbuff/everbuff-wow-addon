@@ -2470,7 +2470,9 @@ function Emitter.repGain(msg)
   -- (g: the character, so the row is still this character's when its session record has been picked up, 0.9.52)
   rep[#rep + 1] = { t = now, s = ns.DB.active, g = ns.charGuid(), faction = faction, amount = amount, src = src,
     zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y }
-  while #rep > 2000 do table.remove(rep, 1) end
+  -- (the cap is one constant, ns.Rep.CAP in Progress.lua: the Reputation page reads it to know the list is cut)
+  local cap = (ns.Rep and ns.Rep.CAP) or 2000
+  while #rep > cap do table.remove(rep, 1) end
 end
 
 local repStanding, repSeeded = {}, false
