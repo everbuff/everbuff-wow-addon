@@ -2636,6 +2636,7 @@ local G = dofile("tests/geometry.lua")
 G.install(M)
 local Lay = dofile("tests/layout.lua")
 Lay.G = G
+Lay.CAPS = ns.UI.UPPER   -- the roles drawn in capitals (the "clipped" check)
 ns.UI.SetWindowSize(900, 580)
 -- the suite's data as it stands, kept for the pane tests below; the sweep makes ns.DB long in place
 local function deepcopy(v, seen)

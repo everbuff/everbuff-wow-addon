@@ -245,6 +245,25 @@ return function(P)
     check("Now at the cap: no THIS SESSION header and no XP PER HOUR card", not c.sesHead:IsShown() and not c.cards:IsShown() and not labels():find("XP", 1, true), labels())
     check("Now at the cap: BALANCE, PLAYED, then LAST RUN when a run is stored, then SAVED TO EVERBUFF.GG; no DEATHS at 0",
       labels() == (Now.lastRun() and "Balance | Played | Last run | Saved to everbuff.gg" or "Balance | Played | Saved to everbuff.gg"), labels())
+    -- (review round 3: the label is drawn in capitals but the brand stays lower case, and the tails of "gg" were cut
+    -- on a line as tall as the font. The line is the role's 13 px with the text at its top, so nothing moves.)
+    do
+      local lab = card("saved").label
+      local lb, vb = P.box(lab), P.box(card("saved").value)
+      check("Now at the cap: the label SAVED TO everbuff.gg keeps the brand lower case on a line with room for its tails",
+        lab.text == "SAVED TO everbuff.gg" and lb.h >= UI.LINE_H.LABEL and lab._justifyV == "TOP" and lb.t + lb.h <= vb.t, tostring(lab.text) .. " h " .. tostring(lb.h))
+      local function clipped()
+        local n = 0
+        for _, x in ipairs(P.Lay.audit(P.M.frames)) do if x.kind == "clipped" then n = n + 1 end end
+        return n
+      end
+      local before = clipped()
+      local keepH = lab._h
+      lab._h = nil
+      local without = clipped()
+      lab._h = keepH
+      eq("Now at the cap: the layout audit passes that label, and reports it once its line is only as tall as the font", before .. " " .. without, "0 1")
+    end
     check("Now at the cap: with no pickup seen the card says Not seen yet, muted, and the hover says what to do", card("saved").value.text == "Not seen yet"
       and near(card("saved").value._color[1], UI.C.fgMuted[1], 0.01) and card("saved").ebTip.text:find("Install the desktop app from everbuff.gg", 1, true) ~= nil, card("saved").value.text)
     check("Now at the cap: PLAYED has no second line", tostring(card("played").meta.text or "") == "")

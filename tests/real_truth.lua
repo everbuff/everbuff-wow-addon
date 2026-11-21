@@ -261,8 +261,19 @@ do
   eq("Sessions: the stored sessions of the range add up to -1,352,189, not the -808,803 of the day rows, and none reaches in from before it", a and (tostring(a.gold) .. " " .. tostring(a.listed)), "more -1352189")
   eq("Sessions: the answer line is one segment", #(v.summary.segs or {}), 1)
   local seg = v.summary.segs[1] or {}
-  eq("Sessions: the answer line never calls the figure net and says the list does not hold it all", (strip(seg.text):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " "):gsub(" $", "")), "Since Wed 18 Nov 20:35: 6 runs \194\183 gold including sessions not listed -80 88")
-  check("Sessions: its hover reconciles the two: all gold changes -80g 88s, sessions listed below -135g 21s", seg.tip and seg.tip.pairs[1][2] == UI.money(-808803, true) and seg.tip.pairs[2][2] == UI.money(-1352189, true))
+  -- (review round 3: -80g 88s right above a Gold column whose rows of the range add up to -135g 21s is a check the
+  -- line fails, so the gold is not on it; the line has no remark and no hover)
+  eq("Sessions: the answer line is the runs of the range alone: no gold, no remark", (strip(seg.text):gsub("%*%*", "")), "Since Wed 18 Nov 20:35: 6 runs")
+  check("Sessions: the answer line has no hover", seg.tip == nil)
+  local gt = v.section.metaHit and v.section.metaHit.ebTip
+  check("Sessions: the hover of the header's one remark reconciles the two: net gold since Wed 18 Nov 20:35 -80g 88s, in the sessions listed -135g 21s",
+    gt and gt.pairs and gt.pairs[1][1] == "Net gold since Wed 18 Nov 20:35" and gt.pairs[1][2] == UI.money(-808803, true) and gt.pairs[2][1] == "In the sessions listed" and gt.pairs[2][2] == UI.money(-1352189, true),
+    gt and gt.pairs and gt.pairs[1][1])
+  do
+    local all = {}
+    for _, f in ipairs(M.frames) do if f._isFS and f.text and f.shown ~= false then all[#all + 1] = tostring(f.text) end end
+    check("Sessions: no text of the window says \"not listed\"", not table.concat(all, "\n"):find("not listed", 1, true))
+  end
   eq("Sessions: the header says where the list starts and that it has gaps", v.section.label.text .. " | " .. v.section.meta.text, "SESSIONS SINCE THU 5 NOV | not every session is kept")
   local cols = {}
   for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.key ~= "_chev" then cols[#cols + 1] = col.key end end

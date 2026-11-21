@@ -1117,8 +1117,10 @@ end
 --   gold = "net"   the stored sessions that began in the range add up to it, to the copper
 --   gold = "more"  they do not, and the stored data says why: no stored session reaches into the range from before
 --                  it and every one in it holds its gold counter, so the rest moved in sessions that are no longer
---                  in the save (the desktop app removes a session once it has saved it). The line says so itself.
---   gold = nil     the difference cannot be explained from the save: the gold is left out of the line.
+--                  in the save (the desktop app removes a session once it has saved it). The gold is left out of
+--                  the line: a figure the Gold column under it does not add up to invites a check it fails. The
+--                  two figures stand in the hover of the header's one remark (Sess.gapTip).
+--   gold = nil    the difference cannot be explained from the save: the gold is left out of the line.
 -- listed is what the stored sessions of the range add up to.
 function Sess.answer()
   if not (ns.Gold and ns.Gold.scope and ns.DB and ns.charGuid and ns.charGuid()) then return nil end
@@ -1149,23 +1151,28 @@ function Sess.answer()
   if listed == out.net then out.gold = "net" elseif explained then out.gold = "more" end
   return out
 end
-Sess.NOT_LISTED = "including sessions not listed"
 -- The text of the answer line, one segment (nil: no line): the range, the runs, then the gold last, so nothing
--- follows a coin.
+-- follows a coin. The gold is on the line only as a net the listed sessions add up to; the line never says that
+-- sessions are missing (one remark per screen, and that is the header's).
 function Sess.answerSeg(a)
   if type(a) ~= "table" then return nil end
   local parts = {}
   if num(a.runs) > 0 then parts[#parts + 1] = ("**%d** %s"):format(a.runs, a.runs == 1 and "run" or "runs") end
-  local tip
-  if a.gold == "net" then parts[#parts + 1] = ("net **%s**"):format(UI.money(a.net, true))
-  elseif a.gold == "more" then
-    parts[#parts + 1] = ("gold %s **%s**"):format(Sess.NOT_LISTED, UI.money(a.net, true))
-    tip = { title = "Gold in this time", text = "Earned less spent, from this character's daily gold totals. The desktop app removes a session from the game's save once it has saved it, so the list below holds fewer sessions than were played.",
-      pairs = { { "All gold changes", UI.money(a.net, true) }, { "Sessions listed below", UI.money(num(a.listed), true) } } }
-  end
+  if a.gold == "net" then parts[#parts + 1] = ("net **%s**"):format(UI.money(a.net, true)) end
   if #parts == 0 then return nil end
   local head = a.since and ("Since " .. UI.fmtStamp(a.since)) or "This week"
-  return { text = head .. ": " .. table.concat(parts, " \194\183 "), tip = tip }
+  return { text = head .. ": " .. table.concat(parts, " \194\183 ") }
+end
+-- The hover of the header's remark "not every session is kept". When the gold of the answer's range is more than
+-- the listed sessions of that range hold (a.gold == "more"), it gives both figures; that range is named here only.
+function Sess.gapTip(a)
+  local tip = { title = "Not every session is kept",
+    text = "This character's totals are higher than the listed sessions add up to. The desktop app removes a session from the game's save once it has saved it." }
+  if type(a) == "table" and a.gold == "more" then
+    local head = a.since and ("since " .. UI.fmtStamp(a.since)) or "this week"
+    tip.pairs = { { "Net gold " .. head, UI.money(a.net, true) }, { "In the sessions listed", UI.money(num(a.listed), true) } }
+  end
+  return tip
 end
 -- what a click on a row opens: the session's gold journal (Loot > Gold), when the row is the running session or
 -- one stored login with a journal. nil: the row opens nothing.
@@ -1280,8 +1287,7 @@ local function buildSessions(content)
       local okG, gaps = pcall(Sess.gaps)
       content.gaps = okG and gaps or false
       if content.gaps then
-        content.section:SetMeta("not every session is kept", { title = "Not every session is kept",
-          text = "This character's totals are higher than the listed sessions add up to. The desktop app removes a session from the game's save once it has saved it." })
+        content.section:SetMeta("not every session is kept", Sess.gapTip(a))
       else content.section:SetMeta(nil) end
       content.section:Show()
     else content.section:Hide() end

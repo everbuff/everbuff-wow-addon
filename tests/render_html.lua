@@ -195,7 +195,9 @@ local function renderPage(pageKey, W, H, dataTag)
         for _, p in ipairs(f._pts or {}) do if p.p:find("LEFT") then hl = true elseif p.p:find("RIGHT") then hr = true end end
         return hl and hr end)()
       local nowrap = (f._wrap == false) or not fixedW
+      -- a text in a taller box stands in its middle, as in the client, unless SetJustifyV says top or bottom
       local padT = math.max(0, (b.h - lines * lh) / 2)
+      if f._justifyV == "TOP" then padT = 0 elseif f._justifyV == "BOTTOM" then padT = math.max(0, b.h - lines * lh) end
       local just = (f._justify or "CENTER"):lower()
       local pb = f.parentFrame and resolve(f.parentFrame, C)
       local style = {

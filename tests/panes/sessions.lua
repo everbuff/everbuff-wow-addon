@@ -268,10 +268,26 @@ return function(P)
       r = Sess.answer()
       eq("Sessions answer: the sessions add up to less than the day rows: gold is said with its remark", tostring(r.gold) .. " " .. r.listed, "more " .. (a.net - 1))
       reopen()
-      eq("Sessions answer: the line never calls it net and carries the remark itself", line(), head .. ": gold including sessions not listed **" .. UI.money(a.net, true) .. "**")
-      local tip = c.summary.segs[1].tip
-      check("Sessions answer: its hover gives both figures, the day rows' and the listed sessions'", tip and tip.pairs[1][2] == UI.money(a.net, true) and tip.pairs[2][2] == UI.money(a.net - 1, true))
-      check("Sessions answer: one segment that ends on the figure, so nothing follows a coin", #c.summary.segs == 1 and line():sub(-4) == "|t**", line())
+      -- (round 3: a figure the Gold column does not add up to is not on the line, and the line has no remark)
+      check("Sessions answer: gold the listed sessions do not add up to is left out: with no run there is no line", not P.visible(c.summary), tostring(line()))
+      blk.dungeonRuns = { { id = "m1", inst = "Deadmines", t = a.from + 10, bosses = {} } }
+      reopen()
+      eq("Sessions answer: with a run the line is the range and the run, no gold and no remark", line(), head .. ": **1** run")
+      check("Sessions answer: the line has no hover of its own", c.summary.segs[1].tip == nil)
+      blk.dungeonRuns = {}
+      -- the two figures stand in the hover of the header's one remark, and only when the totals prove a gap
+      local gt = Sess.gapTip(r)
+      check("Sessions answer: the hover of the header's remark gives both figures, the day rows' and the listed sessions'",
+        gt.pairs and #gt.pairs == 2 and gt.pairs[1][2] == UI.money(a.net, true) and gt.pairs[2][2] == UI.money(a.net - 1, true)
+        and gt.pairs[1][1] == "Net gold " .. (sc.since and ("since " .. UI.fmtStamp(sc.since)) or "this week"), gt.pairs and gt.pairs[1][1])
+      check("Sessions answer: a reconciled net, or gold that cannot be explained, adds no figures to that hover",
+        Sess.gapTip({ gold = "net", net = 5, listed = 5 }).pairs == nil and Sess.gapTip({ net = 5, listed = 4 }).pairs == nil and Sess.gapTip(nil).pairs == nil)
+      blk.gold.gained = blk.gold.gained + 100000000
+      reopen()
+      check("Sessions answer: with a proven gap the remark's hover on the page carries the two figures",
+        P.visible(c.section.meta) and c.section.metaHit.ebTip.pairs ~= nil and c.section.metaHit.ebTip.pairs[2][2] == UI.money(a.net - 1, true), tostring(c.section.meta.text))
+      blk.gold.gained = blk.gold.gained - 100000000
+      reopen()
       -- 3. a stored session reaches into the range from before it: the difference may be its gold. No gold on the line.
       sessions({ { id = "an-1", startedEpoch = a.from + 5, endedEpoch = a.from + 3605, gained = gained - 1, spent = spent },
         { id = "an-0", startedEpoch = a.from - 600, endedEpoch = a.from + 2, gained = 1, spent = 0 } })

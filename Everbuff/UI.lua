@@ -1691,6 +1691,8 @@ function UI.Section(parent, label)
 end
 
 -- ── stat card (h 80): LABEL y 12, DISPLAY value y 29, META y 58. opts.onClick adds the "›" and the hover.
+-- (the label line is the role's line height, its text at the top: a label may carry the brand in lower case, and
+-- the tails of "everbuff.gg" need the room under the capitals. The text does not move.)
 function UI.StatCard(parent, opts)
   opts = opts or {}
   local click = opts.onClick ~= nil
@@ -1698,6 +1700,8 @@ function UI.StatCard(parent, opts)
   c:SetHeight(UI.H.STAT)
   c.label = UI.Text(c, "LABEL", "fgMuted")
   c.label:SetPoint("TOPLEFT", c, "TOPLEFT", S.S3, -S.S3); c.label:SetPoint("TOPRIGHT", c, "TOPRIGHT", -(click and S.S5 or S.S3), -S.S3)
+  c.label:SetHeight(UI.LINE_H.LABEL)
+  if c.label.SetJustifyV then c.label:SetJustifyV("TOP") end
   c.value = UI.Text(c, "DISPLAY", "fg")
   c.value:SetPoint("TOPLEFT", c, "TOPLEFT", S.S3, -29); c.value:SetPoint("TOPRIGHT", c, "TOPRIGHT", -S.S3, -29)
   c.meta = UI.Text(c, "META", "fgMuted")
