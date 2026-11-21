@@ -23,7 +23,7 @@
 -- A real save instead of the fixtures (tests/real_save.lua): with EB_SAVE=<SavedVariables file> the window is the
 -- player's own, on the data of that file and nothing else (no suite, no story, no dungeon fixture, no long variant).
 --   EB_SAVE=<path> [EB_NOW=<unix time>] [EB_CHAR=<name>] [EB_BOOT=resume|login] [EB_RACE=<race>] [EB_ZONE=<zone>]
---     luajit tests/render_html.lua outdir [page ...]
+--     [EB_REP=<file of live reputation bars>] luajit tests/render_html.lua outdir [page ...]
 -- The pages are named <page>-<w>x<h>-real, at the window size the save holds and at 900x580 and 1600x1000. A page
 -- state only the fixtures can build ("home/now:next", "dungeons/runs:limit4") is skipped and said so;
 -- "dungeons/run" is the newest stored run, "dungeons/run:2" the one before it. tests/dump_real.lua prints the same
@@ -64,7 +64,7 @@ local realPrint = print
 local ns, RS
 if REAL then
   RS = Real.boot(M, { save = REAL, now = os.getenv("EB_NOW"), char = os.getenv("EB_CHAR"), boot = os.getenv("EB_BOOT"),
-    race = os.getenv("EB_RACE"), zone = os.getenv("EB_ZONE") })
+    race = os.getenv("EB_RACE"), zone = os.getenv("EB_ZONE"), rep = os.getenv("EB_REP") })
   ns = RS.ns
   print = function() end   -- (the addon's chat lines while the pages render)
   realPrint(("real save: %s"):format(REAL))

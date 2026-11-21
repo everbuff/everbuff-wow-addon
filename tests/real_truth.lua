@@ -342,17 +342,42 @@ do
     for _, r in ipairs(shown(v.tbl)) do got[#got + 1] = r.c.name.text .. " " .. strip(r.c.standing.text) .. " " .. r.c.last.text end
     return table.concat(got, " | ")
   end
-  local WANT = "Barkskin Burrow Unfriendly +1,005 \194\183 Yesterday | Argent Dawn Neutral +95 \194\183 Yesterday"
+  -- Five factions gained on Fri 20 Nov in session 261120200117-8ce2, whose record names Iron (Gadgetzan's newest
+  -- gain is 23:29:32, the others' 21:30:57). Earlier that day (10:31 to 11:26) the save holds gains of the deleted
+  -- session 261120094227-2d1c with no character: the day is certain, the day's sum is only a lower bound.
+  -- Booty Bay, Everlook, Powderfuse and Ratchet: the newest gain of Iron is Thu 19 Nov 22:55:50 and a gain with no
+  -- character is stored on 20 Nov 10:31:39, so the last day cannot be said.
+  local WANT = "Barkskin Burrow Unfriendly +1,005 \194\183 Yesterday | Orgrimmar Honored at least +200 \194\183 Yesterday | Argent Dawn Neutral +95 \194\183 Yesterday"
+    .. " | Darkspear Trolls Honored at least +50 \194\183 Yesterday | Thunder Bluff Honored at least +50 \194\183 Yesterday | Undercity Revered at least +50 \194\183 Yesterday"
+    .. " | Gadgetzan Friendly at least +1 \194\183 Yesterday"
     .. " | Windshapers Neutral +600 \194\183 Thu 19 Nov | Timbermaw Hold Unfriendly +505 \194\183 Thu 19 Nov | Frostwolf Clan Neutral +100 \194\183 Wed 18 Nov"
     .. " | Earthen Ring Neutral +600 \194\183 Mon 16 Nov | Cenarion Circle Neutral +300 \194\183 Mon 16 Nov"
-    .. " | Undercity Revered  | Darkspear Trolls Honored  | Orgrimmar Honored  | Thunder Bluff Honored "
-    .. " | Booty Bay Friendly  | Everlook Friendly  | Gadgetzan Friendly  | Powderfuse Friendly  | Ratchet Friendly "
+    .. " | Booty Bay Friendly Not certain | Everlook Friendly Not certain | Powderfuse Friendly Not certain | Ratchet Friendly Not certain"
     .. " | Bloodsail Buccaneers Hated  | Darkmoon Faire Neutral  | Durotar Supply and Logistics Neutral "
-  eq("Reputation: the rows, factions with a shown gain first (newest day, then the day's gain), then by standing, Neutral with no gain last", line(), WANT)
+  eq("Reputation: the rows, factions with a certain last day first (newest day, then the day's gain), then by standing, Neutral with no gain last", line(), WANT)
   local by = {}
   for _, r in ipairs(rows) do by[r.c.name.text] = r end
-  check("Reputation: Orgrimmar is never +200 for 20 Nov (450 are stored that day, 250 of them with no character)", by.Orgrimmar.c.last.text == "" and by.Orgrimmar.item.partial == true, by.Orgrimmar.c.last.text)
-  check("Reputation: Booty Bay is never dated 19 Nov (a gain of 20 Nov 10:31 is stored, with no character)", by["Booty Bay"].c.last.text == "" and by["Booty Bay"].item.partial == true, by["Booty Bay"].c.last.text)
+  check("Reputation: Orgrimmar is never a bare +200 for 20 Nov (450 are stored that day, 250 of them with no character): at least +200",
+    by.Orgrimmar.c.last.text == "at least +200 \194\183 Yesterday" and by.Orgrimmar.item.atLeast == true and by.Orgrimmar.item.partial == true, by.Orgrimmar.c.last.text)
+  check("Reputation: Booty Bay is never dated 19 Nov (a gain of 20 Nov 10:31 is stored, with no character): Not certain, muted",
+    by["Booty Bay"].c.last.text == "Not certain" and by["Booty Bay"].item.uncertain == true and math.abs(by["Booty Bay"].c.last._color[1] - UI.C.fgMuted[1]) < 0.01, by["Booty Bay"].c.last.text)
+  do
+    local function tipOf(name) return table.concat(ns.Progress.repLastTip(by[name].item), " ") end
+    local n, blank = 0, {}
+    for _, r in ipairs(rows) do
+      if tipOf(r.c.name.text) == "Last day gained: Not recorded" then n = n + 1; blank[#blank + 1] = r.c.name.text end
+      check("Reputation: " .. r.c.name.text .. " has an empty Last day gained cell only with no stored gain", (r.c.last.text == "") == (r.item.ownLast == nil and not r.item.uncertain), r.c.last.text)
+    end
+    eq("Reputation: Not recorded is the hover of the three factions with no stored gain, and of no other", table.concat(blank, ", "), "Bloodsail Buccaneers, Darkmoon Faire, Durotar Supply and Logistics")
+    eq("Reputation: Undercity's newest own gain is Fri 20 Nov 21:30:57", date("%Y-%m-%d %H:%M:%S", by.Undercity.item.ownLast), "2026-11-20 21:30:57")
+    eq("Reputation: Gadgetzan's newest own gain is Fri 20 Nov 23:29:32", date("%Y-%m-%d %H:%M:%S", by.Gadgetzan.item.ownLast), "2026-11-20 23:29:32")
+    eq("Reputation: Booty Bay's newest own gain is Thu 19 Nov 22:55:50", date("%Y-%m-%d %H:%M:%S", by["Booty Bay"].item.ownLast), "2026-11-19 22:55:50")
+    eq("Reputation: Undercity's hover", tipOf("Undercity"), "Newest gain of this character: " .. UI.fmtStamp(by.Undercity.item.ownLast)
+      .. ". Some stored gains of this faction on that day name no character, so the day's total cannot be said: it is at least +50.")
+    eq("Reputation: Booty Bay's hover", tipOf("Booty Bay"), "Newest gain of this character: " .. UI.fmtStamp(by["Booty Bay"].item.ownLast)
+      .. ". A stored gain of this faction on a later day names no character, so the last day it gained cannot be said.")
+    eq("Reputation: Barkskin Burrow's hover (exact)", tipOf("Barkskin Burrow"), "+1,005 in all on that day. Newest gain " .. UI.fmtStamp(by["Barkskin Burrow"].item.lastGain) .. ".")
+  end
   eq("Reputation: Timbermaw Hold, the 32 gains of 19 Nov by the session a craft proves", by["Timbermaw Hold"].c.last.text, "+505 \194\183 Thu 19 Nov")
   local standings = {}
   for _, r in ipairs(v.rows) do standings[r.label] = (standings[r.label] or 0) + 1 end
@@ -390,6 +415,47 @@ do
   check("Reputation: with every ended session record gone (" .. n .. "), the 1,630 gains still count and the list reads the same", n > 0 and counted == 1630 and line() == WANT and v.answer == "Barkskin Burrow +1,005 yesterday", line())
   for id, sess in pairs(records) do ns.DB.sessions[id] = sess end
   ns.Progress.renderRep(); M.settle()
+  -- The live bars are no part of a save. Without EB_REP the state is refused; with the bars read off the in-game
+  -- screenshot (docs/mockups/ux-overhaul/ingame/05-reputation.bars.txt) the page has its four columns, and at the
+  -- smallest window every cell is whole: the bar gives way before "Durotar Supply and Logistics" is cut.
+  Real.close(S)
+  local okOpen, why = Real.open(S, "character/reputation:bars")
+  check("Reputation: the bars state is refused without bars (no number the save does not hold)", okOpen == false and tostring(why):find("EB_REP", 1, true) ~= nil and _G.C_Reputation == nil, why)
+  S.repBars = Real.readBars("docs/mockups/ux-overhaul/ingame/05-reputation.bars.txt")
+  eq("Reputation bars: the 16 rows the screenshot shows", #S.repBars, 16)
+  for _, size in ipairs({ { 900, 580 }, { 1104, 697 } }) do
+    local tag = ("Reputation bars %dx%d"):format(size[1], size[2])
+    UI.SetWindowSize(size[1], size[2])
+    check(tag .. ": opens", Real.open(S, "character/reputation:bars") == true)
+    cols = {}
+    for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.label ~= "" then cols[#cols + 1] = col.label end end
+    eq(tag .. ": the columns", table.concat(cols, " | "), "Faction | Standing | Progress | Last day gained")
+    local byB, cut, right = {}, {}, 0
+    for _, cw in pairs(v.tbl.cols) do right = math.max(right, cw.x + cw.w) end
+    for _, r in ipairs(shown(v.tbl)) do
+      byB[r.c.name.text] = r
+      for _, key in ipairs({ "name", "standing", "last" }) do
+        if UI.TextWidth("BODY", strip(r.c[key].text)) > v.tbl.cols[key].w + 0.5 then cut[#cut + 1] = r.c.name.text .. " " .. key end
+      end
+      local lead = v.barW > 0 and (v.barW + UI.S.S2) or 0
+      if UI.TextWidth("BODY", r.c.prog.text) > v.tbl.cols.prog.w - lead + 0.5 then cut[#cut + 1] = r.c.name.text .. " prog" end
+    end
+    eq(tag .. ": no cell is cut", table.concat(cut, ", "), "")
+    check(tag .. ": the table ends inside the page", right + UI.S.S3 <= UI.G.mainW(size[1]) + 0.5, right)
+    check(tag .. ": the bar is " .. (size[1] == 900 and "narrower than 120 px and at least 40" or "120 px"), size[1] == 900 and (v.barW >= 40 and v.barW < 120) or v.barW == 120, v.barW)
+    eq(tag .. ": Undercity, 4,928 of 21,000 in Revered", byB.Undercity.c.prog.text, "16,072 to Exalted")
+    eq(tag .. ": Durotar Supply and Logistics, 150 of 3,000 in Neutral", byB["Durotar Supply and Logistics"].c.prog.text, "2,850 to Friendly")
+    check(tag .. ": a faction below the screenshot's fold reads Not known yet, with no empty track", byB["Barkskin Burrow"].c.prog.text == "Not known yet" and not byB["Barkskin Burrow"].bar:IsShown())
+    eq(tag .. ": the rows keep their order and their Last day gained", line(), WANT)
+    Real.close(S)
+    check(tag .. ": the bars are gone once the page is left", _G.C_Reputation == nil)
+  end
+  S.repBars = nil
+  UI.SetWindowSize(1104, 697)
+  Real.open(S, "character/reputation"); M.settle()
+  cols = {}
+  for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.label ~= "" then cols[#cols + 1] = col.label end end
+  eq("Reputation: after the bars state the plain page has no Progress column again", table.concat(cols, " | "), "Faction | Standing | Last day gained")
 end
 
 -- ── Character > Professions (3.3). The stored list is at its cap, the last 1,000 crafts, from Wed 11 Nov 11:56:59.

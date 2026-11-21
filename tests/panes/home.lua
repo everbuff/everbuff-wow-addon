@@ -163,6 +163,40 @@ return function(P)
       check("Now: the quests turned in are one row", got.quest and got.quest.title == "2 quests turned in" and got.quest.meta:find("^%+900 XP \194\183 ") ~= nil and got.quest.meta:find("last: The Defias Brotherhood 2", 1, true) ~= nil, got.quest and got.quest.meta)
       for i = #log, lootN + 1, -1 do log[i] = nil end
       for i = #evs, evN + 1, -1 do evs[i] = nil end
+      -- the level-up row: the /played stamps give the time at the level left behind and the difference to the level
+      -- before it, only from a block whose stamps are all /played totals (playedExact), and only with both stamps
+      do
+        local cdb = ns.char()
+        local keepPal, keepExact = cdb.playedAtLevel, cdb.playedExact
+        local ding = {}; for k, v in pairs(qd) do ding[k] = v end
+        ding.kind, ding.s, ding.t, ding.text, ding.xp = "LEVELUP", ses.id, now - 5, "Ding!  Level 12", nil
+        evs[#evs + 1] = ding
+        local function levelRow()
+          for _, it in ipairs(Now.lookItems()) do if it.kind == "level" then return it end end
+        end
+        local clock = UI.fmtClock(ding.t)
+        cdb.playedExact, cdb.playedAtLevel = true, { [10] = 1000, [11] = 4600, [12] = 11800 }
+        local row = levelRow()
+        eq("Now: the level-up row is titled by the level reached", row and row.title, "Reached level 12")
+        -- (stamp 12 - stamp 11 = 7,200 s at level 11; stamp 11 - stamp 10 = 3,600 s at level 10: 3,600 s slower)
+        eq("Now: the level-up row says the time at the level left behind and the difference to the one before", row and row.meta,
+          clock .. " \194\183 " .. UI.fmtDur(7200, { minutes = true }) .. " at level 11 \194\183 " .. UI.fmtDelta(3600) .. " than level 10")
+        check("Now: that is 2 hours at level 11, 1 hour slower than level 10", row ~= nil and row.meta:find(" 2h at level 11 ", 1, true) ~= nil and row.meta:find(" 1h slower than level 10", 1, true) ~= nil, row and row.meta)
+        cdb.playedAtLevel = { [11] = 4600, [12] = 11800 }
+        row = levelRow()
+        eq("Now: with no stamp of level 10 the row has the time at level 11 and no comparison", row and row.meta, clock .. " \194\183 " .. UI.fmtDur(7200, { minutes = true }) .. " at level 11")
+        cdb.playedExact, cdb.playedAtLevel = nil, { [10] = 1000, [11] = 4600, [12] = 11800 }
+        row = levelRow()
+        eq("Now: stamps that are not marked exact give the clock alone", row and row.meta, clock)
+        cdb.playedExact, cdb.playedAtLevel = true, { [10] = 1000, [11] = 4600 }
+        row = levelRow()
+        eq("Now: with no stamp of the level reached the row is the clock alone", row and row.meta, clock)
+        cdb.playedAtLevel = { [10] = 1000, [12] = 11800 }
+        row = levelRow()
+        eq("Now: with no stamp of the level left behind the row is the clock alone", row and row.meta, clock)
+        cdb.playedAtLevel, cdb.playedExact = keepPal, keepExact
+        evs[#evs] = nil
+      end
     end
     if not hadRec then ns.DB.sessions[ses.id] = nil end
     -- the pace lives in memory for the session being played (a data swap of the harness starts it over): 30 active

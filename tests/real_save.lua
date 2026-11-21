@@ -10,6 +10,11 @@
 --                            login: a fresh login at the clock; the addon starts a new, empty session.
 --   EB_RACE=<race>           the race UnitRace answers. A save does not carry it unless a stored fight does.
 --   EB_ZONE=<zone>           the zone the character stands in (default: the zone of its last stored row)
+--   EB_REP=<file>            live reputation bars, which no save holds: lines "Faction | standing | min | max | value"
+--                            (standing 1 Hated to 8 Exalted; min and max the standing's thresholds; "#" starts a
+--                            comment), read off the game by hand. They are served only on the page state
+--                            "character/reputation:bars", through C_Reputation.GetFactionDataByIndex. Without the
+--                            file that state is skipped, and "character/reputation" never has a bar.
 --
 -- The rule (founder: data accuracy is crucial): every answer the stubbed client gives comes from the save, or the
 -- client answers nothing. What the save does not carry stays unanswered and is listed in S.unknown, so a pane shows
@@ -48,6 +53,29 @@ function R.read(path)
   if not ok then error("EB_SAVE: " .. tostring(path) .. " does not run: " .. tostring(e), 0) end
   if type(env.EverbuffDB) ~= "table" then error("EB_SAVE: " .. tostring(path) .. " holds no EverbuffDB", 0) end
   return env
+end
+
+-- the live reputation bars of EB_REP: { { name, standing, min, max, value }, ... } in the file's order
+function R.readBars(path)
+  local f, err = io.open(path, "r")
+  if not f then error("EB_REP: cannot read " .. tostring(path) .. ": " .. tostring(err), 0) end
+  local out, seen, n = {}, {}, 0
+  for line in f:lines() do
+    n = n + 1
+    line = line:gsub("#.*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if line ~= "" then
+      local name, st, lo, hi, v = line:match("^(.-)%s*|%s*(%d+)%s*|%s*(%-?%d+)%s*|%s*(%-?%d+)%s*|%s*(%-?%d+)$")
+      st, lo, hi, v = tonumber(st), tonumber(lo), tonumber(hi), tonumber(v)
+      if not name or name == "" or not v then f:close(); error(("EB_REP: line %d is not 'Faction | standing | min | max | value'"):format(n), 0) end
+      if st < 1 or st > 8 or hi <= lo or v < lo or v > hi then f:close(); error(("EB_REP: line %d (%s): standing 1 to 8, min < max, min <= value <= max"):format(n, name), 0) end
+      if seen[name] then f:close(); error(("EB_REP: line %d names %s a second time"):format(n, name), 0) end
+      seen[name] = true
+      out[#out + 1] = { name, st, lo, hi, v }
+    end
+  end
+  f:close()
+  if #out == 0 then error("EB_REP: " .. tostring(path) .. " holds no faction", 0) end
+  return out
 end
 
 -- the sessions of one character, oldest first
@@ -302,7 +330,7 @@ local function client(M, db, guid, c, S, opts)
   _G.GetSpecialization, _G.GetSpecializationInfo = nil, nil
   M.saved, M.guild, M.friends, M.inbox, M.bags = {}, {}, {}, {}, {}
   _G.C_Container.GetContainerNumSlots = function() return 0 end
-  unknown[#unknown + 1] = "live reputation bars (the save keeps the standing, not the progress inside it): no faction API answers"
+  unknown[#unknown + 1] = "live reputation bars (the save keeps the standing, not the progress inside it): no faction API answers, but on the page state character/reputation:bars with EB_REP"
   unknown[#unknown + 1] = "free bag slots, the quest log, saved instances (lockouts beyond characters[guid].lockouts), the guild and friends lists"
   unknown[#unknown + 1] = "spell names beyond the stub's few (C_Spell.GetSpellName), the character portrait, item icons (drawn as squares)"
 
@@ -339,6 +367,7 @@ function R.boot(M, opts)
   local mode = opts.boot and opts.boot ~= "" and opts.boot:lower() or "resume"
   if mode ~= "resume" and mode ~= "login" then error("EB_BOOT: resume or login, not '" .. tostring(opts.boot) .. "'", 0) end
   S.mode = mode
+  if opts.rep and opts.rep ~= "" then S.repBars, S.repFrom = R.readBars(opts.rep), opts.rep end
 
   local mine = {}
   local sessions = sessionsOf(db, guid)
@@ -433,7 +462,7 @@ R.PAGES = { "home/now", "home/sessions", "home/fights", "home/deaths",
   "loot/items", "loot/items:all", "loot/items:byitem",
   "loot/gold", "loot/gold:today", "loot/gold:week", "loot/gold:all", "loot/gold:journal", "loot/gold:todayjournal",
   "loot/gold:auctions", "loot/gold:auctionstoday",
-  "character/leveling", "character/reputation", "character/professions",
+  "character/leveling", "character/reputation", "character/reputation:bars", "character/professions",
   "settings/general", "settings/golddisplay", "settings/data" }
 
 -- the Gold pane, the Items pane and a Settings sub-tab in a state; returns the function that takes the state back
@@ -492,6 +521,20 @@ function R.open(S, key)
     if not run then return false, ("the save holds %d dungeon run%s of this character"):format(#views, #views == 1 and "" or "s") end
     openPane = "runs"
   end
+  -- "character/reputation:bars": the live bars of EB_REP answer through C_Reputation for this one page
+  local bars = host == "character" and pane == "reputation" and state == "bars"
+  if bars then
+    if not S.repBars then return false, "live reputation bars are not in a save: pass EB_REP=<file> (tests/real_save.lua)" end
+    local list = S.repBars
+    S.keepRep = { _G.C_Reputation }
+    _G.C_Reputation = {
+      GetNumFactions = function() return #list end,
+      GetFactionDataByIndex = function(i)
+        local b = list[i]
+        if b then return { name = b[1], reaction = b[2], currentReactionThreshold = b[3], nextReactionThreshold = b[4], currentStanding = b[5], isHeader = false } end
+      end,
+    }
+  end
   local tab = R.HOSTS[host] or host
   ns.UI.Open(tab, openPane); M.tick()
   ns.UI.Open(tab, openPane)   -- a second open: the panes read sizes their first build set
@@ -510,7 +553,8 @@ function R.close(S)
     if dv and dv:IsShown() and dv.d and dv.d.Close then dv.d.Close() end
   end
   if S.undo then S.undo() end
-  S.undo, S.opened = nil, nil
+  if S.keepRep then _G.C_Reputation = S.keepRep[1] end
+  S.undo, S.opened, S.keepRep = nil, nil, nil
   ns.UI.Open(o.tab, o.pane); M.settle()
 end
 

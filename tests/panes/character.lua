@@ -118,7 +118,7 @@ return function(P)
           local anyP, anyL, anyS = false, false, false
           for _, row in ipairs(r.rows) do
             if row.need or row.standing >= 8 then anyP = true end
-            if row.lastGain then anyL = true end
+            if row.lastGain or row.uncertain then anyL = true end
             if row.session then anyS = true end
           end
           if anyP then want[#want + 1] = "prog" end
@@ -140,12 +140,12 @@ return function(P)
           if row.bar and P.visible(row.bar) then
             local bb, cw = P.box(row.bar), r.tbl.cols.prog
             local pb = P.box(row.c.prog)
-            if not near(bb.l, P.box(r.tbl.frame).l + cw.x) or bb.w ~= 120 then bars[#bars + 1] = "bar " .. i end
+            if not near(bb.l, P.box(r.tbl.frame).l + cw.x) or bb.w ~= r.barW or bb.w < 40 or bb.w > 120 or (size[1] >= 1104 and bb.w ~= 120) then bars[#bars + 1] = "bar " .. i .. " " .. bb.w end
             if not near(pb.l, bb.l + bb.w + S.S2) then bars[#bars + 1] = "text not right after the bar " .. i end
             if row.c.prog:IsTruncated() then bars[#bars + 1] = "text cut " .. i end
           end
         end
-        check("Reputation " .. sz .. ": the 120 px bar at the Progress column, what is left right after it and whole", #bars == 0, table.concat(bars, ","))
+        check("Reputation " .. sz .. ": the bar (120 px with the room, never under 40) at the Progress column, what is left right after it and whole", #bars == 0, table.concat(bars, ","))
       end
       -- Professions
       c = P.open("character", "professions", size[1], size[2], data)
@@ -433,8 +433,12 @@ return function(P)
     check("Reputation: a faction the client does not answer for reads Not known yet, muted, never a dash", byName.Darnassus.c.prog.text == "Not known yet" and near(byName.Darnassus.c.prog._color[1], UI.C.fgMuted[1], 0.01))
     eq("Reputation: Last day gained is the day's gain and the day", sw.c.last.text, "+255 \194\183 Today")
     eq("Reputation: a gain that carries its character counts after its session record is gone", byName["Gnomeregan Exiles"].c.last.text, "+75 \194\183 " .. UI.fmtDate(old, now))
-    check("Reputation: a gain with no character and no session record is not attributed", hostile.item.lastGain == nil and hostile.item.hasGains == false and hostile.item.partial == true and hostile.c.last.text == "")
-    check("Reputation: another character's gain is not this character's", byName.Darnassus.item.lastGain == nil and byName.Darnassus.c.last.text == "")
+    check("Reputation: a gain with no character and no session record is not attributed, and the cell says so in words, muted",
+      hostile.item.lastGain == nil and hostile.item.hasGains == false and hostile.item.uncertain == true and hostile.c.last.text == "Not certain" and near(hostile.c.last._color[1], UI.C.fgMuted[1], 0.01), hostile.c.last.text)
+    eq("Reputation: its hover says why, and never Not recorded", table.concat(V.repLastTip(hostile.item), " "), "The stored gains of this faction name no character, so it cannot be said whether they are this character's.")
+    check("Reputation: another character's gain is not this character's", byName.Darnassus.item.lastGain == nil and byName.Darnassus.item.uncertain == nil and byName.Darnassus.c.last.text == "")
+    eq("Reputation: Not recorded is the hover only of a faction with no stored gain of this character or of no character", table.concat(V.repLastTip(byName.Darnassus.item), " "), "Last day gained: Not recorded")
+    eq("Reputation: the hover of an exact row", table.concat(V.repLastTip(sw.item), " "), "+255 in all on that day. Newest gain " .. UI.fmtStamp(now) .. ".")
     check("Reputation: This session is a column while a faction gained this session", r.tbl.cols.ses ~= nil and sw.c.ses.text == "+255" and hostile.c.ses.text == "", sw.c.ses.text)
     check("Reputation: a Neutral faction with no gain is muted", near(byName.Darnassus.c.name._color[1], UI.C.fgMuted[1], 0.01) and not near(byName["Gnomeregan Exiles"].c.name._color[1], UI.C.fgMuted[1], 0.001))
     check("Reputation: only a faction with stored gains has the chevron", sw.c._chev.text ~= "" and byName["Gnomeregan Exiles"].c._chev.text ~= "" and hostile.c._chev.text == "" and byName.Darnassus.c._chev.text == "")
@@ -455,7 +459,8 @@ return function(P)
     check("Reputation: with no gain this session there is no This session column", r.tbl.cols.ses == nil and r.tbl.cols.last ~= nil)
     -- no stored gain at all: no answer, no Last day gained column, nothing opens
     -- A stored gain of a session the desktop picked up, with no character on it, may be this character's. On the day
-    -- the cell shows (or after it) the day's total cannot be said: the cell is blank, never the smaller number.
+    -- of this character's newest gain the day is still certain and its sum is a lower bound ("at least"); on a later
+    -- day the last day itself cannot be said ("Not certain"). The cell is never blank and never the bare smaller sum.
     do
       local D = now - (now % 86400) + 43200   -- (a noon, so +-1 h stays on the day)
       local function setRep(extra)
@@ -474,16 +479,33 @@ return function(P)
       local by = setRep(nil)
       eq("Reputation: with every stored gain attributed the cell is the day's sum", by.Stormwind.c.last.text, "+250 \194\183 " .. UI.fmtDate(D - 86400, now))
       by = setRep({ s = "gone-6", t = D - 86400 + 3600, faction = "Stormwind", amount = 450 })
-      check("Reputation: a stored gain with no character on the shown day makes the cell blank, not a smaller number",
-        by.Stormwind.c.last.text == "" and by.Stormwind.item.partial == true and by.Stormwind.item.lastGain == nil and by.Stormwind.item.dayGain == nil, by.Stormwind.c.last.text)
+      local dayText = UI.fmtDate(D - 86400, now)
+      local dayWords = dayText == "Yesterday" and "yesterday" or ("on " .. dayText)
+      eq("Reputation: a stored gain with no character on the day of the newest own gain: the day is certain, the sum a lower bound",
+        by.Stormwind.c.last.text, "at least +250 \194\183 " .. dayText)
+      check("Reputation: the row says so in its data", by.Stormwind.item.atLeast == true and by.Stormwind.item.partial == true and by.Stormwind.item.uncertain == nil
+        and by.Stormwind.item.lastGain == D - 86400 + 60 and by.Stormwind.item.dayGain == 250)
+      eq("Reputation: its hover names the newest own gain and why the total cannot be said", table.concat(V.repLastTip(by.Stormwind.item), " "),
+        "Newest gain of this character: " .. UI.fmtStamp(D - 86400 + 60) .. ". Some stored gains of this faction on that day name no character, so the day's total cannot be said: it is at least +250.")
       check("Reputation: the faction still opens its stored gains", by.Stormwind.c._chev.text ~= "" and by.Stormwind.item.hasGains == true)
-      eq("Reputation: the answer is then the first row that shows a gain", r.answer, "Gnomeregan Exiles +75 " .. (UI.fmtDate(D - 86400, now) == "Yesterday" and "yesterday" or ("on " .. UI.fmtDate(D - 86400, now))))
-      eq("Reputation: the blank faction stands with the rest, by standing (after Exalted Ironforge)", r.tbl.rows[1].item.name .. ", " .. r.tbl.rows[2].item.name .. ", " .. r.tbl.rows[3].item.name, "Gnomeregan Exiles, Ironforge, Stormwind")
+      eq("Reputation: it sorts by its certain day, and by its lower bound within the day (250 over 75)", r.tbl.rows[1].item.name .. ", " .. r.tbl.rows[2].item.name .. ", " .. r.tbl.rows[3].item.name, "Stormwind, Gnomeregan Exiles, Ironforge")
+      eq("Reputation: the answer says at least when its row is a lower bound", r.answer, "Stormwind at least +250 " .. dayWords)
       click(by.Stormwind); M.settle()
       check("Reputation: its page lists the gains but says no start and no sum", r.detail.IsOpen() and #V.FACTION.hist == 3 and V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta) and V.FACTION.partial == true, V.FACTION.head.label.text)
       r.detail.Close(); M.settle()
       by = setRep({ s = "gone-6", t = D + 3600, faction = "Stormwind", amount = 450 })
-      check("Reputation: a stored gain with no character on a later day: the older day is not shown as the last one", by.Stormwind.c.last.text == "" and by.Stormwind.item.partial == true)
+      check("Reputation: a stored gain with no character on a later day: the older day is not shown as the last one, the cell says Not certain, muted",
+        by.Stormwind.c.last.text == "Not certain" and near(by.Stormwind.c.last._color[1], UI.C.fgMuted[1], 0.01) and by.Stormwind.item.uncertain == true and by.Stormwind.item.partial == true
+        and by.Stormwind.item.lastGain == nil and by.Stormwind.item.dayGain == nil, by.Stormwind.c.last.text)
+      eq("Reputation: its hover names the newest own gain and the later row, never Not recorded", table.concat(V.repLastTip(by.Stormwind.item), " "),
+        "Newest gain of this character: " .. UI.fmtStamp(D - 86400 + 60) .. ". A stored gain of this faction on a later day names no character, so the last day it gained cannot be said.")
+      eq("Reputation: the answer is then the first row with a certain day", r.answer, "Gnomeregan Exiles +75 " .. dayWords)
+      eq("Reputation: the uncertain faction stands with the rest, by standing (after Exalted Ironforge)", r.tbl.rows[1].item.name .. ", " .. r.tbl.rows[2].item.name .. ", " .. r.tbl.rows[3].item.name, "Gnomeregan Exiles, Ironforge, Stormwind")
+      check("Reputation: it still opens its stored gains", by.Stormwind.c._chev.text ~= "" and by.Stormwind.item.hasGains == true)
+      -- only an uncertain row: the column stays (its cell has words), and there is no answer line
+      ns.DB.story.rep = { { s = "gone-5", g = g, t = D - 86400, faction = "Stormwind", amount = 200 }, { s = "gone-6", t = D + 3600, faction = "Stormwind", amount = 450 } }
+      V.renderRep(); M.settle()
+      check("Reputation: with only an uncertain row the column stays and there is no answer line", r.tbl.cols.last ~= nil and r.answer == nil and not P.visible(r.summary))
       by = setRep({ s = "gone-6", t = D - 2 * 86400 + 3600, faction = "Stormwind", amount = 450 })
       eq("Reputation: a stored gain with no character on an earlier day leaves the last day's sum exact", by.Stormwind.c.last.text, "+250 \194\183 " .. UI.fmtDate(D - 86400, now))
       click(by.Stormwind); M.settle()
@@ -506,6 +528,64 @@ return function(P)
       V.renderRep(); M.settle()
       check("Reputation: old rows still show after applyAck deleted their session record", ns.DB.sessions["old-1"] == nil and r.tbl.rows[1].item.name == "Stormwind" and r.tbl.rows[1].c.last.text == "+325 \194\183 " .. UI.fmtDate(D - 86400, now), r.tbl.rows[1].c.last.text)
       ns.DB.combat.lastAck = lastAck
+    end
+    -- 900x580 with live bars (the in-game state: Faction, Standing, Progress, Last day gained): the longest faction
+    -- name is whole, and the bar is what gives way
+    do
+      local LONG = "Durotar Supply and Logistics"
+      db.reputation[LONG] = { standing = 4, label = "Neutral" }
+      LIVE[#LIVE + 1] = { LONG, 4, 0, 3000, 150 }
+      ns.DB.story.rep = {
+        { s = "gone-5", g = g, t = now, faction = "Stormwind", amount = 250 },
+        { s = "gone-5", g = g, t = now - 86400, faction = LONG, amount = 150 },
+        { s = "gone-6", t = now - 86400, faction = LONG, amount = 10 },
+        { s = "gone-6", t = now, faction = "Gnomeregan Exiles", amount = 10 },
+        { s = "gone-5", g = g, t = now - 2 * 86400, faction = "Gnomeregan Exiles", amount = 10 },
+      }
+      V.renderRep(); M.settle()
+      local by = {}
+      for i = 1, r.tbl.shownN do by[r.tbl.rows[i].item.name] = r.tbl.rows[i] end
+      local long = by[LONG]
+      local function whole(tag, keys)
+        local right, need = 0, 0
+        for _, cw in pairs(r.tbl.cols) do right = math.max(right, cw.x + cw.w) end
+        check(tag .. ": the table ends inside the page", right + S.S3 <= G.mainW(G.winW()) + 0.5, right)
+        local lead = r.barW > 0 and (r.barW + S.S2) or 0
+        for i = 1, r.tbl.shownN do
+          local row = r.tbl.rows[i]
+          need = math.max(need, UI.TextWidth("BODY", row.c.prog.text))
+          for _, key in ipairs(keys) do
+            check(tag .. ": " .. row.item.name .. " " .. key .. " is whole", UI.TextWidth("BODY", row.c[key].text or "") <= r.tbl.cols[key].w + 0.5 and not row.c[key]:IsTruncated(), row.c[key].text)
+          end
+          check(tag .. ": " .. row.item.name .. " progress text is whole, right after the bar", P.box(row.c.prog).w >= UI.TextWidth("BODY", row.c.prog.text) - 0.5 and not row.c.prog:IsTruncated()
+            and near(P.box(row.c.prog).l, P.box(r.tbl.frame).l + r.tbl.cols.prog.x + lead), row.c.prog.text)
+          if row.item.need or row.item.standing >= 8 then
+            check(tag .. ": " .. row.item.name .. " bar is " .. r.barW .. " px", r.barW == 0 and not P.visible(row.bar) or (P.visible(row.bar) and P.box(row.bar).w == r.barW), P.box(row.bar).w)
+          else
+            check(tag .. ": " .. row.item.name .. " (not answered) has no empty track", not P.visible(row.bar))
+          end
+        end
+        check(tag .. ": the Progress column is the bar and the widest text shown, not a worst case", math.abs(r.tbl.cols.prog.w - (lead + math.ceil(need))) <= 1, r.tbl.cols.prog.w .. " vs " .. need)
+      end
+      check("Reputation 900x580: Faction, Standing, Progress and Last day gained show", r.tbl.cols.prog ~= nil and r.tbl.cols.last ~= nil and r.tbl.cols.ses == nil)
+      check("Reputation 900x580: the longest faction name is not cut", long ~= nil and r.tbl.cols.name.w >= UI.TextWidth("BODY", LONG) and not long.c.name:IsTruncated(), r.tbl.cols.name.w .. " < " .. UI.TextWidth("BODY", LONG))
+      check("Reputation 900x580: the bar gave way, and is still a bar", r.barW >= 40 and r.barW < 120, r.barW)
+      whole("Reputation 900x580", { "name", "standing", "last" })
+      eq("Reputation 900x580: the lower bound and the uncertain cell", long.c.last.text .. " | " .. by["Gnomeregan Exiles"].c.last.text, "at least +150 \194\183 " .. UI.fmtDate(now - 86400, now) .. " | Not certain")
+      -- the founder's own window: everything whole with the full bar
+      ns.UI.SetWindowSize(1104, 697); M.settle(); V.renderRep(); M.settle()
+      check("Reputation 1104x697: the full 120 px bar", r.barW == 120, r.barW)
+      whole("Reputation 1104x697", { "name", "standing", "last" })
+      -- a fifth column (a gain this session) at 900: the bar is left out before the table leaves the page, and
+      -- every cell but the longest name stays whole
+      ns.UI.SetWindowSize(900, 580); M.settle()
+      ns.DB.story.rep[1].s = ns.DB.active
+      V.renderRep(); M.settle()
+      check("Reputation 900x580, five columns: This session shows and the bar is left out", r.tbl.cols.ses ~= nil and r.barW == 0, r.barW)
+      whole("Reputation 900x580, five columns", { "standing", "last", "ses" })
+      check("Reputation 900x580, five columns: the Faction column keeps what is left, at least 120 px", r.tbl.cols.name.w >= 120, r.tbl.cols.name.w)
+      db.reputation[LONG] = nil
+      LIVE[#LIVE] = nil
     end
     ns.DB.story.rep = {}
     V.renderRep(); M.settle()
@@ -623,7 +703,14 @@ return function(P)
     V.renderProf(); M.settle()
     local alch
     for _, row in ipairs(p.profRows) do if P.visible(row) and row.title.text == "Alchemy" then alch = row end end
-    check("Professions: a profession whose skill is not read yet has no number and no dash", alch ~= nil and alch.count.text == "" and alch.meta.text == "", alch and alch.count.text)
+    check("Professions: a profession whose skill is not read yet reads Not known yet, muted: no number, no dash", alch ~= nil and alch.count.text == "Not known yet" and alch.meta.text == ""
+      and near(alch.count._color[1], UI.C.fgMuted[1], 0.01), alch and alch.count.text)
+    check("Professions: and it has no progress track (an empty track reads as skill 0)", alch ~= nil and not P.visible(alch.bar))
+    check("Professions: a profession with a read skill keeps its track, and its number in fg", P.visible(p.profRows[1].bar) and p.profRows[1].count.text == "246 / 300" and near(p.profRows[1].count._color[1], UI.C.fg[1], 0.01))
+    if alch then
+      local b, rb = P.box(alch.count), P.box(alch)
+      check("Professions: the phrase ends at the row's right inset and has the room it needs", math.abs((b.l + b.w) - (rb.l + rb.w - UI.S.S3)) < 1 and b.w >= UI.TextWidth("BODY_STRONG", "Not known yet") - 0.5, b.w)
+    end
     db.crafts = {}
     V.renderProf(); M.settle()
     check("Professions: with nothing crafted the Crafted section is left out", not P.visible(p.crafted.head) and not P.visible(p.crafted.tbl.frame))

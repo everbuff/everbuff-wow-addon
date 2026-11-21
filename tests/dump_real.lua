@@ -30,7 +30,7 @@ if #PAGES == 0 then PAGES = Real.PAGES end
 G.install(M, {})
 local out = io.write
 local S = Real.boot(M, { save = SAVE, now = os.getenv("EB_NOW"), char = os.getenv("EB_CHAR"), boot = os.getenv("EB_BOOT"),
-  race = os.getenv("EB_RACE"), zone = os.getenv("EB_ZONE") })
+  race = os.getenv("EB_RACE"), zone = os.getenv("EB_ZONE"), rep = os.getenv("EB_REP") })
 local ns = S.ns
 print = function() end   -- (the addon's chat lines while the pages open; the boot's own are in the header)
 

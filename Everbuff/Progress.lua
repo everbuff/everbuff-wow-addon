@@ -367,12 +367,18 @@ local function sessionIds()
 end
 local function dayKey(t) return date("%Y%m%d", t) end
 -- Rows { name, standing, label, progress, need (live, nil when the client has not answered), hasGains (a stored
--- gain of this character: the row opens), lastGain (the time of the newest stored gain), dayGain (what the faction
--- gained on the calendar day of that gain), partial, session (what it gained this session, nil when nothing) }.
--- `partial`: a stored gain of the faction that names no character lies on that day or after it (or the faction has
--- no other stored gain), so the day's total and the last day cannot be said: lastGain and dayGain are nil, and the
--- cell is blank. Order: factions with a shown gain first, by the day of the last gain (newest first), then by what
--- that day brought, largest first; then the rest by standing, and a Neutral faction with no stored gain last.
+-- gain of this character: the row opens), ownLast (the time of this character's newest stored gain), lastGain (the
+-- same time, only while its day is certainly the last day the faction gained), dayGain (this character's stored
+-- gains on that day), atLeast, uncertain, partial, session (what it gained this session, nil when nothing) }.
+-- A stored gain of the faction that names no character (a loose row) may be this character's or another's. Two
+-- facts are kept apart, the day and the day's sum:
+--   no loose row on the day of ownLast or later: the day and its sum are exact;
+--   a loose row on that same day, none later: the day is certain, the sum is a lower bound (`atLeast`);
+--   a loose row on a later day, or no gain of this character at all: the last day cannot be said (`uncertain`),
+--     lastGain and dayGain are nil.
+-- `partial` is true in the last two cases and in the lower-bound case. Order: factions with a certain last day
+-- first, by that day (newest first), then by what the day brought, largest first; then the rest by standing, and a
+-- Neutral faction with no stored gain last.
 local function buildReputation()
   local snap = charDB().reputation or {}
   local live = readFactions()
@@ -398,10 +404,13 @@ local function buildReputation()
   for name in pairs(names) do
     local sr, lr = snap[name] or {}, live[name] or {}
     local st = tonumber(lr.standing) or tonumber(sr.standing) or 0
-    local partial = loose[name] ~= nil and (last[name] == nil or dayKey(loose[name]) >= dayKey(last[name]))
-    local shown = (not partial) and last[name] or nil
+    local own, lt = last[name], loose[name]
+    local uncertain = lt ~= nil and (own == nil or dayKey(lt) > dayKey(own))
+    local atLeast = lt ~= nil and own ~= nil and dayKey(lt) == dayKey(own)
+    local shown = (not uncertain) and own or nil
     local r = { name = name, standing = st, label = STANDINGS[st] or sr.label or _G["FACTION_STANDING_LABEL" .. st] or "Neutral",
-      session = (num(session[name]) > 0) and session[name] or nil, hasGains = last[name] ~= nil, partial = partial or nil,
+      session = (num(session[name]) > 0) and session[name] or nil, hasGains = own ~= nil, ownLast = own,
+      partial = (uncertain or atLeast) or nil, uncertain = uncertain or nil, atLeast = atLeast or nil,
       lastGain = shown, dayGain = shown and day[name] or nil }
     if lr.min and lr.max and lr.value and lr.max > lr.min then r.progress, r.need = lr.value - lr.min, lr.max - lr.min end
     gained = gained + num(r.session)
@@ -781,16 +790,40 @@ end
 -- ── Reputation ── (docs/UX_PRAGMATIC.md 3.2)
 -- The answer is the first row: what that faction gained on the last day it gained. The list: Faction, Standing,
 -- Progress (the bar and what is left to the next standing), Last day gained (the sum of the faction's gains on the
--- day of its newest stored gain, and that day; blank when a stored gain that names no character could belong to
--- it) and This session (only while a faction gained this session). A faction with stored gains opens them.
-local REP_BAR = 120
+-- day of its newest stored gain, and that day; "at least" before the sum when a stored gain of that day names no
+-- character; "Not certain", muted, when such a gain lies on a later day; blank only with no stored gain at all)
+-- and This session (only while a faction gained this session). A faction with stored gains opens them.
+-- The bar is 120 px wherever the row has the room. In a narrow window it gives way before a faction name is cut:
+-- it shrinks to what is left, and under 40 px it is left out (what is left to the next standing is the text).
+local REP_BAR, REP_BAR_MIN = 120, 40
 -- "16,072 to Exalted": what is left in the standing, nil when the client has not answered or there is no next one
 local function repLeft(r)
   if not r.need or r.standing >= #STANDINGS then return nil end
   return ("%s to %s"):format(UI.fmtNum(math.max(0, r.need - r.progress)), STANDINGS[r.standing + 1] or "the next standing")
 end
--- "+1,005 · Yesterday"
-local function repLast(r, now) return ("+%s \194\183 %s"):format(UI.fmtNum(num(r.dayGain)), UI.fmtDate(r.lastGain, now)) end
+-- "+1,005 · Yesterday", "at least +50 · Yesterday" (a lower bound), "Not certain", "" (no stored gain at all)
+local REP_UNCERTAIN = "Not certain"
+local function repSum(r) return (r.atLeast and "at least +" or "+") .. UI.fmtNum(num(r.dayGain)) end
+local function repLast(r, now)
+  if r.lastGain then return ("%s \194\183 %s"):format(repSum(r), UI.fmtDate(r.lastGain, now)) end
+  return r.uncertain and REP_UNCERTAIN or ""
+end
+-- the lines of the row hover about the last day gained ("Not recorded" only with no stored gain of the faction)
+function V.repLastTip(r)
+  if r.lastGain and not r.atLeast then
+    return { ("+%s in all on that day. Newest gain %s."):format(UI.fmtNum(num(r.dayGain)), UI.fmtStamp(r.lastGain)) }
+  end
+  if r.lastGain then
+    return { ("Newest gain of this character: %s."):format(UI.fmtStamp(r.ownLast)),
+      ("Some stored gains of this faction on that day name no character, so the day's total cannot be said: it is at least +%s."):format(UI.fmtNum(num(r.dayGain))) }
+  end
+  if r.ownLast then
+    return { ("Newest gain of this character: %s."):format(UI.fmtStamp(r.ownLast)),
+      "A stored gain of this faction on a later day names no character, so the last day it gained cannot be said." }
+  end
+  if r.uncertain then return { "The stored gains of this faction name no character, so it cannot be said whether they are this character's." } end
+  return { "Last day gained: Not recorded" }
+end
 local function buildRep(content)
   local v = { content = content }
   V.rep = v
@@ -799,17 +832,18 @@ local function buildRep(content)
   v.pg = UI.Page(list)
   local col = v.pg.col
   v.summary = UI.Summary(col)
-  UI.SetTip(v.summary, { title = "Last day gained", text = "The first row of the list: the newest day with a counted reputation gain, and the faction that gained the most that day. The number is the sum of its gains that day." })
+  UI.SetTip(v.summary, { title = "Last day gained", text = "The first row of the list: the newest day with a counted reputation gain, and the faction with the largest counted gain that day. The number is the sum of its counted gains that day." })
   v.head = UI.Section(col, "Factions")
   v.spec = {
+    -- (min: the longest shown name, set at every render, so a long name is whole wherever the window has the room)
     name = { key = "name", label = "Faction", flex = 1, min = 140 },
     standing = { key = "standing", label = "Standing", kind = "tag", min = 88, measure = STANDINGS },
     -- (PROGRESS heads both: the bar at the column's left, S2, then what is left, left-aligned under the header)
-    prog = { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = REP_BAR + S.S2,
-      min = REP_BAR + S.S2 + math.max(UI.TextWidth("BODY", "36,000 to Unfriendly"), UI.TextWidth("BODY", "Not known yet")),
+    -- (min: the bar and the widest text of the rows shown, set by V.fitRep)
+    prog = { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = REP_BAR + S.S2, min = REP_BAR + S.S2,
       tip = "What is left to the next standing. The numbers come from the game while you are logged in." },
     last = { key = "last", label = "Last day gained", kind = "tag", min = 96, justify = "RIGHT", measure = { "+10,005 \194\183 Wed 28 Nov" },
-      tip = "The sum of the faction's gains on the last day it gained, and that day. Blank when a stored gain of the faction names no character: the day's total cannot be said." },
+      tip = "The sum of the faction's gains on the last day it gained, and that day. \"At least\" when a stored gain of that day names no character. \"Not certain\" when such a gain lies on a later day. Blank with no stored gain." },
     ses = { key = "ses", label = "This session", kind = "num", min = 88, hide = true },
   }
   v.tbl = UI.KitTable(col, { v.spec.name, v.spec.standing, v.spec.prog, v.spec.last, v.spec.ses },
@@ -818,12 +852,7 @@ local function buildRep(content)
     tooltip = function(row, item, tip)
       tip:AddLine(item.name, 1, 1, 1)
       if item.need then tip:AddDoubleLine(item.label, ("%s / %s"):format(UI.fmtNum(item.progress), UI.fmtNum(item.need)), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
-      if item.lastGain then
-        tip:AddLine(("+%s in all on that day. Newest gain %s."):format(UI.fmtNum(num(item.dayGain)), UI.fmtStamp(item.lastGain)), 0.78, 0.79, 0.80, true)
-      else
-        tip:AddLine("Last day gained: Not recorded", 0.78, 0.79, 0.80, true)
-        if item.partial then tip:AddLine("A stored gain of this faction names no character, so the day's total cannot be said.", 0.78, 0.79, 0.80, true) end
-      end
+      for _, line in ipairs(V.repLastTip(item)) do tip:AddLine(line, 0.78, 0.79, 0.80, true) end
       if item.hasGains then tip:AddLine("Opens the stored gains.", 0.78, 0.79, 0.80, true) end
     end })
   v.detail = UI.Detail(content, { list = list, back = "\226\128\185 Reputation", render = function(item, child, d) V.renderFaction(item, child) end,
@@ -838,6 +867,33 @@ function V.placeRep()
   items[#items + 1] = { v.head, H.SECTION }
   items[#items + 1] = { v.tbl.frame, v.tbl.height }
   v.pg.place(items)
+  V.fitRep()
+end
+-- The widths of the list for the rows shown and the window: the Faction column asks for its longest name, the
+-- Progress column for the bar and its widest text. When the table is too narrow for that, the bar gives the
+-- missing width (down to REP_BAR_MIN, then it is left out), so a name is cut only when even that is not enough.
+function V.fitRep()
+  local v = V.rep
+  local tbl = v and v.tbl
+  if not (tbl and tbl.width and v.nameW) then return end
+  local function apply(bar)
+    v.barW = bar
+    v.spec.name.min = v.nameW
+    -- (`lead`: where the cell's text starts inside its column, after the bar)
+    v.spec.prog.lead = bar > 0 and (bar + S.S2) or 0
+    v.spec.prog.min = v.spec.prog.lead + (v.progW or 0)
+    tbl.remeasure()
+  end
+  apply(REP_BAR)
+  local c = tbl.cols
+  if not (c.prog and c.name) then return end
+  local right = 0
+  for _, cw in pairs(c) do right = math.max(right, cw.x + cw.w) end
+  local short = math.max(0, v.nameW - c.name.w) + math.max(0, right + S.S3 - tbl.width)
+  if short > 0 then
+    local bar = REP_BAR - math.ceil(short)
+    apply(bar >= REP_BAR_MIN and bar or 0)
+  end
 end
 function V.renderRep()
   local v = V.rep; if not v then return end
@@ -851,8 +907,8 @@ function V.renderRep()
   if top then
     local day = UI.fmtDate(top.lastGain, now)
     if day == "Today" or day == "Yesterday" then day = day:lower() else day = "on " .. day end
-    v.answer = ("%s +%s %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day)
-    v.summary:SetSegments({ { text = ("**%s +%s** %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day) } })
+    v.answer = ("%s %s %s"):format(top.name, repSum(top), day)
+    v.summary:SetSegments({ { text = ("**%s %s** %s"):format(top.name, repSum(top), day) } })
     v.summary:Show()
   else v.answer = nil; v.summary:SetSegments({}); v.summary:Hide() end
   v.head:SetMeta(#rows > 0 and UI.plural(#rows, "faction") or nil)
@@ -862,8 +918,15 @@ function V.renderRep()
   for _, r in ipairs(rows) do
     if r.need or r.standing >= #STANDINGS then anyProg = true end
     if r.session then anySes = true end
-    if r.lastGain then anyLast = true end
+    if r.lastGain or r.uncertain then anyLast = true end
   end
+  -- (the widths the rows shown need: the longest name, and the bar with the widest Progress text)
+  local nameW, progW = 140, 0
+  for _, r in ipairs(rows) do
+    nameW = math.max(nameW, math.ceil(UI.TextWidth("BODY", r.name)))
+    if anyProg then progW = math.max(progW, math.ceil(UI.TextWidth("BODY", (r.standing >= #STANDINGS and r.label) or repLeft(r) or "Not known yet"))) end
+  end
+  v.nameW, v.progW = nameW, progW
   local changed = false
   for key, hide in pairs({ prog = not anyProg, ses = not anySes, last = not anyLast }) do
     if (v.spec[key].hide or false) ~= hide then v.spec[key].hide = hide; changed = true end
@@ -879,13 +942,15 @@ function V.renderRep()
     row.c.standing:SetTextColor(col[1], col[2], col[3])
     if quiet then UI.SetColor(row.c.name, "fgMuted"); UI.SetColor(row.c.standing, "fgMuted") end
     if not row.bar then row.bar = UI.Bar(row, REP_BAR) end
-    V.placeRepBar(row)
     local left = repLeft(r)
-    if r.standing >= #STANDINGS then row.bar:SetFrac(1); row.c.prog:SetText(r.label)
-    elseif left then row.bar:SetFrac(r.progress / r.need); row.c.prog:SetText(left)
-    -- (the client has not answered for this faction: the empty track and the one phrase for it, muted)
-    else row.bar:SetFrac(0); row.c.prog:SetText("Not known yet"); UI.SetColor(row.c.prog, "fgMuted") end
-    row.c.last:SetText(r.lastGain and repLast(r, now) or "")
+    if r.standing >= #STANDINGS then row.ebFrac = 1; row.c.prog:SetText(r.label)
+    elseif left then row.ebFrac = r.progress / r.need; row.c.prog:SetText(left)
+    -- (the client has not answered for this faction: no track, an empty one reads as no progress, and the one phrase
+    -- for it, muted, where the other rows have their text)
+    else row.ebFrac = nil; row.c.prog:SetText("Not known yet"); UI.SetColor(row.c.prog, "fgMuted") end
+    V.placeRepBar(row)
+    row.c.last:SetText(repLast(r, now))
+    if not r.lastGain then UI.SetColor(row.c.last, "fgMuted") end
     row.c.ses:SetText(r.session and ("+" .. UI.fmtNum(r.session)) or "")
     -- (only a faction with stored gains opens)
     row.ebNoOpen = not r.hasGains
@@ -893,17 +958,22 @@ function V.renderRep()
   if #rows == 0 then v.tbl.setState("No faction met yet.") end
   V.placeRep()
 end
--- the progress bar sits at the left of the Progress column, what is left after it; no bar while the column is out
+-- the progress bar sits at the left of the Progress column, what is left after it; no bar while the column is out,
+-- on a row the client has not answered for, or when V.fitRep found no room for one
 function V.placeRepBar(row)
   local cw = V.rep and V.rep.tbl.cols.prog
   if not (row and row.bar) then return end
   if not cw then row.bar:Hide(); return end
-  row.bar:Show()
-  row.bar:ClearAllPoints(); row.bar:SetPoint("LEFT", row, "LEFT", cw.x, 0)
+  local bar = V.rep.barW or REP_BAR
+  local lead = bar > 0 and (bar + S.S2) or 0
+  if bar > 0 and row.ebFrac then
+    row.bar:ClearAllPoints(); row.bar:SetPoint("LEFT", row, "LEFT", cw.x, 0)
+    row.bar:SetSize(bar, 6); row.bar:SetFrac(row.ebFrac)
+  else row.bar:Hide() end
   local fs = row.c and row.c.prog
   if fs then
-    fs:ClearAllPoints(); fs:SetPoint("LEFT", row, "LEFT", cw.x + REP_BAR + S.S2, 0)
-    fs:SetWidth(math.max(1, cw.w - REP_BAR - S.S2)); fs:SetJustifyH("LEFT")
+    fs:ClearAllPoints(); fs:SetPoint("LEFT", row, "LEFT", cw.x + lead, 0)
+    fs:SetWidth(math.max(1, cw.w - lead)); fs:SetJustifyH("LEFT")
   end
 end
 function V.openFaction(item)
@@ -1022,6 +1092,8 @@ local function placeProfRow(r)
   local barL = math.max(V.BAR_X, barR - V.BAR_W)
   r.bar:ClearAllPoints(); r.bar:SetPoint("LEFT", r, "TOPLEFT", barL, -cy)
   r.bar:SetSize(math.max(1, barR - barL), 6); r.bar:SetFrac(r.frac)
+  -- (no track while the skill is not known: an empty track reads as skill 0)
+  if r.unknown then r.bar:Hide() else r.bar:Show() end
   local textX = S.S3 + 24 + S.S2
   local room = math.max(1, barL - S.S3 - textX)
   r.meta:SetWidth(room)
@@ -1078,9 +1150,11 @@ function V.renderProf()
     r:Set({ icon = PROF_ICON[p.name] or "Interface\\Icons\\INV_Misc_Note_01", title = p.name, meta = known and p.rankName or "",
       tip = { title = p.name, text = known and ("%s, skill %d of %d."):format(p.rankName, p.rank, p.max)
         or "Skill: Not known yet. It shows once the game lists the profession." } })
-    -- (a profession whose rank is not read yet keeps its empty track and no number)
+    -- (a profession whose rank is not read yet: no track, and the one phrase for it, muted, where the number stands)
+    r.unknown = not known
     r.frac = known and p.rank / p.max or 0
-    r.count:SetText(known and ("%d / %d"):format(p.rank, p.max) or "")
+    r.count:SetText(known and ("%d / %d"):format(p.rank, p.max) or "Not known yet")
+    UI.SetColor(r.count, known and "fg" or "fgMuted")
     r.train:SetText(p.training or "")
     r:Show()
   end

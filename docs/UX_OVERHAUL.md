@@ -1353,8 +1353,8 @@ Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
   |---|---|---|
   | Faction | flex | `fgMuted` for a Neutral faction with no stored gain |
   | Standing | 88 | `fgSubtle`; Hated and Hostile in `bad` with the dot |
-  | Progress | 120 bar + S2 + text | bar 120x6 and what is left: "16,072 to Exalted"; "Exalted" with a full bar at the top; "Not known yet" (`fgMuted`) for a faction the client does not answer for. The column is left out while the client answers for no faction. |
-  | Last day gained | 96, right | "+1,005 · Yesterday": the sum of what the faction gained on the day of its newest stored gain, and that day. Blank with none, and blank when a stored gain of the faction that names no character lies on that day or later (hover "Last day gained: Not recorded"). Left out when no faction shows one. |
+  | Progress | bar + S2 + the widest text shown | bar 120x6 and what is left: "16,072 to Exalted"; "Exalted" with a full bar at the top; "Not known yet" (`fgMuted`) and no track for a faction the client does not answer for. The column is left out while the client answers for no faction. In a window too narrow for the longest faction name the bar shrinks (40 px at least) and is then left out. |
+  | Last day gained | 96, right | "+1,005 · Yesterday": the sum of what the faction gained on the day of its newest stored gain, and that day. Blank only with no stored gain (hover "Last day gained: Not recorded"). "at least +200 · Yesterday" when a stored gain that names no character lies on that day; "Not certain" (`fgMuted`) when one lies on a later day. Left out when no faction shows one. |
   | This session | 88 | "+75"; a column only while a faction gained this session |
   | › | 12 | only on a faction with stored gains |
 
@@ -1371,7 +1371,7 @@ Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
   - training line (META `fgSubtle`, no accent; rank thresholds Journeyman 50, Expert 125, Artisan 200):
     - from 10 below the next rank's threshold up to the threshold: "Expert training opens at 125";
     - at or past the threshold while the rank is untrained: "Expert training is open at any Tailoring trainer".
-  - Learned primary and secondary professions are listed. The list is the game's skill lines plus any crafted or learned recipe's profession; one the game has not listed yet has an empty bar and no number.
+  - Learned primary and secondary professions are listed. The list is the game's skill lines plus any crafted or learned recipe's profession; one the game has not listed yet reads "Not known yet" (`fgMuted`) where the number stands and has no bar.
 - `CRAFTED SINCE <day>` table, right "1,012 items" (the header names the first day the list holds whole: the oldest day of a list at its cap is cut and left out):
 
   | Column | Width | Content |

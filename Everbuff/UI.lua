@@ -2349,6 +2349,11 @@ function UI.KitTable(parent, spec, opts)
     if tbl.state and tbl.stateArgs then tbl.setState(tbl.stateArgs[1], tbl.stateArgs[2], tbl.stateArgs[3], tbl.stateArgs[4]) end
     if opts.onLayout then pcall(opts.onLayout, tbl) end
   end
+  -- (a page that changed a column's `min` or `measure` between two fills: the widths are measured and laid out again)
+  function tbl.remeasure()
+    pcall(measureBase)
+    if tbl.width then tbl.relayout(tbl.width) end
+  end
   function tbl.setSort(key, asc)
     tbl.sortKey, tbl.sortAsc = key, asc and true or false
     for _, col in ipairs(full) do
