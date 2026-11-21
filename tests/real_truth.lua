@@ -1,4 +1,4 @@
--- The Dungeons, Fights, Deaths, Gold, Items and Data and sync screens on a real save, against numbers worked out from that save by
+-- The Dungeons, Fights, Deaths, Character, Gold, Items and Data and sync screens on a real save, against numbers worked out from that save by
 -- hand (docs/UX_PRAGMATIC.md: "Example numbers come from the founder's save of 21 Nov 2026 ... derived with throwaway
 -- scripts and not through addon code"). A player's save is private, so this is not part of tests/run_tests.lua:
 --
@@ -279,17 +279,110 @@ do
   for _, c in ipairs(v.levels.tbl.spec) do cols[#cols + 1] = c.label end
   eq("Leveling: the Levels columns: no Time at level, Played by then or Vs previous", table.concat(cols, " | "), "Level | Reached | Zone")
   local got = {}
-  for _, r in ipairs(shown(v.levels.tbl)) do got[#got + 1] = r.c.level.text .. " " .. r.c.reached.text .. " " .. r.c.zone.text end
-  eq("Leveling: 21 levels have a recorded moment, and only they are listed", #got, 21)
-  local lv2 = {}
-  for _, r in ipairs(v.levelRows) do lv2[#lv2 + 1] = r.level end
-  eq("Leveling: which levels", table.concat(lv2, " "), "60 59 58 57 54 53 51 50 49 47 46 45 44 41 40 39 29 28 27 3 2")
-  eq("Leveling: row 1", got[1], "60 Fri 20 Nov, 22:49 Mount Hyjal")
-  eq("Leveling: row 2", got[2], "59 Fri 20 Nov, 16:05 Blackrock Spire")
-  eq("Leveling: row 3 (58, from a session record: the event list no longer has it)", got[3], "58 Thu 19 Nov, 21:58 Mulgore")
-  eq("Leveling: the last row", got[21], "2 Thu 5 Nov, 03:13 Tirisfal Glades")
-  eq("Leveling: one muted line counts the 38 other levels", v.noteText, "38 levels have no recorded date.")
-  check("Leveling: no dash stands for a date", (table.concat(got, "\n") .. "\n"):find(" %- ") == nil)
+  for _, r in ipairs(shown(v.levels.tbl)) do got[#got + 1] = r.c.level.text .. " | " .. r.c.reached.text .. " | " .. r.c.zone.text end
+  local exact, bound = {}, {}
+  for _, r in ipairs(v.levelRows) do
+    if r.t then exact[#exact + 1] = r.level
+    else bound[#bound + 1] = ("%s %d..%d"):format(r.lo < r.level and (r.lo .. "-" .. r.level) or tostring(r.level), r.from, r.to) end
+  end
+  eq("Leveling: 21 levels have a recorded moment", #exact, 21)
+  eq("Leveling: which levels", table.concat(exact, " "), "60 59 58 57 54 53 51 50 49 47 46 45 44 41 40 39 29 28 27 3 2")
+  -- (the other 38 levels: each between the end of the last stored session below it and the start of the first one
+  -- on it, or inside the stored session that crossed it; levels with the same two moments are one row. The recordings'
+  -- own saves confirm the ones they still hold: 52 on 17 Nov 19:21:59, 56 on 19 Nov 01:58:13, 48 on 15 Nov 22:55:29,
+  -- 43 on 13 Nov 14:09:56, 38 on 11 Nov 13:32:33.)
+  eq("Leveling: the levels known between two stored moments, and those moments", table.concat(bound, " | "),
+    "55-56 1795001005..1795098562 | 52 1794931373..1794942362 | 48 1794771363..1794787058 | 42-43 1794516049..1794594976"
+    .. " | 38 1794392571..1794402267 | 30-37 1794162027..1794381796 | 18-26 1793905715..1794076317 | 6-17 1793847731..1793905584 | 4-5 1793845932..1793847427")
+  eq("Leveling: 30 rows: 21 exact, 9 bounds", #got, 30)
+  eq("Leveling: row 1", got[1], "60 | Fri 20 Nov, 22:49 | Mount Hyjal")
+  eq("Leveling: row 2", got[2], "59 | Fri 20 Nov, 16:05 | Blackrock Spire")
+  eq("Leveling: row 3 (58, from a session record: the event list no longer has it)", got[3], "58 | Thu 19 Nov, 21:58 | Mulgore")
+  eq("Leveling: 55 and 56, between Wed 18 Nov 12:23 and Thu 19 Nov 15:29", got[5], "55 to 56 | 18 to 19 Nov | ")
+  eq("Leveling: 52, on Tue 17 Nov between 17:02 and 20:06", got[8], "52 | Tue 17 Nov | ")
+  eq("Leveling: its hover", ns.Progress.boundTip(1794931373, 1794942362, 1795258582), "Between 17:02 and 20:06")
+  eq("Leveling: 30 to 37", got[22], "30 to 37 | 8 to 11 Nov | ")
+  eq("Leveling: 6 to 17, all on Thu 5 Nov", got[27], "6 to 17 | Thu 5 Nov | ")
+  eq("Leveling: the last row", got[30], "2 | Thu 5 Nov, 03:13 | Tirisfal Glades")
+  check("Leveling: every level from 2 to 60 is in a row, so no line counts missing ones", v.noteText == nil and v.levelsMissing == 0, v.noteText)
+  check("Leveling: no dash stands for a date", (table.concat(got, "\n") .. "\n"):find("| %- ") == nil and (table.concat(got, "\n") .. "\n"):find("| %-\n") == nil)
+  -- gate E: the load copied the moments into the character's block and discarded the played stamps of before 0.9.52
+  local c2 = ns.char()
+  local nAt, nExact = 0, 0
+  for _, r in pairs(c2.levelAt or {}) do nAt = nAt + 1; if r.t then nExact = nExact + 1 end end
+  check("save: levelAt holds all 59 levels, 21 of them exact", nAt == 59 and nExact == 21 and c2.levelAt[60].t == 1795211357 and c2.levelAt[60].zone == "Mount Hyjal" and c2.levelAt[58].t == 1795121928, nAt .. "/" .. nExact)
+  check("save: the 59 played stamps written before 0.9.52 are gone (each was overwritten at every login)", c2.playedAtLevel == nil and c2.played.total == 589870 and c2.played.level == 3968)
+end
+
+-- ── Character > Reputation (3.2). The gains counted are the 1,441 stored rows whose session record is still in the
+-- save and is this character's; 559 rows of sessions the desktop picked up carry no character and are not counted. ──
+Real.open(S, "character/reputation"); M.settle()
+do
+  local v = ns.Progress.rep
+  eq("Reputation: the answer", v.answer, "Last gain: Barkskin Burrow +1,005, yesterday")
+  local rows = shown(v.tbl)
+  eq("Reputation: 19 factions", #rows, 19)
+  eq("Reputation: the header counts them", v.head.meta.text, "19 factions")
+  local cols = {}
+  for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.label ~= "" then cols[#cols + 1] = col.label end end
+  -- (the save holds standings, not the progress inside one, and nothing was gained in the session of 11:45 to 11:56)
+  eq("Reputation: no Progress column outside the game, and no This session column with no gain this session", table.concat(cols, " | "), "Faction | Standing | Last gain")
+  local got = {}
+  for _, r in ipairs(rows) do got[#got + 1] = r.c.name.text .. " " .. strip(r.c.standing.text) .. " " .. r.c.last.text end
+  eq("Reputation: the rows, factions with a gain first (newest day, then the day's gain), then by standing, Neutral with no gain last", table.concat(got, " | "),
+    "Barkskin Burrow Unfriendly +1,005 \194\183 Yesterday | Orgrimmar Honored +200 \194\183 Yesterday | Argent Dawn Neutral +95 \194\183 Yesterday"
+    .. " | Darkspear Trolls Honored +50 \194\183 Yesterday | Thunder Bluff Honored +50 \194\183 Yesterday | Undercity Revered +50 \194\183 Yesterday | Gadgetzan Friendly +1 \194\183 Yesterday"
+    .. " | Windshapers Neutral +600 \194\183 Thu 19 Nov | Everlook Friendly +100 \194\183 Thu 19 Nov | Booty Bay Friendly +50 \194\183 Thu 19 Nov | Powderfuse Friendly +50 \194\183 Thu 19 Nov"
+    .. " | Ratchet Friendly +50 \194\183 Thu 19 Nov | Frostwolf Clan Neutral +100 \194\183 Wed 18 Nov | Earthen Ring Neutral +600 \194\183 Mon 16 Nov | Cenarion Circle Neutral +300 \194\183 Mon 16 Nov"
+    .. " | Timbermaw Hold Unfriendly  | Bloodsail Buccaneers Hated  | Darkmoon Faire Neutral  | Durotar Supply and Logistics Neutral ")
+  local standings = {}
+  for _, r in ipairs(v.rows) do standings[r.label] = (standings[r.label] or 0) + 1 end
+  eq("Reputation: the standings: 1 Revered, 3 Honored, 5 Friendly, 7 Neutral, 2 Unfriendly, 1 Hated",
+    ("%d %d %d %d %d %d"):format(standings.Revered, standings.Honored, standings.Friendly, standings.Neutral, standings.Unfriendly, standings.Hated), "1 3 5 7 2 1")
+  local opens = 0
+  for _, r in ipairs(rows) do if r.c._chev.text ~= "" then opens = opens + 1 end end
+  eq("Reputation: the 15 factions with stored gains open, the other 4 do not", opens, 15)
+  local dash = false
+  for _, r in ipairs(rows) do for _, cell in pairs(r.c) do if cell.text == "-" then dash = true end end end
+  check("Reputation: no cell is a dash", not dash)
+  -- the faction page of Barkskin Burrow: 26 stored gains from Thu 19 Nov 22:43, 1,205 in all, and one new standing
+  ns.Progress.openFaction(v.rows[1]); M.settle()
+  local f = ns.Progress.FACTION
+  eq("Reputation: Barkskin Burrow opens its gains", f.title.text .. " | " .. f.head.label.text .. " | " .. f.head.meta.text .. " | " .. #f.hist, "Barkskin Burrow | GAINS SINCE THU 19 NOV | +1,205 | 27")
+  local stand = {}
+  for _, h in ipairs(f.hist) do if h.milestone then stand[#stand + 1] = h.change end end
+  eq("Reputation: the one row that is not a gain is the new standing", table.concat(stand, ","), "Now Unfriendly")
+  v.detail.Close(); M.settle()
+end
+
+-- ── Character > Professions (3.3). The stored list is the last 1,000 crafts: 1,038 items from Wed 11 Nov 11:56. ──
+Real.open(S, "character/professions"); M.settle()
+do
+  local v = ns.Progress.prof
+  local profs = {}
+  for _, r in ipairs(v.profRows) do if r.shown ~= false and r:IsShown() then profs[#profs + 1] = r.title.text .. " " .. r.count.text .. " " .. r.meta.text end end
+  eq("Professions: the rows: skill, rank, and no recipe count (137 stored recipes, 10 with a profession)", table.concat(profs, " | "),
+    "Cooking 297 / 300 Artisan | Mining 255 / 300 Artisan | First Aid 246 / 300 Artisan | Blacksmithing 185 / 225 Expert | Fishing 1 / 75 Apprentice")
+  check("Professions: no headline and no recipe list", v.summary == nil and v.recipes == nil)
+  eq("Professions: the Crafted header says where the list starts", v.crafted.head.label.text, "CRAFTED SINCE WED 11 NOV")
+  eq("Professions: its meta is the items of the list", v.crafted.head.meta.text, "1,038 items")
+  eq("Professions: 1,000 stored crafts are 59 batches", #v.batches, 59)
+  local days, lines = {}, {}
+  for i = 1, v.crafted.tbl.shownN do
+    local r = v.crafted.tbl.rows[i]
+    if r.item.ebSection then days[#days + 1] = r.item.ebSection
+    else lines[#lines + 1] = r.c.when.text .. " " .. r.c.item.text .. " " .. r.c.prof.text end
+  end
+  eq("Professions: the day rows count items (batches per day: 8, 3, 2, 8, 3, 1, 4, 4, 22, 4)", table.concat(days, " | "),
+    "YESTERDAY \194\183 111 items | THURSDAY 19 NOV \194\183 72 items | WEDNESDAY 18 NOV \194\183 47 items | TUESDAY 17 NOV \194\183 257 items | MONDAY 16 NOV \194\183 29 items"
+    .. " | SUNDAY 15 NOV \194\183 20 items | SATURDAY 14 NOV \194\183 44 items | FRIDAY 13 NOV \194\183 29 items | THURSDAY 12 NOV \194\183 404 items | WEDNESDAY 11 NOV \194\183 25 items")
+  eq("Professions: the newest batches", table.concat(lines, " | ", 1, 8),
+    "23:50 Truesilver Bar x6 Mining | 23:49 Gold Bar x3 Mining | 23:46 to 23:48 Mithril Bar x49 Mining | 23:46 Steel Bar x2 Mining"
+    .. " | 23:45 to 23:46 Iron Bar x8 Mining | 23:45 Tin Bar x3 Mining | 23:03 to 23:05 Mageweave Bandage x29 First Aid | 20:05 Solid Weightstone x11 Blacksmithing")
+  eq("Professions: Thursday's batches", table.concat(lines, " | ", 9, 11), "22:22 to 22:23 Tender Wolf Steak x14 Cooking | 22:13 to 22:16 Basic Campfire Kit x18 Cooking | 22:11 to 22:13 Tender Wolf Steak x40 Cooking")
+  local other = false
+  for _, l in ipairs(lines) do if l:find("Other", 1, true) or l:find(" %-$") then other = true end end
+  check("Professions: no Other and no dash for a craft with no profession on its row", not other)
 end
 -- ── Loot > Gold (docs/UX_PRAGMATIC.md 4.2). Copper values worked out from the save's ledgers, day rows and journals
 -- by throwaway scripts. The boot stamps the coin capture of 0.9.52 as starting now, so every stored run is before it. ──

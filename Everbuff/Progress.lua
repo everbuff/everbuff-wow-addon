@@ -1,13 +1,12 @@
 -- Everbuff.GG · Progress.lua - the CHARACTER host: Leveling, Reputation and Professions (docs/UX_OVERHAUL.md 4.10, 4.11).
 --
--- Leveling answers how fast you level compared with before (the hero), where your XP comes from (the cards), every
--- level with its time (LEVELS) and every quest turned in with its gold (QUESTS TURNED IN; the old Quests tab folds in
--- here). Reputation lists every faction with its standing, the progress to the next one and what you gained this
--- session; a faction opens how you earned it. Professions lists your skills with their bar and when to train next,
--- then what you crafted and the recipes you learned (the old Crafting tab folds in here).
--- The data is what other modules capture (the story events, the reputation gains, the professions snapshot, the
--- crafts and recipes Market keeps, the gold journal), plus the live reputation bars and the leveling pace (ns.Pace).
--- Every list reads the logged-in character's rows only (ns.mine, #23). Built from the kit (UI.lua) only.
+-- Leveling is the level (or the time to the next one), the played time and when each level was reached; a leveling
+-- character also has the quests turned in. Reputation lists every faction with its standing, what is left to the
+-- next one and its last gain; a faction with stored gains opens them. Professions lists the skills with their bar
+-- and when to train next, then what was crafted, one row per batch (docs/UX_PRAGMATIC.md 3.1 to 3.3).
+-- The data is what other modules capture (the story events, the session records, the reputation gains, the
+-- professions snapshot, the crafts Market keeps, the gold journal), plus the live reputation bars and the leveling
+-- pace (ns.Pace). Every list reads the logged-in character's rows only (#23). Built from the kit (UI.lua) only.
 
 local ADDON, ns = ...
 local UI = ns.UI
@@ -33,7 +32,6 @@ local function curSession() return (ns.Recorder and ns.Recorder.current and ns.R
 local function sid() local s = curSession(); return (ns.DB and ns.DB.active) or (s and s.id) end   -- this session
 local function events() return ns.mine(ns.DB and ns.DB.story and ns.DB.story.events) end
 local function charDB() return (ns.DB and ns.char()) or {} end
-local function mutedTip(fs, title, text) UI.SetTip(fs, { title = title, text = text }) end
 
 -- ══ data: pure builders (also exported for the headless tests) ═════════════════════════════════════════════════
 -- a quest's name from the game by its id, nil when the client has none
@@ -91,11 +89,133 @@ local function buildQuests()
   return rows, { done = #rows, xp = num(x.fromQuests), kills = num(x.fromKills) }
 end
 
--- LEVELS: every level with a recorded moment (docs/UX_PRAGMATIC.md 3.1). Two sources, both exact: the LEVELUP story
--- event, and the LEVEL_UP row of a stored session record ("seq, server time, clock, LEVEL_UP, level, zone"), which
--- outlives the event list. A level with neither has no row: nothing is worked out from the /played stamps
--- (playedAtLevel), which were overwritten at every login, so no time at a level but the current one is shown.
+-- LEVELS: when each level was reached (docs/UX_PRAGMATIC.md 3.1, gate E). Three stored sources, none worked out
+-- from the /played stamps:
+--   exact: the LEVELUP story event, and the LEVEL_UP row of a stored session record ("seq, server time, clock,
+--     LEVEL_UP, level, zone"), which outlives the event list;
+--   a bound: the levels a stored session record started and ended on, with its start and end, say between which two
+--     moments a level was reached when its own row is gone ("between 17:02 and 20:06");
+--   characters[guid].levelAt, where both are kept ({ t, zone } or { from, to } per level): the event list holds 500
+--     rows and the desktop's pickup deletes session records, so ns.Levels.harvest copies what they say on every load
+--     and before every pickup is applied (Core.lua). A stored moment is never replaced by a later one, and a bound
+--     only ever narrows.
+local Levels = {}
+ns.Levels = Levels
 local function levelOf(e) return tonumber(tostring(e.text or ""):match("(%d+)")) end
+local function wholeLevel(L) L = tonumber(L); return (L and L >= 1 and L == math.floor(L)) and L or nil end
+-- What a set of session records and story events says: { [level] = { t, zone } or { from, to } } for the levels 2
+-- to `cur` (default: the highest level the records name).
+function Levels.derive(sessions, events, cur)
+  local exact, spans, top = {}, {}, 0
+  local function note(L, t, zone)
+    L, t = wholeLevel(L), tonumber(t)
+    if not (L and L >= 2 and t and t > 0) then return end
+    zone = (type(zone) == "string" and zone ~= "" and zone ~= "?") and zone or nil
+    local r = exact[L]
+    if not r or t < r.t then exact[L] = { t = t, zone = zone or (r and r.zone) or nil }
+    elseif not r.zone then r.zone = zone end
+    if L > top then top = L end
+  end
+  for _, e in ipairs(events or {}) do
+    if type(e) == "table" and e.kind == "LEVELUP" then note(levelOf(e), e.t, e.zone) end
+  end
+  for _, sess in ipairs(sessions or {}) do
+    if type(sess.segments) == "table" then
+      for _, seg in ipairs(sess.segments) do
+        if type(seg) == "string" and seg:find("\tLEVEL_UP\t", 1, true) then
+          local t, L, zone = seg:match("^%d+\t(%d+)\t[%d%.]+\tLEVEL_UP\t(%d+)\t?(.*)$")
+          note(L, t, zone)
+        end
+      end
+    end
+    -- (a record whose levels were not read, 0, says nothing)
+    local l0, l1, a, z = wholeLevel(sess.level0), wholeLevel(sess.level), tonumber(sess.startedEpoch), tonumber(sess.endedEpoch)
+    if l0 and l1 and l1 >= l0 and a and a > 0 then
+      spans[#spans + 1] = { l0 = l0, l1 = l1, a = a, z = (z and z >= a) and z or nil }
+      if l1 > top then top = l1 end
+    end
+  end
+  cur = wholeLevel(cur) or top
+  local out = {}
+  for L = 2, cur do
+    if exact[L] then out[L] = exact[L]
+    else
+      -- reached after every moment the character was still below L, and before every moment it was already on it
+      local from, to
+      local function after(t) if t and (not from or t > from) then from = t end end
+      local function before(t) if t and (not to or t < to) then to = t end end
+      for _, sp in ipairs(spans) do
+        if sp.l0 < L then after(sp.a) end
+        if sp.l1 < L then after(sp.z) end
+        if sp.l0 >= L then before(sp.a) end
+        if sp.l1 >= L then before(sp.z) end
+      end
+      for k, r in pairs(exact) do
+        if k < L then after(r.t) elseif k > L and k <= cur then before(r.t) end
+      end
+      if from and to and from <= to then out[L] = { from = from, to = to } end
+    end
+  end
+  return out
+end
+-- `fresh` laid over `stored`: the earliest exact moment wins, an exact moment replaces a bound, two bounds narrow.
+function Levels.merge(stored, fresh)
+  local out = {}
+  local function valid(r)
+    if type(r) ~= "table" then return nil end
+    if tonumber(r.t) and r.t > 0 then return "t" end
+    if tonumber(r.from) and tonumber(r.to) and r.from > 0 and r.from <= r.to then return "b" end
+    return nil
+  end
+  for _, src in ipairs({ type(stored) == "table" and stored or {}, type(fresh) == "table" and fresh or {} }) do
+    for L, r in pairs(src) do
+      local kind = valid(r)
+      L = wholeLevel(L)
+      if L and kind then
+        local have = out[L]
+        local hk = valid(have)
+        if kind == "t" then
+          if hk ~= "t" or r.t < have.t then out[L] = { t = r.t, zone = r.zone or (hk == "t" and have.zone or nil) }
+          elseif not have.zone then have.zone = r.zone end
+        elseif hk == nil then out[L] = { from = r.from, to = r.to }
+        elseif hk == "b" then
+          local from, to = math.max(have.from, r.from), math.min(have.to, r.to)
+          if from <= to then have.from, have.to = from, to end
+        end
+      end
+    end
+  end
+  return out
+end
+-- Copies what the save's session records and events say into each character's block (never creates a block).
+-- Returns how many characters were read.
+function Levels.harvest(db)
+  if not (type(db) == "table" and type(db.characters) == "table") then return 0 end
+  local by = {}
+  local function of(guid)
+    if type(guid) ~= "string" or not db.characters[guid] then return nil end
+    by[guid] = by[guid] or { sessions = {}, events = {} }
+    return by[guid]
+  end
+  for _, sess in pairs(type(db.sessions) == "table" and db.sessions or {}) do
+    if type(sess) == "table" then local b = of(sess.guid); if b then b.sessions[#b.sessions + 1] = sess end end
+  end
+  for _, e in ipairs(type(db.story) == "table" and type(db.story.events) == "table" and db.story.events or {}) do
+    if type(e) == "table" and e.kind == "LEVELUP" then
+      local sess = db.sessions and db.sessions[e.s]
+      local b = type(sess) == "table" and of(sess.guid)
+      if b then b.events[#b.events + 1] = e end
+    end
+  end
+  local n = 0
+  for guid, b in pairs(by) do
+    local c = db.characters[guid]
+    local merged = Levels.merge(c.levelAt, Levels.derive(b.sessions, b.events))
+    if next(merged) then c.levelAt = merged end
+    n = n + 1
+  end
+  return n
+end
 -- seconds played since /played last answered, counted only while that answer is of this login (never time logged out)
 local function sinceAnswer(pl, now)
   local ses = curSession()
@@ -116,35 +236,30 @@ local function playedTotal(now)
   if num(pl.total) <= 0 then return nil end
   return num(pl.total) + sinceAnswer(pl, now)
 end
--- Rows { level, t, zone }, highest level first, and how many of the levels 2 to `cur` have no recorded moment.
+-- The rows of the Levels table, highest level first, and how many of the levels 2 to `cur` have nothing recorded.
+-- An exact row is { level, t, zone }. Levels that share one bound are one row { level (the highest), lo (the
+-- lowest), from, to }: "30 to 37" were all reached between the same two stored moments.
 local function buildLevels(cur)
-  local reached = {}
-  local function note(L, t, zone)
-    L, t = tonumber(L), tonumber(t)
-    if not (L and t and t > 0 and L >= 2 and L == math.floor(L)) then return end
-    if cur and L > cur then return end
-    local r = reached[L]
-    if not r or t < r.t then
-      reached[L] = { level = L, t = t, zone = (type(zone) == "string" and zone ~= "") and zone or (r and r.zone) or nil }
-    elseif not r.zone and type(zone) == "string" and zone ~= "" then r.zone = zone end
-  end
-  for _, e in ipairs(events()) do
-    if e.kind == "LEVELUP" then note(levelOf(e), e.t, e.zone) end
-  end
+  local mine = {}
   for _, sess in pairs((ns.DB and ns.DB.sessions) or {}) do
-    if type(sess) == "table" and ns.isMySession(sess) and type(sess.segments) == "table" then
-      for _, seg in ipairs(sess.segments) do
-        if type(seg) == "string" and seg:find("\tLEVEL_UP\t", 1, true) then
-          local t, L, zone = seg:match("^%d+\t(%d+)\t[%d%.]+\tLEVEL_UP\t(%d+)\t?(.*)$")
-          note(L, t, zone)
-        end
-      end
-    end
+    if type(sess) == "table" and ns.isMySession(sess) then mine[#mine + 1] = sess end
   end
-  local rows = {}
-  for _, r in pairs(reached) do rows[#rows + 1] = r end
-  table.sort(rows, function(a, b) return a.level > b.level end)
-  local missing = (cur and cur >= 2) and math.max(0, (cur - 1) - #rows) or 0
+  local at = Levels.merge(charDB().levelAt, Levels.derive(mine, events(), cur))
+  local top = 0
+  for L in pairs(at) do if L > top then top = L end end
+  if cur then top = math.min(top, cur) end
+  local rows, known = {}, 0
+  local open
+  for L = top, 2, -1 do
+    local r = at[L]
+    if r then known = known + 1 end
+    if r and r.t then rows[#rows + 1] = { level = L, t = r.t, zone = r.zone }; open = nil
+    elseif r then
+      if open and open.from == r.from and open.to == r.to and open.lo == L + 1 then open.lo = L
+      else open = { level = L, lo = L, from = r.from, to = r.to }; rows[#rows + 1] = open end
+    else open = nil end
+  end
+  local missing = (cur and cur >= 2) and math.max(0, (cur - 1) - known) or 0
   return rows, missing
 end
 
@@ -170,16 +285,60 @@ local function readFactions()
   end)
   return out
 end
+-- The stored reputation gains of the logged-in character, in stored order (docs/UX_PRAGMATIC.md 3.2, gate F). A
+-- row that carries its character (`g`, from 0.9.52) counts by it, so it stays when the desktop's pickup has deleted
+-- its session record. An older row counts through its session record; once that is gone nothing says whose the
+-- row is, and it is not shown (never attributed by guesswork).
+local function repGains()
+  local list = ns.DB and ns.DB.story and ns.DB.story.rep
+  local me = ns.charGuid()
+  if not (list and me) then return ns.mine(list) end
+  local sessions = (ns.DB and ns.DB.sessions) or {}
+  local out = {}
+  for _, r in ipairs(list) do
+    if type(r) == "table" then
+      if r.g ~= nil then
+        if r.g == me then out[#out + 1] = r end
+      else
+        local s = r.s ~= nil and sessions[r.s] or nil
+        if s and s.guid == me then out[#out + 1] = r end
+      end
+    end
+  end
+  return out
+end
+-- the session ids of "this session": logins less than 5 minutes apart are one (Gold.joined, the one definition)
+local function sessionIds()
+  local ids = {}
+  local ok, list = pcall(function() return ns.Gold and ns.Gold.joined and ns.Gold.joined() end)
+  if ok and type(list) == "table" then for _, s in ipairs(list) do if s.id then ids[s.id] = true end end end
+  local s = sid()
+  if s then ids[s] = true end
+  return ids
+end
+local function dayKey(t) return date("%Y%m%d", t) end
+-- Rows { name, standing, label, progress, need (live, nil when the client has not answered), lastGain (the time of
+-- the newest stored gain), dayGain (what the faction gained on the calendar day of that gain), session (what it
+-- gained this session, nil when nothing) }. Order: factions with a stored gain first, by the day of the last gain
+-- (newest first), then by what that day brought, largest first; then the rest by standing, and a Neutral faction
+-- with no gain last.
 local function buildReputation()
   local snap = charDB().reputation or {}
   local live = readFactions()
-  local session, last = {}, {}
-  local s = sid()
-  for _, g in ipairs(ns.mine(ns.DB and ns.DB.story and ns.DB.story.rep)) do
-    if type(g) == "table" and g.faction then
-      if s and g.s == s then session[g.faction] = (session[g.faction] or 0) + num(g.amount) end
-      if not last[g.faction] or num(g.t) > last[g.faction] then last[g.faction] = num(g.t) end
+  local session, last, day = {}, {}, {}
+  local ids = sessionIds()
+  local gains = repGains()
+  local oldest
+  for _, g in ipairs(gains) do
+    if g.faction then
+      local t = num(g.t)
+      if g.s ~= nil and ids[g.s] then session[g.faction] = (session[g.faction] or 0) + num(g.amount) end
+      if not last[g.faction] or t > last[g.faction] then last[g.faction] = t end
+      if t > 0 and (not oldest or t < oldest) then oldest = t end
     end
+  end
+  for _, g in ipairs(gains) do
+    if g.faction and last[g.faction] and dayKey(num(g.t)) == dayKey(last[g.faction]) then day[g.faction] = (day[g.faction] or 0) + num(g.amount) end
   end
   local names = {}
   for name in pairs(snap) do names[name] = true end
@@ -189,18 +348,28 @@ local function buildReputation()
     local sr, lr = snap[name] or {}, live[name] or {}
     local st = tonumber(lr.standing) or tonumber(sr.standing) or 0
     local r = { name = name, standing = st, label = STANDINGS[st] or sr.label or _G["FACTION_STANDING_LABEL" .. st] or "Neutral",
-      session = session[name], lastGain = last[name] }
+      session = (num(session[name]) > 0) and session[name] or nil, lastGain = last[name], dayGain = last[name] and day[name] or nil }
     if lr.min and lr.max and lr.value and lr.max > lr.min then r.progress, r.need = lr.value - lr.min, lr.max - lr.min end
-    gained = gained + num(session[name])
+    gained = gained + num(r.session)
     rows[#rows + 1] = r
   end
-  table.sort(rows, function(a, b) if a.standing ~= b.standing then return a.standing > b.standing end return a.name < b.name end)
-  return rows, { factions = #rows, gained = gained }
+  local function rank(r) if r.lastGain then return 0 end return r.standing == 4 and 2 or 1 end
+  table.sort(rows, function(a, b)
+    local ra, rb = rank(a), rank(b)
+    if ra ~= rb then return ra < rb end
+    if ra == 0 then
+      local da, dbk = dayKey(a.lastGain), dayKey(b.lastGain)
+      if da ~= dbk then return da > dbk end
+      if num(a.dayGain) ~= num(b.dayGain) then return num(a.dayGain) > num(b.dayGain) end
+    elseif a.standing ~= b.standing then return a.standing > b.standing end
+    return a.name < b.name
+  end)
+  return rows, { factions = #rows, gained = gained, since = oldest }
 end
 -- every reputation gain and every new standing, newest first; `only` limits it to one faction
 local function buildRepHistory(only)
   local rows = {}
-  for _, g in ipairs(ns.mine(ns.DB and ns.DB.story and ns.DB.story.rep)) do
+  for _, g in ipairs(repGains()) do
     if not only or only == g.faction then
       rows[#rows + 1] = { t = num(g.t), faction = g.faction, amount = num(g.amount), change = ("+%s"):format(UI.fmtNum(num(g.amount))), source = g.src or "", zone = g.zone, sub = g.sub, x = g.x, y = g.y }
     end
@@ -210,7 +379,7 @@ local function buildRepHistory(only)
       local nm = (e.text or ""):match("^(.-):%s") or e.text
       if nm and (not only or only == nm) then
         local now = (e.text or ""):match("now%s+(.+)$") or e.standing
-        rows[#rows + 1] = { t = num(e.t), faction = nm, change = now and ("Now " .. now) or "New standing", source = "", zone = e.zone, sub = e.sub, x = e.x, y = e.y, milestone = true }
+        rows[#rows + 1] = { t = num(e.t), faction = nm, change = now and ("Now " .. now) or "New standing", source = "New standing", zone = e.zone, sub = e.sub, x = e.x, y = e.y, milestone = true }
       end
     end
   end
@@ -218,8 +387,9 @@ local function buildRepHistory(only)
   return rows
 end
 
--- professions: the snapshot (name -> rank / max) with the rank it is, the recipes, the skill-ups this session and
--- the next training
+-- professions: the snapshot (name -> rank / max) with the rank it is, the skill-ups this session and the next
+-- training. No recipe count: a recipe is learned at a trainer with no profession window open, so the stored recipe
+-- rows rarely name their profession (10 of 137 on the save of 21 Nov 2026), and a count from them is wrong.
 local skillOf
 local RANKS = { { 75, "Apprentice" }, { 150, "Journeyman" }, { 225, "Expert" }, { 300, "Artisan" } }
 local NEXT_RANK = { [75] = { "Journeyman", 50 }, [150] = { "Expert", 125 }, [225] = { "Artisan", 200 } }
@@ -235,8 +405,7 @@ end
 local function buildProfessions()
   local snap = charDB().professions or {}
   local c = charDB()
-  local recipes, session = {}, {}
-  for _, r in ipairs(type(c.recipes) == "table" and c.recipes or {}) do if r.prof then recipes[r.prof] = (recipes[r.prof] or 0) + 1 end end
+  local session = {}
   local s = sid()
   for _, e in ipairs(events()) do
     if e.kind == "SKILLUP" and s and e.s == s then local p = skillOf(e); if p then session[p] = (session[p] or 0) + 1 end end
@@ -244,8 +413,7 @@ local function buildProfessions()
   local rows = {}
   for name, pr in pairs(snap) do
     local rank, max = num(tonumber(pr.rank)), num(tonumber(pr.max))
-    rows[#rows + 1] = { name = name, rank = rank, max = max, rankName = rankName(max), recipes = recipes[name] or 0,
-      session = session[name] or 0, training = trainingLine(name, rank, max) }
+    rows[#rows + 1] = { name = name, rank = rank, max = max, rankName = rankName(max), session = session[name] or 0, training = trainingLine(name, rank, max) }
   end
   -- a profession a craft or a recipe names that the skill lines do not (not read yet): listed, its rank unknown
   local seen = {}
@@ -254,10 +422,9 @@ local function buildProfessions()
   for _, l in ipairs({ type(c.crafts) == "table" and c.crafts or {}, type(c.recipes) == "table" and c.recipes or {} }) do
     for _, x in ipairs(l) do if type(x.prof) == "string" and x.prof ~= "" and not seen[x.prof] then named[x.prof] = true end end
   end
-  for name in pairs(named) do rows[#rows + 1] = { name = name, rank = -1, max = 0, recipes = recipes[name] or 0, session = session[name] or 0 } end
+  for name in pairs(named) do rows[#rows + 1] = { name = name, rank = -1, max = 0, session = session[name] or 0 } end
   table.sort(rows, function(a, b) if a.rank ~= b.rank then return a.rank > b.rank end return a.name < b.name end)
-  local nRec = #(type(c.recipes) == "table" and c.recipes or {})
-  return rows, { professions = #rows, recipes = nRec }
+  return rows, { professions = #rows }
 end
 -- the profession and rank of a SKILLUP row: its own prof field (crafts), else its text ("Skill up:  Herbalism 7")
 function skillOf(e)
@@ -265,31 +432,58 @@ function skillOf(e)
   local nm, rank = text:match("^(.-)%s+(%d+)")
   return e.prof or nm, tonumber(rank)
 end
--- CRAFTED and RECIPES LEARNED, newest first
+-- CRAFTED (docs/UX_PRAGMATIC.md 3.3): one row per batch, newest first. A batch is the crafts that follow each other
+-- in the stored list with the same item, profession and session, each at most BATCH_GAP seconds after the one
+-- before: { t (the first craft), t1 (the last), item, id, prof, count (items), crafts }. A stored row that is
+-- already a batch (merged at write time from 0.9.52, with its own t1) reads the same way. The sum says how many
+-- items the list holds and when it starts; the list is capped, so it is never the character's whole history.
+local BATCH_GAP = 60
+local function profOf(v) return (type(v) == "string" and v ~= "") and v or nil end
 local function buildCrafts()
   local c = charDB()
-  local crafts, recs, items = {}, {}, 0
-  for _, r in ipairs(type(c.crafts) == "table" and c.crafts or {}) do
-    crafts[#crafts + 1] = { t = num(r.t), item = r.item, count = num(r.count) > 0 and r.count or 1, prof = r.prof, id = r.id }
-    items = items + (num(r.count) > 0 and r.count or 1)
+  local list = {}
+  for _, r in ipairs(type(c.crafts) == "table" and c.crafts or {}) do if type(r) == "table" then list[#list + 1] = r end end
+  -- (the list is written in time order; a stable sort keeps the stored order of crafts of one second)
+  local ordered = true
+  for i = 2, #list do if num(list[i].t) < num(list[i - 1].t) then ordered = false; break end end
+  if not ordered then
+    for i, r in ipairs(list) do list[i] = { r = r, i = i } end
+    table.sort(list, function(a, b) if num(a.r.t) ~= num(b.r.t) then return num(a.r.t) < num(b.r.t) end return a.i < b.i end)
+    for i, w in ipairs(list) do list[i] = w.r end
   end
-  for _, r in ipairs(type(c.recipes) == "table" and c.recipes or {}) do recs[#recs + 1] = { t = num(r.t), name = r.name, prof = r.prof } end
-  table.sort(crafts, function(a, b) return a.t > b.t end)
-  table.sort(recs, function(a, b) return a.t > b.t end)
-  return crafts, recs, { crafts = #crafts, items = items }
+  local batches, items, since = {}, 0, nil
+  local last
+  for _, r in ipairs(list) do
+    local t, n, prof = num(r.t), (num(r.count) > 0 and r.count or 1), profOf(r.prof)
+    local t1 = math.max(t, num(r.t1))
+    if last and last.item == r.item and last.prof == prof and last.s == r.s and t - last.t1 <= BATCH_GAP then
+      last.count, last.t1, last.crafts = last.count + n, t1, last.crafts + 1
+    else
+      last = { t = t, t1 = t1, item = r.item, id = r.id, prof = prof, s = r.s, count = n, crafts = 1 }
+      batches[#batches + 1] = last
+    end
+    items = items + n
+    if t > 0 and (not since or t < since) then since = t end
+  end
+  local out = {}
+  for i = #batches, 1, -1 do out[#out + 1] = batches[i] end
+  return out, { batches = #batches, items = items, since = since }
 end
 
--- day rows over a newest-first list (a "TODAY · 3 QUESTS" row whenever the date changes)
-local function withDays(rows, word)
+-- day rows over a newest-first list (a "TODAY · 3 QUESTS" row whenever the date changes). `tkey`: the row's time
+-- (default "t"); `nkey`: the row field the day row adds up (default: it counts the rows).
+local function withDays(rows, word, tkey, nkey)
+  tkey = tkey or "t"
   local out, lastDay, head = {}, nil, nil
   for _, r in ipairs(rows) do
-    local day = r.t > 0 and date("%Y-%m-%d", r.t) or "?"
+    local t = num(r[tkey])
+    local day = t > 0 and date("%Y-%m-%d", t) or "?"
     if day ~= lastDay then
       lastDay = day
-      head = { ebSection = "", n = 0, t = r.t }
+      head = { ebSection = "", n = 0, t = t }
       out[#out + 1] = head
     end
-    head.n = head.n + 1
+    head.n = head.n + (nkey and num(r[nkey]) or 1)
     out[#out + 1] = r
   end
   for _, r in ipairs(out) do
@@ -299,7 +493,7 @@ local function withDays(rows, word)
 end
 
 -- ══ view ═══════════════════════════════════════════════════════════════════════════════════════════════════════
-UI.registerHost(2, "Character", "Pace to the next level, your standing, and your skills.")
+UI.registerHost(2, "Character", "Your level, your standing, and your skills.")
 local V = {}           -- the three pages, built on first select
 ns.Progress = V
 
@@ -309,11 +503,8 @@ local function block(col, label, spec, opts)
   b.tbl = UI.KitTable(col, spec, opts or {})
   return b
 end
-local function setTable(b, rows, fill, emptyText)
-  b.tbl.setRows(rows, fill)
-  if #rows == 0 then b.tbl.setState(emptyText) end
-end
 local COORDS = { key = "coords", label = "Coords", kind = "num", min = 72, measure = { "100.0, 100.0" }, wide = true }
+local function relayout(tbl) tbl.relayout(G.mainW(G.winW())) end
 
 -- ── Leveling ── (docs/UX_PRAGMATIC.md 3.1)
 -- At the level cap the page is short: the level, when and where it was reached, the played time, and the levels
@@ -324,6 +515,20 @@ local function fmtReached(t, now)
   if date("%Y", t) == date("%Y", now) then return UI.fmtSince(t, now) .. ", " .. UI.fmtClock(t) end
   return UI.fmtStamp(t, now)
 end
+-- a level known only between two stored moments: "Tue 17 Nov" within one day, "18 to 19 Nov" over days
+local function fmtBound(from, to, now)
+  if date("%Y%m%d", from) == date("%Y%m%d", to) then return UI.fmtSince(from, now) end
+  local d0, d1 = tostring(tonumber(date("%d", from))), tostring(tonumber(date("%d", to)))
+  local year = date("%Y", to) ~= date("%Y", now) and date(" %Y", to) or ""
+  if date("%Y%m", from) == date("%Y%m", to) then return d0 .. " to " .. d1 .. date(" %b", to) .. year end
+  return d0 .. date(" %b", from) .. (date("%Y", from) ~= date("%Y", to) and date(" %Y", from) or "") .. " to " .. d1 .. date(" %b", to) .. year
+end
+local function boundTip(from, to, now)
+  if date("%Y%m%d", from) == date("%Y%m%d", to) then return ("Between %s and %s"):format(UI.fmtClock(from), UI.fmtClock(to)) end
+  return ("Between %s and %s"):format(UI.fmtStamp(from, now), UI.fmtStamp(to, now))
+end
+V.fmtBound, V.boundTip = fmtBound, boundTip
+local function levelText(r) return (r.lo and r.lo < r.level) and ("%d to %d"):format(r.lo, r.level) or tostring(r.level) end
 local function buildLeveling(content)
   local v = { content = content }
   V.leveling = v
@@ -332,12 +537,19 @@ local function buildLeveling(content)
   v.hero = UI.Hero(col, {})
   v.cards = UI.StatRow(col, 2)
   v.levels = block(col, "Levels", {
-    { key = "level", label = "Level", kind = "num", min = 48 },
-    { key = "reached", label = "Reached", kind = "tag", min = 136, measure = { "Wed 28 Nov, 23:59" } },
+    { key = "level", label = "Level", kind = "num", min = 48, measure = { "50 to 59" } },
+    { key = "reached", label = "Reached", kind = "tag", min = 136, measure = { "Wed 28 Nov, 23:59", "28 Sep to 28 Nov" } },
     { key = "zone", label = "Zone", flex = 1, min = 120 },
   }, { tooltip = function(row, item, tip)
-      tip:AddLine(("Level %d"):format(item.level), 1, 1, 1)
-      tip:AddLine("Reached " .. UI.fmtStamp(item.t) .. (item.zone and (" in " .. item.zone) or ""), 0.78, 0.79, 0.80, true)
+      local now = nowT()
+      if item.t then
+        tip:AddLine(("Level %d"):format(item.level), 1, 1, 1)
+        tip:AddLine("Reached " .. UI.fmtStamp(item.t, now) .. (item.zone and (" in " .. item.zone) or ""), 0.78, 0.79, 0.80, true)
+      else
+        tip:AddLine((item.lo < item.level and "Levels " or "Level ") .. levelText(item), 1, 1, 1)
+        tip:AddLine(boundTip(item.from, item.to, now), 0.78, 0.79, 0.80, true)
+        tip:AddLine("The level-up itself is not stored any more; a session before it and one after it are.", 0.78, 0.79, 0.80, true)
+      end
     end })
   -- (the one muted line of the screen about what is not stored, 0.2.2)
   v.levelNote = UI.EmptyLine(col)
@@ -397,8 +609,8 @@ function V.renderLeveling()
   local classN = plainStr((call(UnitClass, "player")))
   hero:SetTitle((ns.fullName and ns.fullName()) or classN or "")
   if atMax then
-    -- the level once, when and where it was reached (left out when not stored), and the played time
-    local top = levels[1] and levels[1].level == lvl and levels[1] or nil
+    -- the level once, when and where it was reached (left out unless its exact moment is stored), and the played time
+    local top = levels[1] and levels[1].level == lvl and levels[1].t and levels[1] or nil
     hero:SetHero("Level " .. lvl)
     v.reachedLine = top and ("Reached " .. UI.fmtStamp(top.t, now) .. (top.zone and (" in " .. top.zone) or "")) or nil
     local pl = {}
@@ -452,13 +664,14 @@ function V.renderLeveling()
     v.cards:Show()
   else v.cards:Hide() end
 
-  -- LEVELS: only the levels with a recorded moment; one muted line counts the rest
+  -- LEVELS: the levels with a recorded moment, and the levels known between two stored moments; one muted line
+  -- counts the rest
   v.levelsShown = #levels > 0
   if v.levelsShown then
     v.levels.head:Show(); v.levels.tbl.frame:Show()
     v.levels.tbl.setRows(levels, function(row, r)
-      row.c.level:SetText(tostring(r.level))
-      row.c.reached:SetText(fmtReached(r.t, now))
+      row.c.level:SetText(levelText(r))
+      row.c.reached:SetText(r.t and fmtReached(r.t, now) or fmtBound(r.from, r.to, now))
       row.c.zone:SetText(r.zone or "")
     end)
   else v.levels.head:Hide(); v.levels.tbl.frame:Hide() end
@@ -466,7 +679,7 @@ function V.renderLeveling()
   v.noteText = v.noteShown and (missing == 1 and "1 level has no recorded date." or ("%d levels have no recorded date."):format(missing)) or nil
   if v.noteShown then
     v.levelNote:Set(v.noteText); v.levelNote:Show()
-    UI.SetTip(v.levelNote, { title = "Not recorded", text = "A level is listed when its level-up was captured and is still stored." })
+    UI.SetTip(v.levelNote, { title = "Not recorded", text = "A level is listed when its level-up, or a session before and after it, is still stored." })
   else v.levelNote:Hide() end
 
   -- QUESTS: a leveling character's list, named after where it starts (the list is capped: never "all time")
@@ -492,7 +705,18 @@ function V.renderLeveling()
   V.placeLeveling()
 end
 
--- ── Reputation ──
+-- ── Reputation ── (docs/UX_PRAGMATIC.md 3.2)
+-- The answer is the last gain. The list: Faction, Standing, Progress (the bar and what is left to the next
+-- standing), Last gain (what the faction gained on the day of its newest stored gain, and that day) and This session
+-- (only while a faction gained this session). A faction with stored gains opens them; the others open nothing.
+local REP_BAR = 120
+-- "16,072 to Exalted": what is left in the standing, nil when the client has not answered or there is no next one
+local function repLeft(r)
+  if not r.need or r.standing >= #STANDINGS then return nil end
+  return ("%s to %s"):format(UI.fmtNum(math.max(0, r.need - r.progress)), STANDINGS[r.standing + 1] or "the next standing")
+end
+-- "+1,005 · Yesterday"
+local function repLast(r, now) return ("+%s \194\183 %s"):format(UI.fmtNum(num(r.dayGain)), UI.fmtDate(r.lastGain, now)) end
 local function buildRep(content)
   local v = { content = content }
   V.rep = v
@@ -501,21 +725,29 @@ local function buildRep(content)
   v.pg = UI.Page(list)
   local col = v.pg.col
   v.summary = UI.Summary(col)
+  UI.SetTip(v.summary, { title = "Last gain", text = "The largest gain of the last day with a stored reputation gain." })
   v.head = UI.Section(col, "Factions")
-  v.tbl = UI.KitTable(col, {
-    { key = "name", label = "Faction", flex = 1, min = 140 },
-    { key = "standing", label = "Standing", kind = "tag", min = 88, measure = STANDINGS },
-    -- (the bar, S2, then the numbers: 200 wide, or wider when the longest numbers need it)
-    -- (PROGRESS heads both: the bar at the column's left, S2, then the number, left-aligned under the header)
-    { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = 120 + S.S2, min = math.max(200, 120 + S.S2 + UI.TextWidth("BODY", "21,000 / 21,000")) },
-    { key = "ses", label = "This session", kind = "num", min = 88 },
-    { key = "last", label = "Last gain", kind = "tag", min = 96, wide = true, justify = "RIGHT", measure = { "Mon 16 Nov" } },
-  }, { onClick = function(row) if row.item then V.openFaction(row.item) end end,
+  v.spec = {
+    name = { key = "name", label = "Faction", flex = 1, min = 140 },
+    standing = { key = "standing", label = "Standing", kind = "tag", min = 88, measure = STANDINGS },
+    -- (PROGRESS heads both: the bar at the column's left, S2, then what is left, left-aligned under the header)
+    prog = { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = REP_BAR + S.S2,
+      min = REP_BAR + S.S2 + math.max(UI.TextWidth("BODY", "36,000 to Unfriendly"), UI.TextWidth("BODY", "Not known yet")),
+      tip = "What is left to the next standing. The numbers come from the game while you are logged in." },
+    last = { key = "last", label = "Last gain", kind = "tag", min = 96, justify = "RIGHT", measure = { "+10,005 \194\183 Wed 28 Nov" },
+      tip = "What the faction gained on the day of its newest stored gain, and that day." },
+    ses = { key = "ses", label = "This session", kind = "num", min = 88, hide = true },
+  }
+  v.tbl = UI.KitTable(col, { v.spec.name, v.spec.standing, v.spec.prog, v.spec.last, v.spec.ses },
+    { onClick = function(row) if row.item and row.item.lastGain then V.openFaction(row.item) end end,
     onLayout = function(t) for i = 1, t.shownN do pcall(V.placeRepBar, t.rows[i]) end end,
     tooltip = function(row, item, tip)
       tip:AddLine(item.name, 1, 1, 1)
-      tip:AddLine("Opens how you earned it.", 0.78, 0.79, 0.80, true)
-      if item.need then tip:AddDoubleLine("To " .. (STANDINGS[item.standing + 1] or "the next standing"), UI.fmtNum(item.need - item.progress), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+      if item.need then tip:AddDoubleLine(item.label, ("%s / %s"):format(UI.fmtNum(item.progress), UI.fmtNum(item.need)), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
+      if item.lastGain then
+        tip:AddLine(("Last gain %s. +%s that day."):format(UI.fmtStamp(item.lastGain), UI.fmtNum(num(item.dayGain))), 0.78, 0.79, 0.80, true)
+        tip:AddLine("Opens the stored gains.", 0.78, 0.79, 0.80, true)
+      else tip:AddLine("Last gain: Not recorded", 0.78, 0.79, 0.80, true) end
     end })
   v.detail = UI.Detail(content, { list = list, back = "\226\128\185 Reputation", render = function(item, child, d) V.renderFaction(item, child) end,
     onBack = function(item) if v.tbl.setSelected then v.tbl.setSelected(nil) end end })
@@ -524,57 +756,87 @@ local function buildRep(content)
 end
 function V.placeRep()
   local v = V.rep; if not v then return end
-  v.pg.place({
-    { v.summary, H.SUMMARY, gap = S.S3 },
-    { v.head, H.SECTION }, { v.tbl.frame, v.tbl.height },
-  })
+  local items = {}
+  if v.summaryShown then items[#items + 1] = { v.summary, H.SUMMARY, gap = S.S3 } end
+  items[#items + 1] = { v.head, H.SECTION }
+  items[#items + 1] = { v.tbl.frame, v.tbl.height }
+  v.pg.place(items)
 end
 function V.renderRep()
   local v = V.rep; if not v then return end
+  local now = nowT()
   local rows, sum = buildReputation()
   v.rows = rows
-  local segs = { { text = ("**%s** known"):format(UI.plural(sum.factions, "faction")) } }
-  if sum.gained > 0 then segs[#segs + 1] = { text = ("**+%s** reputation this session"):format(UI.fmtNum(sum.gained)) } end
-  local top
-  for _, r in ipairs(rows) do if num(r.session) > 0 and (not top or r.session > top.session) then top = r end end
-  if top then segs[#segs + 1] = { text = "most with " .. top.name } end
-  v.summary:SetSegments(segs)
+  -- the answer: the first row of the list when it has a stored gain (left out when no gain is stored)
+  local top = rows[1] and rows[1].lastGain and rows[1] or nil
+  v.summaryShown = top ~= nil
+  if top then
+    local day = UI.fmtDate(top.lastGain, now)
+    if day == "Today" or day == "Yesterday" then day = day:lower() end
+    v.answer = ("Last gain: %s +%s, %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day)
+    v.summary:SetSegments({ { text = ("Last gain: **%s +%s**, %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day) } })
+    v.summary:Show()
+  else v.answer = nil; v.summary:SetSegments({}); v.summary:Hide() end
+  v.head:SetMeta(#rows > 0 and UI.plural(#rows, "faction") or nil)
+  -- (rule 0.3: a column with no value in any row is left out. Progress is a live read; This session is a column
+  -- only while a faction gained this session)
+  local anyProg, anySes, anyLast = false, false, false
+  for _, r in ipairs(rows) do
+    if r.need or r.standing >= #STANDINGS then anyProg = true end
+    if r.session then anySes = true end
+    if r.lastGain then anyLast = true end
+  end
+  local changed = false
+  for key, hide in pairs({ prog = not anyProg, ses = not anySes, last = not anyLast }) do
+    if (v.spec[key].hide or false) ~= hide then v.spec[key].hide = hide; changed = true end
+  end
+  if changed then relayout(v.tbl) end
   v.tbl.setRows(rows, function(row, r)
     row.c.name:SetText(r.name)
     local bad = r.standing == 1 or r.standing == 2
     row.c.standing:SetText((bad and UI.dot("bad") or "") .. r.label)
+    -- (a Neutral faction with no stored gain is the quiet end of the list)
+    local quiet = r.standing == 4 and not r.lastGain
     local col = bad and C.bad or C.fgSubtle
     row.c.standing:SetTextColor(col[1], col[2], col[3])
-    if not row.bar then row.bar = UI.Bar(row, 120) end
+    if quiet then UI.SetColor(row.c.name, "fgMuted"); UI.SetColor(row.c.standing, "fgMuted") end
+    if not row.bar then row.bar = UI.Bar(row, REP_BAR) end
     V.placeRepBar(row)
-    if r.need then
-      row.bar:SetFrac(r.progress / r.need)
-      row.c.prog:SetText(("%s / %s"):format(UI.fmtNum(r.progress), UI.fmtNum(r.need)))
-    -- (a standing with no numbers read yet keeps its empty track and a muted "-": every row has its bar)
-    else row.bar:SetFrac(0); row.c.prog:SetText("-"); UI.SetColor(row.c.prog, "fgMuted") end
-    row.c.ses:SetText(num(r.session) > 0 and ("+" .. UI.fmtNum(r.session)) or "-")
-    row.c.last:SetText(r.lastGain and UI.fmtDate(r.lastGain) or "-")
+    local left = repLeft(r)
+    if r.standing >= #STANDINGS then row.bar:SetFrac(1); row.c.prog:SetText(r.label)
+    elseif left then row.bar:SetFrac(r.progress / r.need); row.c.prog:SetText(left)
+    -- (the client has not answered for this faction: the empty track and the one phrase for it, muted)
+    else row.bar:SetFrac(0); row.c.prog:SetText("Not known yet"); UI.SetColor(row.c.prog, "fgMuted") end
+    row.c.last:SetText(r.lastGain and repLast(r, now) or "")
+    row.c.ses:SetText(r.session and ("+" .. UI.fmtNum(r.session)) or "")
+    -- (only a faction with stored gains opens)
+    row.ebNoOpen = not r.lastGain
   end)
-  if #rows == 0 then v.tbl.setState("Turn in quests or defeat a faction's enemies and your gains show here. Factions you know already are listed with their standing.") end
+  if #rows == 0 then v.tbl.setState("No faction met yet.") end
   V.placeRep()
 end
--- the progress bar sits at the left of the Progress column, the "1,500 / 3,000" right-aligned after it
+-- the progress bar sits at the left of the Progress column, what is left after it; no bar while the column is out
 function V.placeRepBar(row)
   local cw = V.rep and V.rep.tbl.cols.prog
-  if not (row and row.bar and cw) then return end
+  if not (row and row.bar) then return end
+  if not cw then row.bar:Hide(); return end
+  row.bar:Show()
   row.bar:ClearAllPoints(); row.bar:SetPoint("LEFT", row, "LEFT", cw.x, 0)
   local fs = row.c and row.c.prog
   if fs then
-    fs:ClearAllPoints(); fs:SetPoint("LEFT", row, "LEFT", cw.x + 120 + S.S2, 0)
-    fs:SetWidth(math.max(1, cw.w - 120 - S.S2)); fs:SetJustifyH("LEFT")
+    fs:ClearAllPoints(); fs:SetPoint("LEFT", row, "LEFT", cw.x + REP_BAR + S.S2, 0)
+    fs:SetWidth(math.max(1, cw.w - REP_BAR - S.S2)); fs:SetJustifyH("LEFT")
   end
 end
 function V.openFaction(item)
   local v = V.rep; if not v then return end
-  local idx = 1
-  for i, r in ipairs(v.rows or {}) do if r.name == item.name then idx = i end end
+  -- (Older and Newer step through the factions that open: the ones with stored gains)
+  local open, idx = {}, 1
+  for _, r in ipairs(v.rows or {}) do
+    if r.lastGain then open[#open + 1] = r; if r.name == item.name then idx = #open end end
+  end
   if v.tbl.setSelected then v.tbl.setSelected(item) end
-  v.detail:Open(v.rows, idx)
+  v.detail:Open(open, idx)
 end
 V.FACTION = {}
 function V.renderFaction(item, child)
@@ -583,29 +845,46 @@ function V.renderFaction(item, child)
     f.col = CreateFrame("Frame", nil, child); f.col:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
     f.title = UI.Text(f.col, "TITLE", "fg"); f.title:SetPoint("TOPLEFT", f.col, "TOPLEFT", S.S3, 0)
     f.meta = UI.Text(f.col, "META", "fgMuted"); f.meta:SetPoint("TOPLEFT", f.col, "TOPLEFT", S.S3, -22)
-    f.head = UI.Section(f.col, "How you earned it")
-    f.tbl = UI.KitTable(f.col, {
+    f.head = UI.Section(f.col, "Gains")
+    f.spec = {
       { key = "when", label = "When", kind = "tag", min = 96, measure = { "Mon 16 Nov, 23:59" } },
       { key = "source", label = "Source", flex = 1, min = 120 },
       { key = "amount", label = "Amount", kind = "num", min = 88, measure = { "Now Unfriendly" } },
-    }, {})
+    }
+    f.tbl = UI.KitTable(f.col, f.spec, { tooltip = function(row, h, tip)
+        tip:AddLine(h.change, 1, 1, 1)
+        tip:AddLine(UI.fmtWhen(h.t), 0.78, 0.79, 0.80)
+        if h.source == "" then tip:AddLine("Source: Not recorded", 0.78, 0.79, 0.80, true) end
+      end })
   end
   local w = G.mainW(G.winW())
   f.col:SetWidth(w)
   f.title:SetText(item.name); f.title:SetWidth(w - 2 * S.S3)
   local parts = { (item.standing == 1 or item.standing == 2) and (UI.dot("bad") .. item.label) or item.label }
-  if item.need then parts[#parts + 1] = ("%s / %s to %s"):format(UI.fmtNum(item.progress), UI.fmtNum(item.need), STANDINGS[item.standing + 1] or "the next standing") end
-  if num(item.session) > 0 then parts[#parts + 1] = ("+%s this session"):format(UI.fmtNum(item.session)) end
+  local left = repLeft(item)
+  if left then parts[#parts + 1] = left end
+  if item.session then parts[#parts + 1] = ("+%s this session"):format(UI.fmtNum(item.session)) end
   f.meta:SetText(table.concat(parts, " \194\183 ")); f.meta:SetWidth(w - 2 * S.S3)
   local hist = buildRepHistory(item.name)
+  -- the list is capped: its header says where this faction's stored gains start, and how much they add up to
+  local first, total, named = nil, 0, 0
+  for _, h in ipairs(hist) do
+    if h.t > 0 and (not first or h.t < first) then first = h.t end
+    total = total + num(h.amount)
+    if h.source ~= "" then named = named + 1 end
+  end
+  f.label = "Gains" .. (first and (" since " .. UI.fmtSince(first)) or "")
+  f.head:SetLabel(f.label)
+  f.head:SetMeta(total > 0 and ("+" .. UI.fmtNum(total)) or nil)
+  -- (rule 0.3: Source is a column only while a third of the rows name one)
+  local hide = named * 3 < #hist
+  if (f.spec[2].hide or false) ~= hide then f.spec[2].hide = hide; f.tbl.relayout(w) end
   f.tbl.setRows(hist, function(row, h)
     row.c.when:SetText(UI.fmtWhen(h.t))
-    local src = h.source ~= "" and h.source or (h.milestone and "New standing" or "Other")
-    row.c.source:SetText(src)
-    if h.source == "" and not h.milestone then row.c.source:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
+    row.c.source:SetText(h.source)
     row.c.amount:SetText(h.change)
   end)
-  if #hist == 0 then f.tbl.setState(("No gains for %s recorded yet."):format(item.name)) end
+  if #hist == 0 then f.tbl.setState("No gain recorded.") end
   f.head:ClearAllPoints(); f.head:SetPoint("TOPLEFT", f.col, "TOPLEFT", 0, -(22 + UI.LINE_H.META + S.S5)); f.head:SetWidth(w)
   local y = 22 + UI.LINE_H.META + S.S5 + H.SECTION
   f.tbl.frame:ClearAllPoints(); f.tbl.frame:SetPoint("TOPLEFT", f.col, "TOPLEFT", 0, -y); f.tbl.frame:SetWidth(w)
@@ -615,7 +894,9 @@ function V.renderFaction(item, child)
   f.hist = hist
 end
 
--- ── Professions ──
+-- ── Professions ── (docs/UX_PRAGMATIC.md 3.3)
+-- The skills with their bar, then what was crafted, one row per batch. No headline, no recipe count and no recipe
+-- list: the stored recipe rows rarely name their profession.
 local PROF_ICON = {
   Alchemy = "Interface\\Icons\\Trade_Alchemy", Blacksmithing = "Interface\\Icons\\Trade_BlackSmithing",
   Enchanting = "Interface\\Icons\\Trade_Engraving", Engineering = "Interface\\Icons\\Trade_Engineering",
@@ -634,7 +915,6 @@ function V.unbracket(s)
   return (s:gsub("^%[(.*)%]$", "%1"))
 end
 V.BAR_X, V.BAR_W = 320, 160
-V.GATHERING = { Herbalism = true, Mining = true, Skinning = true, Fishing = true }
 local function profRow(v, i)
   local r = v.profRows[i]
   if r then return r end
@@ -665,105 +945,94 @@ local function placeProfRow(r)
   r.title:SetWidth(math.max(1, math.min(UI.TextWidth("ROW_TITLE", r.title:GetText()), room)))
   r.train:ClearAllPoints(); r.train:SetPoint("TOPLEFT", r, "TOPLEFT", barL, -26); r.train:SetWidth(math.max(1, w - barL - S.S3))
 end
+-- "23:46 to 23:48", or the one minute
+local function batchWhen(r)
+  local a, b = UI.fmtClock(r.t), UI.fmtClock(r.t1)
+  return a == b and a or (a .. " to " .. b)
+end
 local function buildProf(content)
   local v = { content = content, profRows = {} }
   V.prof = v
   v.pg = UI.Page(content)
   local col = v.pg.col
-  v.summary = UI.Summary(col)
   v.head = UI.Section(col, "Professions")
   v.empty = UI.EmptyLine(col)
-  v.crafted = block(col, "Crafted", {
-    { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
+  v.spec = {
+    { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59 to 23:59" } },
     { key = "item", label = "Item", flex = 1, min = 120 },
     { key = "prof", label = "Profession", kind = "tag", min = 104, max = 160 },
-    { key = "qty", label = "Qty", kind = "num", min = 40 },
-  }, { tooltip = function(row, item, tip)
-      tip:AddLine(item.item or "Crafted item", 1, 1, 1)
-      if not item.prof then tip:AddLine("No profession window was open when you made it.", 0.78, 0.79, 0.80, true) end
-      tip:AddLine(UI.fmtWhen(item.t), 0.78, 0.79, 0.80)
+  }
+  v.crafted = block(col, "Crafted", v.spec, { tooltip = function(row, item, tip)
+      tip:AddLine(V.unbracket(item.item) or "Crafted item", 1, 1, 1)
+      local when = UI.fmtWhen(item.t) .. (UI.fmtClock(item.t) ~= UI.fmtClock(item.t1) and (" to " .. UI.fmtClock(item.t1)) or "")
+      tip:AddLine(when, 0.78, 0.79, 0.80)
+      if item.crafts > 1 then tip:AddLine(("%s made in %s, one after the other."):format(UI.plural(item.count, "item"), UI.plural(item.crafts, "craft")), 0.78, 0.79, 0.80, true) end
+      if not item.prof then tip:AddLine("Profession: Not recorded", 0.78, 0.79, 0.80, true) end
     end })
-  -- (grouped by day like Crafted: a day row, then each recipe at its clock time)
-  v.recipes = block(col, "Recipes learned", {
-    { key = "when", label = "When", kind = "tag", min = 40, measure = { "23:59" } },
-    { key = "name", label = "Recipe", flex = 1, min = 120 },
-    { key = "prof", label = "Profession", kind = "tag", min = 104, max = 160 },
-  }, {})
   content:HookScript("OnSizeChanged", function() pcall(V.placeProf) end)
   V.renderProf()
 end
 function V.placeProf()
   local v = V.prof; if not v then return end
-  local list = { { v.summary, H.SUMMARY, gap = S.S3 }, { v.head, H.SECTION } }
-  for _, r in ipairs(v.profRows) do list[#list + 1] = { r, H.ROW2 } end
-  list[#list + 1] = { v.empty, H.SECTION }
-  -- the gap after the profession list sits under whichever is last: the rows or the empty line
-  if v.empty:IsShown() then list[#list].gap = S.S5 else list[#list - 1].gap = S.S5 end
-  list[#list + 1] = { v.crafted.head, H.SECTION }; list[#list + 1] = { v.crafted.tbl.frame, v.crafted.tbl.height, gap = S.S5 }
-  list[#list + 1] = { v.recipes.head, H.SECTION }; list[#list + 1] = { v.recipes.tbl.frame, v.recipes.tbl.height }
+  local list = { { v.head, H.SECTION } }
+  for _, r in ipairs(v.profRows) do if r:IsShown() then list[#list + 1] = { r, H.ROW2 } end end
+  if v.empty:IsShown() then list[#list + 1] = { v.empty, H.SECTION } end
+  list[#list].gap = S.S5
+  if v.craftedShown then
+    list[#list + 1] = { v.crafted.head, H.SECTION }; list[#list + 1] = { v.crafted.tbl.frame, v.crafted.tbl.height }
+  end
   v.pg.place(list)
   for _, r in ipairs(v.profRows) do if r:IsShown() then pcall(r.layout); pcall(placeProfRow, r) end end
 end
 function V.renderProf()
   local v = V.prof; if not v then return end
-  local rows, sum = buildProfessions()
-  local crafts, recs, csum = buildCrafts()
-  local ups = 0
-  for _, r in ipairs(rows) do ups = ups + r.session end
-  -- (one recipe count: the recipes the profession rows count, plus the ones no profession of yours names)
-  local mapped = 0
-  for _, r in ipairs(rows) do mapped = mapped + r.recipes end
-  local other = math.max(0, sum.recipes - mapped)
-  local segs = { { text = ("**%s**"):format(UI.plural(sum.professions, "profession")) }, { text = ("**%s** learned"):format(UI.plural(sum.recipes, "recipe")) } }
-  if other > 0 then segs[#segs + 1] = { text = ("%d from other professions"):format(other) } end
-  v.otherRecipes = other
-  if ups > 0 then segs[#segs + 1] = { text = ("**+%d** skill this session"):format(ups) } end
-  v.summary:SetSegments(segs)
-  v.rows = rows
+  local now = nowT()
+  local rows = buildProfessions()
+  local crafts, csum = buildCrafts()
+  v.rows, v.batches, v.craftSum = rows, crafts, csum
   for i, p in ipairs(rows) do
     local r = profRow(v, i)
     local known = p.max > 0   -- (a profession only a craft or a recipe names has no rank read yet)
-    local meta = {}
-    if known then meta[1] = p.rankName end
-    -- (a gathering profession learns no recipes: no "0 recipes learned" under it)
-    if not (V.GATHERING[p.name] and p.recipes == 0) then meta[#meta + 1] = UI.plural(p.recipes, "recipe") .. " learned" end
-    if p.session > 0 then meta[#meta + 1] = ("+%d this session"):format(p.session) end
-    r:Set({ icon = PROF_ICON[p.name] or "Interface\\Icons\\INV_Misc_Note_01", title = p.name, meta = table.concat(meta, " \194\183 "),
+    r:Set({ icon = PROF_ICON[p.name] or "Interface\\Icons\\INV_Misc_Note_01", title = p.name, meta = known and p.rankName or "",
       tip = { title = p.name, text = known and ("%s, skill %d of %d."):format(p.rankName, p.rank, p.max)
-        or "Its skill shows once the game lists it: open the profession window." } })
-    -- (a profession whose rank is not read yet keeps its empty track: every row has its bar)
+        or "Skill: Not known yet. It shows once the game lists the profession." } })
+    -- (a profession whose rank is not read yet keeps its empty track and no number)
     r.frac = known and p.rank / p.max or 0
-    r.count:SetText(known and ("%d / %d"):format(p.rank, p.max) or "-")
+    r.count:SetText(known and ("%d / %d"):format(p.rank, p.max) or "")
     r.train:SetText(p.training or "")
     r:Show()
   end
   for i = #rows + 1, #v.profRows do v.profRows[i]:Hide() end
-  if #rows == 0 then v.empty:Set("Learn a profession at any trainer and its skill shows here."); v.empty:Show() else v.empty:Hide() end
-  v.crafted.head:SetMeta(csum.crafts > 0 and (UI.plural(csum.crafts, "craft") .. " \194\183 " .. UI.plural(csum.items, "item")) or nil)
-  setTable(v.crafted, withDays(crafts, "craft"), function(row, r)
-    row.c.when:SetText(UI.fmtClock(r.t))
-    row.c.item:SetText(V.unbracket(r.item) or "Crafted item")
-    local q = r.id and plain(call(C_Item and C_Item.GetItemQualityByID, r.id))
-    if q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q] then local qc = ITEM_QUALITY_COLORS[q]; row.c.item:SetTextColor(qc.r, qc.g, qc.b) end
-    row.c.prof:SetText(r.prof or "Other")
-    if not r.prof then row.c.prof:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
-    row.c.qty:SetText(UI.fmtNum(r.count))
-  end, "Craft something and it is listed here.")
-  setTable(v.recipes, withDays(recs, "recipe"), function(row, r)
-    row.c.when:SetText(UI.fmtClock(r.t))
-    row.c.name:SetText(V.unbracket(r.name) or "")
-    row.c.prof:SetText(r.prof or "Other")
-    if not r.prof then row.c.prof:SetTextColor(C.fgMuted[1], C.fgMuted[2], C.fgMuted[3]) end
-  end, "Learn a recipe and it is listed here.")
+  if #rows == 0 then v.empty:Set("No profession learned yet."); v.empty:Show() else v.empty:Hide() end
+  -- CRAFTED: named after where the stored list starts, with the items it holds; left out while nothing is stored
+  v.craftedShown = #crafts > 0
+  if v.craftedShown then
+    v.craftLabel = "Crafted" .. (csum.since and (" since " .. UI.fmtSince(csum.since, now)) or "")
+    v.crafted.head:SetLabel(v.craftLabel)
+    v.crafted.head:SetMeta(UI.plural(csum.items, "item"))
+    -- (rule 0.3: Profession is a column only while a third of the rows name one)
+    local named = 0
+    for _, r in ipairs(crafts) do if r.prof then named = named + 1 end end
+    local hide = named * 3 < #crafts
+    if (v.spec[3].hide or false) ~= hide then v.spec[3].hide = hide; relayout(v.crafted.tbl) end
+    v.crafted.head:Show(); v.crafted.tbl.frame:Show()
+    v.crafted.tbl.setRows(withDays(crafts, "item", "t1", "count"), function(row, r)
+      row.c.when:SetText(batchWhen(r))
+      row.c.item:SetText((V.unbracket(r.item) or "Crafted item") .. (r.count > 1 and (" x" .. UI.fmtNum(r.count)) or ""))
+      local q = r.id and plain(call(C_Item and C_Item.GetItemQualityByID, r.id))
+      if q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q] then local qc = ITEM_QUALITY_COLORS[q]; row.c.item:SetTextColor(qc.r, qc.g, qc.b) end
+      row.c.prof:SetText(r.prof or "")
+    end)
+  else v.craftLabel = nil; v.crafted.head:Hide(); v.crafted.tbl.frame:Hide() end
   V.placeProf()
 end
 
 UI.registerPane("Character", 1, "Leveling", buildLeveling, function() pcall(V.renderLeveling) end,
-  "How fast you level compared with before, and where your XP comes from.")
+  "Your level, when you reached each one, and the time played.")
 UI.registerPane("Character", 2, "Reputation", buildRep, function() if V.rep and V.rep.detail.IsOpen() then V.rep.detail.Close() end; pcall(V.renderRep) end,
-  "Your standing with every faction, and what you gained this session.")
+  "Your standing with every faction, what is left to the next one, and the last gain.")
 UI.registerPane("Character", 3, "Professions", buildProf, function() pcall(V.renderProf) end,
-  "Your skills, what you crafted, and when to train next.")
+  "Your skills and what you crafted.")
 
 -- ── test exports: headless luajit tests in tests/ read these; no effect in-game ──
 ns._test = ns._test or {}

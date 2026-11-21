@@ -548,6 +548,20 @@ with `/eb instances limit 5|10|off`) when the player set one.
 `characters[guid].dungeonEvictedTo` (epoch): the latest `endT` of a run evicted from `dungeonRuns`. Join with
 previous run is refused when it is later than the previous run's `endT` (a run between the two left the list).
 
+### Levels, played stamps, reputation rows and craft batches (0.9.52, docs/UX_PRAGMATIC.md gates E and F)
+
+Built on the draft branch, not released; each gate needs the founder's yes on everbuff-wow-addon #57. All fields are
+optional and none is read by ingest.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `characters[guid].levelAt` | map level -> object | When each level was reached. `{ t, zone? }`: the server epoch of the level-up and its zone, from a `LEVELUP` story event or the `LEVEL_UP` row of a session record. `{ from, to }`: no row of the level-up is stored, and the level was reached between these two server epochs, by the levels and times of the stored session records (after every stored moment the character was below the level, before every stored moment it was on it). Written by `ns.Levels.harvest` (`Everbuff/Progress.lua`) for every character of the save at each load and before an acknowledgement deletes session records, so it outlives both the 500 row event list and the session records. An exact moment is never replaced by a later one, an exact moment replaces a bound, and a bound only narrows. Nothing is derived from `/played`. |
+| `characters[guid].playedAtLevel` | map level -> seconds | From 0.9.52: the played total at the moment the level was reached, `total - level time` of the `TIME_PLAYED_MSG` answer, the same on every answer while on the level. An answer with no level time writes nothing. Before 0.9.52 the value was the total of the last answer on the level, moved by every login; those values are invalid and are deleted at load (founder rule 2026-10-05). |
+| `characters[guid].playedExact` | boolean | Written with the first stamp of the new kind: every stamp of the block is of that kind. A block without it keeps no `playedAtLevel` after a load. |
+| `story.rep[].g` | string | The GUID of the character that gained the reputation. A row with `g` is that character's even when its session record has been deleted by an acknowledgement. A row without `g` (before 0.9.52) is attributed through its session record only; with the record gone it is shown for no character. |
+| `characters[guid].crafts[].t1` | number | The server epoch of the last craft of a batch. From 0.9.52 a craft that follows the last stored row within 60 s with the same `item`, `id`, `prof` and `s` is added to that row: `count` is then the items of the batch, `t` the first craft and `t1` the last. A row without `t1` is one craft. |
+| `characters[guid].crafts[].prof`, `recipes[].prof` | string | Never the empty string from 0.9.52: absent when no profession window named one. |
+
 ### Runs from before the run store (`characters[guid].dungeonLegacy`, docs/UX_PRAGMATIC.md gate A)
 
 `characters[guid].dungeonLegacy[]` (optional, at most 200 rows, oldest first; file `Everbuff/RunsLegacy.lua`): the

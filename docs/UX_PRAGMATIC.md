@@ -50,6 +50,15 @@ Gold and Items review round 3 (21 Nov), on the same draft branch. Display only, 
 - Sources, the amount beside MOSTLY FROM shows only when the largest group is a part of the source ("Formula: Enchant Boots - Greater Stamina 2g 81s" of +5g 97s). When the group is the whole source the cell is empty: "Mail received, Yoco Ratnik, +2g 50s", "Flights, Tal, -45c" (before: the same amount twice, side by side).
 - Auction house, a bid is not a purchase until a mail confirms it. A row named when the bid was placed (`C_AuctionHouse.PlaceBid`, `named = "bid"`) with no "Auction won" mail whose invoice names its amount reads "Bid" with its amount, is not counted as bought and its amount is not in the Auction house view's spent (a bid can be outbid or refused). The Journal and Sources say "Bid: Felcloth", never "Bought Felcloth". A won mail of the same item that names another amount, or whose invoice cannot be read, confirms nothing and is its own "Collected" row. The mail whose invoice names the bid's amount makes it a "Bought" row with the mail's count and seller. No such row exists on the save (the capture is new on this branch). Raised: the Classic hook (`PlaceAuctionBid`) stores a bid below the buyout the same way as a buyout, with no confirmation either; the save has no such row, and it is not changed here.
 
+Character round (21 Nov), on the same draft branch: sections 3.1 to 3.3, with gate E (`levelAt`, the played stamp fix, the stamps of before 0.9.52 discarded at load) and the parts of gate F that need no client read (the character id `g` on new reputation rows, craft batches at write with `t1`). Both gates still need their own yes on #57 before a release. The expected values of section 3 are asserted by `tests/real_truth.lua`. Where the build differs from the first text of section 3, the section is changed with it:
+
+- Leveling: levels that share one bound are one row ("30 to 37 · 8 to 11 Nov"), so the save's 38 levels without an exact date are 9 rows, not 38. On the save every level from 2 to 60 is then in a row and the muted line does not show.
+- Reputation: "Last gain" is what the faction gained on the calendar day of its newest stored gain, with that day ("+1,005 · Yesterday"). The order within a day is by that gain, largest first, so the first row and the answer are Barkskin Burrow +1,005. By time alone the newest stored gain is Gadgetzan +1 at 23:29, which says less. Progress is left out while the client answers for no faction, and the section header carries the faction count.
+- Reputation: 559 of the 2,000 stored gains belong to sessions the desktop picked up and carry no character, so they are not counted (Booty Bay, Everlook, Powderfuse and Ratchet read Thu 19 Nov although a row of 20 Nov 10:31 is stored; Timbermaw Hold reads no gain). New rows carry `g` and stay.
+- Professions: the Crafted day of a batch is the day of its last craft.
+- Not built: `recipeBook` (gate F). The profession window lists what its filters show, so a count read from it can be short; it needs a check in the game first. No recipe count and no recipe list is shown until then.
+- Home > Now, "Reached level N": the time at the level before is read only from stamps of the new kind.
+
 Revision 2 answers the founder review of revision 1. The short version: fewer screens, fewer columns, no sentences about why data is missing, and the fix for missing history (gates C and I) is built before anything is worded around it. Section 7 lists the few points where this document does not follow the review, and why.
 
 This document sits on top of `docs/UX_OVERHAUL.md`. The design system there (section 2) and the navigation pattern (sub-tab row, detail page with Back) stay. This document decides, per screen, what is shown and what is cut. Where the two disagree on content, this one wins and `UX_OVERHAUL.md` sections 3 and 4 are updated in the same change that builds it.
@@ -328,8 +337,10 @@ When shown: only dungeons with full runs. Columns Dungeon, Runs, Best (boss cloc
 - Hero: "Level 60", meta "Reached Fri 20 Nov 22:49 in Mount Hyjal". Date from `levelAt[60]` **[gate E]**; until then the LEVELUP event or the session LEVEL_UP row; with none stored the meta is left out.
 - One line: "6d 20h played, 1h 15m at 60" (`played.total` and `played.level`, each plus seconds since `played.atEpoch`).
 - With gate I, a second line: lifetime pulls, deaths and wipes of the character.
-- Levels table: Level, Reached, Zone. Only rows with a date. Exact: "Fri 20 Nov, 22:49". Bound within a day: "Tue 17 Nov", tooltip "Between 17:02 and 20:06". Bound over days: "18 to 19 Nov". One muted line under the table: "N levels have no recorded date."
-- On the save: 21 exact dates (60, 59, 58, 57, 54, 53, 51, 50, 49, 47, 46, 45, 44, 41, 40, 39, 29, 28, 27, 3, 2).
+- Levels table: Level, Reached, Zone. Only rows with a date. Exact: "Fri 20 Nov, 22:49". Bound within a day: "Tue 17 Nov", tooltip "Between 17:02 and 20:06". Bound over days: "18 to 19 Nov". Levels that share one bound are one row: "30 to 37". One muted line under the table: "N levels have no recorded date."
+- A bound comes from the stored session records: a level was reached after every stored moment the character was still below it (the start and the end of a session, an exact date of a lower level) and before every stored moment it was already on it. A record whose level was not read says nothing.
+- On the save: 21 exact dates (60, 59, 58, 57, 54, 53, 51, 50, 49, 47, 46, 45, 44, 41, 40, 39, 29, 28, 27, 3, 2) and 9 bound rows: 55 to 56 (18 to 19 Nov), 52 (Tue 17 Nov, between 17:02 and 20:06), 48 (15 to 16 Nov), 42 to 43 (12 to 13 Nov), 38 (Wed 11 Nov), 30 to 37 (8 to 11 Nov), 18 to 26 (5 to 7 Nov), 6 to 17 and 4 to 5 (Thu 5 Nov). No level is without a row.
+- `levelAt` **[gate E]** keeps both kinds, copied at every load and before a pickup deletes session records, so a row does not fade with the next pickup.
 
 **Removed in the very next build, before anything else:** the columns Time at level, Played by then and Vs previous with their green and red faster/slower deltas. The stored played stamps are overwritten at every login, so every one of those values is wrong except level 60. Gate E fixes the stamp and discards the wrong ones; the columns return only when a third of the rows have an exact stamp (rule 0.3), with no version sentence in between.
 
@@ -341,7 +352,7 @@ When shown: only dungeons with full runs. Columns Dungeon, Runs, Best (boss cloc
 
 **Why I open it.** How far to the next standing, and what moved.
 
-**The answer.** "Last gain: Barkskin Burrow +1,005, yesterday" (`story.rep`). Left out when no gain is stored. Barkskin Burrow is a row of the list (it is in the character's stored reputation block) and with the sort below it is the first row.
+**The answer.** "Last gain: Barkskin Burrow +1,005, yesterday" (`story.rep`): the first row of the list. Left out when no gain is stored.
 
 **Columns.**
 
@@ -349,13 +360,13 @@ When shown: only dungeons with full runs. Columns Dungeon, Runs, Best (boss cloc
 |---|---|
 | Faction | name |
 | Standing | "Revered" |
-| Progress | bar and what is left: "16,072 to Exalted" (21,000 minus 4,928). Tooltip "4,928 / 21,000". At the top standing: "Exalted" and a full bar. "Not known yet" when the client does not answer. |
-| Last gain | "+1,005 · Yesterday". Blank when none is stored. |
+| Progress | bar and what is left: "16,072 to Exalted" (21,000 minus 4,928). Tooltip "4,928 / 21,000". At the top standing: "Exalted" and a full bar. "Not known yet" when the client does not answer for the faction; the column is left out while it answers for none. |
+| Last gain | "+1,005 · Yesterday": what the faction gained on the calendar day of its newest stored gain, and that day. Blank when none is stored. |
 | This session | only when a faction gained this session (rule 0.3) |
 
-**Order.** Factions with a stored gain first, newest gain first. Then the rest by standing. Neutral factions with no gain go last, muted. No fold row.
+**Order.** Factions with a stored gain first: by the day of the last gain, newest first, then by what that day brought, largest first. Then the rest by standing. Neutral factions with no gain go last, muted. No fold row.
 
-**Chevron.** Only on a faction with stored gains; it opens the gain history. Other rows do not open.
+**Chevron.** Only on a faction with stored gains; it opens the gain history ("GAINS SINCE THU 19 NOV", the sum on the right; When, Source, Amount; a gain with no stored source has a blank Source cell). Other rows do not open.
 
 Rows count only gains that carry this character's id **[gate F: `g` on new rows]**; older rows count through their session record.
 
@@ -369,13 +380,13 @@ Rows count only gains that carry this character's id **[gate F: `g` on new rows]
 
 **Crafted table.** Header "CRAFTED SINCE WED 11 NOV", meta "1,038 items" (units only; crafts and caps are not mentioned). Columns When, Item (with "x49"), Profession (hidden by rule 0.3 when mostly blank).
 
-One row per batch: consecutive crafts of the same item, profession and session at most 60 s apart. When "23:46 to 23:48" or one time. Day rows count items: "YESTERDAY · 111 ITEMS". On the save: 1,000 rows become 59; newest: Truesilver Bar x6 23:50, Gold Bar x3 23:49, Mithril Bar x49 23:46 to 23:48. New crafts are merged at write time **[gate F: `t1`]** so the list holds months.
+One row per batch: consecutive crafts of the same item, profession and session at most 60 s apart. When "23:46 to 23:48" or one time. Day rows count items: "YESTERDAY · 111 ITEMS" (a batch counts on the day of its last craft). On the save: 1,000 rows become 59; newest: Truesilver Bar x6 23:50, Gold Bar x3 23:49, Mithril Bar x49 23:46 to 23:48. New crafts are merged at write time **[gate F: `t1`]** so the list holds months.
 
 **Cut.** The "137 recipes learned" headline. The Recipes learned table (126 of 137 rows have no profession; it returns with `recipeBook`). "N from other professions". "Other" for a missing profession. "(older crafts no longer stored)".
 
 **Not in this pass.** What a skill-up cost and what to learn next: both need trainer and recipe reference data. Noted for a later proposal.
 
-**Empty.** "No profession learned yet."
+**Empty.** "No profession learned yet." With nothing crafted the Crafted section is left out.
 
 ---
 

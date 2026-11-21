@@ -2247,10 +2247,15 @@ local function onPlayed(total, levelt)
   c.played.total = total
   c.played.level = plainNum(levelt)
   c.played.atEpoch = (GetServerTime and GetServerTime()) or time()
+  -- the played total at the moment this level was reached: the total minus the time at the level, which is the
+  -- same on every answer while on the level (before 0.9.52 the stamp was the total itself, so each login moved it).
+  -- An answer with no level time stamps nothing.
   local lvl = plainNum(rd(UnitLevel, "player"))
-  if lvl and lvl > 0 then
+  local lt = c.played.level
+  if lvl and lvl > 0 and lt and lt >= 0 and lt <= total then
     c.playedAtLevel = c.playedAtLevel or {}
-    c.playedAtLevel[lvl] = total          -- stamp real /played at each level for the pace chart
+    c.playedAtLevel[lvl] = total - lt
+    c.playedExact = true
   end
 end
 
@@ -2462,7 +2467,8 @@ function Emitter.repGain(msg)
   local L = locStamp()
   ns.DB.story.rep = ns.DB.story.rep or {}
   local rep = ns.DB.story.rep
-  rep[#rep + 1] = { t = now, s = ns.DB.active, faction = faction, amount = amount, src = src,
+  -- (g: the character, so the row is still this character's when its session record has been picked up, 0.9.52)
+  rep[#rep + 1] = { t = now, s = ns.DB.active, g = ns.charGuid(), faction = faction, amount = amount, src = src,
     zone = L.zone, sub = L.sub, map = L.map, x = L.x, y = L.y }
   while #rep > 2000 do table.remove(rep, 1) end
 end

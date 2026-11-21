@@ -406,17 +406,19 @@ function Now.lookItems(now)
   end
   -- 3 level-ups
   local db = (ns.DB and ns.char()) or {}
-  local pal = type(db.playedAtLevel) == "table" and db.playedAtLevel or {}
+  -- (the /played stamps: the played total when each level was reached, read only from a block whose stamps are
+  -- all of that kind, 0.9.52; the time at level L is then the stamp of L + 1 minus the stamp of L)
+  local pal = (db.playedExact and type(db.playedAtLevel) == "table") and db.playedAtLevel or {}
   for i = #ev, 1, -1 do
     local e = ev[i]
     if e.kind == "LEVELUP" then
       local lvl = tonumber(tostring(e.text or ""):match("(%d+)%s*$"))
       local meta = { UI.fmtClock(e.t) }
-      if lvl and pal[lvl - 1] and pal[lvl - 2] then
-        local took = num(pal[lvl - 1]) - num(pal[lvl - 2])
+      if lvl and pal[lvl] and pal[lvl - 1] then
+        local took = num(pal[lvl]) - num(pal[lvl - 1])
         if took > 0 then meta[#meta + 1] = UI.fmtDur(took, { minutes = true }) .. " at level " .. (lvl - 1) end
-        if took > 0 and pal[lvl - 3] then
-          local before = num(pal[lvl - 2]) - num(pal[lvl - 3])
+        if took > 0 and pal[lvl - 2] then
+          local before = num(pal[lvl - 1]) - num(pal[lvl - 2])
           if before > 0 then
             local d = UI.fmtDelta(took - before)
             if d ~= "same as best" then meta[#meta + 1] = d .. " than level " .. (lvl - 2) end

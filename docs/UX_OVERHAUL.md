@@ -515,7 +515,7 @@ All measurements are in window units. "y" is relative to the component's own top
 |---|---|---|
 | **Home** | Now · Sessions · Fights · Deaths | How this session is going, and every session, pull and death before it. |
 | **Dungeons** | Runs · By dungeon | Every dungeon run against your best, and which dungeon is worth your time. |
-| **Character** | Leveling · Reputation · Professions | Pace to the next level, your standing, and your skills. |
+| **Character** | Leveling · Reputation · Professions | Your level, your standing, and your skills. |
 | **Loot** | Items · Gold | What you picked up, and where every copper came from and went. |
 | **Settings** (pinned bottom) | General · Gold display · Data and sync | How the window and notifications behave, and whether your data reaches everbuff.gg. |
 
@@ -1297,101 +1297,94 @@ At WIDE (tonight too, since it only adds cards): 6 cards, adding XP ("4,210" / "
 
 ### 4.10 Character > Leveling (phase 2; Quests folded in)
 
-**Tooltip:** "How fast you level compared with before, and where your XP comes from."
+Content as `docs/UX_PRAGMATIC.md` 3.1 has it (the pragmatic pass replaced the pace comparison, the four cards and the time columns of this section: the stored played stamps were overwritten at every login).
+
+**Tooltip:** "Your level, when you reached each one, and the time played."
 
 **Hero:**
-- TITLE "Level 18".
-- HERO, the comparison only Leveling has:
-  - "On pace to be 4m faster than level 17" (`good`), or "...slower..." (`warn`);
-  - before 10 active minutes: "1h 0m at level 18 so far".
-- META 1: "XP 9,100 / 11,800 · 77% · rested 1,200" (the same format as Now), right "42m to level 19".
-- Bar with the rested overlay, as on Now.
+- TITLE: the character's full name.
+- At the level cap: HERO "Level 60"; META 1 "Reached Fri 20 Nov 22:49 in Mount Hyjal" (left out unless the exact moment is stored); META 2 "6d 20h played, 1h 15m at 60". No bar, no cards, no Quests table.
+- Leveling: HERO "42m to level 19" (before 10 active minutes: "Level 18"); META 1 "XP 9,100 / 11,800 · 77% · rested 1,200", right "at 12,400 XP per hour"; the bar with the rested overlay, as on Now.
 
-**Cards:**
+**Cards (leveling only, each once /played has answered):**
 
 | Label | Value | Meta |
 |---|---|---|
-| TIME AT LEVEL 18 | "1h 0m" | "so far" |
-| BEST LEVEL TIME | "38m" | "level 9" |
-| QUEST XP SHARE | "63%" | "kills 37%" |
-| XP IN DUNGEONS | "6%" | "of all XP at this level" |
+| PLAYED | "4h 17m" | "on this character" |
+| TIME AT LEVEL 18 | "30m" | "so far" |
 
-XP sources are two: quests and kills (dungeon XP is split into both). Dungeons is a separate fact.
-
-**`LEVELS` table** (24 + 368 fixed + 4 gaps (48) + Reached 244)
+**`LEVELS` table**
 
 | Column | Width | Content |
 |---|---|---|
-| Level | 48 | |
-| Reached | flex (max 360) | `fmtWhen` |
-| Time at level | 104 | "1h 0m so far" for the current level |
-| Played by then | 112 | |
-| Vs previous | 104 | `fmtDelta` |
+| Level | 48, right | "53", or "30 to 37" for levels that share one bound |
+| Reached | 136 | exact: "Fri 20 Nov, 22:49". A level known only between two stored moments: "Tue 17 Nov" (hover "Between 17:02 and 20:06"), or "18 to 19 Nov" over days |
+| Zone | flex | only on an exact row |
 
-**`QUESTS TURNED IN` table** (section right "21 quests"; 24 + 308 fixed + 4 gaps (48) + Quest 304)
+- A level with nothing stored has no row. One muted line under the table counts them: "12 levels have no recorded date."
+- No Time at level, Played by then or Vs previous column.
+
+**`QUESTS SINCE <day>` table** (leveling only; the header names the day of the oldest stored quest, no count)
 
 | Column | Width |
 |---|---|
 | When | 40 |
 | Quest | flex |
 | Place | 140 |
-| XP | 56 |
 | Gold | 72 |
 | Coords | 72, WIDE only |
 
-- The STATUS column is cut.
-- An uncached title reads "Quest 1234" in `fgMuted`, with the tooltip "The game did not give the quest name when you turned it in." It is resolved later through the guarded `C_QuestLog.GetTitleForQuestID` (present in `Deps.lua` and already used in `Economy.lua`).
+- An uncached title reads "Quest 1234" in `fgMuted`, with the tooltip "The game did not give the quest name when you turned it in."
+- A quest with no gold recorded has a blank Gold cell.
 
-**Empty:**
-- Levels: "Your first level-up is timed from now."
-- Quests: "Turn in a quest and it shows here with its XP and gold."
-- At max level the hero reads "Level 60 · max level", and the cards become PLAYED, GOLD PER HOUR, QUESTS, DUNGEON RUNS.
-
-**Rail:** `PACE` (XP per hour per session, last 10) and `BEST LEVEL`.
+**Empty:** a table with no rows is left out; no sentence takes its place.
 
 ### 4.11 Character > Reputation and Professions (phase 2)
 
+Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
+
 **Reputation**
-- Tooltip: "Your standing with every faction, and what you gained this session."
-- Columns at 900 (24 + 388 fixed + 4 gaps (48) + Faction 224):
+- Tooltip: "Your standing with every faction, what is left to the next one, and the last gain."
+- Answer line: "Last gain: **Barkskin Burrow +1,005**, yesterday" (the first row of the list). Left out when no gain is stored.
+- Section header "FACTIONS", right "19 factions".
+- Columns:
 
   | Column | Width | Content |
   |---|---|---|
-  | Faction | flex | |
+  | Faction | flex | `fgMuted` for a Neutral faction with no stored gain |
   | Standing | 88 | `fgSubtle`; Hated and Hostile in `bad` with the dot |
-  | Progress | 200 | bar 120x6 (`accent` on `sunken`) plus S2 and "1,250 / 3,000" |
-  | This session | 88 | "+75", or "-" |
-  | › | 12 | |
-  | Last gain | 96, WIDE only | |
+  | Progress | 120 bar + S2 + text | bar 120x6 and what is left: "16,072 to Exalted"; "Exalted" with a full bar at the top; "Not known yet" (`fgMuted`) for a faction the client does not answer for. The column is left out while the client answers for no faction. |
+  | Last gain | 96, right | "+1,005 · Yesterday": what the faction gained on the day of its newest stored gain, and that day. Blank with none. Left out when no faction has one. |
+  | This session | 88 | "+75"; a column only while a faction gained this session |
+  | › | 12 | only on a faction with stored gains |
 
-- The faction page shows "how you earned it" (existing data): When · Source · Amount.
-- Empty (inline): "Turn in quests or defeat a faction's enemies and your gains show here. Factions you know already are listed with their standing." Known factions still list.
-- Plurals: "1 faction known".
+- Order: factions with a stored gain first, by the day of the last gain (newest first), then by that day's gain (largest first); then the rest by standing; a Neutral faction with no gain last.
+- Only a faction with stored gains opens. Its page: the name, "Revered · 16,072 to Exalted", section "GAINS SINCE <day>" with the sum on the right, table When · Source · Amount. A gain with no stored source has a blank Source cell (hover "Source: Not recorded"); Source is a column only while a third of the rows name one.
+- Empty (inline): "No faction met yet."
 
 **Professions**
-- Tooltip: "Your skills, what you crafted, and when to train next."
+- Tooltip: "Your skills and what you crafted."
+- No headline above the rows.
 - Profession rows (ROW2):
-  - icon 24; title "Tailoring"; meta "Journeyman · 4 recipes known";
+  - icon 24; title "Tailoring"; meta "Journeyman" (no recipe count: the stored recipe rows rarely name their profession);
   - bar 160x6 at x 320; "118 / 150" right-aligned at `w-12`;
   - training line (META `fgSubtle`, no accent; rank thresholds Journeyman 50, Expert 125, Artisan 200):
     - from 10 below the next rank's threshold up to the threshold: "Expert training opens at 125";
     - at or past the threshold while the rank is untrained: "Expert training is open at any Tailoring trainer".
-  - Learned primary and secondary professions are listed. The list is the game's skill lines plus any crafted or learned recipe's profession.
-- `CRAFTED` table (24 + 184 fixed + 3 gaps (36) + Item flex, max 360; the table then shrinks):
+  - Learned primary and secondary professions are listed. The list is the game's skill lines plus any crafted or learned recipe's profession; one the game has not listed yet has an empty bar and no number.
+- `CRAFTED SINCE <day>` table, right "1,038 items" (the header names the day of the oldest stored craft):
 
   | Column | Width | Content |
   |---|---|---|
-  | When | 40 | |
-  | Item | flex | quality colour, no brackets |
-  | Profession | 104 | the trade skill open at craft time, else "Other" (muted, with a tooltip) |
-  | Qty | 40 | |
+  | When | 40 | "23:50", or "23:46 to 23:48" for a batch |
+  | Item | flex | quality colour, no brackets, "x49" after the name when more than one |
+  | Profession | 104 | blank when the row names none; a column only while a third of the rows name one |
 
-  Section right: "2 crafts · 2,777 items".
-- `RECIPES LEARNED` table: When · Recipe · Profession.
-- Cut: the CRAFTS and UNKNOWN chips, and "MILESTONES -" and "SKILL-UPS -". Skill-ups become the meta "+12 this session".
+  One row per batch: crafts that follow each other with the same item, profession and session, each at most 60 s after the one before. Day rows count items: "YESTERDAY · 111 ITEMS".
+- Cut: the headline, the recipe count on a row, the `RECIPES LEARNED` table, the Qty column, "Other", "+12 this session".
 - Empty:
-  - Professions: "Learn a profession at any trainer and its skill shows here."
-  - Crafted: "Craft something and it is listed here."
+  - Professions: "No profession learned yet."
+  - Crafted: the section is left out.
 
 ### 4.12 Settings (phase 2)
 

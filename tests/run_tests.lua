@@ -137,7 +137,28 @@ check("xp cur/max stored", ns.char().xp.cur == 50 and ns.char().xp.max == 1200)
 -- ── /played ──
 M.fire("TIME_PLAYED_MSG", 90061, 3600)
 check("played total stored", ns.char().played.total == 90061)
-check("played stamped at level", ns.char().playedAtLevel and ns.char().playedAtLevel[12] == 90061)
+-- (the stamp of a level is the played total when the level was reached: the total minus the time at the level,
+-- docs/UX_PRAGMATIC.md 3.1 gate E. Before 0.9.52 it was the total itself, which every later login moved.)
+check("played stamped at level: the total when the level was reached (90061 - 3600)", ns.char().playedAtLevel and ns.char().playedAtLevel[12] == 86461, ns.char().playedAtLevel and ns.char().playedAtLevel[12])
+check("played: the block is marked as holding only stamps of that kind", ns.char().playedExact == true)
+M.fire("TIME_PLAYED_MSG", 93661, 7200)
+check("played: a later answer on the same level leaves the stamp where it was", ns.char().playedAtLevel[12] == 86461 and ns.char().played.total == 93661, ns.char().playedAtLevel[12])
+M.fire("TIME_PLAYED_MSG", 93700, nil)
+check("played: an answer with no level time stamps nothing", ns.char().playedAtLevel[12] == 86461 and ns.char().played.total == 93700)
+M.fire("TIME_PLAYED_MSG", 90061, 3600)
+do
+  -- the stamps written before 0.9.52 are invalid: the load discards them, once, and keeps the ones written since
+  local old = { schema = 2, sessions = {}, loot = { log = {} }, characters = {
+    A = { played = { total = 589870, level = 3968 }, playedAtLevel = { [59] = 580730, [60] = 589870 } },
+    B = { playedExact = true, playedAtLevel = { [12] = 86461 } }, C = {} } }
+  ns.migrateDB(old)
+  check("played: stamps from before 0.9.52 are discarded at load, the played time itself is kept", old.characters.A.playedAtLevel == nil and old.characters.A.played.total == 589870 and old.characters.A.played.level == 3968)
+  check("played: stamps written since are kept, and a block with none is not touched", old.characters.B.playedAtLevel[12] == 86461 and next(old.characters.C) == nil)
+  -- (the /played answer writes the stamp and the mark together)
+  old.characters.A.playedAtLevel, old.characters.A.playedExact = { [60] = 585902 }, true
+  ns.migrateDB(old)
+  check("played: the next load discards nothing more", old.characters.A.playedAtLevel[60] == 585902)
+end
 
 -- ── fight lifecycle through the REAL recorder ──
 M.units.target = { name = "Kobold Miner", hostile = true, guid = "Creature-0-1-1-1-6-000B", cls = "normal" }
@@ -1784,6 +1805,45 @@ M.fire("MAIL_CLOSED")
 local arows, asum = ns.Market.buildAuctions()
 -- (the bid of 12,345 has no item and no auction mail names its price: it is counted as a bid, not as bought)
 check("auctions pane rows and sums", #arows >= 4 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 240 and asum.bids == 1, asum.spent)
+do
+  -- crafts are batched as they are written (0.9.52): the same item, profession and session within 60 s is one row
+  local list = ns.char().crafts
+  local n0, t0 = #list, M.epoch
+  M.tradeSkillName = "First Aid"; M.fire("TRADE_SKILL_SHOW")
+  ns.Market.craft("Linen Bandage", 1, 1251)
+  M.epoch = t0 + 2; ns.Market.craft("Linen Bandage", 1, 1251)
+  M.epoch = t0 + 62; ns.Market.craft("Linen Bandage", 2, 1251)
+  local row = list[#list]
+  check("craft batch: three crafts within 60 s of each other are one row that counts the items", #list == n0 + 1 and row.count == 4 and row.t == t0 and row.t1 == t0 + 62, row.count)
+  M.epoch = t0 + 62 + 61; ns.Market.craft("Linen Bandage", 1, 1251)
+  check("craft batch: 61 s after the last craft a new row starts, with no t1 of its own", #list == n0 + 2 and list[#list].count == 1 and list[#list].t1 == nil and row.count == 4)
+  M.epoch = t0 + 62 + 62; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  check("craft batch: another item is another row", #list == n0 + 3 and list[#list].item == "Heavy Linen Bandage")
+  M.fire("TRADE_SKILL_CLOSE"); ns.Market.tradeSkill = nil
+  M.epoch = t0 + 62 + 63; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  check("craft batch: the same item with another profession on the row (none) is another row", #list == n0 + 4 and list[#list].prof == nil)
+  local s0 = ns.DB.active
+  ns.DB.active = "another-session"
+  M.epoch = t0 + 62 + 64; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  ns.DB.active = s0
+  check("craft batch: another session is another row", #list == n0 + 5)
+  ns.Market.tradeSkill = ""
+  local rec2 = ns.Market.recipe("Anti-Venom")
+  local rec3 = ns.Market.recipe("Smelt Tin", "")
+  ns.Market.tradeSkill = nil
+  check("recipe: an empty profession name is never stored", rec2.prof == nil and rec3.prof == nil)
+  for i = #list, n0 + 1, -1 do table.remove(list, i) end
+  table.remove(ns.char().recipes); table.remove(ns.char().recipes)
+  M.epoch = t0
+end
+do
+  -- a reputation gain carries its character (0.9.52), so it is still this character's when its session record is gone
+  local rep0 = #(ns.DB.story.rep or {})
+  M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "Reputation with Stormwind increased by 25.")
+  local row = ns.DB.story.rep and ns.DB.story.rep[#ns.DB.story.rep]
+  check("rep gain: the row carries the character's GUID beside its session", #ns.DB.story.rep == rep0 + 1 and row.g == ns.charGuid() and row.s == ns.DB.active and row.amount == 25, row and row.g)
+  table.remove(ns.DB.story.rep)
+end
 local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
 check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.char().crafts, ns.char().recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
