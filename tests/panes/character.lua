@@ -112,7 +112,7 @@ return function(P)
       local r = V.rep
       check("Reputation " .. sz .. ": opened", c ~= nil and r ~= nil)
       if r then
-        -- (Last gain at every size; This session only while a faction gained this session, 0.3)
+        -- (Last day gained at every size; This session only while a faction gained this session, 0.3)
         do
           local want = { "name", "standing" }
           local anyP, anyL, anyS = false, false, false
@@ -127,7 +127,7 @@ return function(P)
           want[#want + 1] = "_chev"
           local got = {}
           for _, c2 in ipairs(r.tbl.full) do if r.tbl.cols[c2.key] then got[#got + 1] = c2.key end end
-          check("Reputation " .. sz .. ": Faction, Standing, then Progress, Last gain and This session only while a row has a value", table.concat(got, ",") == table.concat(want, ","), table.concat(got, ","))
+          check("Reputation " .. sz .. ": Faction, Standing, then Progress, Last day gained and This session only while a row has a value", table.concat(got, ",") == table.concat(want, ","), table.concat(got, ","))
           local dash = false
           for i = 1, r.tbl.shownN do for _, c2 in ipairs(r.tbl.spec) do local cell = r.tbl.rows[i].c[c2.key]; if cell and cell.text == "-" then dash = true end end end
           check("Reputation " .. sz .. ": no cell is a dash", not dash)
@@ -423,16 +423,17 @@ return function(P)
     for i = 1, r.tbl.shownN do local row = r.tbl.rows[i]; names[#names + 1] = row.item.name; byName[row.item.name] = row end
     eq("Reputation: factions with a stored gain first (newest day first), then by standing, a Neutral one with no gain last", table.concat(names, ", "),
       "Stormwind, Gnomeregan Exiles, Ironforge, Defias Brotherhood, Darnassus")
-    eq("Reputation: the answer is the last gain: the faction, what that day brought, the day", r.answer, "Last gain: Stormwind +255, today")
+    eq("Reputation: the answer is the first row: the faction, what that day brought, the day; never called one gain", r.answer, "Stormwind +255 today")
+    eq("Reputation: the column says what the number is", r.spec.last.label, "Last day gained")
     check("Reputation: the answer line is shown, above the list", P.visible(r.summary) and P.box(r.summary).t < P.box(r.head).t)
     local sw, hostile = byName.Stormwind, byName["Defias Brotherhood"]
     check("Reputation: Hostile reads bad with the dot", hostile and hostile.c.standing.text:find("Hostile", 1, true) ~= nil and near(hostile.c.standing._color[1], UI.C.bad[1], 0.01))
     eq("Reputation: Progress is what is left to the next standing (21,000 - 4,928)", sw.c.prog.text, "16,072 to Exalted")
     eq("Reputation: at the top standing Progress reads it, with a full bar", byName.Ironforge.c.prog.text, "Exalted")
     check("Reputation: a faction the client does not answer for reads Not known yet, muted, never a dash", byName.Darnassus.c.prog.text == "Not known yet" and near(byName.Darnassus.c.prog._color[1], UI.C.fgMuted[1], 0.01))
-    eq("Reputation: Last gain is the day's gain and the day", sw.c.last.text, "+255 \194\183 Today")
+    eq("Reputation: Last day gained is the day's gain and the day", sw.c.last.text, "+255 \194\183 Today")
     eq("Reputation: a gain that carries its character counts after its session record is gone", byName["Gnomeregan Exiles"].c.last.text, "+75 \194\183 " .. UI.fmtDate(old, now))
-    check("Reputation: a gain with no character and no session record is not attributed", hostile.item.lastGain == nil and hostile.c.last.text == "")
+    check("Reputation: a gain with no character and no session record is not attributed", hostile.item.lastGain == nil and hostile.item.hasGains == false and hostile.item.partial == true and hostile.c.last.text == "")
     check("Reputation: another character's gain is not this character's", byName.Darnassus.item.lastGain == nil and byName.Darnassus.c.last.text == "")
     check("Reputation: This session is a column while a faction gained this session", r.tbl.cols.ses ~= nil and sw.c.ses.text == "+255" and hostile.c.ses.text == "", sw.c.ses.text)
     check("Reputation: a Neutral faction with no gain is muted", near(byName.Darnassus.c.name._color[1], UI.C.fgMuted[1], 0.01) and not near(byName["Gnomeregan Exiles"].c.name._color[1], UI.C.fgMuted[1], 0.001))
@@ -444,6 +445,7 @@ return function(P)
     check("Reputation: the faction page lists the stored gains", #V.FACTION.hist == 2 and V.FACTION.hist[1].source == "Quest: The Fargodeep Mine" and V.FACTION.tbl.rows[1].c.amount.text == "+250")
     eq("Reputation: its header says where the stored gains start, and their sum", V.FACTION.head.label.text .. " | " .. V.FACTION.head.meta.text, ("GAINS SINCE " .. UI.fmtSince(now)):upper() .. " | +255")
     check("Reputation: a gain with no stored source has a blank Source cell, never Other", V.FACTION.tbl.cols.source ~= nil and V.FACTION.tbl.rows[2].c.source.text == "", V.FACTION.tbl.rows[2].c.source.text)
+    check("Reputation: the faction page is whole (no stored gain of the faction without a character)", V.FACTION.partial == nil)
     check("Reputation: the faction page says what is left, not the raw numbers", V.FACTION.meta.text:find("16,072 to Exalted", 1, true) ~= nil and V.FACTION.meta.text:find("+255 this session", 1, true) ~= nil, V.FACTION.meta.text)
     r.detail.Close(); M.settle()
     check("Reputation: Back returns to the list", not r.detail.IsOpen() and P.visible(r.list))
@@ -451,10 +453,63 @@ return function(P)
     for _, row in ipairs(ns.DB.story.rep) do if row.s == ns.DB.active then row.s, row.g = "gone-4", g end end
     V.renderRep(); M.settle()
     check("Reputation: with no gain this session there is no This session column", r.tbl.cols.ses == nil and r.tbl.cols.last ~= nil)
-    -- no stored gain at all: no answer, no Last gain column, nothing opens
+    -- no stored gain at all: no answer, no Last day gained column, nothing opens
+    -- A stored gain of a session the desktop picked up, with no character on it, may be this character's. On the day
+    -- the cell shows (or after it) the day's total cannot be said: the cell is blank, never the smaller number.
+    do
+      local D = now - (now % 86400) + 43200   -- (a noon, so +-1 h stays on the day)
+      local function setRep(extra)
+        ns.DB.story.rep = {
+          { s = "gone-5", g = g, t = D - 2 * 86400, faction = "Stormwind", amount = 100 },
+          { s = "gone-5", g = g, t = D - 86400, faction = "Stormwind", amount = 200 },
+          { s = "gone-5", g = g, t = D - 86400 + 60, faction = "Stormwind", amount = 50 },
+          { s = "gone-5", g = g, t = D - 86400, faction = "Gnomeregan Exiles", amount = 75 },
+          extra,
+        }
+        V.renderRep(); M.settle()
+        local by = {}
+        for i = 1, r.tbl.shownN do by[r.tbl.rows[i].item.name] = r.tbl.rows[i] end
+        return by
+      end
+      local by = setRep(nil)
+      eq("Reputation: with every stored gain attributed the cell is the day's sum", by.Stormwind.c.last.text, "+250 \194\183 " .. UI.fmtDate(D - 86400, now))
+      by = setRep({ s = "gone-6", t = D - 86400 + 3600, faction = "Stormwind", amount = 450 })
+      check("Reputation: a stored gain with no character on the shown day makes the cell blank, not a smaller number",
+        by.Stormwind.c.last.text == "" and by.Stormwind.item.partial == true and by.Stormwind.item.lastGain == nil and by.Stormwind.item.dayGain == nil, by.Stormwind.c.last.text)
+      check("Reputation: the faction still opens its stored gains", by.Stormwind.c._chev.text ~= "" and by.Stormwind.item.hasGains == true)
+      eq("Reputation: the answer is then the first row that shows a gain", r.answer, "Gnomeregan Exiles +75 " .. (UI.fmtDate(D - 86400, now) == "Yesterday" and "yesterday" or ("on " .. UI.fmtDate(D - 86400, now))))
+      eq("Reputation: the blank faction stands with the rest, by standing (after Exalted Ironforge)", r.tbl.rows[1].item.name .. ", " .. r.tbl.rows[2].item.name .. ", " .. r.tbl.rows[3].item.name, "Gnomeregan Exiles, Ironforge, Stormwind")
+      click(by.Stormwind); M.settle()
+      check("Reputation: its page lists the gains but says no start and no sum", r.detail.IsOpen() and #V.FACTION.hist == 3 and V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta) and V.FACTION.partial == true, V.FACTION.head.label.text)
+      r.detail.Close(); M.settle()
+      by = setRep({ s = "gone-6", t = D + 3600, faction = "Stormwind", amount = 450 })
+      check("Reputation: a stored gain with no character on a later day: the older day is not shown as the last one", by.Stormwind.c.last.text == "" and by.Stormwind.item.partial == true)
+      by = setRep({ s = "gone-6", t = D - 2 * 86400 + 3600, faction = "Stormwind", amount = 450 })
+      eq("Reputation: a stored gain with no character on an earlier day leaves the last day's sum exact", by.Stormwind.c.last.text, "+250 \194\183 " .. UI.fmtDate(D - 86400, now))
+      click(by.Stormwind); M.settle()
+      check("Reputation: but the page, which starts on that earlier day, says no start and no sum", V.FACTION.head.label.text == "GAINS" and not P.visible(V.FACTION.head.meta), V.FACTION.head.label.text)
+      r.detail.Close(); M.settle()
+      -- the same row once its session is proven (a craft of this character carries the session id): it counts
+      local keepCrafts = db.crafts
+      db.crafts = { { s = "gone-6", t = D, item = "Tin Bar", id = 3576, prof = "Mining" } }
+      by = setRep({ s = "gone-6", t = D - 86400 + 3600, faction = "Stormwind", amount = 450 })
+      ns.Rep.harvest(ns.DB); V.renderRep(); M.settle()
+      eq("Reputation: after the harvest proved the session by a craft, the gain counts", r.tbl.rows[1].c.last.text .. " " .. r.tbl.rows[1].item.name, "+700 \194\183 " .. UI.fmtDate(D - 86400, now) .. " Stormwind")
+      db.crafts = keepCrafts
+      -- a pickup: rows of before 0.9.52 whose session records the ack deletes still count afterwards
+      ns.DB.sessions["old-1"] = { id = "old-1", guid = g, startedEpoch = D - 86400, endedEpoch = D - 86400 + 7200 }
+      ns.DB.story.rep = { { s = "old-1", t = D - 86400, faction = "Stormwind", amount = 300 }, { s = "old-1", t = D - 86400 + 30, faction = "Stormwind", amount = 25 } }
+      -- (applyAck also copies the level moments into the block and notes the pickup: both put back)
+      local lastAck, keepAt = ns.DB.combat.lastAck, db.levelAt
+      ns.applyAck({ sessions = { ["old-1"] = true } }, "file")
+      db.levelAt = keepAt
+      V.renderRep(); M.settle()
+      check("Reputation: old rows still show after applyAck deleted their session record", ns.DB.sessions["old-1"] == nil and r.tbl.rows[1].item.name == "Stormwind" and r.tbl.rows[1].c.last.text == "+325 \194\183 " .. UI.fmtDate(D - 86400, now), r.tbl.rows[1].c.last.text)
+      ns.DB.combat.lastAck = lastAck
+    end
     ns.DB.story.rep = {}
     V.renderRep(); M.settle()
-    check("Reputation: with no stored gain there is no answer line and no Last gain column", not P.visible(r.summary) and r.answer == nil and r.tbl.cols.last == nil and r.tbl.cols.prog ~= nil)
+    check("Reputation: with no stored gain there is no answer line and no Last day gained column", not P.visible(r.summary) and r.answer == nil and r.tbl.cols.last == nil and r.tbl.cols.prog ~= nil)
     eq("Reputation: the header counts the factions", r.head.meta.text, "5 factions")
     -- the client answers nothing (a save read outside the game): no Progress column, no bar, no row of "Not known yet"
     _G.GetNumFactions, _G.GetFactionInfo = nil, nil
@@ -483,22 +538,54 @@ return function(P)
     -- two crafts of 2: the row counts items
     crafts[#crafts + 1] = { s = "s1", t = D0 + 600, item = "Bronze Bar", count = 2, prof = "Mining" }
     crafts[#crafts + 1] = { s = "s1", t = D0 + 603, item = "Bronze Bar", count = 2, prof = "Mining" }
-    -- the same item in another session, and with no profession on the row: each its own row
+    -- the same item in another session is its own row; a craft stored with no profession joins the crafts of its
+    -- spell around it and reads their profession
     crafts[#crafts + 1] = { s = "s2", t = D0 + 610, item = "Bronze Bar", count = 2, prof = "Mining" }
     crafts[#crafts + 1] = { s = "s2", t = D0 + 612, item = "Bronze Bar", count = 2 }
     -- a row merged at write time (0.9.52) with the craft that follows its last second
     crafts[#crafts + 1] = { s = "s2", t = D0 + 3600, t1 = D0 + 3720, item = "Bolt of Linen Cloth", count = 49, prof = "Tailoring" }
     crafts[#crafts + 1] = { s = "s2", t = D0 + 3770, item = "Bolt of Linen Cloth", count = 1, prof = "Tailoring" }
+    -- the first craft of a round, stored before the profession was read (by spell id), then the rest of the round
+    crafts[#crafts + 1] = { s = "s2", t = D0 + 7200, item = "Tin Bar", id = 3576, count = 1 }
+    crafts[#crafts + 1] = { s = "s2", t = D0 + 7203, item = "Tin Bar", id = 3576, count = 1, prof = "Mining" }
+    crafts[#crafts + 1] = { s = "s2", t = D0 + 7206, item = "Tin Bar", id = 3576, count = 1, prof = "Mining" }
+    -- an item a quest made: no stored row of its spell names a profession
+    crafts[#crafts + 1] = { s = "s2", t = D0 + 7300, item = "Courier's Shipment", id = 260452, count = 1 }
     -- the day after
-    crafts[#crafts + 1] = { s = "s3", t = D0 + 86400, item = "Rough Arrow", count = 200 }
+    crafts[#crafts + 1] = { s = "s3", t = D0 + 86400, item = "Rough Arrow", count = 200, prof = "Engineering" }
     db.crafts = crafts
     local batches, sum = ns._test.buildCrafts()
     local got = {}
-    for _, b in ipairs(batches) do got[#got + 1] = ("%s x%d (%d)"):format(b.item, b.count, b.crafts) end
-    eq("crafts: one row per batch, newest first: same item, profession and session, at most 60 s apart", table.concat(got, ", "),
-      "Rough Arrow x200 (1), Bolt of Linen Cloth x50 (2), Bronze Bar x2 (1), Bronze Bar x2 (1), Bronze Bar x4 (2), Linen Bandage x1 (1), Linen Bandage x30 (30)")
-    check("crafts: the sum is the items of the stored list and where it starts", sum.items == 289 and sum.since == D0 and sum.batches == 7, sum.items)
-    check("crafts: a batch runs from its first craft to its last", batches[7].t == D0 and batches[7].t1 == D0 + 58 and batches[2].t == D0 + 3600 and batches[2].t1 == D0 + 3770)
+    for _, b in ipairs(batches) do got[#got + 1] = ("%s x%d (%d) %s"):format(b.item, b.count, b.crafts, tostring(b.prof)) end
+    eq("crafts: one row per batch, newest first: same spell and session, at most 60 s apart; the profession is the one a row of the spell names", table.concat(got, ", "),
+      "Rough Arrow x200 (1) Engineering, Tin Bar x3 (3) Mining, Bolt of Linen Cloth x50 (2) Tailoring, Bronze Bar x4 (2) Mining, Bronze Bar x4 (2) Mining, Linen Bandage x1 (1) First Aid, Linen Bandage x30 (30) First Aid")
+    check("crafts: a craft whose spell no stored row gives a profession is left out, with its item", (function() for _, b in ipairs(batches) do if b.item == "Courier's Shipment" then return false end end return true end)())
+    check("crafts: the sum is the items listed and where they start", sum.items == 292 and sum.since == D0 and sum.batches == 7, sum.items)
+    check("crafts: a batch runs from its first craft to its last", batches[7].t == D0 and batches[7].t1 == D0 + 58 and batches[3].t == D0 + 3600 and batches[3].t1 == D0 + 3770 and batches[2].t == D0 + 7200)
+    -- the cap: a list that has reached Market.CRAFT_CAP has lost its oldest rows, so its oldest day is cut
+    do
+      local cap = ns.Market.CRAFT_CAP
+      local DAY0 = D0 - 5 * 86400
+      local full = {}
+      -- 25 rows left of a longer day, the first of them the tail of a batch
+      for i = 0, 24 do full[#full + 1] = { s = "c1", t = DAY0 + i * 3, item = "Roast Raptor", id = 15856, count = 1, prof = "Cooking" } end
+      -- then whole days
+      for i = 0, cap - 26 do full[#full + 1] = { s = "c2", t = DAY0 + 86400 + i * 3, item = "Tin Bar", id = 3576, count = 1, prof = "Mining" } end
+      db.crafts = full
+      local b2, s2 = ns._test.buildCrafts()
+      check("crafts at the cap: the fixture is full", #full == cap, #full)
+      check("crafts at the cap: the oldest day is partial, so its batches and its items are left out", s2.items == cap - 25 and s2.since == DAY0 + 86400 and b2[#b2].item == "Tin Bar", s2.items)
+      V.renderProf(); M.settle()
+      eq("crafts at the cap: the header names the first whole day", V.prof.crafted.head.label.text .. " | " .. V.prof.crafted.head.meta.text, ("CRAFTED SINCE " .. UI.fmtSince(DAY0 + 86400)):upper() .. " | " .. UI.plural(cap - 25, "item"))
+      local cutDay = false
+      for i = 1, V.prof.crafted.tbl.shownN do local it = V.prof.crafted.tbl.rows[i].item; if it.ebSection and it.t < DAY0 + 86400 then cutDay = true end end
+      check("crafts at the cap: no day row for the cut day", not cutDay)
+      -- one row under the cap: nothing was dropped, the first day stays
+      table.remove(full)
+      b2, s2 = ns._test.buildCrafts()
+      check("crafts below the cap: the first day stays, with its items", s2.items == cap - 1 and s2.since == DAY0 and b2[#b2].item == "Roast Raptor", s2.items)
+      db.crafts = crafts
+    end
     V.renderProf(); M.settle()
     local p = V.prof
     local t = p.profRows[1]
@@ -510,23 +597,27 @@ return function(P)
     check("Professions: the training line 10 under the threshold", p.profRows[2].train.text == "Expert training opens at 125")
     check("Professions: Mining has no training line at 30 of 75", p.profRows[3].train.text == "")
     eq("Professions: the Crafted header says where the stored list starts", p.crafted.head.label.text, ("CRAFTED SINCE " .. UI.fmtSince(D0)):upper())
-    eq("Professions: its meta counts items, not crafts", p.crafted.head.meta.text, "289 items")
+    eq("Professions: its meta counts items, not crafts", p.crafted.head.meta.text, "292 items")
     local lines = {}
     for i = 1, p.crafted.tbl.shownN do
       local row = p.crafted.tbl.rows[i]
       lines[#lines + 1] = row.item.ebSection or (row.c.when.text .. " | " .. row.c.item.text .. " | " .. row.c.prof.text)
     end
     eq("Professions: a day row counts the day's items", lines[1], UI.fmtDay(D0 + 86400) .. " \194\183 200 items")
-    eq("Professions: a craft with no profession on its row has a blank Profession cell, never Other", lines[2], "12:00 | Rough Arrow x200 | ")
-    eq("Professions: the second day row", lines[3], UI.fmtDay(D0) .. " \194\183 89 items")
-    eq("Professions: a batch reads its span and its items after the name", lines[4], "13:00 to 13:02 | Bolt of Linen Cloth x50 | Tailoring")
+    eq("Professions: the newest batch", lines[2], "12:00 | Rough Arrow x200 | Engineering")
+    eq("Professions: the second day row (the quest item is not counted)", lines[3], UI.fmtDay(D0) .. " \194\183 92 items")
+    eq("Professions: the craft stored with no profession is in the batch of its spell, with the profession", lines[4], "14:00 | Tin Bar x3 | Mining")
+    eq("Professions: a batch reads its span and its items after the name", lines[5], "13:00 to 13:02 | Bolt of Linen Cloth x50 | Tailoring")
     eq("Professions: 30 crafts in under a minute are one row", lines[#lines], "12:00 | Linen Bandage x30 | First Aid")
     eq("Professions: a craft 61 s later is its own row, with no x1", lines[#lines - 1], "12:01 | Linen Bandage | First Aid")
     check("Professions: 7 batches under 2 day rows", #lines == 9, #lines)
-    -- Profession is a column only while a third of the rows name one
+    local blank = false
+    for _, l in ipairs(lines) do if l:find(" | $") then blank = true end end
+    check("Professions: every listed batch names its profession", not blank and p.crafted.tbl.cols.prof ~= nil)
+    -- with no profession on any craft nothing says these are profession crafts: nothing is listed
     for _, c2 in ipairs(db.crafts) do c2.prof = nil end
     V.renderProf(); M.settle()
-    check("Professions: with no profession on any craft the Profession column is left out", p.crafted.tbl.cols.prof == nil and p.crafted.tbl.cols.item ~= nil)
+    check("Professions: with no profession on any stored craft the Crafted section is left out", not P.visible(p.crafted.head) and not P.visible(p.crafted.tbl.frame))
     -- a profession only a craft names: listed, with no number standing in for its skill
     db.crafts[1].prof = "Alchemy"
     V.renderProf(); M.settle()

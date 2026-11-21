@@ -1344,8 +1344,8 @@ Content as `docs/UX_PRAGMATIC.md` 3.1 has it (the pragmatic pass replaced the pa
 Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
 
 **Reputation**
-- Tooltip: "Your standing with every faction, what is left to the next one, and the last gain."
-- Answer line: "Last gain: **Barkskin Burrow +1,005**, yesterday" (the first row of the list). Left out when no gain is stored.
+- Tooltip: "Your standing with every faction, what is left to the next one, and the last day it gained."
+- Answer line: "**Barkskin Burrow +1,005** yesterday" (the first row of the list; "on Thu 19 Nov" for an older day). Left out when no row shows a gain.
 - Section header "FACTIONS", right "19 factions".
 - Columns:
 
@@ -1354,12 +1354,12 @@ Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
   | Faction | flex | `fgMuted` for a Neutral faction with no stored gain |
   | Standing | 88 | `fgSubtle`; Hated and Hostile in `bad` with the dot |
   | Progress | 120 bar + S2 + text | bar 120x6 and what is left: "16,072 to Exalted"; "Exalted" with a full bar at the top; "Not known yet" (`fgMuted`) for a faction the client does not answer for. The column is left out while the client answers for no faction. |
-  | Last gain | 96, right | "+1,005 · Yesterday": what the faction gained on the day of its newest stored gain, and that day. Blank with none. Left out when no faction has one. |
+  | Last day gained | 96, right | "+1,005 · Yesterday": the sum of what the faction gained on the day of its newest stored gain, and that day. Blank with none, and blank when a stored gain of the faction that names no character lies on that day or later (hover "Last day gained: Not recorded"). Left out when no faction shows one. |
   | This session | 88 | "+75"; a column only while a faction gained this session |
   | › | 12 | only on a faction with stored gains |
 
-- Order: factions with a stored gain first, by the day of the last gain (newest first), then by that day's gain (largest first); then the rest by standing; a Neutral faction with no gain last.
-- Only a faction with stored gains opens. Its page: the name, "Revered · 16,072 to Exalted", section "GAINS SINCE <day>" with the sum on the right, table When · Source · Amount. A gain with no stored source has a blank Source cell (hover "Source: Not recorded"); Source is a column only while a third of the rows name one.
+- Order: factions with a shown gain first, by the day of the last gain (newest first), then by that day's gain (largest first); then the rest by standing; a Neutral faction with no stored gain last.
+- Only a faction with stored gains opens. Its page: the name, "Revered · 16,072 to Exalted", section "GAINS SINCE <day>" with the sum on the right ("GAINS" alone, no sum, when a stored gain of the faction that names no character lies on the first listed day or later), table When · Source · Amount. A gain with no stored source has a blank Source cell (hover "Source: Not recorded"); Source is a column only while a third of the rows name one.
 - Empty (inline): "No faction met yet."
 
 **Professions**
@@ -1372,15 +1372,15 @@ Content as `docs/UX_PRAGMATIC.md` 3.2 and 3.3 have it.
     - from 10 below the next rank's threshold up to the threshold: "Expert training opens at 125";
     - at or past the threshold while the rank is untrained: "Expert training is open at any Tailoring trainer".
   - Learned primary and secondary professions are listed. The list is the game's skill lines plus any crafted or learned recipe's profession; one the game has not listed yet has an empty bar and no number.
-- `CRAFTED SINCE <day>` table, right "1,038 items" (the header names the day of the oldest stored craft):
+- `CRAFTED SINCE <day>` table, right "1,012 items" (the header names the first day the list holds whole: the oldest day of a list at its cap is cut and left out):
 
   | Column | Width | Content |
   |---|---|---|
   | When | 40 | "23:50", or "23:46 to 23:48" for a batch |
   | Item | flex | quality colour, no brackets, "x49" after the name when more than one |
-  | Profession | 104 | blank when the row names none; a column only while a third of the rows name one |
+  | Profession | 104 | the profession a stored row of the craft's spell names; a craft whose spell has none is not listed |
 
-  One row per batch: crafts that follow each other with the same item, profession and session, each at most 60 s after the one before. Day rows count items: "YESTERDAY · 111 ITEMS".
+  One row per batch: crafts that follow each other with the same spell and session, each at most 60 s after the one before. Day rows count items: "YESTERDAY · 111 ITEMS".
 - Cut: the headline, the recipe count on a row, the `RECIPES LEARNED` table, the Qty column, "Other", "+12 this session".
 - Empty:
   - Professions: "No profession learned yet."

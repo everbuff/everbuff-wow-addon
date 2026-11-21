@@ -80,9 +80,14 @@ end
 --- Emitter calls this from the "You create: [item]" line. `prof` defaults to the tradeskill window open now.
 --- A craft that follows the last stored one within Market.BATCH_GAP seconds, with the same item, profession and
 --- session, is added to that row: `count` is then the items of the batch, `t` its first craft and `t1` its last
---- (0.9.52, docs/UX_PRAGMATIC.md 3.3). So the 1000 rows hold months of crafting, not days. A name the client hid
---- (nil) never joins a batch.
+--- (0.9.52, docs/UX_PRAGMATIC.md 3.3). So the CRAFT_CAP rows hold months of crafting, not days. A name the client
+--- hid (nil) never joins a batch. The first craft of a round is often written before the profession window is read,
+--- so a row with no profession and the next craft of the same spell id are one batch, with the profession the
+--- second one names (one spell belongs to one profession).
 Market.BATCH_GAP = 60
+--- how many rows characters[guid].crafts holds; the oldest row is dropped past it (Progress reads this to know that
+--- the oldest day of a full list is cut)
+Market.CRAFT_CAP = 1000
 local function profName(v) if type(v) == "string" and v ~= "" then return v end return nil end
 function Market.craft(item, count, id, icon)
   if not ns.DB then return nil end
@@ -90,14 +95,17 @@ function Market.craft(item, count, id, icon)
   local list = ch().crafts
   local now, s, name, prof, n = nowEpoch(), sid(), safeStr(item), profName(Market.tradeSkill), plainNum(count) or 1
   local last = list[#list]
-  if type(last) == "table" and name and last.item == name and last.id == plainNum(id) and last.prof == prof and last.s == s
+  local sid0 = plainNum(id)
+  local sameProf = type(last) == "table" and (last.prof == prof or (sid0 ~= nil and (last.prof == nil or prof == nil)))
+  if sameProf and name and last.item == name and last.id == sid0 and last.s == s
     and type(last.t) == "number" and now >= (last.t1 or last.t) and now - (last.t1 or last.t) <= Market.BATCH_GAP then
     last.count = (plainNum(last.count) or 1) + n
     last.t1 = now
+    last.prof = last.prof or prof
     return last
   end
-  return push(list, { s = s, t = now, item = name, id = plainNum(id), icon = plainNum(icon),
-    count = n, prof = prof, zone = zone, x = x, y = y }, 1000)
+  return push(list, { s = s, t = now, item = name, id = sid0, icon = plainNum(icon),
+    count = n, prof = prof, zone = zone, x = x, y = y }, Market.CRAFT_CAP)
 end
 --- `prof` is stored only when a profession is known (never ""): a recipe learned at a trainer has none.
 function Market.recipe(name, prof)

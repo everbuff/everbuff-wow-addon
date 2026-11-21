@@ -208,6 +208,8 @@ function ns.applyAck(ack, source)
   if not (db and type(ack) == "table") then return 0, 0 end
   -- when each level was reached is copied into the character's block before any session record is deleted
   if ns.Levels then pcall(ns.Levels.harvest, db) end
+  -- and every reputation gain gets its character while the session record still names it
+  if ns.Rep then pcall(ns.Rep.harvest, db) end
   local through = tonumber(ack.through) or 0
   local uids = type(ack.uids) == "table" and ack.uids or {}
   -- the running session is never pruned: it is still being written
@@ -384,6 +386,8 @@ f:SetScript("OnEvent", function(_, event, ...)
     if ns.RunsLegacy then pcall(ns.RunsLegacy.harvestAll, db) end
     -- when each level was reached, copied from the session records and the event list (the list holds 500 rows)
     if ns.Levels then pcall(ns.Levels.harvest, db) end
+    -- whose each stored reputation gain is, written on the row while its session record (or a craft) still says so
+    if ns.Rep then pcall(ns.Rep.harvest, db) end
     -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
     if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or next(EverbuffAck.sessions or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
       local marked, removed = ns.applyAck(EverbuffAck, "file")

@@ -1821,12 +1821,22 @@ do
   check("craft batch: another item is another row", #list == n0 + 3 and list[#list].item == "Heavy Linen Bandage")
   M.fire("TRADE_SKILL_CLOSE"); ns.Market.tradeSkill = nil
   M.epoch = t0 + 62 + 63; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
-  check("craft batch: the same item with another profession on the row (none) is another row", #list == n0 + 4 and list[#list].prof == nil)
+  check("craft batch: a craft of the same spell written with no profession joins the batch, which keeps its profession", #list == n0 + 3 and list[#list].count == 2 and list[#list].prof == "First Aid", list[#list].prof)
   local s0 = ns.DB.active
   ns.DB.active = "another-session"
   M.epoch = t0 + 62 + 64; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
   ns.DB.active = s0
-  check("craft batch: another session is another row", #list == n0 + 5)
+  check("craft batch: another session is another row", #list == n0 + 4)
+  -- the first craft of a round is written before the profession window is read: the next one names the profession
+  M.epoch = t0 + 400; ns.Market.craft("Tin Bar", 1, 3576)
+  ns.Market.tradeSkill = "Mining"
+  M.epoch = t0 + 403; ns.Market.craft("Tin Bar", 1, 3576)
+  check("craft batch: a first craft with no profession and the next of the same spell are one row with that profession", #list == n0 + 5 and list[#list].count == 2 and list[#list].prof == "Mining" and list[#list].t == t0 + 400, list[#list].prof)
+  ns.Market.tradeSkill = "Cooking"
+  M.epoch = t0 + 406; ns.Market.craft("Tin Bar", 1, 3576)
+  check("craft batch: two different professions never join", #list == n0 + 6 and list[#list].prof == "Cooking" and list[#list - 1].prof == "Mining")
+  ns.Market.tradeSkill = nil
+  check("craft cap: one constant", ns.Market.CRAFT_CAP == 1000)
   ns.Market.tradeSkill = ""
   local rec2 = ns.Market.recipe("Anti-Venom")
   local rec3 = ns.Market.recipe("Smelt Tin", "")
@@ -1843,6 +1853,49 @@ do
   local row = ns.DB.story.rep and ns.DB.story.rep[#ns.DB.story.rep]
   check("rep gain: the row carries the character's GUID beside its session", #ns.DB.story.rep == rep0 + 1 and row.g == ns.charGuid() and row.s == ns.DB.active and row.amount == 25, row and row.g)
   table.remove(ns.DB.story.rep)
+end
+do
+  -- ns.Rep.harvest: a row from before 0.9.52 gets its character from its session record or from a craft of the same
+  -- session, at load and before a pickup deletes the record; what nothing proves stays without one
+  local db = ns.DB
+  local me = ns.charGuid()
+  local keepRep = db.story.rep
+  local c = ns.char()
+  local keepCrafts, keepRecipes = c.crafts, c.recipes
+  local alt = "Player-1-00ALT001"
+  db.characters[alt] = db.characters[alt] or { crafts = {}, recipes = {} }
+  local keepAlt = { db.characters[alt].crafts, db.characters[alt].recipes }
+  db.sessions["rh-mine"] = { id = "rh-mine", guid = me, startedEpoch = 100, endedEpoch = 200 }
+  db.sessions["rh-alt"] = { id = "rh-alt", guid = alt, startedEpoch = 100, endedEpoch = 200 }
+  db.sessions["rh-noguid"] = { id = "rh-noguid", startedEpoch = 100, endedEpoch = 200 }
+  c.crafts = { { s = "rh-craft", t = 150, item = "Tin Bar", id = 3576 }, { s = "rh-both", t = 150, item = "Tin Bar", id = 3576 } }
+  c.recipes = { { s = "rh-recipe", t = 150, name = "Smelt Tin" } }
+  db.characters[alt].crafts, db.characters[alt].recipes = { { s = "rh-both", t = 151, item = "Tin Bar", id = 3576 }, { s = "rh-altcraft", t = 151, item = "Tin Bar", id = 3576 } }, {}
+  local function row(s2, g) return { s = s2, g = g, t = 150, faction = "Orgrimmar", amount = 10 } end
+  db.story.rep = { row("rh-mine"), row("rh-alt"), row("rh-noguid"), row("rh-gone"), row("rh-craft"), row("rh-recipe"), row("rh-both"), row("rh-altcraft"), row("rh-gone", "Player-1-KEEP"), row(nil) }
+  local R = db.story.rep
+  local n = ns.Rep.harvest(db)
+  check("rep harvest: a row gets the character its session record names", R[1].g == me and R[2].g == alt, tostring(R[1].g))
+  check("rep harvest: a record with no character and a record that is gone prove nothing", R[3].g == nil and R[4].g == nil and R[10].g == nil)
+  check("rep harvest: with the record gone, a craft or a recipe of the same session in a character's block proves it", R[5].g == me and R[6].g == me and R[8].g == alt)
+  check("rep harvest: a session two characters' blocks name proves nothing", R[7].g == nil)
+  check("rep harvest: a row that carries its character is never rewritten", R[9].g == "Player-1-KEEP")
+  check("rep harvest: it counts what it wrote, and a second pass writes nothing", n == 5 and ns.Rep.harvest(db) == 0, n)
+  -- a pickup deletes the session records: the rows were stamped first, inside applyAck
+  db.story.rep = { row("rh-mine"), row("rh-alt") }
+  R = db.story.rep
+  -- (applyAck also copies the level moments into each block and notes the pickup: both put back)
+  local lastAck, keepAt = db.combat.lastAck, {}
+  for guid, blk in pairs(db.characters) do keepAt[guid] = blk.levelAt or false end
+  ns.applyAck({ sessions = { ["rh-mine"] = true, ["rh-alt"] = true, ["rh-noguid"] = true } }, "file")
+  for guid, blk in pairs(db.characters) do if keepAt[guid] ~= nil then blk.levelAt = keepAt[guid] or nil end end
+  check("rep harvest: applyAck writes the character on the rows before it deletes their session records",
+    db.sessions["rh-mine"] == nil and db.sessions["rh-alt"] == nil and R[1].g == me and R[2].g == alt, tostring(R[1].g))
+  db.combat.lastAck = lastAck
+  db.sessions["rh-noguid"] = nil
+  db.story.rep, c.crafts, c.recipes = keepRep, keepCrafts, keepRecipes
+  db.characters[alt].crafts, db.characters[alt].recipes = keepAlt[1], keepAlt[2]
+  if not next(db.characters[alt].crafts) and not next(db.characters[alt].recipes) then db.characters[alt] = nil end
 end
 local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)

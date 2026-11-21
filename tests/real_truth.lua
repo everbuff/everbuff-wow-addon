@@ -314,34 +314,53 @@ do
   check("save: the 59 played stamps written before 0.9.52 are gone (each was overwritten at every login)", c2.playedAtLevel == nil and c2.played.total == 589870 and c2.played.level == 3968)
 end
 
--- ── Character > Reputation (3.2). The gains counted are the 1,441 stored rows whose session record is still in the
--- save and is this character's; 559 rows of sessions the desktop picked up carry no character and are not counted. ──
+-- ── Character > Reputation (3.2). Of the 2,000 stored gains none carries its character in the save. The load
+-- writes it on 1,630: 1,441 by their session record, 189 by a craft or recipe of this character that carries the
+-- session id of a record the desktop picked up (sessions 261115123253-71eb, 261117184759-c754, 261118202156-96b7).
+-- 370 rows of 12 picked-up sessions name no character. Where one of them lies on the faction's last day or after
+-- it the cell is blank: Orgrimmar holds 200 counted and 250 uncounted on Fri 20 Nov and is never "+200", Booty Bay
+-- has an uncounted +100 on 20 Nov and is never dated 19 Nov. Timbermaw Hold: its 32 gains of Thu 19 Nov are of a
+-- proven session (505); the 35 of Wed 18 Nov (330) name no character, a day earlier, so the cell is exact. ──
+do
+  local withG, mine = 0, 0
+  for _, r in ipairs(ns.DB.story.rep) do if r.g ~= nil then withG = withG + 1 end; if r.g == S.guid then mine = mine + 1 end end
+  eq("save: the load wrote the character on 1,630 of the 2,000 stored reputation gains, all this character's", withG .. " " .. mine .. " " .. #ns.DB.story.rep, "1630 1630 2000")
+end
 Real.open(S, "character/reputation"); M.settle()
 do
   local v = ns.Progress.rep
-  eq("Reputation: the answer", v.answer, "Last gain: Barkskin Burrow +1,005, yesterday")
+  eq("Reputation: the answer", v.answer, "Barkskin Burrow +1,005 yesterday")
   local rows = shown(v.tbl)
   eq("Reputation: 19 factions", #rows, 19)
   eq("Reputation: the header counts them", v.head.meta.text, "19 factions")
   local cols = {}
   for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.label ~= "" then cols[#cols + 1] = col.label end end
   -- (the save holds standings, not the progress inside one, and nothing was gained in the session of 11:45 to 11:56)
-  eq("Reputation: no Progress column outside the game, and no This session column with no gain this session", table.concat(cols, " | "), "Faction | Standing | Last gain")
-  local got = {}
-  for _, r in ipairs(rows) do got[#got + 1] = r.c.name.text .. " " .. strip(r.c.standing.text) .. " " .. r.c.last.text end
-  eq("Reputation: the rows, factions with a gain first (newest day, then the day's gain), then by standing, Neutral with no gain last", table.concat(got, " | "),
-    "Barkskin Burrow Unfriendly +1,005 \194\183 Yesterday | Orgrimmar Honored +200 \194\183 Yesterday | Argent Dawn Neutral +95 \194\183 Yesterday"
-    .. " | Darkspear Trolls Honored +50 \194\183 Yesterday | Thunder Bluff Honored +50 \194\183 Yesterday | Undercity Revered +50 \194\183 Yesterday | Gadgetzan Friendly +1 \194\183 Yesterday"
-    .. " | Windshapers Neutral +600 \194\183 Thu 19 Nov | Everlook Friendly +100 \194\183 Thu 19 Nov | Booty Bay Friendly +50 \194\183 Thu 19 Nov | Powderfuse Friendly +50 \194\183 Thu 19 Nov"
-    .. " | Ratchet Friendly +50 \194\183 Thu 19 Nov | Frostwolf Clan Neutral +100 \194\183 Wed 18 Nov | Earthen Ring Neutral +600 \194\183 Mon 16 Nov | Cenarion Circle Neutral +300 \194\183 Mon 16 Nov"
-    .. " | Timbermaw Hold Unfriendly  | Bloodsail Buccaneers Hated  | Darkmoon Faire Neutral  | Durotar Supply and Logistics Neutral ")
+  eq("Reputation: no Progress column outside the game, and no This session column with no gain this session", table.concat(cols, " | "), "Faction | Standing | Last day gained")
+  local function line()
+    local got = {}
+    for _, r in ipairs(shown(v.tbl)) do got[#got + 1] = r.c.name.text .. " " .. strip(r.c.standing.text) .. " " .. r.c.last.text end
+    return table.concat(got, " | ")
+  end
+  local WANT = "Barkskin Burrow Unfriendly +1,005 \194\183 Yesterday | Argent Dawn Neutral +95 \194\183 Yesterday"
+    .. " | Windshapers Neutral +600 \194\183 Thu 19 Nov | Timbermaw Hold Unfriendly +505 \194\183 Thu 19 Nov | Frostwolf Clan Neutral +100 \194\183 Wed 18 Nov"
+    .. " | Earthen Ring Neutral +600 \194\183 Mon 16 Nov | Cenarion Circle Neutral +300 \194\183 Mon 16 Nov"
+    .. " | Undercity Revered  | Darkspear Trolls Honored  | Orgrimmar Honored  | Thunder Bluff Honored "
+    .. " | Booty Bay Friendly  | Everlook Friendly  | Gadgetzan Friendly  | Powderfuse Friendly  | Ratchet Friendly "
+    .. " | Bloodsail Buccaneers Hated  | Darkmoon Faire Neutral  | Durotar Supply and Logistics Neutral "
+  eq("Reputation: the rows, factions with a shown gain first (newest day, then the day's gain), then by standing, Neutral with no gain last", line(), WANT)
+  local by = {}
+  for _, r in ipairs(rows) do by[r.c.name.text] = r end
+  check("Reputation: Orgrimmar is never +200 for 20 Nov (450 are stored that day, 250 of them with no character)", by.Orgrimmar.c.last.text == "" and by.Orgrimmar.item.partial == true, by.Orgrimmar.c.last.text)
+  check("Reputation: Booty Bay is never dated 19 Nov (a gain of 20 Nov 10:31 is stored, with no character)", by["Booty Bay"].c.last.text == "" and by["Booty Bay"].item.partial == true, by["Booty Bay"].c.last.text)
+  eq("Reputation: Timbermaw Hold, the 32 gains of 19 Nov by the session a craft proves", by["Timbermaw Hold"].c.last.text, "+505 \194\183 Thu 19 Nov")
   local standings = {}
   for _, r in ipairs(v.rows) do standings[r.label] = (standings[r.label] or 0) + 1 end
   eq("Reputation: the standings: 1 Revered, 3 Honored, 5 Friendly, 7 Neutral, 2 Unfriendly, 1 Hated",
     ("%d %d %d %d %d %d"):format(standings.Revered, standings.Honored, standings.Friendly, standings.Neutral, standings.Unfriendly, standings.Hated), "1 3 5 7 2 1")
   local opens = 0
   for _, r in ipairs(rows) do if r.c._chev.text ~= "" then opens = opens + 1 end end
-  eq("Reputation: the 15 factions with stored gains open, the other 4 do not", opens, 15)
+  eq("Reputation: the 16 factions with stored gains open, the other 3 do not", opens, 16)
   local dash = false
   for _, r in ipairs(rows) do for _, cell in pairs(r.c) do if cell.text == "-" then dash = true end end end
   check("Reputation: no cell is a dash", not dash)
@@ -353,9 +372,32 @@ do
   for _, h in ipairs(f.hist) do if h.milestone then stand[#stand + 1] = h.change end end
   eq("Reputation: the one row that is not a gain is the new standing", table.concat(stand, ","), "Now Unfriendly")
   v.detail.Close(); M.settle()
+  -- Orgrimmar's page lists its 86 counted rows, and says neither a start nor a sum (stored rows with no character)
+  ns.Progress.openFaction(by.Orgrimmar.item); M.settle()
+  check("Reputation: Orgrimmar's page says no start and no sum", f.title.text == "Orgrimmar" and f.head.label.text == "GAINS" and f.head.meta.shown == false and f.partial == true, f.head.label.text)
+  v.detail.Close(); M.settle()
+  -- the next pickup: every ended session record is deleted, and the page reads the same (on a copy of the store)
+  local keep = { sessions = {}, lastAck = ns.DB.combat.lastAck }
+  for id, sess in pairs(ns.DB.sessions) do keep.sessions[id] = sess end
+  local ack, n = { sessions = {} }, 0
+  for id, sess in pairs(ns.DB.sessions) do if sess.endedEpoch and id ~= ns.DB.active then ack.sessions[id] = true; n = n + 1 end end
+  local records = {}
+  for id in pairs(ack.sessions) do records[id] = ns.DB.sessions[id] end
+  for id in pairs(ack.sessions) do ns.DB.sessions[id] = nil end
+  ns.Progress.renderRep(); M.settle()
+  local counted = 0
+  for _, r in ipairs(ns.DB.story.rep) do if r.g == S.guid then counted = counted + 1 end end
+  check("Reputation: with every ended session record gone (" .. n .. "), the 1,630 gains still count and the list reads the same", n > 0 and counted == 1630 and line() == WANT and v.answer == "Barkskin Burrow +1,005 yesterday", line())
+  for id, sess in pairs(records) do ns.DB.sessions[id] = sess end
+  ns.Progress.renderRep(); M.settle()
 end
 
--- ── Character > Professions (3.3). The stored list is the last 1,000 crafts: 1,038 items from Wed 11 Nov 11:56. ──
+-- ── Character > Professions (3.3). The stored list is at its cap, the last 1,000 crafts, from Wed 11 Nov 11:56:59.
+-- That day is cut (25 rows of it are left; the save of 19 Nov still holds 148 crafts and 154 items for it), so the
+-- list starts on Thu 12 Nov. One row is no profession craft (Courier's Shipment, Fri 13 Nov 13:04, spell 260452,
+-- no profession on any row of that spell). 1,038 stored items less 25 less 1 are 1,012, in 52 batches: the first
+-- Tin Bar of Thu 12 Nov 15:46 and the first Tender Wolf Steak of Tue 17 Nov 19:26 were stored with no profession
+-- and belong to the batch that follows them 3 s later. ──
 Real.open(S, "character/professions"); M.settle()
 do
   local v = ns.Progress.prof
@@ -364,25 +406,33 @@ do
   eq("Professions: the rows: skill, rank, and no recipe count (137 stored recipes, 10 with a profession)", table.concat(profs, " | "),
     "Cooking 297 / 300 Artisan | Mining 255 / 300 Artisan | First Aid 246 / 300 Artisan | Blacksmithing 185 / 225 Expert | Fishing 1 / 75 Apprentice")
   check("Professions: no headline and no recipe list", v.summary == nil and v.recipes == nil)
-  eq("Professions: the Crafted header says where the list starts", v.crafted.head.label.text, "CRAFTED SINCE WED 11 NOV")
-  eq("Professions: its meta is the items of the list", v.crafted.head.meta.text, "1,038 items")
-  eq("Professions: 1,000 stored crafts are 59 batches", #v.batches, 59)
+  eq("save: the craft list is at its cap", #ns.char().crafts, ns.Market.CRAFT_CAP)
+  eq("Professions: the Crafted header names the first whole day (Wed 11 Nov is cut by the cap)", v.crafted.head.label.text, "CRAFTED SINCE THU 12 NOV")
+  eq("Professions: its meta is the items listed", v.crafted.head.meta.text, "1,012 items")
+  eq("Professions: 52 batches", #v.batches, 52)
   local days, lines = {}, {}
   for i = 1, v.crafted.tbl.shownN do
     local r = v.crafted.tbl.rows[i]
     if r.item.ebSection then days[#days + 1] = r.item.ebSection
     else lines[#lines + 1] = r.c.when.text .. " " .. r.c.item.text .. " " .. r.c.prof.text end
   end
-  eq("Professions: the day rows count items (batches per day: 8, 3, 2, 8, 3, 1, 4, 4, 22, 4)", table.concat(days, " | "),
+  eq("Professions: the day rows count items (batches per day: 8, 3, 2, 7, 3, 1, 4, 3, 21); no row for Wed 11 Nov", table.concat(days, " | "),
     "YESTERDAY \194\183 111 items | THURSDAY 19 NOV \194\183 72 items | WEDNESDAY 18 NOV \194\183 47 items | TUESDAY 17 NOV \194\183 257 items | MONDAY 16 NOV \194\183 29 items"
-    .. " | SUNDAY 15 NOV \194\183 20 items | SATURDAY 14 NOV \194\183 44 items | FRIDAY 13 NOV \194\183 29 items | THURSDAY 12 NOV \194\183 404 items | WEDNESDAY 11 NOV \194\183 25 items")
+    .. " | SUNDAY 15 NOV \194\183 20 items | SATURDAY 14 NOV \194\183 44 items | FRIDAY 13 NOV \194\183 28 items | THURSDAY 12 NOV \194\183 404 items")
   eq("Professions: the newest batches", table.concat(lines, " | ", 1, 8),
     "23:50 Truesilver Bar x6 Mining | 23:49 Gold Bar x3 Mining | 23:46 to 23:48 Mithril Bar x49 Mining | 23:46 Steel Bar x2 Mining"
     .. " | 23:45 to 23:46 Iron Bar x8 Mining | 23:45 Tin Bar x3 Mining | 23:03 to 23:05 Mageweave Bandage x29 First Aid | 20:05 Solid Weightstone x11 Blacksmithing")
   eq("Professions: Thursday's batches", table.concat(lines, " | ", 9, 11), "22:22 to 22:23 Tender Wolf Steak x14 Cooking | 22:13 to 22:16 Basic Campfire Kit x18 Cooking | 22:11 to 22:13 Tender Wolf Steak x40 Cooking")
-  local other = false
-  for _, l in ipairs(lines) do if l:find("Other", 1, true) or l:find(" %-$") then other = true end end
-  check("Professions: no Other and no dash for a craft with no profession on its row", not other)
+  local all = " | " .. table.concat(lines, " | ") .. " | "
+  check("Professions: Tin Bar of 12 Nov 15:46 is one batch of 29, Mining (the first craft was stored with no profession)",
+    all:find(" | 15:46 to 15:47 Tin Bar x29 Mining | ", 1, true) ~= nil and all:find(" | 15:46 Tin Bar ", 1, true) == nil)
+  check("Professions: Tender Wolf Steak of 17 Nov 19:26 is one batch of 15, Cooking",
+    all:find(" | 19:26 to 19:27 Tender Wolf Steak x15 Cooking | ", 1, true) ~= nil and all:find(" | 19:26 Tender Wolf Steak ", 1, true) == nil)
+  check("Professions: Courier's Shipment (no profession craft) is not listed", all:find("Courier", 1, true) == nil)
+  check("Professions: nothing of the cut day (Roast Raptor of Wed 11 Nov 11:56) is listed", lines[#lines] == "12:44 to 12:46 Heavy Silk Bandage x46 First Aid", lines[#lines])
+  local blank = false
+  for _, l in ipairs(lines) do if l:find("Other", 1, true) or l:find(" %-$") or l:find(" $") then blank = true end end
+  check("Professions: every batch names its profession: no Other, no dash, no blank", not blank)
 end
 -- ── Loot > Gold (docs/UX_PRAGMATIC.md 4.2). Copper values worked out from the save's ledgers, day rows and journals
 -- by throwaway scripts. The boot stamps the coin capture of 0.9.52 as starting now, so every stored run is before it. ──

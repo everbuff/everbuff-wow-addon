@@ -53,9 +53,10 @@ Gold and Items review round 3 (21 Nov), on the same draft branch. Display only, 
 Character round (21 Nov), on the same draft branch: sections 3.1 to 3.3, with gate E (`levelAt`, the played stamp fix, the stamps of before 0.9.52 discarded at load) and the parts of gate F that need no client read (the character id `g` on new reputation rows, craft batches at write with `t1`). Both gates still need their own yes on #57 before a release. The expected values of section 3 are asserted by `tests/real_truth.lua`. Where the build differs from the first text of section 3, the section is changed with it:
 
 - Leveling: levels that share one bound are one row ("30 to 37 · 8 to 11 Nov"), so the save's 38 levels without an exact date are 9 rows, not 38. On the save every level from 2 to 60 is then in a row and the muted line does not show.
-- Reputation: "Last gain" is what the faction gained on the calendar day of its newest stored gain, with that day ("+1,005 · Yesterday"). The order within a day is by that gain, largest first, so the first row and the answer are Barkskin Burrow +1,005. By time alone the newest stored gain is Gadgetzan +1 at 23:29, which says less. Progress is left out while the client answers for no faction, and the section header carries the faction count.
-- Reputation: 559 of the 2,000 stored gains belong to sessions the desktop picked up and carry no character, so they are not counted (Booty Bay, Everlook, Powderfuse and Ratchet read Thu 19 Nov although a row of 20 Nov 10:31 is stored; Timbermaw Hold reads no gain). New rows carry `g` and stay.
+- Reputation: the column "Last day gained" is the sum of what the faction gained on the calendar day of its newest stored gain, with that day ("+1,005 · Yesterday"; 25 gains on the save, the last single one +150 at 22:53). It is never called one gain. The order within a day is by that sum, largest first, so the first row and the answer are Barkskin Burrow +1,005. By time alone the newest stored gain is Gadgetzan +1 at 23:29, which says less. Progress is left out while the client answers for no faction, and the section header carries the faction count.
+- Reputation, review round 1: none of the 2,000 stored gains carries its character in the save, and 559 of them belong to 15 sessions whose record the desktop picked up. The load now writes the character on every row it can prove (`ns.Rep.harvest`, at load and before a pickup is applied): 1,441 by their session record, 189 by a craft or recipe of this character that carries the same session id (3 of the 15 sessions). So the next pickup no longer empties the page. 370 rows of 12 sessions name no character and are never guessed. A faction with such a row on its last day or later has a blank cell (hover "Last day gained: Not recorded"), never a smaller number or an older day: Orgrimmar (450 stored on Fri 20 Nov, 250 of them with no character), Undercity, Darkspear Trolls, Thunder Bluff, Gadgetzan, Booty Bay, Everlook, Powderfuse and Ratchet on the save. Their pages still list the counted gains, under "GAINS" with no start and no sum. Timbermaw Hold reads "+505 · Thu 19 Nov" (32 gains of a proven session; its 35 unproven rows are of Wed 18 Nov, a day earlier).
 - Professions: the Crafted day of a batch is the day of its last craft.
+- Professions, review round 1: the craft list is at its cap (1,000 rows), which cut through Wed 11 Nov (25 of 148 crafts left), so that day is left out and the header names the first whole day. A batch is keyed on spell id and session, not on the profession of the row: the first craft of a round is often stored with no profession ("Tin Bar" 15:46 on 12 Nov, "Tender Wolf Steak" 19:26 on 17 Nov) and now stands in its batch, with the profession the other rows of that spell name. New crafts merge the same way at write time. A craft whose spell no stored row gives a profession ("Courier's Shipment", an item a quest made) is not listed and not counted.
 - Not built: `recipeBook` (gate F). The profession window lists what its filters show, so a count read from it can be short; it needs a check in the game first. No recipe count and no recipe list is shown until then.
 - Home > Now, "Reached level N": the time at the level before is read only from stamps of the new kind.
 
@@ -352,7 +353,7 @@ When shown: only dungeons with full runs. Columns Dungeon, Runs, Best (boss cloc
 
 **Why I open it.** How far to the next standing, and what moved.
 
-**The answer.** "Last gain: Barkskin Burrow +1,005, yesterday" (`story.rep`): the first row of the list. Left out when no gain is stored.
+**The answer.** "Barkskin Burrow +1,005 yesterday" (`story.rep`): the first row of the list, the faction and the sum of its gains on the last day it gained ("on Thu 19 Nov" for an older day). The number is a day's sum, so the line never says "last gain". Left out when no row shows a gain.
 
 **Columns.**
 
@@ -361,14 +362,14 @@ When shown: only dungeons with full runs. Columns Dungeon, Runs, Best (boss cloc
 | Faction | name |
 | Standing | "Revered" |
 | Progress | bar and what is left: "16,072 to Exalted" (21,000 minus 4,928). Tooltip "4,928 / 21,000". At the top standing: "Exalted" and a full bar. "Not known yet" when the client does not answer for the faction; the column is left out while it answers for none. |
-| Last gain | "+1,005 · Yesterday": what the faction gained on the calendar day of its newest stored gain, and that day. Blank when none is stored. |
+| Last day gained | "+1,005 · Yesterday": the sum of what the faction gained on the calendar day of its newest stored gain, and that day. Blank when none is stored. Also blank (hover "Last day gained: Not recorded", rule 0.2) when a stored gain of the faction names no character and lies on that day or later: the day's total cannot be said, and neither a smaller number nor an older day is shown. |
 | This session | only when a faction gained this session (rule 0.3) |
 
-**Order.** Factions with a stored gain first: by the day of the last gain, newest first, then by what that day brought, largest first. Then the rest by standing. Neutral factions with no gain go last, muted. No fold row.
+**Order.** Factions with a shown gain first: by the day of the last gain, newest first, then by what that day brought, largest first. Then the rest by standing (a faction whose cell is blank stands here). Neutral factions with no stored gain go last, muted. No fold row.
 
-**Chevron.** Only on a faction with stored gains; it opens the gain history ("GAINS SINCE THU 19 NOV", the sum on the right; When, Source, Amount; a gain with no stored source has a blank Source cell). Other rows do not open.
+**Chevron.** Only on a faction with stored gains; it opens the gain history ("GAINS SINCE THU 19 NOV", the sum on the right; When, Source, Amount; a gain with no stored source has a blank Source cell). When a stored gain of the faction that names no character lies on the first listed day or later, the header is "GAINS" alone: no start and no sum. Other rows do not open.
 
-Rows count only gains that carry this character's id **[gate F: `g` on new rows]**; older rows count through their session record.
+Rows count only gains that carry this character's id **[gate F: `g`]**. New rows are written with it. On older rows the load writes it, and so does every pickup before it deletes session records, from the row's session record or, with the record gone, from a craft or recipe in the character's own block with the same session id. A row neither proves is counted for no character.
 
 **Empty.** "No faction met yet."
 
@@ -378,9 +379,9 @@ Rows count only gains that carry this character's id **[gate F: `g` on new rows]
 
 **Profession rows.** Name, "297 / 300", rank, bar. No headline above them. Recipes per profession appear only when read from the open profession window **[gate F: `recipeBook`]**. Never "0 recipes learned".
 
-**Crafted table.** Header "CRAFTED SINCE WED 11 NOV", meta "1,038 items" (units only; crafts and caps are not mentioned). Columns When, Item (with "x49"), Profession (hidden by rule 0.3 when mostly blank).
+**Crafted table.** Header "CRAFTED SINCE THU 12 NOV", meta "1,012 items" (units only; crafts and caps are not mentioned). Columns When, Item (with "x49"), Profession. The stored list holds 1,000 rows; once it is full its oldest day is cut (on the save Wed 11 Nov: 25 of 148 crafts left), so that day is not listed and not counted, and the header names the first whole day. A craft whose spell no stored row gives a profession is no profession craft ("Courier's Shipment") and is not listed either. 1,038 stored items less 25 less 1 are 1,012.
 
-One row per batch: consecutive crafts of the same item, profession and session at most 60 s apart. When "23:46 to 23:48" or one time. Day rows count items: "YESTERDAY · 111 ITEMS" (a batch counts on the day of its last craft). On the save: 1,000 rows become 59; newest: Truesilver Bar x6 23:50, Gold Bar x3 23:49, Mithril Bar x49 23:46 to 23:48. New crafts are merged at write time **[gate F: `t1`]** so the list holds months.
+One row per batch: consecutive crafts of the same spell and session at most 60 s apart. The profession is the one a stored row of that spell names, so the first craft of a round, often stored with none, stands in its batch ("15:46 to 15:47 Tin Bar x29 Mining"), never as a row of its own with a blank cell. When "23:46 to 23:48" or one time. Day rows count items: "YESTERDAY · 111 ITEMS" (a batch counts on the day of its last craft). On the save: 52 batches; newest: Truesilver Bar x6 23:50, Gold Bar x3 23:49, Mithril Bar x49 23:46 to 23:48; day rows 111, 72, 47, 257, 29, 20, 44, 28, 404. New crafts are merged at write time **[gate F: `t1`]** so the list holds months.
 
 **Cut.** The "137 recipes learned" headline. The Recipes learned table (126 of 137 rows have no profession; it returns with `recipeBook`). "N from other professions". "Other" for a missing profession. "(older crafts no longer stored)".
 

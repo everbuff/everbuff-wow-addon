@@ -2,8 +2,8 @@
 --
 -- Leveling is the level (or the time to the next one), the played time and when each level was reached; a leveling
 -- character also has the quests turned in. Reputation lists every faction with its standing, what is left to the
--- next one and its last gain; a faction with stored gains opens them. Professions lists the skills with their bar
--- and when to train next, then what was crafted, one row per batch (docs/UX_PRAGMATIC.md 3.1 to 3.3).
+-- next one and the last day it gained; a faction with stored gains opens them. Professions lists the skills with
+-- their bar and when to train next, then what was crafted, one row per batch (docs/UX_PRAGMATIC.md 3.1 to 3.3).
 -- The data is what other modules capture (the story events, the session records, the reputation gains, the
 -- professions snapshot, the crafts Market keeps, the gold journal), plus the live reputation bars and the leveling
 -- pace (ns.Pace). Every list reads the logged-in character's rows only (#23). Built from the kit (UI.lua) only.
@@ -285,27 +285,76 @@ local function readFactions()
   end)
   return out
 end
--- The stored reputation gains of the logged-in character, in stored order (docs/UX_PRAGMATIC.md 3.2, gate F). A
--- row that carries its character (`g`, from 0.9.52) counts by it, so it stays when the desktop's pickup has deleted
--- its session record. An older row counts through its session record; once that is gone nothing says whose the
--- row is, and it is not shown (never attributed by guesswork).
+-- Whose a stored reputation gain is (docs/UX_PRAGMATIC.md 3.2, gate F). A row written from 0.9.52 carries its
+-- character (`g`). An older row has only its session id, and the desktop's pickup deletes session records, so
+-- ns.Rep.harvest writes `g` on every row it can prove, at every load and before every pickup is applied (Core.lua,
+-- beside ns.Levels.harvest). Two proofs, both stored facts:
+--   the session record of the row (sessions[s].guid), while it is still in the save;
+--   a row inside one character's own block that carries the same session id (characters[guid].crafts[].s,
+--     recipes[].s), when the record is gone. A session id that two characters' blocks name proves nothing.
+-- A row neither proves stays without `g`: it is shown for no character (never attributed by guesswork).
+local Rep = {}
+ns.Rep = Rep
+local function recordGuid(sessions, s)
+  local rec = s ~= nil and sessions[s] or nil
+  local g = type(rec) == "table" and rec.guid or nil
+  return (type(g) == "string" and g ~= "") and g or nil
+end
+-- Returns how many rows got their character.
+function Rep.harvest(db)
+  local list = type(db) == "table" and type(db.story) == "table" and db.story.rep
+  if type(list) ~= "table" then return 0 end
+  local sessions = type(db.sessions) == "table" and db.sessions or {}
+  local proof    -- session id -> guid, or false when two characters name it; built on the first row that needs it
+  local function proven(s)
+    if not proof then
+      proof = {}
+      for guid, c in pairs(type(db.characters) == "table" and db.characters or {}) do
+        if type(guid) == "string" and type(c) == "table" then
+          for _, key in ipairs({ "crafts", "recipes" }) do
+            for _, r in ipairs(type(c[key]) == "table" and c[key] or {}) do
+              local id = type(r) == "table" and r.s or nil
+              if id ~= nil then
+                if proof[id] == nil then proof[id] = guid elseif proof[id] ~= guid then proof[id] = false end
+              end
+            end
+          end
+        end
+      end
+    end
+    return proof[s] or nil
+  end
+  local n = 0
+  for _, r in ipairs(list) do
+    if type(r) == "table" and r.g == nil and r.s ~= nil then
+      local g = recordGuid(sessions, r.s) or (sessions[r.s] == nil and proven(r.s)) or nil
+      if g then r.g = g; n = n + 1 end
+    end
+  end
+  return n
+end
+-- The stored reputation gains of the logged-in character, in stored order, and `loose`: per faction the time of
+-- the newest stored gain that names no character at all (no `g`, and no session record that names one). A loose
+-- row may be this character's or another's, so a figure that would have to include it is not shown.
 local function repGains()
   local list = ns.DB and ns.DB.story and ns.DB.story.rep
   local me = ns.charGuid()
-  if not (list and me) then return ns.mine(list) end
+  local loose = {}
+  if not (list and me) then return ns.mine(list), loose end
   local sessions = (ns.DB and ns.DB.sessions) or {}
   local out = {}
   for _, r in ipairs(list) do
     if type(r) == "table" then
-      if r.g ~= nil then
-        if r.g == me then out[#out + 1] = r end
-      else
-        local s = r.s ~= nil and sessions[r.s] or nil
-        if s and s.guid == me then out[#out + 1] = r end
+      local g = r.g
+      if g == nil then g = recordGuid(sessions, r.s) end
+      if g == me then out[#out + 1] = r
+      elseif g == nil and r.faction then
+        local t = num(r.t)
+        if not loose[r.faction] or t > loose[r.faction] then loose[r.faction] = t end
       end
     end
   end
-  return out
+  return out, loose
 end
 -- the session ids of "this session": logins less than 5 minutes apart are one (Gold.joined, the one definition)
 local function sessionIds()
@@ -317,17 +366,19 @@ local function sessionIds()
   return ids
 end
 local function dayKey(t) return date("%Y%m%d", t) end
--- Rows { name, standing, label, progress, need (live, nil when the client has not answered), lastGain (the time of
--- the newest stored gain), dayGain (what the faction gained on the calendar day of that gain), session (what it
--- gained this session, nil when nothing) }. Order: factions with a stored gain first, by the day of the last gain
--- (newest first), then by what that day brought, largest first; then the rest by standing, and a Neutral faction
--- with no gain last.
+-- Rows { name, standing, label, progress, need (live, nil when the client has not answered), hasGains (a stored
+-- gain of this character: the row opens), lastGain (the time of the newest stored gain), dayGain (what the faction
+-- gained on the calendar day of that gain), partial, session (what it gained this session, nil when nothing) }.
+-- `partial`: a stored gain of the faction that names no character lies on that day or after it (or the faction has
+-- no other stored gain), so the day's total and the last day cannot be said: lastGain and dayGain are nil, and the
+-- cell is blank. Order: factions with a shown gain first, by the day of the last gain (newest first), then by what
+-- that day brought, largest first; then the rest by standing, and a Neutral faction with no stored gain last.
 local function buildReputation()
   local snap = charDB().reputation or {}
   local live = readFactions()
   local session, last, day = {}, {}, {}
   local ids = sessionIds()
-  local gains = repGains()
+  local gains, loose = repGains()
   local oldest
   for _, g in ipairs(gains) do
     if g.faction then
@@ -347,13 +398,16 @@ local function buildReputation()
   for name in pairs(names) do
     local sr, lr = snap[name] or {}, live[name] or {}
     local st = tonumber(lr.standing) or tonumber(sr.standing) or 0
+    local partial = loose[name] ~= nil and (last[name] == nil or dayKey(loose[name]) >= dayKey(last[name]))
+    local shown = (not partial) and last[name] or nil
     local r = { name = name, standing = st, label = STANDINGS[st] or sr.label or _G["FACTION_STANDING_LABEL" .. st] or "Neutral",
-      session = (num(session[name]) > 0) and session[name] or nil, lastGain = last[name], dayGain = last[name] and day[name] or nil }
+      session = (num(session[name]) > 0) and session[name] or nil, hasGains = last[name] ~= nil, partial = partial or nil,
+      lastGain = shown, dayGain = shown and day[name] or nil }
     if lr.min and lr.max and lr.value and lr.max > lr.min then r.progress, r.need = lr.value - lr.min, lr.max - lr.min end
     gained = gained + num(r.session)
     rows[#rows + 1] = r
   end
-  local function rank(r) if r.lastGain then return 0 end return r.standing == 4 and 2 or 1 end
+  local function rank(r) if r.lastGain then return 0 end return (r.standing == 4 and not r.hasGains and not r.partial) and 2 or 1 end
   table.sort(rows, function(a, b)
     local ra, rb = rank(a), rank(b)
     if ra ~= rb then return ra < rb end
@@ -433,16 +487,22 @@ function skillOf(e)
   return e.prof or nm, tonumber(rank)
 end
 -- CRAFTED (docs/UX_PRAGMATIC.md 3.3): one row per batch, newest first. A batch is the crafts that follow each other
--- in the stored list with the same item, profession and session, each at most BATCH_GAP seconds after the one
--- before: { t (the first craft), t1 (the last), item, id, prof, count (items), crafts }. A stored row that is
--- already a batch (merged at write time from 0.9.52, with its own t1) reads the same way. The sum says how many
--- items the list holds and when it starts; the list is capped, so it is never the character's whole history.
+-- in the stored list with the same spell id and session, each at most BATCH_GAP seconds after the one before:
+-- { t (the first craft), t1 (the last), item, id, prof, count (items), crafts }. A stored row that is already a
+-- batch (merged at write time from 0.9.52, with its own t1) reads the same way.
+--   The profession of a batch is the one a stored row of the same spell id names (one spell belongs to one
+--   profession; the first craft of a round is often stored without it). A craft whose spell no stored row gives a
+--   profession is not a profession craft (an item a quest makes) and is left out, with its items.
+--   A list that has reached Market.CRAFT_CAP has lost its oldest rows, so the day its oldest batch stands under is
+--   cut: its batches and items are left out and the list starts at the first whole day.
+-- The sum says how many items are listed and when they start; it is never the character's whole history.
 local BATCH_GAP = 60
 local function profOf(v) return (type(v) == "string" and v ~= "") and v or nil end
 local function buildCrafts()
   local c = charDB()
   local list = {}
   for _, r in ipairs(type(c.crafts) == "table" and c.crafts or {}) do if type(r) == "table" then list[#list + 1] = r end end
+  local full = #list >= ((ns.Market and ns.Market.CRAFT_CAP) or math.huge)
   -- (the list is written in time order; a stable sort keeps the stored order of crafts of one second)
   local ordered = true
   for i = 2, #list do if num(list[i].t) < num(list[i - 1].t) then ordered = false; break end end
@@ -451,19 +511,32 @@ local function buildCrafts()
     table.sort(list, function(a, b) if num(a.r.t) ~= num(b.r.t) then return num(a.r.t) < num(b.r.t) end return a.i < b.i end)
     for i, w in ipairs(list) do list[i] = w.r end
   end
-  local batches, items, since = {}, 0, nil
-  local last
+  -- (a row with no spell id is told apart by its item name)
+  local function spell(r) if r.id ~= nil then return r.id end return r.item end
+  local profBy = {}
   for _, r in ipairs(list) do
-    local t, n, prof = num(r.t), (num(r.count) > 0 and r.count or 1), profOf(r.prof)
+    local k, prof = spell(r), profOf(r.prof)
+    if k ~= nil and prof and not profBy[k] then profBy[k] = prof end
+  end
+  local all, last = {}, nil
+  for _, r in ipairs(list) do
+    local t, n, k = num(r.t), (num(r.count) > 0 and r.count or 1), spell(r)
     local t1 = math.max(t, num(r.t1))
-    if last and last.item == r.item and last.prof == prof and last.s == r.s and t - last.t1 <= BATCH_GAP then
+    if last and k ~= nil and last.key == k and last.item == r.item and last.s == r.s and t - last.t1 <= BATCH_GAP then
       last.count, last.t1, last.crafts = last.count + n, t1, last.crafts + 1
     else
-      last = { t = t, t1 = t1, item = r.item, id = r.id, prof = prof, s = r.s, count = n, crafts = 1 }
-      batches[#batches + 1] = last
+      last = { t = t, t1 = t1, item = r.item, id = r.id, key = k, prof = k ~= nil and profBy[k] or nil, s = r.s, count = n, crafts = 1 }
+      all[#all + 1] = last
     end
-    items = items + n
-    if t > 0 and (not since or t < since) then since = t end
+  end
+  local cut = (full and all[1]) and dayKey(all[1].t1) or nil
+  local batches, items, since = {}, 0, nil
+  for _, b in ipairs(all) do
+    if b.prof and dayKey(b.t1) ~= cut then
+      batches[#batches + 1] = b
+      items = items + b.count
+      if b.t > 0 and (not since or b.t < since) then since = b.t end
+    end
   end
   local out = {}
   for i = #batches, 1, -1 do out[#out + 1] = batches[i] end
@@ -706,9 +779,10 @@ function V.renderLeveling()
 end
 
 -- ── Reputation ── (docs/UX_PRAGMATIC.md 3.2)
--- The answer is the last gain. The list: Faction, Standing, Progress (the bar and what is left to the next
--- standing), Last gain (what the faction gained on the day of its newest stored gain, and that day) and This session
--- (only while a faction gained this session). A faction with stored gains opens them; the others open nothing.
+-- The answer is the first row: what that faction gained on the last day it gained. The list: Faction, Standing,
+-- Progress (the bar and what is left to the next standing), Last day gained (the sum of the faction's gains on the
+-- day of its newest stored gain, and that day; blank when a stored gain that names no character could belong to
+-- it) and This session (only while a faction gained this session). A faction with stored gains opens them.
 local REP_BAR = 120
 -- "16,072 to Exalted": what is left in the standing, nil when the client has not answered or there is no next one
 local function repLeft(r)
@@ -725,7 +799,7 @@ local function buildRep(content)
   v.pg = UI.Page(list)
   local col = v.pg.col
   v.summary = UI.Summary(col)
-  UI.SetTip(v.summary, { title = "Last gain", text = "The largest gain of the last day with a stored reputation gain." })
+  UI.SetTip(v.summary, { title = "Last day gained", text = "The first row of the list: the newest day with a counted reputation gain, and the faction that gained the most that day. The number is the sum of its gains that day." })
   v.head = UI.Section(col, "Factions")
   v.spec = {
     name = { key = "name", label = "Faction", flex = 1, min = 140 },
@@ -734,20 +808,23 @@ local function buildRep(content)
     prog = { key = "prog", label = "Progress", kind = "tag", justify = "LEFT", lead = REP_BAR + S.S2,
       min = REP_BAR + S.S2 + math.max(UI.TextWidth("BODY", "36,000 to Unfriendly"), UI.TextWidth("BODY", "Not known yet")),
       tip = "What is left to the next standing. The numbers come from the game while you are logged in." },
-    last = { key = "last", label = "Last gain", kind = "tag", min = 96, justify = "RIGHT", measure = { "+10,005 \194\183 Wed 28 Nov" },
-      tip = "What the faction gained on the day of its newest stored gain, and that day." },
+    last = { key = "last", label = "Last day gained", kind = "tag", min = 96, justify = "RIGHT", measure = { "+10,005 \194\183 Wed 28 Nov" },
+      tip = "The sum of the faction's gains on the last day it gained, and that day. Blank when a stored gain of the faction names no character: the day's total cannot be said." },
     ses = { key = "ses", label = "This session", kind = "num", min = 88, hide = true },
   }
   v.tbl = UI.KitTable(col, { v.spec.name, v.spec.standing, v.spec.prog, v.spec.last, v.spec.ses },
-    { onClick = function(row) if row.item and row.item.lastGain then V.openFaction(row.item) end end,
+    { onClick = function(row) if row.item and row.item.hasGains then V.openFaction(row.item) end end,
     onLayout = function(t) for i = 1, t.shownN do pcall(V.placeRepBar, t.rows[i]) end end,
     tooltip = function(row, item, tip)
       tip:AddLine(item.name, 1, 1, 1)
       if item.need then tip:AddDoubleLine(item.label, ("%s / %s"):format(UI.fmtNum(item.progress), UI.fmtNum(item.need)), C.fgMuted[1], C.fgMuted[2], C.fgMuted[3], 1, 1, 1) end
       if item.lastGain then
-        tip:AddLine(("Last gain %s. +%s that day."):format(UI.fmtStamp(item.lastGain), UI.fmtNum(num(item.dayGain))), 0.78, 0.79, 0.80, true)
-        tip:AddLine("Opens the stored gains.", 0.78, 0.79, 0.80, true)
-      else tip:AddLine("Last gain: Not recorded", 0.78, 0.79, 0.80, true) end
+        tip:AddLine(("+%s in all on that day. Newest gain %s."):format(UI.fmtNum(num(item.dayGain)), UI.fmtStamp(item.lastGain)), 0.78, 0.79, 0.80, true)
+      else
+        tip:AddLine("Last day gained: Not recorded", 0.78, 0.79, 0.80, true)
+        if item.partial then tip:AddLine("A stored gain of this faction names no character, so the day's total cannot be said.", 0.78, 0.79, 0.80, true) end
+      end
+      if item.hasGains then tip:AddLine("Opens the stored gains.", 0.78, 0.79, 0.80, true) end
     end })
   v.detail = UI.Detail(content, { list = list, back = "\226\128\185 Reputation", render = function(item, child, d) V.renderFaction(item, child) end,
     onBack = function(item) if v.tbl.setSelected then v.tbl.setSelected(nil) end end })
@@ -767,14 +844,15 @@ function V.renderRep()
   local now = nowT()
   local rows, sum = buildReputation()
   v.rows = rows
-  -- the answer: the first row of the list when it has a stored gain (left out when no gain is stored)
+  -- the answer: the first row of the list when it shows a gain (left out when none does). The number is a day's
+  -- sum, so the line names the day and never calls it one gain: "Barkskin Burrow +1,005 yesterday".
   local top = rows[1] and rows[1].lastGain and rows[1] or nil
   v.summaryShown = top ~= nil
   if top then
     local day = UI.fmtDate(top.lastGain, now)
-    if day == "Today" or day == "Yesterday" then day = day:lower() end
-    v.answer = ("Last gain: %s +%s, %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day)
-    v.summary:SetSegments({ { text = ("Last gain: **%s +%s**, %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day) } })
+    if day == "Today" or day == "Yesterday" then day = day:lower() else day = "on " .. day end
+    v.answer = ("%s +%s %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day)
+    v.summary:SetSegments({ { text = ("**%s +%s** %s"):format(top.name, UI.fmtNum(num(top.dayGain)), day) } })
     v.summary:Show()
   else v.answer = nil; v.summary:SetSegments({}); v.summary:Hide() end
   v.head:SetMeta(#rows > 0 and UI.plural(#rows, "faction") or nil)
@@ -796,7 +874,7 @@ function V.renderRep()
     local bad = r.standing == 1 or r.standing == 2
     row.c.standing:SetText((bad and UI.dot("bad") or "") .. r.label)
     -- (a Neutral faction with no stored gain is the quiet end of the list)
-    local quiet = r.standing == 4 and not r.lastGain
+    local quiet = r.standing == 4 and not r.hasGains and not r.partial
     local col = bad and C.bad or C.fgSubtle
     row.c.standing:SetTextColor(col[1], col[2], col[3])
     if quiet then UI.SetColor(row.c.name, "fgMuted"); UI.SetColor(row.c.standing, "fgMuted") end
@@ -810,7 +888,7 @@ function V.renderRep()
     row.c.last:SetText(r.lastGain and repLast(r, now) or "")
     row.c.ses:SetText(r.session and ("+" .. UI.fmtNum(r.session)) or "")
     -- (only a faction with stored gains opens)
-    row.ebNoOpen = not r.lastGain
+    row.ebNoOpen = not r.hasGains
   end)
   if #rows == 0 then v.tbl.setState("No faction met yet.") end
   V.placeRep()
@@ -833,7 +911,7 @@ function V.openFaction(item)
   -- (Older and Newer step through the factions that open: the ones with stored gains)
   local open, idx = {}, 1
   for _, r in ipairs(v.rows or {}) do
-    if r.lastGain then open[#open + 1] = r; if r.name == item.name then idx = #open end end
+    if r.hasGains then open[#open + 1] = r; if r.name == item.name then idx = #open end end
   end
   if v.tbl.setSelected then v.tbl.setSelected(item) end
   v.detail:Open(open, idx)
@@ -873,9 +951,14 @@ function V.renderFaction(item, child)
     total = total + num(h.amount)
     if h.source ~= "" then named = named + 1 end
   end
-  f.label = "Gains" .. (first and (" since " .. UI.fmtSince(first)) or "")
+  -- (a stored gain of the faction that names no character, on the first listed day or later, could belong in this
+  -- list: then neither a start nor a sum is said, the header is "GAINS" alone)
+  local _, loose = repGains()
+  local lt = loose[item.name]
+  f.partial = (lt ~= nil and (first == nil or dayKey(lt) >= dayKey(first))) or nil
+  f.label = "Gains" .. ((first and not f.partial) and (" since " .. UI.fmtSince(first)) or "")
   f.head:SetLabel(f.label)
-  f.head:SetMeta(total > 0 and ("+" .. UI.fmtNum(total)) or nil)
+  f.head:SetMeta((total > 0 and not f.partial) and ("+" .. UI.fmtNum(total)) or nil)
   -- (rule 0.3: Source is a column only while a third of the rows name one)
   local hide = named * 3 < #hist
   if (f.spec[2].hide or false) ~= hide then f.spec[2].hide = hide; f.tbl.relayout(w) end
@@ -967,7 +1050,6 @@ local function buildProf(content)
       local when = UI.fmtWhen(item.t) .. (UI.fmtClock(item.t) ~= UI.fmtClock(item.t1) and (" to " .. UI.fmtClock(item.t1)) or "")
       tip:AddLine(when, 0.78, 0.79, 0.80)
       if item.crafts > 1 then tip:AddLine(("%s made in %s, one after the other."):format(UI.plural(item.count, "item"), UI.plural(item.crafts, "craft")), 0.78, 0.79, 0.80, true) end
-      if not item.prof then tip:AddLine("Profession: Not recorded", 0.78, 0.79, 0.80, true) end
     end })
   content:HookScript("OnSizeChanged", function() pcall(V.placeProf) end)
   V.renderProf()
@@ -1004,17 +1086,12 @@ function V.renderProf()
   end
   for i = #rows + 1, #v.profRows do v.profRows[i]:Hide() end
   if #rows == 0 then v.empty:Set("No profession learned yet."); v.empty:Show() else v.empty:Hide() end
-  -- CRAFTED: named after where the stored list starts, with the items it holds; left out while nothing is stored
+  -- CRAFTED: named after the first day the list holds whole, with the items listed; left out while nothing is listed
   v.craftedShown = #crafts > 0
   if v.craftedShown then
     v.craftLabel = "Crafted" .. (csum.since and (" since " .. UI.fmtSince(csum.since, now)) or "")
     v.crafted.head:SetLabel(v.craftLabel)
     v.crafted.head:SetMeta(UI.plural(csum.items, "item"))
-    -- (rule 0.3: Profession is a column only while a third of the rows name one)
-    local named = 0
-    for _, r in ipairs(crafts) do if r.prof then named = named + 1 end end
-    local hide = named * 3 < #crafts
-    if (v.spec[3].hide or false) ~= hide then v.spec[3].hide = hide; relayout(v.crafted.tbl) end
     v.crafted.head:Show(); v.crafted.tbl.frame:Show()
     v.crafted.tbl.setRows(withDays(crafts, "item", "t1", "count"), function(row, r)
       row.c.when:SetText(batchWhen(r))
@@ -1030,7 +1107,7 @@ end
 UI.registerPane("Character", 1, "Leveling", buildLeveling, function() pcall(V.renderLeveling) end,
   "Your level, when you reached each one, and the time played.")
 UI.registerPane("Character", 2, "Reputation", buildRep, function() if V.rep and V.rep.detail.IsOpen() then V.rep.detail.Close() end; pcall(V.renderRep) end,
-  "Your standing with every faction, what is left to the next one, and the last gain.")
+  "Your standing with every faction, what is left to the next one, and the last day it gained.")
 UI.registerPane("Character", 3, "Professions", buildProf, function() pcall(V.renderProf) end,
   "Your skills and what you crafted.")
 
