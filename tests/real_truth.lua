@@ -256,9 +256,13 @@ do
     a and (tostring(a.since) .. " " .. a.net .. " " .. a.runs))
   UI.Open("Home", "sessions"); M.settle()
   local v = home.paneByKey.sessions.content
-  local segs = {}
-  for _, sg in ipairs(v.summary.segs or {}) do segs[#segs + 1] = strip(sg.text) end
-  eq("Sessions: the answer line", (table.concat(segs, " | "):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " "):gsub(" | ", "|"):gsub(" |", "|")), "Since Wed 18 Nov 20:35: net -80 88|6 runs")
+  -- (the five stored sessions that began after that moment: +204,634 -101,169 +35,285 -1,265,802 -225,137. The day
+  -- rows hold 543,386 copper more: levels 54 to 56 between 18 Nov 12:23 and 19 Nov 15:29 have no session record.)
+  eq("Sessions: the stored sessions of the range add up to -1,352,189, not the -808,803 of the day rows, and none reaches in from before it", a and (tostring(a.gold) .. " " .. tostring(a.listed)), "more -1352189")
+  eq("Sessions: the answer line is one segment", #(v.summary.segs or {}), 1)
+  local seg = v.summary.segs[1] or {}
+  eq("Sessions: the answer line never calls the figure net and says the list does not hold it all", (strip(seg.text):gsub("%*%*", ""):gsub("\194\160", " "):gsub("%s+", " "):gsub(" $", "")), "Since Wed 18 Nov 20:35: 6 runs \194\183 gold including sessions not listed -80 88")
+  check("Sessions: its hover reconciles the two: all gold changes -80g 88s, sessions listed below -135g 21s", seg.tip and seg.tip.pairs[1][2] == UI.money(-808803, true) and seg.tip.pairs[2][2] == UI.money(-1352189, true))
   eq("Sessions: the header says where the list starts and that it has gaps", v.section.label.text .. " | " .. v.section.meta.text, "SESSIONS SINCE THU 5 NOV | not every session is kept")
   local cols = {}
   for _, col in ipairs(v.tbl.full) do if v.tbl.cols[col.key] and col.key ~= "_chev" then cols[#cols + 1] = col.key end end

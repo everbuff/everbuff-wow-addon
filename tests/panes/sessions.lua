@@ -235,28 +235,78 @@ return function(P)
     check("Sessions answer: the gold fixture has day rows this week", a ~= nil and #sc.period.days > 0)
     if a then
       eq("Sessions answer: the net is the Week of Loot > Gold, to the copper", a.net, sc.ledger.gained - sc.ledger.spent)
-      local segs = {}
-      for _, sg in ipairs(c.summary.segs or {}) do segs[#segs + 1] = sg.text end
       local head = sc.since and ("Since " .. UI.fmtStamp(sc.since)) or "This week"
-      check("Sessions answer: it names the week, or where the gold history starts inside it", P.visible(c.summary) and tostring(segs[1]):find(head .. ": net ", 1, true) == 1, tostring(segs[1]))
-      -- the runs of the run store that began in the range, full and rebuilt, and none from before it
       local blk = ns.char()
+      local g = ns.charGuid()
+      local function line() return P.visible(c.summary) and tostring((c.summary.segs[1] or {}).text) or nil end
+      -- the stored sessions of the range, set by hand: the running record and one more that began in the range
+      local keepS = {}
+      for id, s in pairs(ns.DB.sessions) do keepS[id] = s end
+      local cur = ns.Recorder.current()
+      local keepC = { cur.startedEpoch, cur.gained, cur.spent, cur.guid }
+      local function sessions(list)
+        for id in pairs(ns.DB.sessions) do ns.DB.sessions[id] = nil end
+        ns.DB.sessions[cur.id] = cur
+        cur.guid, cur.startedEpoch, cur.gained, cur.spent = g, M.epoch - 60, 0, 0
+        for _, s in ipairs(list) do
+          s.guid, s.level0, s.level, s.addonVersion = s.guid or g, 60, 60, "0.9.51"
+          ns.DB.sessions[s.id] = s
+        end
+      end
+      blk.dungeonRuns, blk.dungeonLegacy, blk.dungeonRun = {}, {}, nil
+      local gained, spent = math.max(a.net, 0) + 500, math.max(-a.net, 0) + 500
+      -- 1. the sessions of the range add up to the day rows, to the copper: the line says net
+      sessions({ { id = "an-1", startedEpoch = a.from + 5, endedEpoch = a.from + 3605, gained = gained, spent = spent },
+        { id = "an-alt", guid = "Player-1-0000AA", startedEpoch = a.from + 5, endedEpoch = a.from + 900, gained = 77 } })
+      local r = Sess.answer()
+      eq("Sessions answer: the stored sessions of the range add up to the net: gold is said as net", r.gold .. " " .. r.listed, "net " .. a.net)
+      reopen()
+      eq("Sessions answer: the line is the range and the net", line(), head .. ": net **" .. UI.money(a.net, true) .. "**")
+      check("Sessions answer: a reconciled net has no hover", c.summary.segs[1].tip == nil)
+      -- 2. one copper short, nothing reaching in from before the range: sessions are gone, and the line says so
+      ns.DB.sessions["an-1"].gained = gained - 1
+      r = Sess.answer()
+      eq("Sessions answer: the sessions add up to less than the day rows: gold is said with its remark", tostring(r.gold) .. " " .. r.listed, "more " .. (a.net - 1))
+      reopen()
+      eq("Sessions answer: the line never calls it net and carries the remark itself", line(), head .. ": gold including sessions not listed **" .. UI.money(a.net, true) .. "**")
+      local tip = c.summary.segs[1].tip
+      check("Sessions answer: its hover gives both figures, the day rows' and the listed sessions'", tip and tip.pairs[1][2] == UI.money(a.net, true) and tip.pairs[2][2] == UI.money(a.net - 1, true))
+      check("Sessions answer: one segment that ends on the figure, so nothing follows a coin", #c.summary.segs == 1 and line():sub(-4) == "|t**", line())
+      -- 3. a stored session reaches into the range from before it: the difference may be its gold. No gold on the line.
+      sessions({ { id = "an-1", startedEpoch = a.from + 5, endedEpoch = a.from + 3605, gained = gained - 1, spent = spent },
+        { id = "an-0", startedEpoch = a.from - 600, endedEpoch = a.from + 2, gained = 1, spent = 0 } })
+      eq("Sessions answer: a session that reaches into the range: the gold cannot be reconciled", Sess.answer().gold, nil)
+      reopen()
+      check("Sessions answer: with no run and no gold to say there is no line", not P.visible(c.summary), tostring(line()))
+      -- (a session that ended before the range proves nothing either way)
+      ns.DB.sessions["an-0"].endedEpoch = a.from - 300
+      eq("Sessions answer: a session that ended before the range is not in the way", Sess.answer().gold, "more")
+      -- 4. a session of the range with no gold counter: its blank Gold cell is the difference, perhaps
+      sessions({ { id = "an-1", startedEpoch = a.from + 5, endedEpoch = a.from + 3605, gained = gained - 1, spent = spent },
+        { id = "an-bare", startedEpoch = a.from + 4000, endedEpoch = a.from + 4600 } })
+      eq("Sessions answer: a session of the range with no gold counter: no gold on the line", Sess.answer().gold, nil)
+      -- the runs of the run store that began in the range, full and rebuilt, and none from before it
       blk.dungeonRuns = { { id = "a1", inst = "Deadmines", t = a.from + 10, bosses = {} }, { id = "a0", inst = "Deadmines", t = a.from - 10, bosses = {} } }
       blk.dungeonLegacy = { { id = "g" .. (a.from + 20), src = "gold", inst = "Maraudon", t = a.from + 20, secs = 100 } }
       blk.dungeonRun = nil
       eq("Sessions answer: 2 runs began in the range (one full, one rebuilt), the one before it is not counted", Sess.answer().runs, 2)
       reopen()
-      segs = {}
-      for _, sg in ipairs(c.summary.segs or {}) do segs[#segs + 1] = sg.text end
-      check("Sessions answer: the line says 2 runs", tostring(segs[2]):find("2", 1, true) ~= nil and tostring(segs[2]):find("runs", 1, true) ~= nil, tostring(segs[2]))
-      blk.dungeonRuns, blk.dungeonLegacy = {}, {}
+      eq("Sessions answer: gold that cannot be reconciled is left out, the runs stay", line(), head .. ": **2** runs")
+      sessions({ { id = "an-1", startedEpoch = a.from + 5, endedEpoch = a.from + 3605, gained = gained, spent = spent } })
       reopen()
-      eq("Sessions answer: with no run in the range the line is the net alone", #(c.summary.segs or {}), 1)
+      eq("Sessions answer: runs first, the gold last", line(), head .. ": **2** runs \194\183 net **" .. UI.money(a.net, true) .. "**")
+      blk.dungeonRuns, blk.dungeonLegacy = { blk.dungeonRuns[1] }, {}
+      reopen()
+      eq("Sessions answer: one run is 1 run", line(), head .. ": **1** run \194\183 net **" .. UI.money(a.net, true) .. "**")
+      blk.dungeonRuns = {}
       -- no day row: no line (never a net of 0 for a week with no gold history)
       blk.goldDays, blk.goldMonths = {}, nil
       eq("Sessions answer: no gold day row in the week, no answer", Sess.answer(), nil)
       reopen()
       check("Sessions answer: then the line is not shown and the list starts at the top", not P.visible(c.summary) and near(P.box(c.section).t, P.box(c.col).t, 1))
+      for id in pairs(ns.DB.sessions) do ns.DB.sessions[id] = nil end
+      for id, v in pairs(keepS) do ns.DB.sessions[id] = v end
+      cur.startedEpoch, cur.gained, cur.spent, cur.guid = keepC[1], keepC[2], keepC[3], keepC[4]
     end
   end
 

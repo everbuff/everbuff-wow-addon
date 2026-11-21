@@ -1110,9 +1110,16 @@ function Sess.gaps()
   for _, s in ipairs(sessionRows()) do g, x = g + num(s.gained), x + num(s.xp) end
   return num(type(c.gold) == "table" and c.gold.gained) > g or num(type(c.xp) == "table" and c.xp.gained) > x
 end
--- The answer line: the week's net gold from the day rows (the Week of Loot > Gold, one function), and the runs of
--- the run store that began in it. When the gold history starts inside the week the line names the real start.
--- nil while the character has no gold day row in the week.
+-- The answer line: the runs of the run store that began in the week, and the week's net gold from the day rows
+-- (the Week of Loot > Gold, one function). When the gold history starts inside the week the line names the real
+-- start. nil while the character has no gold day row in the week.
+-- The gold stands right above the Gold column, so it is said only in a form the rows under it bear out:
+--   gold = "net"   the stored sessions that began in the range add up to it, to the copper
+--   gold = "more"  they do not, and the stored data says why: no stored session reaches into the range from before
+--                  it and every one in it holds its gold counter, so the rest moved in sessions that are no longer
+--                  in the save (the desktop app removes a session once it has saved it). The line says so itself.
+--   gold = nil     the difference cannot be explained from the save: the gold is left out of the line.
+-- listed is what the stored sessions of the range add up to.
 function Sess.answer()
   if not (ns.Gold and ns.Gold.scope and ns.DB and ns.charGuid and ns.charGuid()) then return nil end
   local ok, sc = pcall(ns.Gold.scope, "week", "char")
@@ -1127,7 +1134,38 @@ function Sess.answer()
   end
   count(c.dungeonRuns); count(c.dungeonLegacy)
   if type(c.dungeonRun) == "table" then count({ c.dungeonRun }) end
+  -- the stored sessions of the range (2 s of slack at its start, as the gold scope has it)
+  local cur = curSession()
+  local listed, explained = 0, true
+  for _, s in ipairs(sessionRows()) do
+    local a, z = statN(s.startedEpoch), statN(s.endedEpoch)
+    if not a then explained = false
+    elseif a >= from - 2 and a < sc.to then
+      if statN(s.gained) or statN(s.spent) then listed = listed + num(s.gained) - num(s.spent) else explained = false end
+    elseif a < from - 2 and (s == cur or (z or a) > from) then explained = false   -- it reaches into the range
+    end
+  end
+  out.listed = listed
+  if listed == out.net then out.gold = "net" elseif explained then out.gold = "more" end
   return out
+end
+Sess.NOT_LISTED = "including sessions not listed"
+-- The text of the answer line, one segment (nil: no line): the range, the runs, then the gold last, so nothing
+-- follows a coin.
+function Sess.answerSeg(a)
+  if type(a) ~= "table" then return nil end
+  local parts = {}
+  if num(a.runs) > 0 then parts[#parts + 1] = ("**%d** %s"):format(a.runs, a.runs == 1 and "run" or "runs") end
+  local tip
+  if a.gold == "net" then parts[#parts + 1] = ("net **%s**"):format(UI.money(a.net, true))
+  elseif a.gold == "more" then
+    parts[#parts + 1] = ("gold %s **%s**"):format(Sess.NOT_LISTED, UI.money(a.net, true))
+    tip = { title = "Gold in this time", text = "Earned less spent, from this character's daily gold totals. The desktop app removes a session from the game's save once it has saved it, so the list below holds fewer sessions than were played.",
+      pairs = { { "All gold changes", UI.money(a.net, true) }, { "Sessions listed below", UI.money(num(a.listed), true) } } }
+  end
+  if #parts == 0 then return nil end
+  local head = a.since and ("Since " .. UI.fmtStamp(a.since)) or "This week"
+  return { text = head .. ": " .. table.concat(parts, " \194\183 "), tip = tip }
 end
 -- what a click on a row opens: the session's gold journal (Loot > Gold), when the row is the running session or
 -- one stored login with a journal. nil: the row opens nothing.
@@ -1232,12 +1270,9 @@ local function buildSessions(content)
     -- the answer: the week, each part only when it can be derived
     local a = Sess.answer()
     content.answer = a
-    if a and #rows > 0 then
-      local head = a.since and ("Since " .. UI.fmtStamp(a.since)) or "This week"
-      local segs = { { text = ("%s: net **%s**"):format(head, UI.money(a.net, true)) } }
-      if a.runs > 0 then segs[#segs + 1] = { text = ("**%d** %s"):format(a.runs, a.runs == 1 and "run" or "runs") } end
-      content.summary:SetSegments(segs); content.summary:Show()
-    else content.summary:Hide() end
+    local seg = a and #rows > 0 and Sess.answerSeg(a) or nil
+    if seg then content.summary:SetSegments({ seg }); content.summary:Show()
+    else content.summary:SetSegments({}); content.summary:Hide() end
     -- the header says where the list starts, once (0.2.3), and the one remark when the stored totals prove a gap
     if #rows > 0 then
       local oldest = rows[#rows].startedEpoch
