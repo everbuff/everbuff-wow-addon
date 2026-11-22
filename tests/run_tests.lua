@@ -2552,6 +2552,11 @@ for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", 
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
 end
+-- #58: the market snapshot (Auctionator prices and the client's vendor prices, silent)
+do
+  local ok, err = pcall(dofile("tests/market_snapshot.lua"), { check = check, M = M, ns = ns })
+  check("#58 tests/market_snapshot.lua runs to its end", ok, err)
+end
 -- UX overhaul step 1 (docs/UX_OVERHAUL.md 5): the shared formatters and the cmap scan of the text characters
 do
   local ok, err = pcall(dofile("tests/formatters.lua"), { check = check, ns = ns })
