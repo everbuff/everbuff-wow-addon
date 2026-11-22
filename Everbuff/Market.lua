@@ -546,3 +546,167 @@ function Market.buildCrafts()
   for _, r in ipairs(c.crafts) do local p = r.prof or "Unknown"; byProf[p] = (byProf[p] or 0) + (r.count or 1) end
   return rows, { crafts = #c.crafts, recipes = #c.recipes, byProf = byProf }
 end
+
+-- ── market snapshot: Auctionator's prices plus the client's own vendor prices (issue #58) ───────────────────────
+-- WHAT: after each auction house visit (and at logout), a silent copy of the price database Auctionator keeps for this
+-- realm, so the backend can keep one snapshot per upload and see across days which listings sold. Everbuff sends no
+-- auction queries of its own and writes nothing to Auctionator. No window, chat line or setting; never in combat.
+-- WHERE (EverbuffDB, additive):
+--   market = { src = "Auctionator", realm, day0, at, scanDay, n, skipped, items = { [itemId] = "m/a/d" }, vendor = { [itemId] = copper } }
+--     items[id]  m = the lowest buyout per unit Auctionator saw at its latest look at the item (copper), a = how many
+--                were listed on that day (all listings, every price; empty when Auctionator kept no count), d = that
+--                day in Auctionator's day numbers: whole days since day0 (Auctionator.Constants.SCAN_DAY_0, the PC's
+--                local midnight of 2020-01-01). Every item Auctionator knows is in it, each with its own day: an item
+--                not seen in the latest scan keeps its older day, so a reader picks the days it trusts.
+--     scanDay    the newest day of any item; n the items written; skipped the keys that are not a plain item id
+--                (battle pets and the like), counted and left out.
+--     vendor[id] what a vendor pays for one of the item, read from the client (C_Item.GetItemInfo's 11th value, the
+--                price of the base item: a random-suffix copy can sell a few percent apart). 0 = sells for nothing.
+--                Kept across snapshots (a vendor price does not change); an item the client has not loaded yet has
+--                no entry until it loads: never a guess, never an outside table.
+local Snap = { CHUNK = 400, VENDOR_STEP = 20, VENDOR_EVERY = 0.5, AFTER_CLOSE = 3, COMBAT_RETRY = 5 }
+Market.snap = Snap
+
+local function after(s, fn) if C_Timer and C_Timer.After then C_Timer.After(s, fn) else fn() end end
+local function fighting() return (InCombatLockdown and InCombatLockdown()) and true or false end
+
+-- the in-memory price table Auctionator holds for the current realm, its realm name and day 0; nil when Auctionator is
+-- not installed or holds nothing readable
+function Snap.source()
+  local A = rawget(_G, "Auctionator")
+  if type(A) ~= "table" then return nil end
+  local realm = type(A.State) == "table" and safeStr(A.State.CurrentRealm) or nil
+  local db = type(A.Database) == "table" and A.Database.db or nil
+  if type(db) ~= "table" then
+    local all = rawget(_G, "AUCTIONATOR_PRICE_DATABASE")
+    db = (type(all) == "table" and realm) and all[realm] or nil
+    if type(db) == "string" and C_EncodingUtil and C_EncodingUtil.DeserializeCBOR then
+      local ok, t = pcall(C_EncodingUtil.DeserializeCBOR, db)   -- Auctionator serializes the realm at logout
+      db = ok and t or nil
+    end
+  end
+  if type(db) ~= "table" then return nil end
+  local day0 = type(A.Constants) == "table" and plainNum(A.Constants.SCAN_DAY_0) or nil
+  return db, realm, day0
+end
+
+-- one item of Auctionator's table as "m/a/d" plus its day, or nil when it holds no price
+function Snap.entry(v)
+  if type(v) == "string" and C_EncodingUtil and C_EncodingUtil.DeserializeCBOR then
+    local ok, t = pcall(C_EncodingUtil.DeserializeCBOR, v); v = ok and t or nil
+  end
+  if type(v) ~= "table" then return nil end
+  local m = plainNum(v.m)
+  if not m or m <= 0 then return nil end
+  local d
+  for k in pairs(type(v.h) == "table" and v.h or {}) do
+    local n = tonumber(k); if n and (not d or n > d) then d = n end
+  end
+  if not d then return nil end
+  local a = type(v.a) == "table" and plainNum(v.a[tostring(d)] or v.a[d]) or nil
+  return ("%d/%s/%d"):format(m, a and ("%d"):format(a) or "", d), d
+end
+
+local function market()
+  local mk = ns.DB.market
+  if type(mk) ~= "table" then mk = {}; ns.DB.market = mk end
+  if type(mk.vendor) ~= "table" then mk.vendor = {} end
+  return mk
+end
+
+-- vendor prices: VENDOR_STEP items every VENDOR_EVERY seconds, out of combat. Asking for an item the client does not
+-- have loads it; GET_ITEM_INFO_RECEIVED then fills it, and the next snapshot asks again for any still missing.
+Snap.queue, Snap.waiting, Snap.pumping = {}, {}, false
+local function vendorOf(id) local G = ns.Gold; return G and G.sellPrice and G.sellPrice(id) or nil end
+function Snap.pump()
+  Snap.pumping = false
+  if not ns.DB or #Snap.queue == 0 then return end
+  if fighting() then Snap.pumping = true; after(Snap.COMBAT_RETRY, Snap.pump) return end
+  local vend = market().vendor
+  for _ = 1, Snap.VENDOR_STEP do
+    local id = table.remove(Snap.queue)
+    if not id then break end
+    if vend[id] == nil then
+      local p = vendorOf(id)
+      if p then vend[id] = p; Snap.waiting[id] = nil else Snap.waiting[id] = true end
+    end
+  end
+  if #Snap.queue > 0 then Snap.pumping = true; after(Snap.VENDOR_EVERY, Snap.pump) end
+end
+function Snap.received(id, ok)
+  id = plainNum(id)
+  if not id or not Snap.waiting[id] or not ns.DB then return end
+  Snap.waiting[id] = nil
+  if ok == false then return end
+  local p = vendorOf(id)
+  if p then market().vendor[id] = p end
+end
+local function queueVendor(ids)
+  local vend = market().vendor
+  for _, id in ipairs(ids) do if vend[id] == nil then Snap.queue[#Snap.queue + 1] = id end end
+  if #Snap.queue > 0 and not Snap.pumping then Snap.pumping = true; after(0, Snap.pump) end
+end
+
+-- the snapshot itself: CHUNK keys per frame into a new table, which replaces the stored one only when complete
+Snap.job = nil
+local function finish(job)
+  local mk = market()
+  mk.src, mk.realm, mk.day0, mk.at = "Auctionator", job.realm, job.day0, nowEpoch()
+  mk.scanDay, mk.n, mk.skipped, mk.items = job.scanDay, job.n, job.skipped, job.items
+  Snap.job = nil
+  queueVendor(job.ids)
+end
+local function step(job, all)
+  local last = all and #job.keys or math.min(job.i + Snap.CHUNK - 1, #job.keys)
+  for i = job.i, last do
+    local k = job.keys[i]
+    local id = (type(k) == "number" and k) or (type(k) == "string" and k:match("^%d+$") and tonumber(k)) or nil
+    if id then
+      local e, d = Snap.entry(job.db[k])
+      if e then
+        job.items[id] = e; job.n = job.n + 1; job.ids[#job.ids + 1] = id
+        if not job.scanDay or d > job.scanDay then job.scanDay = d end
+      end
+    elseif k ~= "version" then job.skipped = job.skipped + 1 end
+  end
+  job.i = last + 1
+  if job.i > #job.keys then finish(job) return true end
+  return false
+end
+local function run()
+  local job = Snap.job
+  if not job then return end
+  if fighting() then after(Snap.COMBAT_RETRY, run) return end
+  if not step(job) then after(0, run) end
+end
+--- take a snapshot (`now` = in one go, for logout, where no later frame comes); false when there is nothing to read
+function Snap.take(now)
+  if not ns.DB then return false end
+  if Snap.job then if now then step(Snap.job, true) end return true end
+  local db, realm, day0 = Snap.source()
+  if not db then return false end
+  local keys = {}
+  for k in pairs(db) do keys[#keys + 1] = k end
+  Snap.job = { db = db, realm = realm, day0 = day0, keys = keys, i = 1, items = {}, ids = {}, n = 0, skipped = 0 }
+  if now then step(Snap.job, true) else after(0, run) end
+  return true
+end
+
+local sf = CreateFrame("Frame")
+ns.eventFrames[#ns.eventFrames + 1] = sf
+for _, e in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "GET_ITEM_INFO_RECEIVED", "PLAYER_LOGOUT" }) do
+  pcall(sf.RegisterEvent, sf, e)
+end
+Snap.open, Snap.taken = false, false
+sf:SetScript("OnEvent", function(_, event, a1, a2)
+  if event == "AUCTION_HOUSE_SHOW" then Snap.open = true
+  elseif event == "AUCTION_HOUSE_CLOSED" then
+    -- Auctionator stores a full scan a few frames after it ends: wait a moment so the copy holds it
+    Snap.open = false
+    after(Snap.AFTER_CLOSE, function() Snap.taken = Snap.take(false) or Snap.taken end)
+  elseif event == "GET_ITEM_INFO_RECEIVED" then Snap.received(a1, a2)
+  elseif event == "PLAYER_LOGOUT" then
+    -- logged out at the auctioneer, or a copy still being built: finish it now
+    if Snap.job or Snap.open then Snap.take(true) end
+  end
+end)
