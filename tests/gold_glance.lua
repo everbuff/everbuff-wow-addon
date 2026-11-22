@@ -332,7 +332,7 @@ return function(P)
     G.menu(p)
     row("Hide").scripts.OnClick(row("Hide"))
     check("menu: Hide turns the pill off (a right-click alone never does)", ns.DB.settings.gold.pill.on == false and p.shown == false)
-    check("menu: with the pill off the entry offers to show it", (function() for _, it in ipairs(G.menuItems()) do if it.text == "Show the gold pill" then return true end end end)() == true)
+    check("menu: with the pill off the entry offers to show it", (function() for _, it in ipairs(G.menuItems()) do if it.text == "Show gold on screen" then return true end end end)() == true)
     G.pillOn(true)
     -- with MenuUtil
     local calls, kids = {}, {}

@@ -78,6 +78,14 @@ function ns.migrateDB(db)
   db.character, db.loot.gold, db.characterLegacy = nil, nil, nil
   db.story.inInstance = nil   -- now per character (characters[guid].inInstance)
   db.characters = db.characters or {}
+  -- The /played stamps written before 0.9.52 are invalid and are discarded (docs/UX_PRAGMATIC.md 3.1, gate E; founder
+  -- rule 2026-10-05): each was the played total at the last /played answer on its level, overwritten at every
+  -- login, not the total when the level was reached. From 0.9.52 a stamp is that total, and the /played answer that
+  -- writes one marks the block (`playedExact`: its stamps are all of the new kind). A block without the mark keeps
+  -- no stamps; nothing else of it is touched.
+  for _, c in pairs(db.characters) do
+    if type(c) == "table" and not c.playedExact and c.playedAtLevel ~= nil then c.playedAtLevel = nil end
+  end
   db.story.events = db.story.events or {}
   -- loot rows from before schema 2 carry no session id (#17): the backend selects rows by session, so they can never
   -- upload; drop them
@@ -198,6 +206,10 @@ end
 function ns.applyAck(ack, source)
   local db = ns.DB
   if not (db and type(ack) == "table") then return 0, 0 end
+  -- when each level was reached is copied into the character's block before any session record is deleted
+  if ns.Levels then pcall(ns.Levels.harvest, db) end
+  -- and every reputation gain gets its character while the session record still names it
+  if ns.Rep then pcall(ns.Rep.harvest, db) end
   local through = tonumber(ack.through) or 0
   local uids = type(ack.uids) == "table" and ack.uids or {}
   -- the running session is never pruned: it is still being written
@@ -282,7 +294,7 @@ SlashCmdList.EVERBUFF = function(arg)
   if arg == "" or arg == "show" or arg == "open" then
     if ns.UI then ns.UI.Toggle() else ns.msg("UI not loaded") end
   elseif arg == "rec" or arg == "recording" then
-    if ns.UI then ns.UI.Open("Combat", "fights") end
+    if ns.UI then ns.UI.Open("Home", "fights") end
   -- NOTE: /eb loot · /eb ready · /eb crew (raid-lead tools) are DEFERRED - see addon/Everbuff/future/.
   elseif arg:match("^ack") then
     local ack = ns.parseAckCode((arg:gsub("^ack%s*", "")))
@@ -370,6 +382,12 @@ f:SetScript("OnEvent", function(_, event, ...)
     ns.migrateDB(db)
     ns.DB = db
     if ns.flushBlocked then ns.flushBlocked() end   -- blocks seen before the save file loaded
+    -- the runs from before the run store, copied once from the gold runs (before anything is pruned)
+    if ns.RunsLegacy then pcall(ns.RunsLegacy.harvestAll, db) end
+    -- when each level was reached, copied from the session records and the event list (the list holds 500 rows)
+    if ns.Levels then pcall(ns.Levels.harvest, db) end
+    -- whose each stored reputation gain is, written on the row while its session record (or a craft) still says so
+    if ns.Rep then pcall(ns.Rep.harvest, db) end
     -- the desktop's ack (companion SavedVariable, written while WoW was closed): mark + prune
     if type(EverbuffAck) == "table" and (next(EverbuffAck.uids or {}) or next(EverbuffAck.sessions or {}) or tonumber(EverbuffAck.through)) and not EverbuffAck.applied then
       local marked, removed = ns.applyAck(EverbuffAck, "file")

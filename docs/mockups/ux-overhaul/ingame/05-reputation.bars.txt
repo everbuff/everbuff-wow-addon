@@ -1,0 +1,23 @@
+# Live reputation bars of Iron Hart, read by hand off 05-reputation.png (in game, 21 Nov 2026), the PROGRESS
+# column "progress / need" of each row. A save holds the standing only, so these are an input of their own:
+#   EB_REP=docs/mockups/ux-overhaul/ingame/05-reputation.bars.txt  with the page character/reputation:bars
+# Faction | standing | min | max | value      (value = min + the row's progress; standing 7 Revered, 6 Honored,
+# 5 Friendly, 4 Neutral)
+# The screenshot ends at Windshapers: Barkskin Burrow, Timbermaw Hold and Bloodsail Buccaneers are below its fold
+# and are left out, so those three rows read "Not known yet".
+Undercity | 7 | 21000 | 42000 | 25928
+Darkspear Trolls | 6 | 9000 | 21000 | 13530
+Orgrimmar | 6 | 9000 | 21000 | 20241
+Thunder Bluff | 6 | 9000 | 21000 | 14848
+Booty Bay | 5 | 3000 | 9000 | 8110
+Everlook | 5 | 3000 | 9000 | 6350
+Gadgetzan | 5 | 3000 | 9000 | 8136
+Powderfuse | 5 | 3000 | 9000 | 6250
+Ratchet | 5 | 3000 | 9000 | 7855
+Argent Dawn | 4 | 0 | 3000 | 1145
+Cenarion Circle | 4 | 0 | 3000 | 300
+Darkmoon Faire | 4 | 0 | 3000 | 700
+Durotar Supply and Logistics | 4 | 0 | 3000 | 150
+Earthen Ring | 4 | 0 | 3000 | 1850
+Frostwolf Clan | 4 | 0 | 3000 | 100
+Windshapers | 4 | 0 | 3000 | 600

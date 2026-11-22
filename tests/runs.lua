@@ -1100,7 +1100,7 @@ return function(P)
     expire()
     r = last()
     check("17: a level-up outside after leaving does not move the run's end level", r.xp.gain == 200 and r.xp.l0 == 12 and r.xp.l1 == 12 and r.xp.p1 == 0.3 and r.xp.need == 1000, r.xp.l1 .. " " .. r.xp.p1)
-    check("17: the page reads the levels inside, and how many such runs the level still takes", select(1, R.xpLine(R.views()[1])) == "200 XP" .. SEP .. "level 12.1 to 12.3", (R.xpLine(R.views()[1])))
+    check("17: the page reads the levels inside, and no forecast of runs to the level", select(1, R.xpLine(R.views()[1])) == "200 XP" .. SEP .. "level 12.1 to 12.3", (R.xpLine(R.views()[1])))
     M.xp, M.xpmax, M.level = 100, 1000, 12
     invariants("17 outside")
     -- no XP block when the maximum is not a plain positive number (level cap, or hidden)
@@ -1624,21 +1624,20 @@ return function(P)
       enter("Deadmines", { map = 36 }); play(600); leave(); expire()
       local function names() local o = {}; T.dungeonList(); for _, r in ipairs(lv.shown) do o[#o + 1] = r.name .. ":" .. r.duration end; return table.concat(o, " ") end
       check("list: newest first by default", names() == "The Deadmines:600 Maraudon:160 Molten Core:900 The Deadmines:330", names())
-      lv.tabs.select("raid")
-      check("list: Raids keeps the raids only", names() == "Molten Core:900", names())
-      lv.tabs.select("party")
-      check("list: Dungeons leaves the raids out", names() == "The Deadmines:600 Maraudon:160 The Deadmines:330", names())
-      lv.tabs.select("all")
-      lv.pick:GetScript("OnClick")(lv.pick)
-      local items = lv.menu.items or {}
-      check("list: the dungeon list names every dungeon once, after All dungeons", #items == 4 and items[1][2] == "All dungeons" and items[1][3] == true and items[2][1] == "Maraudon"
-        and items[3][1] == "Molten Core" and items[4][1] == "The Deadmines", #items)
-      lv.menu.btns[4]:GetScript("OnClick")(lv.menu.btns[4])
-      check("list: a dungeon picked keeps its runs only, and the button says which", names() == "The Deadmines:600 The Deadmines:330" and lv.pick.text:GetText() == "The Deadmines", names())
-      lv.tabs.select("raid")
-      check("list: a filter that keeps nothing says so, not that there are no runs", #lv.shown == 0 and lv.tbl.empty and lv.tbl.empty:GetText() == "No run matches this filter.",
-        lv.tbl.empty and lv.tbl.empty:GetText())
-      lv.tabs.select("all"); lv.pickInst(nil)
+      check("list: the raid is listed with the dungeons (no Raids tab)", names():find("Molten Core:900", 1, true) ~= nil, names())
+      lv.filter:GetScript("OnClick")(lv.filter)
+      local items = lv.filter.menu.items or {}
+      check("list: the dungeon filter names every dungeon once, after All dungeons, then raids greyed as coming soon", #items == 5 and items[1][2] == "All dungeons" and items[1][3] == true
+        and items[2][1] == "Maraudon" and items[3][1] == "Molten Core" and items[4][1] == "The Deadmines" and items[5][2] == "Raids \194\183 coming soon" and items[5][4] == true, #items)
+      lv.filter.menu.rows[4]:GetScript("OnClick")(lv.filter.menu.rows[4])
+      check("list: a dungeon picked keeps its runs only, and the filter button says which in its active style", names() == "The Deadmines:600 The Deadmines:330"
+        and lv.filter.text:GetText() == "The Deadmines" and lv.filter.ebActive == true and lv.filter.clear.shown ~= false, names())
+      lv.filter.clear:GetScript("OnClick")(lv.filter.clear)
+      check("list: the clear glyph resets the filter", lv.st.inst == nil and lv.filter.text:GetText() == "All dungeons" and lv.filter.ebActive == false and #lv.shown == 4)
+      lv.pickInst("Shadowfang Keep")
+      check("list: a filter that keeps nothing says so, with a way back, not that there are no runs", #lv.shown == 0 and lv.tbl.state == "No run of Shadowfang Keep stored."
+        and lv.tbl.stateLink.text:GetText() == "Show all dungeons", lv.tbl.state)
+      lv.pickInst(nil)
       local head = lv.tbl.head
       head.dur:GetScript("OnClick")(head.dur)
       check("list: Length sorts longest first, then shortest first on a second click", names() == "Molten Core:900 The Deadmines:600 The Deadmines:330 Maraudon:160", names())
@@ -1650,7 +1649,7 @@ return function(P)
       check("list: Bosses sorts most first, ties newest first", names() == "Maraudon:160 The Deadmines:330 The Deadmines:600 Molten Core:900", names())
       head.death:GetScript("OnClick")(head.death)
       check("list: Deaths sorts most first", lv.shown[1].name == "Molten Core", names())
-      for _, k in ipairs({ "time", "rate", "loot" }) do check("list: " .. k .. " is a sortable column", head[k] and head[k]:GetScript("OnClick") ~= nil) end
+      for _, k in ipairs({ "time", "worth" }) do check("list: " .. k .. " is a sortable column", head[k] and head[k]:GetScript("OnClick") ~= nil) end
       head.time:GetScript("OnClick")(head.time)
       check("list: back on Time: newest first", names() == "The Deadmines:600 Maraudon:160 Molten Core:900 The Deadmines:330", names())
       invariants("list")
@@ -1795,8 +1794,8 @@ return function(P)
     fresh()
     local lv = T.dungeonList and T.dungeonList()
     if lv then
-      check("21: the empty list says how runs get there and since when they are kept", lv.emptyText == "No dungeon runs yet. Enter a dungeon and it shows up here.\nRuns are kept from version 0.9.50 on."
-        and R.SINCE == "Runs are kept from version 0.9.50 on.")
+      check("21: the empty list says how runs get there", lv.empty.shown ~= false and lv.empty.title:GetText() == "No run stored yet"
+        and lv.empty.text:GetText() == "Enter any dungeon and your run is recorded: time, bosses, deaths and loot.", lv.empty.title:GetText())
     end
     enter("Maraudon", { type = "raid" }); play(100)
     kill(422, "Noxxion", 30); combat(false); die(); play(10); leave(); play(120); enter("Maraudon"); rise(); play(400)
@@ -1804,13 +1803,12 @@ return function(P)
     M.xp = M.xp + 300; M.fire("PLAYER_XP_UPDATE")
     local v = R.views()[1]
     check("21: the open run is a row in progress, with its clocks", v.inProgress == true and v.endT == nil and v.state == "in" and v.duration == 660 and v.inside == 540 and v.ghost == 120 and v.kind == "raid", v.duration)
-    local tl1, tl2 = R.timeLine(v)
-    check("21: the time lines read the clocks in words: where the time went, then what was done inside", tl1 == ("Inside 9m 0s%srunning back 2m 0s"):format(SEP)
-      and tl2 == ("Active 9m 0s%sin combat 0s (bosses 30s)"):format(SEP), tl1 .. " | " .. tl2)
+    check("21: no screen text is built from the third clock or the combat totals", R.timeLine == nil)
     if lv then
       local tips = lv.tipLines(v)
-      check("21: the row's tooltip lists inside, run back, active and the state", tips[1] == "Inside 9m 0s" and tips[2] == "Run back 2m 0s" and tips[3] == "Active 9m 0s" and tips[4] == "In progress"
-        and tips[5] == "Re-entered 1 time", table.concat(tips, " | "))
+      local all = table.concat(tips, " | ")
+      check("21: the row's tooltip lists inside, run back and the state: no Active clock, no re-entry count", tips[1] == "Inside 9m" and tips[2] == "Run back 2m" and tips[3] == "In progress"
+        and all:find("Active", 1, true) == nil and all:find("Re-entered", 1, true) == nil, all)
     end
     check("contract: characters[guid].dungeonRun, every key typed, the open-only keys present only here", contract(open(), true) == nil and open().st == "in" and open().mark and open().beat and open().g0 and open().m0, contract(open(), true))
     leave()
@@ -1830,7 +1828,7 @@ return function(P)
     -- the XP lines of the page, with kills the client hid
     local xv = { inProgress = false, xpGain = 5000, xpPerHour = 23000.4, hidden = { xp = 2 }, xp = { gain = 5000, kill = 350, quest = 1200, n = 1450, l0 = 12, p0 = 0.1, l1 = 12, p1 = 0.3, need = 1000 } }
     local x1, x2, x3 = R.xpLine(xv)
-    check("21: the XP line reads gain, rate, levels and the runs the level still takes (from kill XP)", x1 == table.concat({ "5,000 XP", "23,000 per hour", "level 12.1 to 12.3", "about 2 more runs to level 13" }, SEP), x1)
+    check("21: the XP line reads gain, rate and levels, and forecasts no runs to a level", x1 == table.concat({ "5,000 XP", "23,000 per hour", "level 12.1 to 12.3" }, SEP) and R.runsToLevel == nil, x1)
     check("21: quest XP and the kills read are a line of their own, the count with its separator", x2 == "1,200 XP from quests" .. SEP .. "at least 1,450 kills", x2)
     check("21: a hidden line is called an XP line, never a kill line", x3 == "2 XP lines were hidden by the client.", x3)
     xv.hidden, xv.xp.n, xv.inProgress = { xp = 1 }, 1, true
@@ -1854,11 +1852,12 @@ return function(P)
     local WANT = {
       fights = "auras bossName difficultyID duration encounterID endEpoch endLocalHi endMono enemies foes gear id instanceMapID instanceType level map outcome player realm schema session spec startEpoch startLocal startLocalHi startMono stats uid uploaded x y zone",
       story = "downtime kind map s shown t text x y zone",
-      loot = "count guid icon id item money q s src t x y zone",
+      -- (0.9.52, gate G of docs/UX_PRAGMATIC.md: an item row carries `map`, and `pushed` when it came with no loot window)
+      loot = "count guid icon id item map money q s src t x y zone",
       gold = "inst items lootValue looted quests secs t",
     }
     for _, k in ipairs({ "fights", "story", "loot", "gold" }) do
-      check("contract: nothing new on the " .. k .. " rows (the keys of 0.9.49, no other)", got[k] == WANT[k] and got[k] ~= "", got[k])
+      check("contract: nothing new on the " .. k .. " rows (the keys of 0.9.49 and the loot keys of 0.9.52, no other)", (got[k]:gsub(" pushed", "")) == WANT[k] and got[k] ~= "", got[k])
     end
     check("contract: no schema bump", ns.DB.schema == 2)
     -- the limits

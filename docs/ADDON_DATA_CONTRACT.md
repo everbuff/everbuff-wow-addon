@@ -179,6 +179,18 @@ so an item dragged onto the merchant window is `unexplained` (a known case). An 
 | Sales and purchases | A purchase's amount is `C_MerchantFrame.GetItemInfo(index).price` (legacy `GetMerchantItemInfo` as fallback) times the quantity over the stack count. A change takes the waiting entry whose amount it equals; else the entries (searched over the 8 oldest with a known amount) that sum to it, one row each; else the oldest entry is used up as before, and when several were waiting and every amount was known the row names no item and carries `x=unmatched`. An entry waits 5 s, and every purse change that takes one restarts the wait of the rest (sell all junk, a slow server) |
 | Context | Where the client has `C_PlayerInteractionManager.IsInteractingWithNpcOfType`, a merchant, trainer, mailbox or auctioneer it reports open counts as open even when the window event was not seen. It never closes a window the events say is open |
 
+Two more rules from 0.9.52 (docs/UX_PRAGMATIC.md gate H and everbuff-wow-addon #52; built on the draft branch, not
+released, both wait for the founder's yes):
+
+| Rule | What is written |
+| --- | --- |
+| Mailbox flag (#52) | The mailbox counts as open from MAIL_SHOW to MAIL_CLOSED, and the client does not always send MAIL_CLOSED. PLAYER_ENTERING_WORLD now clears the flag (a loading screen closes the mailbox). The last fallback of an income, "at the mailbox with no take waiting is `mail`", no longer applies while the character is inside an instance (`characters[guid].inInstance`): the income goes on to the coin line and the loot window, or stays `unexplained`. A take that is waiting still claims its amount anywhere. |
+| Split share | A coin line whose digits no single income has is matched against two to four incomes in a row that are still waiting for a source (3 s) and add up to exactly its amount, in either order of line and purse changes. Each of them becomes `looted` (with `share=1` for a share line): its journal row is rewritten in place, the ledgers and the day row move the amount from `unexplained` to `looted`, the place and the open dungeon run are credited, and the loot log gets one coin row per part. Exact sums only; a single income with the line's digits is taken first. On the founder's saves of 18 to 21 Nov 464 of 479 unexplained incomes are parts of such shares. |
+
+`characters[guid].goldShareSince` (0.9.52, optional, write-once): the server epoch of the character's first load with
+these two rules. Loot > Gold does not offer its Sources view for a period that holds time inside a dungeon from before
+it. Rows written before it are not rewritten.
+
 Every function and event above is feature-tested (`type(x) == "function"`) or registered through pcall, and each
 rule keeps the behavior of 0.9.45 as its fallback on a client that lacks it. `tests/gold_sources.lua` holds these
 (with `tests/coin_locales.lua`, the coin lines of the 13 locales mined from the client), and `tests/gold_profile.lua`
@@ -536,6 +548,44 @@ with `/eb instances limit 5|10|off`) when the player set one.
 `characters[guid].dungeonEvictedTo` (epoch): the latest `endT` of a run evicted from `dungeonRuns`. Join with
 previous run is refused when it is later than the previous run's `endT` (a run between the two left the list).
 
+### Levels, played stamps, reputation rows and craft batches (0.9.52, docs/UX_PRAGMATIC.md gates E and F)
+
+Built on the draft branch, not released; each gate needs the founder's yes on everbuff-wow-addon #57. All fields are
+optional and none is read by ingest.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `characters[guid].levelAt` | map level -> object | When each level was reached. `{ t, zone? }`: the server epoch of the level-up and its zone, from a `LEVELUP` story event or the `LEVEL_UP` row of a session record. `{ from, to }`: no row of the level-up is stored, and the level was reached between these two server epochs, by the levels and times of the stored session records (after every stored moment the character was below the level, before every stored moment it was on it). Written by `ns.Levels.harvest` (`Everbuff/Progress.lua`) for every character of the save at each load and before an acknowledgement deletes session records, so it outlives both the 500 row event list and the session records. An exact moment is never replaced by a later one, an exact moment replaces a bound, and a bound only narrows. Nothing is derived from `/played`. |
+| `characters[guid].playedAtLevel` | map level -> seconds | From 0.9.52: the played total at the moment the level was reached, `total - level time` of the `TIME_PLAYED_MSG` answer, the same on every answer while on the level. An answer with no level time writes nothing. Before 0.9.52 the value was the total of the last answer on the level, moved by every login; those values are invalid and are deleted at load (founder rule 2026-10-05). |
+| `characters[guid].playedExact` | boolean | Written with the first stamp of the new kind: every stamp of the block is of that kind. A block without it keeps no `playedAtLevel` after a load. |
+| `story.rep[].g` | string | The GUID of the character that gained the reputation. A row with `g` is that character's even when its session record has been deleted by an acknowledgement. New rows are written with it (0.9.52). On a row without it (before 0.9.52) `ns.Rep.harvest` (`Everbuff/Progress.lua`) writes it at each load and before an acknowledgement deletes session records, in the same two places as `levelAt`, and only from a stored fact: the `guid` of the row's session record while that record is in the save, or, with the record gone, the character whose own block holds a row with the same session id (`characters[guid].crafts[].s`, `recipes[].s`); a session id that two characters' blocks name proves nothing. A row neither proves keeps no `g` and is shown for no character. The Reputation page states no day total and no last day for a faction while such a row of that faction lies on that day or later. |
+| `characters[guid].crafts[].t1` | number | The server epoch of the last craft of a batch. From 0.9.52 a craft that follows the last stored row within 60 s with the same `item`, `id` and `s` is added to that row when both name the same profession, or when one of them names none and they share a spell `id` (the first craft of a round is often written before the profession window is read; the row then takes the profession the other names): `count` is then the items of the batch, `t` the first craft and `t1` the last. A row without `t1` is one craft. The list holds 1000 rows (`Market.CRAFT_CAP`); past it the oldest row is dropped, so the oldest calendar day of a full list is incomplete and the Professions page leaves that day out. |
+| `characters[guid].crafts[].prof`, `recipes[].prof` | string | Never the empty string from 0.9.52: absent when no profession window named one. |
+
+### Runs from before the run store (`characters[guid].dungeonLegacy`, docs/UX_PRAGMATIC.md gate A)
+
+`characters[guid].dungeonLegacy[]` (optional, at most 200 rows, oldest first; file `Everbuff/RunsLegacy.lua`): the
+character's gold runs (`goldRuns`, from 0.9.47) that have no run record, copied once so the Dungeons list can show
+the runs played before 0.9.50. A gold run belongs to a run record when the two name the same dungeon and began
+within 300 seconds of each other; such a gold run is never copied. A gold run under 60 seconds with no coin, quest
+coin or item is not a run and is not copied.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | `"g"` and the gold run's start epoch |
+| `src` | string | `"gold"`: where the row came from |
+| `inst` | string | the dungeon's name, as the gold run stored it |
+| `t` | number | epoch the gold run began |
+| `secs` | number | seconds the gold run counted in the dungeon, to its 10 second tick (the dungeon's own entrance area counts when it carries the dungeon's name) |
+| `looted?`, `quests?`, `items?`, `lootValue?`, `unpriced?` | number | the gold run's own sums; a 0 is absent |
+
+Rules. The copy runs once per character, at load, before the desktop's acknowledgement is applied: from then on the
+list exists (empty when there was nothing to copy) and is never built again, so a run record deleted by hand does not
+come back as a row and every later run has a record of its own. A row holds only what the gold run stored: no
+bosses, no deaths, no XP, no end time. Nothing is rebuilt from timing, from gaps between events or from zone names.
+The rows never enter `dungeonStats`, bests or averages. The acknowledgement never touches the list. An invalid row is
+dropped on load. Not read by ingest.
+
 Split here (`Runs.split`) cuts a run where a visit begins: the bosses go whole to the side of their kill (or of
 their first pull), deaths, coin and XP with their visits, and the gap between the two is no one's time. Join with
 previous run (`Runs.joinRec`) is its inverse: a split then a join gives the original record back, every number
@@ -553,7 +603,7 @@ draws and says about gold, and nothing else (the pill, the bar texts, the menu a
 
 | Surface | When | What |
 | --- | --- | --- |
-| Loot > Gold pane | the addon window is open | periods by server day, who (character, realm, account), the Days and Characters views. Other characters' names and balances are shown here, and so in recordings |
+| Loot > Gold pane | the addon window is open | periods by server day. From the pragmatic pass (docs/UX_PRAGMATIC.md 4.2, draft branch) the pane shows the logged-in character only, with the total of all characters on the BALANCE card; the Days, Characters, Zones and Runs views, the PER HOUR card and the status line named in the rows below are gone from it (the rate is NET's second line after 30 minutes of play; a break of the records is BALANCE's second line) |
 | Home > Overview, GOLD card | the addon window is open | today's net and today's pace (the day's net over the time played that day, after 5 minutes), and on a second line the total of all characters when more than one is known |
 | Minimap button tooltip | while the mouse is over the button | the gold block (at most 18 lines) under the two help lines; it follows the purse while it is open. Off with `settings.gold.tips = false` |
 | Chat | only as the direct reply to a typed `/eb gold` (four lines, a fifth while a farm timer runs), `/eb gold chars` (the roster), `/eb gold stats` (0.9.45: today, week and month in, out and net for the character, its realm and the account, three lines) or `/eb gold timer` (0.9.45: starts the farm timer, "Farm timer started.") | never a login summary. These replies also answer in combat: they open, move and change nothing on screen |
@@ -640,10 +690,12 @@ ROSTERLEAVE BROKEN COLLECT PROFTIER RECIPE UPGRADE GOLDAWAY TRADE`. (`money`, 0.
 
 ## Loot log entry
 
-Item: `{ t, s (session id), item, count, q (hex color), icon, src, guid?, quest?, x?, y?, zone? }`. `quest = true` marks a quest item (item class 12).
+Item: `{ t, s (session id), item, count, q (hex color), icon, src, guid?, quest?, x?, y?, zone?, map?, pushed?, srcBy? }`. `quest = true` marks a quest item (item class 12).
+From 0.9.52, review round 1 (same gate G, draft branch, not released): every item row is stamped where the character stands when the item arrives (before, a loot window row kept the stamp of the moment the window opened), and a `pushed` row says how its `src` was named: `srcBy = "object"` (the world object opened in the last 15 s) or `srcBy = "kill"` (the last kill of the last 15 s, a guess by timing that no pane shows as a name). Absent on a row from a loot window, a quest reward and `"Picked up"`.
+From 0.9.52 (docs/UX_PRAGMATIC.md gate G, built on the draft branch, not released): `map` is the uiMapID of the place (absent when unknown; contract of 0.9.37, written from now on), and `pushed = true` marks an item that reached the bags with no loot window (a roll won later, a quest reward, a pushed drop). Such a row is stamped where the character stands at the pickup. Before 0.9.52 it took `x`, `y` and `zone` from the last loot window, which can be another zone or none: for the sources `Picked up`, `an enemy` and `Quest reward` a place without `pushed` is not reliable, and Loot > Items does not show it. Rows already written are not rewritten.
 Coin: `{ t, s (session id), money (copper), src, guid?, x?, y?, zone? }`. From 0.9.46 (#43) coin that reached the purse with no loot window of the player's own, named by the client's coin line, is a coin row too, with `src` `"Group share"` (the line said it is the player's share of what a group member looted) or `"Coin"` (the player's own loot line, no window seen), no `guid`, and the place the player stood.
 `src` is the SOURCE only: the mob name when readable, else `"Mining node"` / `"Herb node"` / `"Fishing spot"` /
-`"Skinned creature"` / `"Object"` / `"Creature"` / `"Unknown source"`; items pushed without a loot window use the world object just clicked (its name), the mob just killed, `"Quest reward"`, or `"Picked up"`. Location is separate: `zone` (name) and `x`, `y` (numeric coordinates), each its own field and its own UI column.
+`"Skinned creature"` / `"Object"` / `"Creature"` / `"Container"` (0.9.52: the loot GUID is an `Item-`, an opened bag item; before it such a row is `"Unknown source"` with that `guid`) / `"Unknown source"`; items pushed without a loot window use the world object just clicked (its name), the mob just killed, `"Quest reward"`, or `"Picked up"`. From 0.9.52 a kill whose name the client hid gives `"Creature"`; the on-screen placeholder `"an enemy"` is no longer stored as a source (older rows keep it). Location is separate: `zone` (name) and `x`, `y` (numeric coordinates), each its own field and its own UI column.
 (Rows written before 2026-09-25 embedded " at (x, y)" in `src`; the UI splits those on display.)
 Mailbox rows (2026-09-25): `src` is `"Auction sale"` (coin row), `"Auction won"`, `"Auction returned"` or
 `"Mail from <sender>"`, with `mail = { sender, subject, item?, buyer?, seller?, cod?, rel? }` (`rel` from 0.9.40, #36: `alt`, `guild`, `friend`, `stranger` or `system`, as in the gold journal). Location is the mailbox.
@@ -699,7 +751,7 @@ takes the same facts from rows it does ingest. Measured on the save file of 2026
 | List | Rows | Size | Pane in game | What the backend reads instead |
 | --- | ---: | ---: | --- | --- |
 | `story.rep` | 76 | 11.5 KB | Progress, reputation history per faction | `story.events` REP (tier reached) and `characters[guid].reputation` (standings, `character_snapshots.reputation`) |
-| `loot.ah` | 24 | 2.7 KB | Loot, Auctions | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
+| `loot.ah` (0.9.52: `bought[]` rows may carry `named` = `"bid"` or `"invoice"`, how a `C_AuctionHouse.PlaceBid` row got its item, and `delivered`, the units its won mails have brought; a won mail adds a `kind = "mail"` row only when no priced row of that item id, or no unnamed bid of exactly the invoice's amount, is waiting for it) | 24 | 2.7 KB | Loot > Gold, Auction house | `loot.log` mail rows (Auction sale, Auction won, Auction returned, with `mail{}`), the AUCTION visit and the gold ledger (`auctions`, `auctionSales`) |
 | `characters[guid].crafts` | 0 | 0 KB | Character, Crafting | `story.events` SKILLUP with `craft` and `crafted` |
 | `characters[guid].recipes` | 2 | 0.1 KB | Character, Crafting | `story.events` RECIPE |
 
@@ -709,7 +761,8 @@ and the farm timer), and from 0.9.47 `goldZones`, `goldZonesEvicted`, `goldRun`,
 `goldMonths` and `goldBest` (places, dungeon runs, folded months, records): uploaded with the save file, not read by
 ingest until a backend gate of its own. They were not in the file measured here. From 0.9.50 the stored dungeon
 runs (`characters[guid].dungeonRun`, `dungeonRuns`, `settings.instanceAlias`) are a sixth: they back Combat >
-Dungeons and are not read by ingest.
+Dungeons and are not read by ingest. `characters[guid].dungeonLegacy` (the gold runs with no run record, copied once
+for the Dungeons list) belongs to the same store.
 
 Together 14.4 KB, 0.7 % of the file; the fights are 1.47 MB (71 %). Dropping them would remove in-game panes and save
 almost nothing, so they stay. Reading them on the backend (per-gain reputation, auction postings) needs a place in

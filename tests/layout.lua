@@ -5,6 +5,9 @@
 --   spill    the text runs past the right or bottom edge of a parent whose size is known
 --   overlap  two texts of the same parent are drawn over each other (a wrapped table cell over the next row)
 --   cut      a number shortened by the client's "..." (a fixed width with wrapping off); names may shorten, numbers never
+--   clipped  a label drawn in capitals that carries the brand in lower case ("SAVED TO everbuff.gg") on a line only
+--            as tall as its font: capitals have no tails, "gg" does, and a one-line text of a fixed width is cut at
+--            its box (review round 3: the card label read close to "everbuff.qq"). L.CAPS names the roles.
 -- Text widths come from the addon's TrueType files through tests/geometry.lua (set L.G); without it a text's width
 -- is estimated per character from its font size, on the wide side of Inter and Chakra Petch.
 local L = {}
@@ -204,6 +207,12 @@ function L.audit(frames)
         local drawnW = (boxW and f._wrap ~= false) and b.w or math.min(est, boxW or est)
         if boxW and f._wrap == false and est > boxW + 1 and looksNumeric(f.text) then
           out[#out + 1] = { kind = "cut", text = label(f), detail = ("needs %d px, has %d"):format(est, boxW) }
+        end
+        if boxW and f._wrap == false and L.CAPS and L.CAPS[f.ebRole] and plain(f.text):find("everbuff.gg", 1, true) then
+          local has = (f._h and f._h > 0) and f._h or fontSize(f)   -- with no height of its own the line is its font size
+          if has < lineH(f) then
+            out[#out + 1] = { kind = "clipped", text = label(f), detail = ("line %d px, the lower case brand needs %d"):format(has, lineH(f)) }
+          end
         end
         -- a parent of 2 px or less is a scroll child sized later, not a box
         if pw and pw > 2 and b.l + drawnW > pw + 1 then

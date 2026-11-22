@@ -6,22 +6,32 @@ local M = require("wow_stub")
 local passed, failed = 0, 0
 local function check(name, cond, detail)
   if cond then passed = passed + 1
-  else failed = failed + 1; print(("FAIL  %s%s"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
+  -- (io.write, not print: a test file that silences print for the addon's chat lines must not hide a failure)
+  else failed = failed + 1; io.write(("FAIL  %s%s\n"):format(name, detail ~= nil and ("   -> " .. tostring(detail)) or "")) end
 end
 local function count(t, pred) local n = 0; for _, v in ipairs(t or {}) do if pred(v) then n = n + 1 end end return n end
 
 -- ── load the addon exactly as WoW would (TOC order, (addonName, ns) varargs) ──
 local ns, ADDON = {}, "EverbuffJournal"
-for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Runs", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core", "Deps", "SelfTest" }) do
+for _, f in ipairs({ "Theme", "Logging", "Segments", "Fights", "UI", "Debug", "Recording", "Economy", "Runs", "RunsLegacy", "Progress", "Market", "Visits", "Journey", "Dungeons", "Deaths", "Sync", "Emitter", "Core", "Deps", "SelfTest" }) do
   local chunk, err = loadfile("Everbuff/" .. f .. ".lua")
   check("parse " .. f, chunk ~= nil, err)
   if chunk then local ok, e = pcall(chunk, ADDON, ns); check("load " .. f, ok, e) end
 end
 local T = ns._test or {}
+-- "This session" joins logins less than 5 minutes apart (Gold.joined, docs/UX_PRAGMATIC.md 0.2.4). The suite's
+-- sessions follow each other with no time between them and each test means the one record it made, so the join is
+-- off here; its own tests switch it on (tests/panes/gold.lua) and tests/real_truth.lua runs with it.
+ns.Gold.JOIN_S = 0
+-- Home > Activity is removed (docs/UX_PRAGMATIC.md 0.5, 1.3): no pane, no tab, and its old keys open Home > Now.
 
 -- ── boot ──
 M.fire("ADDON_LOADED", ADDON)
 check("ADDON_LOADED creates ns.DB", type(ns.DB) == "table")
+-- the suite plays as a player who went through the first-run guide (Home > Now's own tests, tests/panes/home.lua,
+-- walk the guide itself); without this every open of Home would show the guide instead of Now
+ns.DB.settings = ns.DB.settings or {}
+ns.DB.settings.welcomeDone = true
 check("db.gold/xp/played initialised", ns.DB and ns.char().gold and ns.char().xp and ns.char().played)
 check("#23 the character block lives under the player GUID", ns.DB.characters["Player-1-000001"] == ns.char() and ns.DB.character == nil and ns.DB.loot.gold == nil)
 M.money = 5000; M.xp = 100
@@ -124,7 +134,28 @@ check("xp cur/max stored", ns.char().xp.cur == 50 and ns.char().xp.max == 1200)
 -- ── /played ──
 M.fire("TIME_PLAYED_MSG", 90061, 3600)
 check("played total stored", ns.char().played.total == 90061)
-check("played stamped at level", ns.char().playedAtLevel and ns.char().playedAtLevel[12] == 90061)
+-- (the stamp of a level is the played total when the level was reached: the total minus the time at the level,
+-- docs/UX_PRAGMATIC.md 3.1 gate E. Before 0.9.52 it was the total itself, which every later login moved.)
+check("played stamped at level: the total when the level was reached (90061 - 3600)", ns.char().playedAtLevel and ns.char().playedAtLevel[12] == 86461, ns.char().playedAtLevel and ns.char().playedAtLevel[12])
+check("played: the block is marked as holding only stamps of that kind", ns.char().playedExact == true)
+M.fire("TIME_PLAYED_MSG", 93661, 7200)
+check("played: a later answer on the same level leaves the stamp where it was", ns.char().playedAtLevel[12] == 86461 and ns.char().played.total == 93661, ns.char().playedAtLevel[12])
+M.fire("TIME_PLAYED_MSG", 93700, nil)
+check("played: an answer with no level time stamps nothing", ns.char().playedAtLevel[12] == 86461 and ns.char().played.total == 93700)
+M.fire("TIME_PLAYED_MSG", 90061, 3600)
+do
+  -- the stamps written before 0.9.52 are invalid: the load discards them, once, and keeps the ones written since
+  local old = { schema = 2, sessions = {}, loot = { log = {} }, characters = {
+    A = { played = { total = 589870, level = 3968 }, playedAtLevel = { [59] = 580730, [60] = 589870 } },
+    B = { playedExact = true, playedAtLevel = { [12] = 86461 } }, C = {} } }
+  ns.migrateDB(old)
+  check("played: stamps from before 0.9.52 are discarded at load, the played time itself is kept", old.characters.A.playedAtLevel == nil and old.characters.A.played.total == 589870 and old.characters.A.played.level == 3968)
+  check("played: stamps written since are kept, and a block with none is not touched", old.characters.B.playedAtLevel[12] == 86461 and next(old.characters.C) == nil)
+  -- (the /played answer writes the stamp and the mark together)
+  old.characters.A.playedAtLevel, old.characters.A.playedExact = { [60] = 585902 }, true
+  ns.migrateDB(old)
+  check("played: the next load discards nothing more", old.characters.A.playedAtLevel[60] == 585902)
+end
 
 -- ── fight lifecycle through the REAL recorder ──
 M.units.target = { name = "Kobold Miner", hostile = true, guid = "Creature-0-1-1-1-6-000B", cls = "normal" }
@@ -250,20 +281,15 @@ do
   check("fmtMoney: a hidden or broken value reads as 0c", (function() M.secrets[777] = true; local r = T.fmtMoney(777); M.secrets[777] = nil; return r end)() == "0c" and T.fmtMoney(nil) == "0c" and T.fmtMoney(0 / 0) == "0c")
   check("fmtMoney: one formatter behind every pane", T.fmtMoney == ns.fmtMoney and T.economyFmtMoney == ns.fmtMoney and T.journeyMoney == ns.fmtMoney)
 end
-check("fmtTime", T.fmtTime(90061) == "1d 1h" and T.fmtTime(3661) == "1h 1m" and T.fmtTime(300) == "5m" and T.fmtTime(0) == "-")
-check("commas", T.commas(1234567) == "1,234,567" and T.commas(50) == "50")
-check("fmtDur", T.fmtDur(75) == "1:15" and T.fmtDur(9) == "9s")
+check("fmtDur: the fight list speaks the one dialect, never mm:ss", T.fmtDur(75) == "1m 15s" and T.fmtDur(9) == "9s", T.fmtDur(75))
 check("plain passes numbers", T.plain(5) == 5 and T.plain("x") == nil)
 check("safeKey passes plain values", T.safeKey("abc") == "abc" and T.safeKey(nil) == nil)
 check("safeStr type gate", T.safeStr("ok") == "ok" and T.safeStr(5) == nil)
 check("statSig stable", T.statSig({ level = 1, ap = 10 }) == T.statSig({ level = 1, ap = 10 }))
 check("foesText", T.foesText({ foes = {} }) == "unknown" and T.foesText({ bossName = "Edwin", foes = {} }) == "Edwin")
 
--- ── Events tab helpers ──
-check("eventMatches all", T.eventMatches({ kind = "ZONE" }, "all"))
-check("eventMatches combat", T.eventMatches({ kind = "KILL" }, "combat") and not T.eventMatches({ kind = "ZONE" }, "combat"))
-check("eventMatches travel", T.eventMatches({ kind = "FLIGHT" }, "travel") and T.eventMatches({ kind = "DUNGEON" }, "travel"))
-check("eventMatches journey", T.eventMatches({ kind = "LEVELUP" }, "journey") and not T.eventMatches({ kind = "LOOT" }, "journey"))
+-- ── one-line places ──
+T.fmtWhere = function(e) return ns.UI.fmtLocation(e.zone, e.x, e.y, e.sub) end
 check("fmtWhere zone + coords", T.fmtWhere({ zone = "Elwynn Forest", x = 0.421, y = 0.637 }) == "Elwynn Forest  (42.1, 63.7)")
 check("fmtWhere sub, zone", T.fmtWhere({ zone = "Elwynn Forest", sub = "Goldshire" }) == "Goldshire, Elwynn Forest")
 check("fmtWhere sub == zone collapses", T.fmtWhere({ zone = "Deadmines", sub = "Deadmines" }) == "Deadmines")
@@ -321,6 +347,65 @@ M.itemQuality[3014] = 4
 local fixedRows = ns.Emitter.backfillLootQuality()
 local old = ns.DB.loot.log[#ns.DB.loot.log]
 check("backfill resolves old white rows by item id", fixedRows >= 1 and old.q == "ffa335ee", old.q)
+-- A pushed item ("You receive item:") is never a kill's drop, and a quest reward that reaches the bags before
+-- QUEST_TURNED_IN is named by the turn-in (Blackrock Spire, 20 Nov 15:29: Prismcharm, then "Urok Doomhowl completed").
+do
+  local log = ns.DB.loot.log
+  local function green(id, name) return ("|cff1eff00|Hitem:%d::::::::60:::::|h[%s]|h|r"):format(id, name) end
+  local function pass(s) M.now = M.now + s; M.epoch = M.epoch + s end
+  local xpQ = ns.char().xp and ns.char().xp.fromQuests
+  pass(60)                                                              -- no loot window, no object, no turn-in near
+  ns.Emitter.event("KILL", { name = "Urok Doomhowl" }, true)
+  pass(2)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15867, "Prismcharm") .. ".")
+  local prism = log[#log]
+  check("pushed item: before the turn-in it is stored as every pushed item after a kill is, under the kill's name", prism.item == "Prismcharm" and prism.src == "Urok Doomhowl", prism.src)
+  pass(1)
+  M.fire("QUEST_TURNED_IN", 4867, 0, 0)
+  check("pushed item: the turn-in a second later names it a quest reward", prism.src == "Quest reward" and prism.guid == nil, prism.src)
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15868, "Prismcharm Two") .. ".")
+  local prism2 = log[#log]
+  check("pushed item: with no kill near it is stored Picked up", prism2.src == "Picked up", prism2.src)
+  pass(2)
+  M.fire("QUEST_TURNED_IN", 4870, 0, 0)
+  check("pushed item: and the turn-in 2 s later names that one too", prism2.src == "Quest reward", prism2.src)
+  check("pushed item: the turn-in changes those rows only", log[#log - 2].src ~= "Quest reward", log[#log - 2].src)
+  -- an item pushed off a world object keeps the object's name through a turn-in
+  pass(30)
+  M.fire("UNIT_SPELLCAST_SENT", "player", "Urok's Tribute Pile", "cast-9", 6478)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(15869, "Tribute Thing") .. ".")
+  local trib = log[#log]
+  M.fire("QUEST_TURNED_IN", 4871, 0, 0)
+  check("pushed item: one that named a world object keeps it through a turn-in", trib.src == "Urok's Tribute Pile", trib.src)
+  pass(30)
+  -- a drop won by roll after the loot window closed reads "You receive loot:": it keeps the kill's name
+  pass(30)
+  ns.Emitter.event("KILL", { name = "Spire Spiderling" }, true)
+  pass(14)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. green(10231, "Engraved Cape of the Gorilla") .. ".")
+  local cape = log[#log]
+  check("pushed item: a \"You receive loot:\" line with no loot window still takes the kill's name", cape.src == "Spire Spiderling", cape.src)
+  -- a drop with nothing to name it, then a turn-in in the same second: a loot line is never a quest reward
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive loot: " .. green(10232, "Engraved Cape of the Whale") .. ".")
+  local whale = log[#log]
+  M.fire("QUEST_TURNED_IN", 4868, 0, 0)
+  check("pushed item: a drop stored as \"Picked up\" is not re-sourced by a turn-in", whale.src == "Picked up", whale.src)
+  -- a pushed item 4 s before a turn-in is too old to be its reward
+  pass(30)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(10233, "Vial of Something") .. ".")
+  local vial = log[#log]
+  pass(4)
+  M.fire("QUEST_TURNED_IN", 4869, 0, 0)
+  check("pushed item: one that arrived 4 s before a turn-in stays as it was stored", vial.src == "Picked up", vial.src)
+  -- the usual order, turn-in first, is as before
+  pass(1)
+  M.fire("CHAT_MSG_LOOT", "You receive item: " .. green(10234, "Reward After") .. ".")
+  check("pushed item: an item after its turn-in is a quest reward at once", log[#log].src == "Quest reward", log[#log].src)
+  pass(30)
+  if ns.char().xp then ns.char().xp.fromQuests = xpQ end
+end
 check("backfill leaves a true white row white", qunknown.q == "ffffffff", qunknown.q)
 -- ── aura timelines (player + enemy) through the REAL recorder ──
 M.auras.player = { HELPFUL = { { name = "Power Word: Fortitude", icon = 135987, spellId = 1243 } }, HARMFUL = {} }
@@ -578,22 +663,31 @@ end
 local names = {}
 for _, tab in ipairs(T.tabs) do names[tab.name] = true end
 check("Sync is no longer a top-level tab", names.Sync == nil)
-check("five top-level tabs: Home · Combat · Loot · Character · Settings", #T.tabs == 5 and names.Home and names.Combat and names.Loot and names.Character and names.Settings, #T.tabs)
-check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Dungeons == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
+check("five top-level tabs: Home · Dungeons · Character · Loot · Settings", #T.tabs == 5 and names.Home and names.Dungeons and names.Loot and names.Character and names.Settings, #T.tabs)
+check("the sidebar order is Home, Dungeons, Character, Loot, then Settings pinned", (function()
+  local o = {}; for _, tab in ipairs(T.tabs) do o[#o + 1] = tab.name end
+  return table.concat(o, ",") == "Home,Dungeons,Character,Loot,Settings" end)())
+check("old tab names are gone", names.Journey == nil and names.Fights == nil and names.Deaths == nil and names.Combat == nil and names.Timeline == nil and names.Progress == nil and names.Economy == nil)
 local function host(n) for _, tab in ipairs(T.tabs) do if tab.name == n then return tab end end end
-check("Combat hosts Dungeons · Fights · Deaths in that order", (function() local h = host("Combat"); return h and h.panes[1].key == "dungeons" and h.panes[2].key == "fights" and h.panes[3].key == "deaths" end)())
-check("Home hosts Overview · Timeline · Sessions", (function() local h = host("Home"); return h and h.panes[1].key == "overview" and h.panes[2].key == "timeline" and h.panes[3].key == "sessions" end)())
-check("Loot hosts Items · Gold; Character hosts Quests · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and c.panes[1].key == "quests" and c.panes[3].key == "professions" end)())
-check("capture pane builder exposed", type(ns.BuildCapturePane) == "function")
+check("Dungeons hosts Runs", (function() local h = host("Dungeons"); return h and h.panes[1].key == "runs" end)())
+check("Home hosts Now · Sessions · Fights · Deaths (no Activity pane)", (function() local h = host("Home"); local k = {}; for _, pn in ipairs(h and h.panes or {}) do k[#k + 1] = pn.key end; return table.concat(k, ",") == "now,sessions,fights,deaths" and h.paneByKey.activity == nil end)())
+check("old window keys resolve to their new place", (function()
+  local R = ns.UI.Resolve
+  local a1, b1 = R("Combat", "dungeons"); local a2, b2 = R("Combat", "fights"); local a3, b3 = R("Combat", "deaths")
+  local a4, b4 = R("Home", "overview"); local a5, b5 = R("Home", "timeline"); local a6 = R("Combat")
+  return a1 == "Dungeons" and b1 == "runs" and a2 == "Home" and b2 == "fights" and a3 == "Home" and b3 == "deaths"
+    and a4 == "Home" and b4 == "now" and a5 == "Home" and b5 == "now" and a6 == "Dungeons" end)())
+check("Loot hosts Items · Gold; Character hosts Leveling · Reputation · Professions", (function() local l, c = host("Loot"), host("Character"); return l and l.panes[1].key == "items" and l.panes[2].key == "gold" and c and #c.panes == 3 and c.panes[1].key == "leveling" and c.panes[2].key == "reputation" and c.panes[3].key == "professions" end)())
+check("settings builder exposed", type(ns.BuildSettings) == "function")
 -- ── Settings sub-tab control ──
 local settingsTab
 for _, tab in ipairs(T.tabs) do if tab.name == "Settings" then settingsTab = tab end end
 local st = settingsTab and settingsTab.content and settingsTab.content.subtabs
-check("Settings exposes a tab control with three panes", st and st.panes.general and st.panes.capture and st.panes.data)
+check("Settings exposes a tab control with three panes: General, Gold display, Data and sync (4.12)", st and st.panes.general and st.panes.golddisplay and st.panes.data and #st.tabs == 3)
 if st then
-  local okSel, errSel = pcall(function() st.select("capture"); st.select("data"); st.select("general") end)
+  local okSel, errSel = pcall(function() st.select("golddisplay"); st.select("data"); st.select("general") end)
   check("switching sub-tabs renders cleanly", okSel, errSel)
-  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.capture:IsShown() and not st.panes.data:IsShown())
+  check("only the active pane is shown", st.panes.general:IsShown() and not st.panes.golddisplay:IsShown() and not st.panes.data:IsShown())
 end
 -- ── Source / Location split ──
 check("fmtLocation zone + coords", ns.UI.fmtLocation("Elwynn Forest", 0.421, 0.637) == "Elwynn Forest  (42.1, 63.7)")
@@ -604,16 +698,10 @@ local lastFight = ns.DB.combat.fights[#ns.DB.combat.fights]
 check("fights capture coordinates at the pull", lastFight and lastFight.x == 0.421 and lastFight.y == 0.637 and lastFight.map == 37, lastFight and lastFight.x)
 -- ── filter tabs on Fights + Timeline ──
 local fl = T.fightsList()
-check("Fights list has a tab control", fl and fl.tabs and fl.tabs.content ~= nil)
+check("Fights list has a filter button and a search in the control row (A3)", fl and fl.filter and fl.search and fl.tabs ~= nil)
 if fl and fl.tabs then
   local okF, errF = pcall(function() fl.tabs.select("death"); fl.tabs.select("notable"); fl.tabs.select("all") end)
   check("Fights filter tabs switch cleanly", okF, errF)
-end
-local tlTab = host("Home") and host("Home").paneByKey.timeline
-check("Timeline pane has a filter tab control", tlTab and tlTab.content and tlTab.content.tabs ~= nil)
-if tlTab and tlTab.content and tlTab.content.tabs then
-  local okT, errT = pcall(function() tlTab.content.tabs.select("combat"); tlTab.content.tabs.select("all") end)
-  check("Timeline filter tabs switch cleanly", okT, errT)
 end
 -- ── in-combat SECRET aura data (Midnight): tracked by instance id, names resolved / backfilled ──
 local SECRET = 0 / 0   -- NaN cannot be used as a table key: stands in for a Secret Value in the stub
@@ -845,25 +933,28 @@ check("a real login keeps the logged-out session ended at its logout", s14.ended
 M.fire("PLAYER_DEAD"); M.now = M.now + 95; M.dead = false; M.fire("PLAYER_UNGHOST")
 local lastDeath; for i = #ns.DB.story.events, 1, -1 do if ns.DB.story.events[i].kind == "DEATH" then lastDeath = ns.DB.story.events[i]; break end end
 check("death row carries the corpse-run downtime", lastDeath and lastDeath.downtime == 95, lastDeath and lastDeath.downtime)
--- ── text search on Timeline and Loot ──
-check("event search matches text", ns._test.eventMatches({ kind = "KILL", text = "Kobold Vermin down!" }, "all", "kobold"))
-check("event search matches zone", ns._test.eventMatches({ kind = "ZONE", text = "x", zone = "Westfall" }, "all", "westf"))
-check("event search rejects non-matching", not ns._test.eventMatches({ kind = "KILL", text = "Kobold Vermin down!" }, "all", "murloc"))
-check("event search still respects the filter tab", not ns._test.eventMatches({ kind = "LOOT", text = "Kobold" }, "combat", "kobold"))
+-- ── text search on Loot ──
 M.tick()
 check("loot search matches item", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "linen"))
-check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "auction"))
+check("loot search matches source", ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner", guid = "Creature-0-1-1-1-40-00AA" }, "miner"))
+-- (a name with no loot window behind it is not shown, so it is not found either: docs/UX_PRAGMATIC.md 0.2.1)
+check("loot search does not match a source the row does not show", not ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold Miner" }, "miner"))
+-- (docs/UX_PRAGMATIC.md 4.1: auction and mail rows are purchases and deliveries, Gold > Auction house owns them)
+check("the Items pane never lists an auction or a mail row", not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction sale" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction won", mail = { bid = 5 } }, "")
+  and not ns._test.lootMatches({ item = "Linen Cloth", src = "Mail from Thrall" }, "") and not ns._test.lootMatches({ item = "Linen Cloth", src = "Auction returned" }, ""))
+check("loot search does not match a source word the pane never shows", not ns._test.lootMatches({ item = "Linen Cloth", src = "Picked up" }, "picked") and not ns._test.lootMatches({ item = "Linen Cloth", src = "an enemy" }, "an enemy"))
 check("#38 the Items pane never lists a coin row (coin is the Gold pane's)", not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, "gold") and not ns._test.lootMatches({ money = 120, src = "Defias Thug" }, ""))
 check("loot search rejects non-matching", not ns._test.lootMatches({ item = "Linen Cloth", src = "Kobold" }, "wool"))
 -- ── dungeon run detail: boss-by-boss attempts, deaths, notable loot ──
 do
   local t0 = M.epoch + 100000
   local L, Fz = ns.DB.story.events, ns.DB.combat.fights
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {} }                                     -- trash, the foe's name hidden
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" } }
-  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" } }                        -- after the run
+  -- (the run's fights are in its instance, B3: the zone names it)
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "fled", startEpoch = t0 + 60, duration = 20, foes = {}, zone = "Ragefire Chasm" }                -- trash, the foe's name hidden
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "wipe", startEpoch = t0 + 120, duration = 45, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 300, duration = 50, bossName = "Taragaman the Hungerer", foes = { "Taragaman the Hungerer" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 420, duration = 30, bossName = "Jergosh the Invoker", foes = { "Jergosh the Invoker" }, zone = "Ragefire Chasm" }
+  Fz[#Fz + 1] = { session = ns.DB.active, outcome = "kill", startEpoch = t0 + 900, duration = 30, foes = { "Durotar Scorpid" }, zone = "Durotar" }                        -- after the run
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 352, item = "Cursed Felblade", count = 1, q = "ff0070dd", src = "Taragaman the Hungerer" }
   ns.DB.loot.log[#ns.DB.loot.log + 1] = { s = ns.DB.active, t = t0 + 353, item = "Linen Cloth", count = 3, q = "ffffffff", src = "Taragaman the Hungerer" }
   -- a rare picked up after the run, its row still stamped with the dungeon's zone (the stamp is the last loot window's)
@@ -890,10 +981,10 @@ do
   -- a fight inside an instance with no foe and no death is a trash pull, not a flight (57 of 57 in Maraudon read "Fled")
   local dvR = T.dungeonDetail()
   local trash, fled = 0, 0
-  for _, b in ipairs(dvR and dvR.child.btn or {}) do
-    if b.shown ~= false and b.re then
-      if b.re.text == "Trash" then trash = trash + 1 elseif b.re.text == "Fled" then fled = fled + 1 end
-    end
+  local pulls = dvR and dvR.tables.pulls
+  for i = 1, pulls and pulls.shownN or 0 do
+    local t = pulls.rows[i].c.re.text
+    if t == "Trash" then trash = trash + 1 elseif t == "Fled" then fled = fled + 1 end
   end
   check("run detail: a fight with no foe reads Trash, never Fled", trash == 1 and fled == 0, trash .. "/" .. fled)
 end
@@ -994,9 +1085,10 @@ end
 -- ── day labels ──
 do
   local nowT = M.epoch
-  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "Today")
-  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "Yesterday")
-  check("fmtDay older shows weekday and date", ns.UI.fmtDay(nowT - 5 * 86400, nowT) == date("%A, %b %d", nowT - 5 * 86400))
+  check("fmtDay today", ns.UI.fmtDay(nowT, nowT) == "TODAY")
+  check("fmtDay yesterday", ns.UI.fmtDay(nowT - 86400, nowT) == "YESTERDAY")
+  local old = nowT - 5 * 86400
+  check("fmtDay older shows weekday, day and month in capitals", ns.UI.fmtDay(old, nowT) == (date("%A ", old) .. tonumber(date("%d", old)) .. date(" %b", old)):upper(), ns.UI.fmtDay(old, nowT))
 end
 -- ── delete a single fight from its detail (two clicks) ──
 do
@@ -1145,34 +1237,42 @@ do
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTACCEPT", t = t0 + 10, text = "Quest:  Investigate Echo Ridge", zone = "Elwynn Forest" }
   L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 300, text = "Complete:  Kobold Camp Cleanup", zone = "Elwynn Forest", sub = "Northshire", x = 0.48, y = 0.41 }
   L[#L + 1] = { s = ns.DB.active, kind = "REWARD", t = t0 + 301, text = "Chose:  Worn Shortsword" }
+  L[#L + 1] = { s = ns.DB.active, kind = "QUESTDONE", t = t0 + 302, text = "Complete:  quest", zone = "Elwynn Forest" }
   local rows, sum = T.buildQuests()
-  check("quests: completed and open counted", sum.done >= 1 and sum.open >= 1 and sum.rewards >= 1, sum.done .. "/" .. sum.open)
+  check("quests: every turn-in counted, accepted quests left out (Leveling, 4.10)", sum.done >= 2, sum.done)
   local top = rows[1]
-  check("quests: newest first with a status", top and top.name == "Kobold Camp Cleanup" and top.status == "done", top and top.name)
-  local openRow; for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then openRow = r end end
-  check("quests: accepted but not completed is in progress", openRow and openRow.status == "accepted")
+  check("quests: newest first", top and top.t == t0 + 302 and rows[2].name == "Kobold Camp Cleanup", top and top.name)
+  check("quests: a name the game did not give is never the placeholder", top.name ~= "quest" and top.unnamed == true, top.name)
+  for _, r in ipairs(rows) do if r.name == "Investigate Echo Ridge" then check("quests: an accepted quest is not a turn-in", false) end end
   ns.char().reputation = { ["Stormwind"] = { standing = 5, label = "Friendly" }, ["Darnassus"] = { standing = 4, label = "Neutral" }, ["Ironforge"] = { standing = 6, label = "Honored" } }
   L[#L + 1] = { s = ns.DB.active, kind = "REP", t = t0 + 500, text = "Ironforge:  now Honored", standing = "Honored" }
+  ns.DB.story.rep = ns.DB.story.rep or {}
+  table.insert(ns.DB.story.rep, { s = ns.DB.active, t = t0 + 499, faction = "Ironforge", amount = 75, src = "Quest: Kobold Camp Cleanup" })
   local rr, rs = T.buildReputation()
-  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[3].name == "Darnassus", rr[1] and rr[1].name)
-  check("reputation: last standing gain matched to the faction", rr[1].lastUp == t0 + 500 and rs.ups >= 1)
-  ns.char().professions = { ["Mining"] = { rank = 78, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
-  L[#L + 1] = { s = ns.DB.active, kind = "PROFTIER", t = t0 + 600, text = "Skill milestone:  Mining 75" }
+  check("reputation: sorted best standing first", rr[1] and rr[1].name == "Ironforge" and rr[#rr].name == "Darnassus", rr[1] and rr[1].name)
+  local sw; for _, r in ipairs(rr) do if r.name == "Stormwind" then sw = r end end
+  check("reputation: the live bar read from the client (1,500 of 3,000)", sw and sw.progress == 1500 and sw.need == 3000, sw and tostring(sw.progress))
+  check("reputation: this session's gains per faction", rr[1].session == 75 and rs.gained >= 75, rr[1].session)
+  local hist = T.buildRepHistory("Ironforge")
+  check("reputation: how you earned it, newest first, the new standing too", #hist == 2 and hist[1].milestone and hist[2].change == "+75" and hist[2].source == "Quest: Kobold Camp Cleanup", #hist)
+  ns.char().professions = { ["Mining"] = { rank = 118, max = 150 }, ["First Aid"] = { rank = 40, max = 75 } }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 610, text = "Mining 78", prof = "Mining", craft = "Copper Bar", crafted = 12 }
-  L[#L + 1] = { s = ns.DB.active, kind = "RECIPE", t = t0 + 620, text = "New recipe:  Bronze Bar" }
   local pr, ps = T.buildProfessions()
-  check("professions: highest skill first with rank/max", pr[1] and pr[1].name == "Mining" and pr[1].rank == 78 and pr[1].max == 150, pr[1] and pr[1].name)
-  check("professions: milestones and skill-ups per profession", pr[1].tiers >= 1 and pr[1].skillups >= 1 and ps.recipes >= 1, pr[1].tiers .. "/" .. pr[1].skillups)
-  -- a gathered skill-up has no prof field: its profession comes from the text
+  check("professions: highest skill first with rank/max and the rank's name", pr[1] and pr[1].name == "Mining" and pr[1].rank == 118 and pr[1].max == 150 and pr[1].rankName == "Journeyman", pr[1] and pr[1].name)
+  check("professions: the training line 10 under the next rank", pr[1].training == "Expert training opens at 125", pr[1].training)
+  check("professions: the training line once it is open", T.trainingLine("Tailoring", 125, 150) == "Expert training is open at any Tailoring trainer" and T.trainingLine("Tailoring", 100, 150) == nil)
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 630, text = "Skill up:  First Aid 41", zone = "Elwynn Forest", x = 0.41, y = 0.66 }
   L[#L + 1] = { s = ns.DB.active, kind = "SKILLUP", t = t0 + 640, text = "Skill up:  Swords 12" }   -- a weapon skill, not a profession
   local pr2 = T.buildProfessions()
   local fa; for _, r in ipairs(pr2) do if r.name == "First Aid" then fa = r end end
-  check("professions: a skill-up without a prof field still counts", fa and fa.skillups == 1, fa and fa.skillups)
-  local hist = T.buildSkillups()
-  check("history: every profession skill-up newest first, weapon skills left out", #hist == 2 and hist[1].prof == "First Aid" and hist[1].rank == 41 and hist[2].prof == "Mining", #hist)
-  check("history: a craft is the source, with the count", hist[2].source == "Copper Bar x12" and hist[2].rank == 78, hist[2].source)
-  check("history: filtered to one profession", #T.buildSkillups("Mining") == 1 and #T.buildSkillups("Herbalism") == 0)
+  check("professions: a skill-up without a prof field still counts this session", fa and fa.session == 1, fa and fa.session)
+  -- (the played stamps are overwritten at every login: no level row is built from them, docs/UX_PRAGMATIC.md 3.1)
+  ns.char().playedAtLevel = { [11] = 3600, [12] = 7200 }
+  L[#L + 1] = { s = ns.DB.active, kind = "LEVELUP", t = t0 + 700, text = "Ding!  Level 12" }
+  local lv, lvMissing = T.buildLevels(12)
+  local l11; for _, r in ipairs(lv) do if r.level == 11 then l11 = r end end
+  check("levels: newest level first, each from its recorded level-up; the played stamps make no row and no time at a level",
+    lv[1].level == 12 and lv[1].t <= t0 + 700 and lv[1].at == nil and (l11 == nil or l11.t ~= nil) and lvMissing == 11 - #lv, lv[1] and lv[1].level)
   -- founder 2026-09-30: nothing opens or moves in combat, so the desktop never loses the flag mid-fight
   do
     local corner0 = ns.DB.settings.emitCorner
@@ -1213,7 +1313,7 @@ do
   local sw; for _, r in ipairs(rh) do if r.faction == "Stormwind" and r.change == "+250" then sw = r end end
   local sorted = true; for i = 2, #rh do if rh[i].t > rh[i - 1].t then sorted = false end end
   check("reputation history: gains and new standings, newest first", #rh >= 2 and sw ~= nil and sorted, #rh)
-  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 1 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
+  check("reputation history: filtered to one faction", #T.buildRepHistory("Ironforge") == 2 and T.buildRepHistory("Ironforge")[1].change == "Now Honored")
   ns.UI.Open("Character", "reputation"); M.tick()
   local rp = host("Character").paneByKey.reputation
   check("Reputation pane with its history builds and renders cleanly", rp and rp.built and rp.buildError == nil and rp.showError == nil, rp and (rp.buildError or rp.showError))
@@ -1221,18 +1321,18 @@ do
   local chr = host("Character")
   local pp = chr and chr.paneByKey.professions
   check("Professions pane with its history builds and renders cleanly", pp and pp.built and pp.buildError == nil and pp.showError == nil, pp and (pp.buildError or pp.showError))
-  check("timeline: the Professions filter", T.eventMatches({ kind = "SKILLUP" }, "professions") and T.eventMatches({ kind = "RECIPE" }, "professions") and not T.eventMatches({ kind = "LOOT" }, "professions"))
   ns.UI.Open("Home"); M.tick()
   local home = host("Home")
   check("Home built and refreshed cleanly", home and home.buildError == nil and home.showError == nil, home and (home.buildError or home.showError))
-  local ov = home.paneByKey.overview
-  check("Home opens on Overview with the cards in the pane", home.ctl.active == "overview" and ov.content.cLevel and ov.content.cLevel:GetParent() == ov.content)
+  ns.UI.Open("Home", "now"); M.tick()
+  local ov = home.paneByKey.now
+  check("Home / Now holds the hero and the four cards in the pane", home.ctl.active == "now" and ov.content.hero and #ov.content.cards.cards == 4 and ov.content.hero:GetParent() == ov.content.col)
   ns.UI.Open("Loot", "gold")
   local gold = host("Loot").paneByKey.gold
-  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.cBalance and gold.content.cBalance.value:GetText() ~= nil)
+  check("Loot / Gold pane renders the economy cards", host("Loot").ctl.active == "gold" and gold.content.shownCards and gold.content.shownCards[1].value:GetText() ~= nil)
   ns.UI.Open("Home")
-  ov.content.cXP:GetScript("OnMouseUp")(ov.content.cXP)
-  check("clicking the XP card opens Character / Quests", host("Character").ctl.active == "quests" and host("Character").paneByKey.quests.built)
+  ov.content.cards.cards[2]:GetScript("OnClick")(ov.content.cards.cards[2])
+  check("clicking the XP PER HOUR card opens Character / Leveling", host("Character").ctl.active == "leveling" and host("Character").paneByKey.leveling.built)
   ns.UI.Open("Home", "sessions")
   local srows = T.sessionRows()
   check("Sessions pane lists the current session first", #srows >= 1 and srows[1].id == ns.DB.active, srows[1] and srows[1].id)
@@ -1353,7 +1453,7 @@ do
   }
   local agg = ns._test.lootAggregate(log, "", function() return true end)
   check("aggregation: one row per item, coin excluded, most quantity first", #agg == 2 and agg[1].item == "Linen Cloth" and agg[1].count == 6 and agg[1].drops == 3, agg[1] and agg[1].count)
-  check("aggregation: most frequent source, the drop count kept apart for its own column", agg[1].src == "Kobold Miner" and agg[1].drops == 3, agg[1].src)
+  check("aggregation: the newest pickup is the row's Last looted, the pickups are counted", agg[1].t == 3 and agg[1].first == 1 and agg[1].drops == 3, agg[1].t)
   check("aggregation keeps id and quality for tooltips and color", agg[2].id == 7777 and agg[2].q == "ff0070dd")
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
@@ -1373,7 +1473,7 @@ do
     check("fight row hover tooltip renders", okH, errH)
   end
 end
--- ── fight detail -> Timeline window ──
+-- ── the fight detail has no Timeline button (Home > Activity is removed) ──
 do
   local f = { uid = "tl-win", startEpoch = M.epoch + 500000, duration = 30, outcome = "kill", foes = { "Windowed Mob" } }
   ns.DB.combat.fights[#ns.DB.combat.fights + 1] = f
@@ -1382,14 +1482,8 @@ do
   L[#L + 1] = { kind = "ZONE", t = f.startEpoch + 3600, text = "Far Away Later", s = ns.DB.active }
   ns.OpenFightDetail(f)
   local dv = T.fightDetail()
-  dv.tlBtn:GetScript("OnClick")(dv.tlBtn)
-  local w = ns._test.timelineWindow()
-  check("Timeline button opens Home / Timeline with the fight's window", host("Home").ctl.active == "timeline" and w and w.t0 == f.startEpoch - 5 and w.t1 == f.startEpoch + 50, w and w.t0)
-  local tl = host("Home").paneByKey.timeline
-  check("window banner shown", tl.content.timelineBanner.shown == true)
-  check("events outside the window are filtered out", ns._test.eventMatches(L[#L], "all", "") == false and ns._test.eventMatches(L[#L - 1], "all", "") == true)
-  tl.content.timelineBanner:GetScript("OnClick")(tl.content.timelineBanner)
-  check("clicking the banner clears the window", ns._test.timelineWindow() == nil and ns._test.eventMatches(L[#L], "all", "") == true)
+  check("the fight detail has no Timeline button and nothing opens a time window", dv.tlBtn == nil and ns.OpenTimelineWindow == nil)
+  check("an old Activity key opens Home > Now", ns.UI.Open("Home", "activity") ~= nil and host("Home").ctl.active == "now", host("Home").ctl.active)
   ns.UI.Open("Home", "overview")
 end
 -- ── durability lost across a death ──
@@ -1412,9 +1506,9 @@ do
   local L = ns.char().lockouts
   check("locked instances captured with reset time and boss progress", L and #L == 1 and L[1].name == "Blackfathom Deeps" and L[1].down == 4 and L[1].bosses == 6 and L[1].resetAt == M.epoch + 90000, L and #L)
   ns.UI.Open("Combat", "dungeons"); M.tick()
-  local dg = host("Combat").paneByKey.dungeons
+  local dg = host("Dungeons").paneByKey.runs
   local txt = T.dungeonsLockText and T.dungeonsLockText() or ""
-  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps 4/6") ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
+  check("Dungeons pane shows the lockout with time to reset", txt:find("Blackfathom Deeps: 4 of 6 bosses down", 1, true) ~= nil and txt:find("resets in 1d 1h") ~= nil, txt)
   M.saved = {}
 end
 -- ── retail trait string ──
@@ -1471,11 +1565,11 @@ do
   ns.UI.Open("Loot", "items"); M.tick()
   local items = host("Loot").paneByKey.items
   local minQ = items.content.lootFilter()
-  check("quality filter starts at All", minQ == 0)
+  check("quality filter starts at Green and better (docs/UX_OVERHAUL.md 4.8)", minQ == 2, minQ)
   local rows = {
-    { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed" },
-    { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe" },
-    { t = 3, item = "Green Belt", count = 2, q = "ff1eff00", src = "Moe" },
+    { t = 1, item = "Wool Cloth", count = 4, q = "ffffffff", src = "Zed", guid = "Creature-0-1-1-1-1-00AA" },
+    { t = 2, item = "Blue Sword", count = 1, q = "ff0070dd", src = "Abe", guid = "Creature-0-1-1-1-2-00AA" },
+    { t = 3, item = "Green Belt", count = 2, q = "ff1eff00", src = "Moe", guid = "Creature-0-1-1-1-3-00AA" },
     { t = 4, money = 500, src = "Abe" },
   }
   local byQty = ns._test.lootSort({ unpack(rows) }, "qty", false)
@@ -1485,13 +1579,11 @@ do
   local byQ = ns._test.lootSort({ unpack(rows) }, "quality", false)
   check("sort by quality puts the rare first", byQ[1].item == "Blue Sword", byQ[1].item)
 end
--- ── onboarding card ──
+-- ── Home > Now: the old onboarding card is gone (docs/UX_OVERHAUL.md 4.1) ──
 do
   ns.UI.Open("Home", "overview"); M.tick()
-  local ov = host("Home").paneByKey.overview.content
-  check("onboarding card shows on a fresh install", ov.onboard and ov.onboard:IsShown() and not ns.DB.settings.onboarded)
-  ov.onboard.okBtn:GetScript("OnClick")(ov.onboard.okBtn)
-  check("Got it dismisses the card for good", ns.DB.settings.onboarded == true and not ov.onboard:IsShown())
+  local ov = host("Home").paneByKey.now.content
+  check("Home > Now carries no onboarding card", ov.onboard == nil and ov.hero ~= nil)
 end
 -- ── flag free-drag position ──
 do
@@ -1500,16 +1592,12 @@ do
   ns.Emitter.setCorner("TOPLEFT")
   check("choosing a corner ends free placement", ns.DB.settings.flagPos == nil and ns.DB.settings.emitCorner == "TOPLEFT")
 end
--- ── per-session bar strips ──
+-- ── Home > Sessions has no bar strips (docs/UX_PRAGMATIC.md 1.2) ──
 do
-  local rows = { { startedEpoch = 300, xp = 900, gained = 100, spent = 400 }, { startedEpoch = 200, xp = 300, gained = 500, spent = 0, endedEpoch = 250 }, { startedEpoch = 100, xp = 0, gained = 0, spent = 0, endedEpoch = 150 } }
-  local xpv = ns._test.stripValues(rows, "xp")
-  check("XP strip is oldest-left with the live session last", #xpv == 3 and xpv[1].v == 0 and xpv[3].v == 900 and xpv[3].live == true)
-  local gv = ns._test.stripValues(rows, nil, true)
-  check("gold strip is signed net per session", gv[2].v == 500 and gv[3].v == -300, gv[3].v)
   ns.UI.Open("Home", "sessions"); M.tick()
   local sp = host("Home").paneByKey.sessions
-  check("Sessions pane renders both strips", sp.content.xpStrip and sp.content.goldStrip and #ns.UI.paneErrors() == 0, table.concat(ns.UI.paneErrors(), " || "))
+  check("Sessions pane renders with no strip, no gold block and no hidden-sessions line", sp.content.xpStrip == nil and sp.content.goldStrip == nil and sp.content.goldBand == nil and sp.content.shortLine == nil
+    and sp.content.tbl ~= nil and #ns.UI.paneErrors() == 0, table.concat(ns.UI.paneErrors(), " || "))
 end
 -- ── run headers in the Fights list ──
 do
@@ -1517,12 +1605,14 @@ do
   local L = ns.DB.story.events
   ns.char().dungeonRuns = ns.char().dungeonRuns or {}
   table.insert(ns.char().dungeonRuns, T.runRecord("Wailing Caverns", t0, 600))
-  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" } }
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-1", session = ns.DB.active, startEpoch = t0 + 60, duration = 20, outcome = "kill", bossName = "Lady Anacondra", foes = { "Lady Anacondra" }, zone = "Wailing Caverns" }
+  -- (B3: a pull counts for a run only inside its window and in its instance: an open-world pull at the same time gets no run row)
+  ns.DB.combat.fights[#ns.DB.combat.fights + 1] = { uid = "wc-out", session = ns.DB.active, startEpoch = t0 + 90, duration = 10, outcome = "kill", foes = { "Plainstrider" }, zone = "The Barrens" }
   local dv = T.fightDetail(); if dv then dv:Hide() end          -- an earlier test left the replay open; the list only rebuilds when visible
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
   local found = false
-  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):find("Wailing Caverns") then found = true end end
+  for _, d in ipairs((fl.daysFn and fl.daysFn()) or {}) do if d.shown ~= false and d.text and tostring(d.text):lower():find("wailing caverns", 1, true) then found = true end end
   local diag = {}
   for _, r in ipairs(ns.DungeonRuns()) do if r.name == "Wailing Caverns" then diag[#diag + 1] = ("run %s..%s fights=%d"):format(tostring(r.startT), tostring(r.endT), #(r.fights or {})) end end
   diag[#diag + 1] = "days=" .. tostring(fl.daysFn and #(fl.daysFn() or {}))
@@ -1566,6 +1656,7 @@ do
   check("Settings > Data has the sync box", settingsTab.content.ackBox ~= nil and settingsTab.content.ackBtn ~= nil)
   settingsTab.content.ackBox:SetText("not a code"); settingsTab.content.ackBtn:GetScript("OnClick")(settingsTab.content.ackBtn)
   check("a bad code does not crash and leaves data alone", #M.errors == 0 and ns.DB.combat.lastAck.source == "paste")
+  settingsTab.content.ackBox:SetText("")   -- (the field empty again, as a player finds it: the shots show its placeholder)
   ns.DB.combat.fights, ns.DB.loot.log, ns.DB.story.events, ns.DB.sessions = keepF, keepL, keepE, keepS
 end
 -- ── ack by session (everbuff-business #46): exactly the sessions the backend stored are pruned, nothing older ──
@@ -1674,11 +1765,124 @@ TakeInboxItem(2, 1)
 local ret = ns.DB.loot.ah.returned[#ns.DB.loot.ah.returned]
 check("expired auction recorded as a return", ret and ret.item == "Wool Cloth" and ret.count == 8 and ret.reason == "expired", ret and ret.reason)
 TakeInboxItem(3, 1)
-local won = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought - 1]
-check("won mail completes the earlier bid with the item and seller", won and won.item == "Rough Stone" and won.seller == "Sellerguy" and won.auctionId == 9001, won and tostring(won.item))
+-- (0.9.52: a won mail names a bid only by its invoice. This mail's invoice names no amount, and the two purchases
+-- stored are other items, so it is a row of its own with no price: the bid is not given a name by guesswork.)
+local won = ns.DB.loot.ah.bought[#ns.DB.loot.ah.bought]
+check("won mail whose invoice fits no purchase is its own row, with the item and seller and no price", won and won.item == "Rough Stone" and won.seller == "Sellerguy" and won.kind == "mail" and won.price == nil and won.count == 5, won and tostring(won.item))
+check("the bid placed earlier keeps no guessed name", (function() for _, b in ipairs(ns.DB.loot.ah.bought) do if b.auctionId == 9001 and b.item ~= nil then return false end end return true end)())
 M.fire("MAIL_CLOSED")
 local arows, asum = ns.Market.buildAuctions()
-check("auctions pane rows and sums", #arows >= 5 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 12345 + 240, asum.spent)
+-- (the bid of 12,345 has no item and no auction mail names its price: it is counted as a bid, not as bought)
+check("auctions pane rows and sums", #arows >= 4 and asum.net >= 85500 and asum.cut >= 4500 and asum.spent == 240 and asum.bids == 1, asum.spent)
+do
+  -- crafts are batched as they are written (0.9.52): the same item, profession and session within 60 s is one row
+  local list = ns.char().crafts
+  local n0, t0 = #list, M.epoch
+  M.tradeSkillName = "First Aid"; M.fire("TRADE_SKILL_SHOW")
+  ns.Market.craft("Linen Bandage", 1, 1251)
+  M.epoch = t0 + 2; ns.Market.craft("Linen Bandage", 1, 1251)
+  M.epoch = t0 + 62; ns.Market.craft("Linen Bandage", 2, 1251)
+  local row = list[#list]
+  check("craft batch: three crafts within 60 s of each other are one row that counts the items", #list == n0 + 1 and row.count == 4 and row.t == t0 and row.t1 == t0 + 62, row.count)
+  M.epoch = t0 + 62 + 61; ns.Market.craft("Linen Bandage", 1, 1251)
+  check("craft batch: 61 s after the last craft a new row starts, with no t1 of its own", #list == n0 + 2 and list[#list].count == 1 and list[#list].t1 == nil and row.count == 4)
+  M.epoch = t0 + 62 + 62; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  check("craft batch: another item is another row", #list == n0 + 3 and list[#list].item == "Heavy Linen Bandage")
+  M.fire("TRADE_SKILL_CLOSE"); ns.Market.tradeSkill = nil
+  M.epoch = t0 + 62 + 63; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  check("craft batch: a craft of the same spell written with no profession joins the batch, which keeps its profession", #list == n0 + 3 and list[#list].count == 2 and list[#list].prof == "First Aid", list[#list].prof)
+  local s0 = ns.DB.active
+  ns.DB.active = "another-session"
+  M.epoch = t0 + 62 + 64; ns.Market.craft("Heavy Linen Bandage", 1, 2581)
+  ns.DB.active = s0
+  check("craft batch: another session is another row", #list == n0 + 4)
+  -- the first craft of a round is written before the profession window is read: the next one names the profession
+  M.epoch = t0 + 400; ns.Market.craft("Tin Bar", 1, 3576)
+  ns.Market.tradeSkill = "Mining"
+  M.epoch = t0 + 403; ns.Market.craft("Tin Bar", 1, 3576)
+  check("craft batch: a first craft with no profession and the next of the same spell are one row with that profession", #list == n0 + 5 and list[#list].count == 2 and list[#list].prof == "Mining" and list[#list].t == t0 + 400, list[#list].prof)
+  ns.Market.tradeSkill = "Cooking"
+  M.epoch = t0 + 406; ns.Market.craft("Tin Bar", 1, 3576)
+  check("craft batch: two different professions never join", #list == n0 + 6 and list[#list].prof == "Cooking" and list[#list - 1].prof == "Mining")
+  ns.Market.tradeSkill = nil
+  check("craft cap: one constant", ns.Market.CRAFT_CAP == 1000)
+  ns.Market.tradeSkill = ""
+  local rec2 = ns.Market.recipe("Anti-Venom")
+  local rec3 = ns.Market.recipe("Smelt Tin", "")
+  ns.Market.tradeSkill = nil
+  check("recipe: an empty profession name is never stored", rec2.prof == nil and rec3.prof == nil)
+  for i = #list, n0 + 1, -1 do table.remove(list, i) end
+  table.remove(ns.char().recipes); table.remove(ns.char().recipes)
+  M.epoch = t0
+end
+do
+  -- a reputation gain carries its character (0.9.52), so it is still this character's when its session record is gone
+  local rep0 = #(ns.DB.story.rep or {})
+  M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", "Reputation with Stormwind increased by 25.")
+  local row = ns.DB.story.rep and ns.DB.story.rep[#ns.DB.story.rep]
+  check("rep gain: the row carries the character's GUID beside its session", #ns.DB.story.rep == rep0 + 1 and row.g == ns.charGuid() and row.s == ns.DB.active and row.amount == 25, row and row.g)
+  table.remove(ns.DB.story.rep)
+  -- the cap of the list is one constant (ns.Rep.CAP): the Emitter trims to it and the Reputation page reads it
+  check("rep cap: one constant", ns.Rep.CAP == 2000)
+  local keepRep, keepCap = ns.DB.story.rep, ns.Rep.CAP
+  ns.Rep.CAP = 40
+  ns.DB.story.rep = {}
+  check("rep cap: a list under the cap is not cut", ns.Rep.cut() == nil)
+  for i = 1, 55 do M.fire("CHAT_MSG_COMBAT_FACTION_CHANGE", ("Reputation with Stormwind increased by %d."):format(i)) end
+  local R = ns.DB.story.rep
+  check("rep cap: the Emitter keeps the newest CAP rows", #R == 40 and R[1].amount == 16 and R[40].amount == 55, #R)
+  local cutT, cutDay = ns.Rep.cut()
+  check("rep cap: a full list is cut at its first row", cutT == R[1].t and cutDay == os.date("%Y%m%d", R[1].t), cutT)
+  local sw
+  for _, r in ipairs((T.buildReputation())) do if r.name == "Stormwind" then sw = r end end
+  -- (55 gains, 1 to 55, add up to 1,540; the 40 left add up to 1,420)
+  check("rep cap: what the page says of the gains left is a lower bound, for the day and for the session",
+    sw ~= nil and sw.dayGain == 1420 and sw.atLeast == true and sw.cut == true and sw.partial == true and sw.session == 1420 and sw.sessionAtLeast == true, sw and sw.dayGain)
+  ns.DB.story.rep, ns.Rep.CAP = keepRep, keepCap
+end
+do
+  -- ns.Rep.harvest: a row from before 0.9.52 gets its character from its session record or from a craft of the same
+  -- session, at load and before a pickup deletes the record; what nothing proves stays without one
+  local db = ns.DB
+  local me = ns.charGuid()
+  local keepRep = db.story.rep
+  local c = ns.char()
+  local keepCrafts, keepRecipes = c.crafts, c.recipes
+  local alt = "Player-1-00ALT001"
+  db.characters[alt] = db.characters[alt] or { crafts = {}, recipes = {} }
+  local keepAlt = { db.characters[alt].crafts, db.characters[alt].recipes }
+  db.sessions["rh-mine"] = { id = "rh-mine", guid = me, startedEpoch = 100, endedEpoch = 200 }
+  db.sessions["rh-alt"] = { id = "rh-alt", guid = alt, startedEpoch = 100, endedEpoch = 200 }
+  db.sessions["rh-noguid"] = { id = "rh-noguid", startedEpoch = 100, endedEpoch = 200 }
+  c.crafts = { { s = "rh-craft", t = 150, item = "Tin Bar", id = 3576 }, { s = "rh-both", t = 150, item = "Tin Bar", id = 3576 } }
+  c.recipes = { { s = "rh-recipe", t = 150, name = "Smelt Tin" } }
+  db.characters[alt].crafts, db.characters[alt].recipes = { { s = "rh-both", t = 151, item = "Tin Bar", id = 3576 }, { s = "rh-altcraft", t = 151, item = "Tin Bar", id = 3576 } }, {}
+  local function row(s2, g) return { s = s2, g = g, t = 150, faction = "Orgrimmar", amount = 10 } end
+  db.story.rep = { row("rh-mine"), row("rh-alt"), row("rh-noguid"), row("rh-gone"), row("rh-craft"), row("rh-recipe"), row("rh-both"), row("rh-altcraft"), row("rh-gone", "Player-1-KEEP"), row(nil) }
+  local R = db.story.rep
+  local n = ns.Rep.harvest(db)
+  check("rep harvest: a row gets the character its session record names", R[1].g == me and R[2].g == alt, tostring(R[1].g))
+  check("rep harvest: a record with no character and a record that is gone prove nothing", R[3].g == nil and R[4].g == nil and R[10].g == nil)
+  check("rep harvest: with the record gone, a craft or a recipe of the same session in a character's block proves it", R[5].g == me and R[6].g == me and R[8].g == alt)
+  check("rep harvest: a session two characters' blocks name proves nothing", R[7].g == nil)
+  check("rep harvest: a row that carries its character is never rewritten", R[9].g == "Player-1-KEEP")
+  check("rep harvest: it counts what it wrote, and a second pass writes nothing", n == 5 and ns.Rep.harvest(db) == 0, n)
+  -- a pickup deletes the session records: the rows were stamped first, inside applyAck
+  db.story.rep = { row("rh-mine"), row("rh-alt") }
+  R = db.story.rep
+  -- (applyAck also copies the level moments into each block and notes the pickup: both put back)
+  local lastAck, keepAt = db.combat.lastAck, {}
+  for guid, blk in pairs(db.characters) do keepAt[guid] = blk.levelAt or false end
+  ns.applyAck({ sessions = { ["rh-mine"] = true, ["rh-alt"] = true, ["rh-noguid"] = true } }, "file")
+  for guid, blk in pairs(db.characters) do if keepAt[guid] ~= nil then blk.levelAt = keepAt[guid] or nil end end
+  check("rep harvest: applyAck writes the character on the rows before it deletes their session records",
+    db.sessions["rh-mine"] == nil and db.sessions["rh-alt"] == nil and R[1].g == me and R[2].g == alt, tostring(R[1].g))
+  db.combat.lastAck = lastAck
+  db.sessions["rh-noguid"] = nil
+  db.story.rep, c.crafts, c.recipes = keepRep, keepCrafts, keepRecipes
+  db.characters[alt].crafts, db.characters[alt].recipes = keepAlt[1], keepAlt[2]
+  if not next(db.characters[alt].crafts) and not next(db.characters[alt].recipes) then db.characters[alt] = nil end
+end
 local crows, csum = ns.Market.buildCrafts()
 check("crafting pane rows and sums", #crows >= 2 and csum.crafts >= 1 and csum.recipes >= 1 and csum.byProf.Tailoring == 2, csum.crafts)
 check("contract: market rows carry the session id", (function() for _, l in ipairs({ ns.DB.loot.ah.posted, ns.DB.loot.ah.bought, ns.DB.loot.ah.sold, ns.DB.loot.ah.returned, ns.char().crafts, ns.char().recipes }) do for _, row in ipairs(l) do if type(row.s) ~= "string" or type(row.t) ~= "number" then return false end end end return true end)())
@@ -2056,8 +2260,12 @@ do
   -- Home: the GOLD card is the character's own ledger, and kills, deaths and fights count the character's sessions only
   a.gold.balance = 123456
   local ovc = T.journeyRefresh()
-  check("#23 Home GOLD shows the logged-in character's balance", ovc and ovc.cGold.value:GetText() == T.journeyMoney(123456), ovc and ovc.cGold.value:GetText())
-  local before = ovc.cKills.value:GetText()
+  local function goldTip() local t = ovc.cards.cards[3].ebTip; return t and t.pairs and t.pairs[1] and t.pairs[1][2] end
+  check("#23 Home GOLD names the logged-in character's balance", ovc and goldTip() == ns.fmtMoney(123456, { icons = true }), ovc and goldTip())
+  -- (the DEATHS card is the session's own count; lifetime kills and deaths are on no card or hover: they are
+  -- counters of gate I, docs/UX_PRAGMATIC.md 1.5, and a sum over the stored sessions is not a lifetime)
+  local function deathsCard() return tostring(ovc.cards.cards[4].value.text) .. "/" .. tostring(ovc.cards.cards[4].ebTip and ovc.cards.cards[4].ebTip.pairs) end
+  local before = deathsCard()
   ns.DB.sessions["other-23"] = { guid = "Player-1-000002", startedEpoch = 1 }
   local ev = ns.DB.story.events
   ev[#ev + 1] = { kind = "KILL", text = "Kill: Wolf", s = "other-23", t = 1 }
@@ -2065,16 +2273,13 @@ do
   local fl = ns.DB.combat.fights
   fl[#fl + 1] = { uid = "other-23-f1", s = "other-23", startedEpoch = 1, duration = 1 }
   T.journeyRefresh()
-  check("#23 Home kills, deaths and fights leave out another character's sessions", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() ~= nil, ovc.cKills.value:GetText())
-  check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
-  local subBefore = ovc.cKills.sub:GetText()
-  _G.UnitGUID = function(u) if u == "player" then return "Player-1-000002" end return realGUID(u) end
+  ns.DB.sessions["other-23"].kills, ns.DB.sessions["other-23"].deaths = 1, 1
   T.journeyRefresh()
-  check("#23 on the other character Home counts its kill, death and fight", ovc.cKills.value:GetText() == "1 kills" and ovc.cKills.sub:GetText():find("^1 death ") ~= nil and ovc.cKills.sub:GetText():find("1 fights") ~= nil, tostring(ovc.cKills.value:GetText()) .. " | " .. tostring(ovc.cKills.sub:GetText()))
-  _G.UnitGUID = realGUID
+  check("#23 Home's DEATHS card leaves out another character's sessions, and sums no lifetime", deathsCard() == before and before:find("/nil$") ~= nil, deathsCard())
+  check("#23 isMine: a row of another character's session is not the logged-in character's", not ns.isMine(ev[#ev]) and ns.isMine({ s = ns.DB.active }) == (ns.DB.active ~= nil))
   table.remove(ev); table.remove(ev); table.remove(fl); ns.DB.sessions["other-23"] = nil
   T.journeyRefresh()
-  check("#23 Home is back to the first character's counts", ovc.cKills.value:GetText() == before and ovc.cKills.sub:GetText() == subBefore)
+  check("#23 Home is back to the first character's counts", deathsCard() == before, deathsCard())
 end
 -- ── #23 every pane shows the logged-in character only: a two-character save (Hart and Undertaker) ──
 do
@@ -2112,7 +2317,7 @@ do
   ns.DB.characters[UT] = ns.DB.characters[UT] or ns.newCharBlock()
   ns.DB.characters[UT].dungeonRuns = { T.runRecord("Shadowfang Keep", t0 + 1100, 300, { nDeaths = { me = 1, party = 0 },
     gold = { looted = 777, quests = 0, lootValue = 0, items = 1, purse = 777 } }) }
-  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9 }
+  local utF = { uid = "ut-23-f1", session = "ut-23", startEpoch = t0 + 1190, duration = 8, outcome = "death", foes = { "Undertaker Bane" }, level = 9, zone = "Shadowfang Keep" }
   Fz[#Fz + 1] = utF
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1195, item = "Undertaker Shroud", count = 1, q = "ff0070dd", src = "Undertaker Bane" }
   Lg[#Lg + 1] = { s = "ut-23", t = t0 + 1196, money = 777, src = "Undertaker Bane" }
@@ -2123,13 +2328,13 @@ do
   local function shownRows(rows) local out = {}; for _, r in ipairs(rows or {}) do if r.shown ~= false then out[#out + 1] = r end end return out end
 
   -- logged in as Hart: none of Undertaker's rows in any pane
-  ns.UI.Open("Home", "timeline"); M.tick()
-  local tl = host("Home").paneByKey.timeline.content
-  local tlRows = shownRows(tl.timelineRows)
-  check("#23 Hart: Timeline leaves out Undertaker's events", #tlRows > 0 and not has(tlRows, function(r) return r.ev and r.ev.s == "ut-23" end) and has(tlRows, function(r) return r.ev and r.ev.text == "Kill: Hart Wolf" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  local lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.nm:GetText()) or r.nm:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.nm:GetText() == "Hart Cloth" end))
+  -- the item rows of Loot > Items (not its day rows), every quality shown
+  local function itemRows(ic) local out = {}; for _, r in ipairs(shownRows(ic.lootRows)) do if r.item and not r.item.ebSection then out[#out + 1] = r end end return out end
+  local itc = host("Loot").paneByKey.items.content
+  itc.setLootQuality("all")
+  local lr = itemRows(itc)
+  check("#23 Hart: Loot / Items leaves out Undertaker's pickups", #lr > 0 and not has(lr, function(r) return isUT(r.c.item:GetText()) or r.c.item:GetText() == T.fmtMoney(777) end) and has(lr, function(r) return r.c.item:GetText() == "Hart Cloth" end))
   local dv = T.fightDetail(); if dv then dv:Hide() end
   local fl = T.fightsList(); fl:Show()
   ns.UI.Open("Combat", "fights"); M.tick()
@@ -2138,25 +2343,20 @@ do
   check("#23 Hart: Combat / Dungeons leaves out Undertaker's run", not has(T.runViews(), function(r) return r.name == "Shadowfang Keep" end))
   check("#23 Hart: Combat / Deaths leaves out Undertaker's death", not has(T.collectDeaths(), function(d) return d.killer == "Undertaker Bane" end))
   local qRows = T.buildQuests()
-  check("#23 Hart: Character / Quests leaves out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
-  local _, repSum = T.buildReputation()
-  local repUps = repSum.ups
+  check("#23 Hart: Character / Leveling's quests leave out Undertaker's quests", not has(qRows, function(q) return isUT(q.name) end) and has(qRows, function(q) return q.name == "Hart Errand" end))
+  local repUps = #T.buildRepHistory()
   check("#23 Hart: reputation history leaves out Undertaker's gains", not has(T.buildRepHistory(), function(r) return r.faction == "Undercity" end))
-  local mineUps = #T.buildSkillups("Mining")
-  check("#23 Hart: profession history leaves out Undertaker's skill-ups", not has(T.buildSkillups("Mining"), function(r) return r.rank == 99 end))
-  check("#23 Hart: Loot / Auctions leaves out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
+  check("#23 Hart: the auction rows (Loot > Gold, Auction house) leave out Undertaker's trades", not has((ns.Market.buildAuctions()), function(r) return isUT(r.item) end))
   check("#23 Hart: Home / Sessions leaves out Undertaker's session", #T.sessionRows() > 0 and not has(T.sessionRows(), function(s) return s.id == "ut-23" end) and has(T.sessionRows(), function(s) return s.id == hs end))
   check("#23 Hart: a fight's loot leaves out another character's pickups", #T.fightLoot(utF) == 0)
   check("#23 isMine reads a fight's `session` (Home counted none of the real fights in 0.9.31)", ns.isMine(hartF) and not ns.isMine(utF) and not ns.isMine({ session = "no-such-session" }))
 
   -- logged in as Undertaker: only his rows
   asUT()
-  ns.UI.Open("Home", "timeline"); M.tick()
-  tlRows = {}; for _, r in ipairs(shownRows(tl.timelineRows)) do if r.ev then tlRows[#tlRows + 1] = r end end   -- the event rows (not the day headers)
-  check("#23 Undertaker: Timeline shows only his eight events", #tlRows == 8 and not has(tlRows, function(r) return r.ev and r.ev.s ~= "ut-23" end), #tlRows)
   ns.UI.Open("Loot", "items"); M.tick()
-  lr = shownRows(host("Loot").paneByKey.items.content.lootRows)
-  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].nm:GetText() == "Undertaker Shroud", #lr)
+  lr = itemRows(host("Loot").paneByKey.items.content)
+  check("#23 Undertaker: Loot / Items shows only his item (#38: coin is the Gold pane's)", #lr == 1 and lr[1].c.item:GetText() == "Undertaker Shroud", #lr)
+  host("Loot").paneByKey.items.content.setLootQuality("green")
   ns.UI.Open("Combat", "fights"); M.tick()
   fr = {}; for _, r in ipairs(shownRows(fl.rows)) do if r.fight then fr[#fr + 1] = r end end   -- the fight rows (not the day headers)
   check("#23 Undertaker: Combat / Fights shows only his fight", #fr == 1 and fr[1].fight == utF, #fr)
@@ -2165,10 +2365,9 @@ do
   local ds = T.collectDeaths()
   check("#23 Undertaker: Combat / Deaths shows only his death, linked to his fight", #ds == 1 and ds[1].killer == "Undertaker Bane" and ds[1].fight == utF, #ds)
   qRows = T.buildQuests()
-  check("#23 Undertaker: Character / Quests shows only his quests", #qRows == 2 and isUT(qRows[1].name) and isUT(qRows[2].name), #qRows)
-  local _, utRep = T.buildReputation()
+  check("#23 Undertaker: Character / Leveling's quests show only his turn-in", #qRows == 1 and isUT(qRows[1].name), #qRows)
   local rh = T.buildRepHistory()
-  check("#23 Undertaker: reputation shows only his gain and his new standing", utRep.ups == 1 and #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
+  check("#23 Undertaker: reputation shows only his gain and his new standing", #rh == 2 and rh[1].faction == "Undercity" and rh[2].faction == "Undercity", #rh)
   check("#23 Undertaker: Loot / Auctions shows only his sale", #(ns.Market.buildAuctions()) == 1 and (ns.Market.buildAuctions())[1].item == "Undertaker Linen")
   local sr = T.sessionRows()
   check("#23 Undertaker: Home / Sessions shows only his session", #sr == 1 and sr[1].id == "ut-23", #sr)
@@ -2176,8 +2375,7 @@ do
 
   -- back on Hart: the same views as before; nothing stored was changed by the filtering
   asHart()
-  local _, repBack = T.buildReputation()
-  check("#23 back on Hart: his reputation and profession counts are unchanged", repBack.ups == repUps and #T.buildSkillups("Mining") == mineUps)
+  check("#23 back on Hart: his reputation history is unchanged", #T.buildRepHistory() == repUps)
   check("#23 filtering changes nothing stored: every row is still in the save", #L == nL0 + 8 and #Fz == nF0 + 1 and #Lg == nLg0 + 2 and #R == nR0 + 1 and ns.DB.sessions["ut-23"] ~= nil)
   -- no GUID yet: there is nothing to tell the characters apart by, so every row shows
   _G.UnitGUID = function() return nil end
@@ -2350,9 +2548,16 @@ end
 -- #43 (0.9.45): the rate window, the farm timer and the reset; the formatter, the pill, the menu and the bar text
 -- #43 (0.9.46): honest sources, one case per accounting rule
 -- #43 (0.9.47): showcase: zones, runs, the month fold, records, the balance line, the audit and a soak
-for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show" }) do
+for _, name in ipairs({ "gold_days", "gold_roster", "gold_rate", "gold_glance", "gold_sources", "gold_show", "gold_auctions", "gold_mailrows" }) do
   local ok, err = pcall(dofile("tests/" .. name .. ".lua"), { check = check, M = M, ns = ns })
   check("#43 tests/" .. name .. ".lua runs to its end", ok, err)
+end
+-- UX overhaul step 1 (docs/UX_OVERHAUL.md 5): the shared formatters and the cmap scan of the text characters
+do
+  local ok, err = pcall(dofile("tests/formatters.lua"), { check = check, ns = ns })
+  check("UX tests/formatters.lua runs to its end", ok, err)
+  local okG, errG = pcall(loadfile("tests/glyphs.lua"), { check = check })
+  check("UX tests/glyphs.lua runs to its end", okG, errG)
 end
 -- 0.9.49 (#42, plan in #51): the chat guards, the group member not named yet, the friendly target that is no foe,
 -- the sticky dungeon check records and the client's restricted events (on a save file of its own)
@@ -2363,13 +2568,17 @@ end
 -- 0.9.50 (#51): the durable dungeon run (Everbuff/Runs.lua): visits and typed gaps, the encounter state machine, XP
 -- and gold per visit, the purse check, the learned alias, the cap and the size of a record (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.50 tests/runs.lua runs to its end", ok, err)
 end
 -- 0.9.51 (#51, the plan's milestone 0.9.50): bests per route and the segments, the dungeon statistics, Delete,
 -- Split, Join and Keep, the glance and the instances of the hour (on a save file of its own)
 do
+  local keepPrint = print
   local ok, err = pcall(dofile("tests/runs_bests.lua"), { check = check, M = M, ns = ns })
+  print = keepPrint   -- (a sub-suite that stops on an error leaves its silenced print behind)
   check("0.9.51 tests/runs_bests.lua runs to its end", ok, err)
 end
 -- #43 (0.9.46): the journal and the sources suites again on clients of their own (tests/gold_profile.lua, one
@@ -2427,6 +2636,7 @@ local G = dofile("tests/geometry.lua")
 G.install(M)
 local Lay = dofile("tests/layout.lua")
 Lay.G = G
+Lay.CAPS = ns.UI.UPPER   -- the roles drawn in capitals (the "clipped" check)
 ns.UI.SetWindowSize(900, 580)
 -- the suite's data as it stands, kept for the pane tests below; the sweep makes ns.DB long in place
 local function deepcopy(v, seen)
@@ -2543,11 +2753,13 @@ do
     end
     return out
   end
-  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", character = "Character" }
+  local HOSTS = { loot = "Loot", home = "Home", combat = "Combat", dungeons = "Dungeons", character = "Character", settings = "Settings" }
+  -- old page keys (combat/dungeons, home/overview) resolve through the window's aliases (docs/UX_OVERHAUL.md 3.1)
   function P.open(host, pane, w, h, data)
     useData(data or "normal")
     ns.UI.SetWindowSize(w or 900, h or 580)
-    local name = HOSTS[host] or host
+    local name
+    name, pane = ns.UI.Resolve(HOSTS[host] or host, pane)
     ns.UI.Open(name, pane); M.settle()
     for _, tab in ipairs(T.tabs) do
       if tab.name == name then
@@ -2574,6 +2786,13 @@ do
   end
   table.sort(files)
   check("pane tests: tests/panes holds test files", #files > 0, #files)
+  -- EB_PANES=items,gold runs only those pane files (while iterating; CI runs every one)
+  local only = os.getenv("EB_PANES")
+  if only and only ~= "" then
+    local keep = {}
+    for _, f in ipairs(files) do for name in only:gmatch("[^,]+") do if f == name .. ".lua" then keep[#keep + 1] = f end end end
+    files = keep
+  end
   for _, file in ipairs(files) do
     local chunk, err = loadfile("tests/panes/" .. file)
     check("pane tests: parse " .. file, chunk ~= nil, err)

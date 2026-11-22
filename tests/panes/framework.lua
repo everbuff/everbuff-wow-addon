@@ -272,7 +272,7 @@ return function(P)
     eq("EditBox: no search hint is drawn on a pane under a box any more", strays, 0)
   end
 
-  -- ── the window: its size stays inside 900x580 to 1600x1000; the host subtitle is one line across the host
+  -- ── the window: its size stays inside 900x580 to 1600x1000; the chrome sits on the grid of docs/UX_OVERHAUL.md 2.7
   do
     UI.SetWindowSize(5000, 100)
     check("window: SetWindowSize clamps to the bounds", _G.EverbuffFrame._w == 1600 and _G.EverbuffFrame._h == 580 and ns.DB.settings.winSize.w == 1600)
@@ -280,18 +280,57 @@ return function(P)
     check("window: a missing or broken saved size is the minimum", w == 900 and h == 580)
     w, h = UI.clampWinSize(1200.7, 2000)
     check("window: a saved size is floored and capped", w == 1200 and h == 1000)
-    UI.SetWindowSize(900, 580)
-    local subs = 0
-    for _, tab in ipairs(P.T.tabs) do
-      if tab.host and tab.content then
-        for _, f in ipairs(P.descendants(tab.content)) do
-          if f._isFS and f.text == tab.subtitle and f.parentFrame == tab.content then
-            subs = subs + 1
-            check("window: " .. tab.name .. " subtitle is two-point anchored and single line", #(f._pts or {}) == 2 and f._wrap == false and f._w == nil)
+    for _, size in ipairs({ { 900, 580 }, { 1600, 1000 } }) do
+      local W, H = size[1], size[2]
+      UI.SetWindowSize(W, H); ns.UI.Open("Home", "now"); P.M.settle()
+      local fr = _G.EverbuffFrame
+      local fb = P.box(fr)
+      local function rel(f) local b = P.box(f); return b.l - fb.l, b.t - fb.t, b.w, b.h end
+      local tag = ("window %dx%d: "):format(W, H)
+      local x, y, bw, bh = rel(fr.close)
+      check(tag .. "close is 24 x 24 with its box edge on BOX_R", x == W - 48 and y == 8 and bw == 24 and bh == 24, x .. "," .. y)
+      x, y, bw = rel(fr.chip)
+      check(tag .. "the status chip ends at W - 56, inside the title bar", x + bw == W - 56 and y == 8 and x > 44 + 80, x + bw)
+      x, y, bw, bh = rel(fr.strip)
+      check(tag .. "the sidebar is 168 wide under the 40 px title bar", x == 1 and y == 40 and x + bw == 167 and y + bh == H - 1, x .. "," .. y .. "," .. bw .. "," .. bh)
+      local i = 0
+      for _, tab in ipairs(P.T.tabs) do
+        x, y, bw, bh = rel(tab.btn)
+        if tab.pin == "bottom" then
+          check(tag .. tab.name .. " is pinned with its bottom 16 px over the window's", x == 8 and y + bh == H - 16 and bw == 152 and bh == 36, y)
+        else
+          check(tag .. tab.name .. " sits on the nav rhythm (x 8, y 48 + 36 n, 152 x 36)", x == 8 and y == 48 + 36 * i and bw == 152 and bh == 36, x .. "," .. y)
+          i = i + 1
+        end
+      end
+      -- the host draws no title and no subtitle (3.2): its sidebar row and the sub-tab name the page
+      local strays = 0
+      for _, tab in ipairs(P.T.tabs) do
+        if tab.content then
+          for _, f in ipairs(P.descendants(tab.content)) do
+            if f._isFS and f.text and (f.text == tab.subtitle or (f.text == tab.name and f.parentFrame == tab.content)) then strays = strays + 1 end
           end
         end
       end
+      eq(tag .. "no host draws its title or description on the page", strays, 0)
+      local home = nil
+      for _, tab in ipairs(P.T.tabs) do if tab.name == "Home" then home = tab end end
+      local ctl = home.ctl
+      x, y, bw, bh = rel(ctl.tabs[1])
+      check(tag .. "the first sub-tab starts at TEXT_L on the control row", x == 204 and y == 52 and bh == 28, x .. "," .. y)
+      -- (a sub-tab with no page now is not in the row: the ones shown follow each other)
+      local shownTabs = {}
+      for _, b in ipairs(ctl.tabs) do if not (ctl.hidden and ctl.hidden[b.key]) then shownTabs[#shownTabs + 1] = b end end
+      for k = 2, #shownTabs do
+        local x1, _, w1 = rel(shownTabs[k - 1]); local x2 = rel(shownTabs[k])
+        check(tag .. "sub-tabs are 24 px apart (" .. shownTabs[k].key .. ")", x2 - (x1 + w1) == 24, x2 - (x1 + w1))
+      end
+      local last = ctl.tabs[#ctl.tabs]; local lx, _, lw = rel(last)
+      check(tag .. "the sub-tabs fit on the control row", lx + lw <= W - 36, lx + lw)
+      x, y, bw, bh = rel(ctl.panes.now)
+      check(tag .. "a pane's box runs from BOX_L to BOX_R and CONTENT_TOP to the bottom margin", x == 192 and y == 92 and x + bw == W - 24 and y + bh == H - 16, x .. "," .. y .. "," .. bw .. "," .. bh)
+      check(tag .. "the active sub-tab is underlined in accent, the others are not", ctl.tabs[1].accent._fill and ctl.tabs[1].accent._fill[4] ~= 0 and ctl.tabs[2].accent._fill and ctl.tabs[2].accent._fill[4] == 0)
     end
-    check("window: the host subtitles were found", subs >= 3, subs)
+    UI.SetWindowSize(900, 580)
   end
 end

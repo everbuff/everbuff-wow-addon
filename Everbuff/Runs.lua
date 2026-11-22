@@ -3,7 +3,8 @@
 -- Until 0.9.49 a run was rebuilt at view time from the DUNGEON and DUNGEONLEAVE story events, which the 500 row cap
 -- and the desktop's acknowledgement remove within hours. From 0.9.50 a run is a stored record of the logged-in
 -- character: `characters[guid].dungeonRun` while it is open, `characters[guid].dungeonRuns[]` once closed (oldest
--- first, at most Runs.CAP). The acknowledgement never touches either. Nothing before 0.9.50 is backfilled.
+-- first, at most Runs.CAP). The acknowledgement never touches either. Of the time before 0.9.50 only
+-- what the character's gold runs still hold is kept, as partial rows of their own (RunsLegacy.lua).
 --
 -- What a run is made of:
 --   visits    one row per stretch inside. Every sum (seconds, XP, coin, items) is kept per visit, so the run's sums
@@ -1488,6 +1489,8 @@ function Runs.isFull(s, rec)
   local killed = {}
   for _, b in ipairs(rec.bosses or {}) do if b.kill then killed[b.enc] = true end end
   for _, enc in ipairs(L) do if not killed[enc] then return false end end
+  -- (a boss the run met and left up is not cleared: the run is no full clear, B1)
+  for _, b in ipairs(rec.bosses or {}) do if not b.kill and b.enc ~= nil then return false end end
   return true
 end
 -- Whether a run holds the best of its route now (worked out from `bestId`, never stored: 0.9.51's review)
@@ -1733,9 +1736,10 @@ function Runs.bossTotal(rec)
   local set, n, missing = {}, 0, {}
   for _, enc in ipairs(L) do set[enc] = true; n = n + 1 end
   local pulled = {}
+  -- (every encounter the run met counts, killed or left up: 6 of 8 with two missed, never 6 of 6, B1)
   for _, b in ipairs(rec.bosses or {}) do
     pulled[b.enc] = true
-    if b.kill and not set[b.enc] then set[b.enc] = true; n = n + 1 end
+    if b.enc ~= nil and not set[b.enc] then set[b.enc] = true; n = n + 1 end
   end
   local s = S[Runs.keyOf(rec)]
   for _, enc in ipairs(L) do
@@ -1781,6 +1785,9 @@ function Runs.dungeonRows()
       row.coinPerHour = warm and (num(s.looted) + num(s.quests)) * 3600 / s.active or nil
       row.xpPerHour = (warm and num(s.xp) > 0) and s.xp * 3600 / s.active or nil
       row.deathsPerRun = num(s.deaths) / s.n
+      -- (what a run of the dungeon was worth: booked coin and the vendor value of its items, never quest coin. By
+      -- dungeon adds what the purse of each stored run gained beyond the booked coin: Dungeons.lua, D.worthPerRun.)
+      row.worthPerRun = (num(s.looted) + num(s.lootValue)) / s.n
       out[#out + 1] = row
     end
   end
@@ -1889,6 +1896,16 @@ function Runs.visitClocks(rec)
   local starts = { 0 }
   for k = 2, n do starts[k] = starts[k - 1] + num(V[k - 1].secs) + gaps[k][1] end
   return starts, gaps
+end
+-- The wall time (epoch) of a moment on the run's clock, through the visits: the clock stands still while the
+-- character is outside alive or offline. nil when the record cannot say (Runs.visitClocks).
+function Runs.wallOf(rec, clock)
+  clock = plainNum(clock)
+  if type(rec) ~= "table" or not clock or not plainNum(rec.t) then return nil end
+  local starts = Runs.visitClocks(rec)
+  if not starts then return nil end
+  local j = Runs.visitAt(starts, clock)
+  return rec.t + num(rec.visits[j].i) + (clock - starts[j])
 end
 -- Split a run at visit k (2 or later) into two: A, the visits before, keeps the id; B, from visit k on, is a run of
 -- its own (`open = "split"`). Every sum lives per visit, so the two add up to the run. What no visit row holds goes to
@@ -2289,6 +2306,8 @@ function Runs.view(rec, isOpen, full, light)
     if b.kill then down = down + 1 elseif num(b.unknown) > 0 then unseen = unseen + 1 end
   end
   v.bossesDown, v.pulls, v.wipes, v.unseen = down, pulls, wipes, unseen
+  -- (the run's fights, the one list the run page and the Fights list's group rows count, B23)
+  if full then v.fights = Runs.fightsOf(rec) end
   if light then return v end
   v.splits = Runs.splits(rec)
   -- (0.9.51) the learned boss list, the best, the marks an edit and a repeated pull leave
@@ -2297,14 +2316,18 @@ function Runs.view(rec, isOpen, full, light)
   -- the Pace section waits for the dungeon's first full clear (plan 5.B)
   local S = statsOf(me())
   local st = S and S[Runs.keyOf(rec)]
-  v.cleared = type(st) == "table" and num(st.full) > 0 or nil
+  -- (the Pace section asks for the same bosses killed twice, as its empty sentence says: a full clear, or a route run
+  -- twice; a dungeon with a boss always left up has no full clear and still has a pace)
+  local sig = Runs.sigOf(rec)
+  local route = sig and type(st) == "table" and type(st.routes) == "table" and st.routes[sig] or nil
+  v.cleared = (type(st) == "table" and (num(st.full) > 0 or (route and num(route.n) >= 2))) or nil
   v.done, v.pb, v.edited, v.repull, v.exact, v.keep, v.size = rec.done, vs.pb, rec.edited, rec.repull, rec.exact, rec.keep, rec.size
   local warm = v.active >= Runs.RATE_WARM
   v.xpGain = type(rec.xp) == "table" and num(rec.xp.gain) or 0
   v.xpPerHour = (warm and v.xpGain > 0) and v.xpGain * 3600 / v.active or nil
   v.coinPerHour = warm and v.coin * 3600 / v.active or nil
   if full then
-    v.fights = Runs.rowsOf(rec, ns.Fights and ns.Fights.list and ns.Fights.list(), "startEpoch")
+    v.fights = v.fights or Runs.fightsOf(rec)
     local grp
     for _, f in ipairs(v.fights) do
       if type(f.group) == "table" and (not grp or #f.group > #grp) then grp = f.group end
@@ -2351,6 +2374,21 @@ end
 -- run's start (Runs.TAIL_SLACK rows in a row from before it: a row can sit a little out of order), never the whole
 -- list of up to 5000 fights or 2000 loot rows.
 Runs.TAIL_SLACK = 20
+-- a fight is the run's only in the run's instance (B3): its instance map id (GetInstanceInfo, as the run's) when both
+-- know one, else its zone by name. A fight that names neither cannot be placed and is not counted (the open world
+-- between two visits must never be).
+function Runs.inInstance(rec, f)
+  if type(f) ~= "table" or type(rec) ~= "table" then return false end
+  local fm, rm = plainNum(f.instanceMapID), plainNum(rec.map)
+  if fm and rm then return fm == rm end
+  local z, n = f.zone, rec.inst
+  if type(z) ~= "string" or type(n) ~= "string" then return false end
+  return z:lower() == n:lower()
+end
+-- the fights of a run: the stored fights that began inside one of its visits, in its instance
+function Runs.fightsOf(rec)
+  return Runs.rowsOf(rec, ns.Fights and ns.Fights.list and ns.Fights.list(), "startEpoch", function(f) return Runs.inInstance(rec, f) end)
+end
 function Runs.rowsOf(rec, list, tkey, want)
   local rev, older = {}, 0
   if type(list) ~= "table" then return rev end
@@ -2385,41 +2423,23 @@ function Runs.views(full, light)
   if run and Runs.valid(run) then out[#out + 1] = Runs.view(run, true, full, light) end
   return out
 end
--- Two lines, so that no clock is cut at the narrowest window:
---   "Inside 31m 10s · running back 2m 05s · outside 4m 30s · offline 1h 56m"   where the wall time went
---   "Active 28m 40s · in combat 14m 2s (bosses 3m 10s)"                        what was done inside
-function Runs.timeLine(v)
-  local SEP = "  ·  "
-  local a = { "Inside " .. fmtDur(v.inside) }
-  if v.ghost > 0 then a[#a + 1] = "running back " .. fmtDur(v.ghost) end
-  if v.outside > 0 then a[#a + 1] = "outside " .. fmtDur(v.outside) end
-  if v.offline > 0 then a[#a + 1] = "offline " .. fmtDur(v.offline) end
-  local b = { "Active " .. fmtDur(v.active) }
-  if v.combat > 0 or v.boss > 0 then
-    b[#b + 1] = "in combat " .. fmtDur(v.combat) .. (v.boss > 0 and (" (bosses " .. fmtDur(v.boss) .. ")") or "")
-  end
-  return table.concat(a, SEP), table.concat(b, SEP)
-end
--- How many more runs like this one reach the next level, from the XP of its kills alone (a quest is handed in
--- once). Only for a run that is over, and only when the bar it ended on is known.
-function Runs.runsToLevel(v)
-  local x = v.xp
-  if v.inProgress or type(x) ~= "table" or num(x.kill) <= 0 or not (plainNum(x.need) and plainNum(x.p1) and plainNum(x.l1)) then return nil end
-  local n = math.ceil(x.need * (1 - x.p1) / x.kill)
-  if n < 1 or n > 999 then return nil end
-  return n, x.l1 + 1
-end
--- "12,300 XP · 23,000 per hour · level 23.4 to 24.1 · about 6 more runs to level 25", then on a line of their own
--- the quest XP and the kills the client let the addon read, then what it hid. Returns the three (the last two or nil).
+-- "12,300 XP · 23,000 per hour · level 23.4 to 24.1", then on a line of their own the quest XP and the kills the
+-- client let the addon read, then what it hid. Returns the three (the last two or nil). Stored facts only: there is
+-- no "about N more runs to level L" (a forecast from kill XP, false the moment the character levels another way).
 function Runs.xpLine(v)
   local x = v.xp
   if type(x) ~= "table" or v.xpGain <= 0 then return nil end
   local SEP = "  ·  "
   local parts = { Runs.commas(v.xpGain) .. " XP" }
   if v.xpPerHour then parts[#parts + 1] = Runs.commas(v.xpPerHour) .. " per hour" end
-  if x.l0 and x.p0 and x.l1 and x.p1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + floor(x.p0 * 10) / 10, x.l1 + floor(x.p1 * 10) / 10) end
-  local more, lvl = Runs.runsToLevel(v)
-  if more then parts[#parts + 1] = ("about %d more run%s to level %d"):format(more, more == 1 and "" or "s", lvl) end
+  if x.l0 and x.p0 and x.l1 and x.p1 then
+    -- (one decimal, two when the run moved the level less than a tenth: "level 18.71 to 18.77", never "18.7 to 18.7";
+    -- left out when even two decimals show no change)
+    local a1, b1 = floor(x.p0 * 10), floor(x.p1 * 10)
+    local a2, b2 = floor(x.p0 * 100), floor(x.p1 * 100)
+    if x.l0 ~= x.l1 or a1 ~= b1 then parts[#parts + 1] = ("level %.1f to %.1f"):format(x.l0 + a1 / 10, x.l1 + b1 / 10)
+    elseif a2 ~= b2 then parts[#parts + 1] = ("level %.2f to %.2f"):format(x.l0 + a2 / 100, x.l1 + b2 / 100) end
+  end
   local second = {}
   if num(x.quest) > 0 then second[#second + 1] = Runs.commas(x.quest) .. " XP from quests" end
   local hid = num(v.hidden and v.hidden.xp)

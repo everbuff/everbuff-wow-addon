@@ -279,8 +279,12 @@ return function(P)
     if first and ns._test.dungeonDetail() then
       ns._test.renderRun(first)
       local dv = ns._test.dungeonDetail()
-      check("dungeons: the run's page reads items, coin and loot value from that block", dv and dv.lootLine == ("4 items  ·  %s coin  ·  loot value about %s"):format(fmt(3300), fmt(1200)), dv and dv.lootLine)
-      check("dungeons: and says when the looted coin is not what the purse gained", dv and dv.purseLine == ("Coin %s of %s gained inside"):format(fmt(2100), fmt(2600)), dv and dv.purseLine)
+      -- (WORTH is the run's coin plus the vendor value of the items; the quest coin is not loot and is only in the hover.
+      -- The purse gained 2,600 inside, quest coin aside, where 2,100 was booked as looted: the coin is the 2,600.)
+      check("dungeons: the run's page reads coin and loot value from that block, as its WORTH", dv and dv.card.worth and dv.card.worth.value.text == ns.UI.money(2600 + 1200)
+        and ns.Dungeons.D.worthParts(first) == ("%s coin · %s items at vendor prices"):format(ns.UI.money(2600), ns.UI.money(1200)), dv and dv.worthText)
+      check("dungeons: and its WORTH hover says the coin is the purse figure and what was booked as loot", dv and dv.purseLine == nil
+        and dv.purseTip == ("Coin is what your purse gained inside, quest rewards aside: %s. Of it %s was seen as loot when it was picked up."):format(fmt(2600), fmt(2100)), dv and dv.purseTip)
     end
     check("dungeons: Gold.runFor is gone with the view-time runs it matched", G.runFor == nil)
   end
@@ -299,6 +303,43 @@ return function(P)
     G.runSync()
   end
 
+  -- ── 0.9.52 (gate H, everbuff-wow-addon #52): group coin inside a dungeon is the run's, never the mailbox's ──
+  do
+    fresh()
+    M.epoch, M.money = T0, 50000
+    login(); G.tick()
+    local g = function() return me().gold end
+    -- the mailbox was opened and the client sent no MAIL_CLOSED (walking away); then a dungeon
+    M.fire("MAIL_SHOW")
+    money(60)
+    check("#52: at the mailbox, outside, an income with no take waiting is still the mailbox's", (g().mail or 0) == 60, g().mail)
+    M.now = M.now + 10
+    enter("Shadowfang Keep")
+    local run = me().goldRun
+    M.fire("CHAT_MSG_MONEY", "Your share of the loot is 3 Silver, 40 Copper."); money(340)
+    check("#52: a group share inside a dungeon, the mailbox flag still set: looted, on the run", (g().looted or 0) == 340 and (g().mail or 0) == 60 and run and run.looted == 340, ("%s %s %s"):format(tostring(g().looted), tostring(g().mail), tostring(run and run.looted)))
+    M.now = M.now + 10
+    money(55)
+    check("#52: inside a dungeon an income with no coin line is never mail: it has no source", (g().mail or 0) == 60 and g().gained == 60 + 340 + 55 and run.looted == 340, g().mail)
+    M.now = M.now + 10
+    -- the same share paid in two purse changes (the founder's save, 20 Nov 15:25): both parts reach the run
+    money(154); money(101); M.fire("CHAT_MSG_MONEY", "Your share of the loot is 2 Silver, 55 Copper.")
+    check("#52: a share in two purse changes is looted coin of the run", (g().looted or 0) == 340 + 255 and run.looted == 340 + 255 and (g().mail or 0) == 60, run.looted)
+    local zr
+    for _, r in pairs(me().goldZones or {}) do if type(r) == "table" and (r.looted or 0) >= 595 then zr = r end end
+    check("#52: and of the place", zr ~= nil)
+    M.now = M.now + 10
+    leave()
+    M.now = M.now + 10
+    -- second case: no instance, but a loading screen after the mailbox
+    M.fire("MAIL_SHOW")
+    login(true)
+    money(77)
+    check("#52: after a loading screen the mailbox is closed: an income with no source is not mail", (g().mail or 0) == 60, g().mail)
+    M.fire("MAIL_CLOSED")
+    M.epoch, M.now = M.epoch + 21 * 60, M.now + 21 * 60
+    G.runSync()
+  end
   -- ── runs: the ring of the last 50, and the acknowledgement ──────────────────────────────────────────────────
   do
     local c = me()
@@ -476,55 +517,6 @@ return function(P)
     check("reset: the history after it reconciles", G.audit("today").state == "ok", tostring(G.audit("today").text or G.audit("today").reason))
   end
 
-  -- ── the balance line ────────────────────────────────────────────────────────────────────────────────────────
-  do
-    fresh()
-    M.epoch, M.money = T0, 1000
-    login(); G.tick()
-    loot(100)                                   -- day 0 closes on 1100
-    M.epoch, M.now = M.epoch + 3 * DAY, M.now + 3 * DAY
-    money(-300)                                 -- day 3 closes on 800
-    M.epoch, M.now = M.epoch + 2 * DAY, M.now + 2 * DAY   -- today is day 5, nothing moved
-    local line = G.balanceLine("char", M.epoch)
-    local n = G.STRIP_DAYS
-    check("line: 30 day slots, today last", #line == n and line[n].live == true and line[n].key == G.dayKey(M.epoch, G.baseStored()))
-    check("line: before the first row the opening balance of that row is carried back, marked stale", line[1] and line[1].v == 1000 and line[1].stale == true and line[n - 6].v == 1000)
-    check("line: a day with a row shows its closing balance, not stale", line[n - 5].v == 1100 and line[n - 5].stale == false and line[n - 2].v == 800 and line[n - 2].stale == false)
-    check("line: the days between two rows carry the balance forward, marked stale", line[n - 4].v == 1100 and line[n - 4].stale == true and line[n - 3].v == 1100 and line[n - 3].stale == true)
-    check("line: a day after the last row carries it forward too", line[n - 1].v == 800 and line[n - 1].stale == true)
-    check("line: today is the balance of the logged-in character, never stale", line[n].v == 800 and line[n].stale == false)
-    -- a second character: the account line sums each character's own carried balance
-    ns.DB.characters["Player-1-000002"] = { name = "Mira", realm = me().realm, class = "MAGE", faction = me().faction, level = 21, seen = M.epoch - 100,
-      gold = { balance = 5000, gained = 0, spent = 0 } }
-    local acct = G.balanceLine("account", M.epoch)
-    check("line: the account line adds a character with no row at its stored balance", acct[n].v == 5800 and acct[1].v == 6000 and acct[n - 5].v == 6100)
-    check("line: an account slot is stale when no character has a row that day", acct[n - 4].stale == true and acct[n - 5].stale == false)
-    ns.DB.characters["Player-1-000002"] = nil
-    -- no day base, no line
-    local keep = ns.DB.settings.gold.dayBase
-    ns.DB.settings.gold.dayBase = nil
-    check("line: with no day base there is no line", #G.balanceLine("char", M.epoch) == 0)
-    ns.DB.settings.gold.dayBase = keep
-    -- the widget: one solid step per day with a row, dashes for a carried day, a riser where the balance moved
-    local st = G.lineBuild(UIParent, "Balance, last 30 days", n)
-    st.slot = 28
-    G.lineRender(st, line)
-    check("line widget: a solid step for each day with a row and for today", st.solid == 3, st.solid)
-    check("line widget: carried days are drawn dashed", st.dashes == 27 * 4, st.dashes)
-    check("line widget: a riser where the balance moved", st.risers == 2, st.risers)
-    local shownSegs = 0
-    for _, t in ipairs(st.segs) do if t.shown ~= false then shownSegs = shownSegs + 1 end end
-    check("line widget: every segment drawn is shown, none left over from a wider draw", shownSegs == st.solid + st.dashes + st.risers, shownSegs)
-    check("line widget: the title says the range", st.range.text == fmt(800) .. " to " .. fmt(1100), st.range.text)
-    check("line widget: a slot's hover names the day and the balance, and says when it is carried", st.hits[n].tip == line[n].label .. "  ·  " .. fmt(800) and st.hits[n].tip2 == nil and st.hits[1].tip2 ~= nil)
-    local empty = {}
-    for i = 1, n do empty[i] = false end
-    G.lineRender(st, empty)
-    local left = 0
-    for _, t in ipairs(st.segs) do if t.shown ~= false then left = left + 1 end end
-    check("line widget: no balance known draws nothing", left == 0 and st.range.text == "")
-  end
-
   -- ── the audit: reconciled, broken, not checkable ────────────────────────────────────────────────────────────
   do
     fresh()
@@ -564,7 +556,7 @@ return function(P)
     -- a read changes nothing
     do
       local snap = deepcopy(ns.DB)
-      G.audit(); G.audit("today"); G.zones(); G.runs(); G.balanceLine("account"); G.bestText()
+      G.audit(); G.audit("today"); G.zones(); G.runs(); G.bestText()
       check("audit: reading writes nothing into the save file", same(ns.DB, snap))
     end
     -- broken: a journal row whose balance does not follow
@@ -583,7 +575,7 @@ return function(P)
     do
       ses.gold.other = ses.gold.other + 1
       local b = G.audit()
-      check("audit: rows that do not sum to the session's ledger are a break, named by the source", b.state == "broken" and b.text:find("Unexplained spending", 1, true) ~= nil, b.text)
+      check("audit: rows that do not sum to the session's ledger are a break, named by the source", b.state == "broken" and b.text:find("Spending not explained", 1, true) ~= nil, b.text)
       ses.gold.other = ses.gold.other - 1
     end
     -- broken: a day row whose sources do not sum, and one whose balances do not follow
@@ -787,14 +779,15 @@ return function(P)
     local worst, worstView, rendered = 0, "?", 0
     local okRender, errRender = pcall(function()
       ns.UI.Open("Loot", "gold")
+      -- (All time and Week: the two periods that hold the whole history's rows)
       for _, v in ipairs(G.VIEWS) do
-        for _, who in ipairs({ "char", "account" }) do
+        for _, scope in ipairs({ "all", "week" }) do
           local tr = os.clock()
-          G.open("all", v[1]); M.settle()
+          G.open(scope, v[1]); M.settle()
           local c = ns._test.goldPane and ns._test.goldPane()
-          if c and c.setWho then c.setWho(who); M.settle(); rendered = rendered + 1 end
+          if c and c.scopeData and c.tbl[c.view] then rendered = rendered + 1 end
           local ms = (os.clock() - tr) * 1000
-          if ms > worst then worst, worstView = ms, v[1] .. "/" .. who end
+          if ms > worst then worst, worstView = ms, v[1] .. "/" .. scope end
         end
       end
     end)

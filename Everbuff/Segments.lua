@@ -46,6 +46,26 @@ function ns.surname()
   return (type(sur) == "string" and sur ~= "") and sur or nil
 end
 
+-- The character's name as a screen shows it, "Iron Hart", or nil when only half of it is known: a half name is never
+-- shown (docs/UX_PRAGMATIC.md 1.1). The second name is the client's (ns.surname), else the one stored on the
+-- character's block. A client with no second names (ns.surname has no function to ask) gives the one name it has.
+function ns.fullName()
+  local okN, name = pcall(UnitName, "player")
+  if not okN or type(name) ~= "string" or (issecretvalue and issecretvalue(name)) or name == "" then return nil end
+  local okS, sur = pcall(ns.surname)
+  sur = okS and sur or nil
+  if not sur then
+    local c = ns.DB and ns.charGuid and ns.charGuid() and ns.char and ns.char() or nil
+    sur = c and type(c.surname) == "string" and c.surname ~= "" and c.surname or nil
+  end
+  if sur then return name .. " " .. sur end
+  if C_PlayerInfo and C_PlayerInfo.ShouldDisplaySurname then
+    local ok, show = pcall(C_PlayerInfo.ShouldDisplaySurname, "player")
+    if ok and show then return nil end
+  end
+  return name
+end
+
 -- The session's gold ledger (everbuff-backend #46): the keys of the character's lifetime gold ledger (characters[guid].gold) except balance, in copper,
 -- all present from the start so a zero is a known zero. Emitter's money handler credits it.
 R.GOLD_KEYS = { "gained", "spent", "looted", "sold", "quests", "auctionSales", "mail", "repairs", "vendor", "training",
@@ -94,8 +114,7 @@ function R.start()
   row("SESSION_START", string.format("%s\t%s\t%s\tlvl=%d", sess.player or "?", sess.realm or "?", context, sess.level))
   local aclOn, combatOn = ns.Logging.enforce()
   row("LOGGING", string.format("acl=%d\tcombat=%d", aclOn and 1 or 0, combatOn and 1 or 0))
-  ns.msg(("recording %s%s|r · %ssession %s|r · the combat log is the record; this is just the beacon")
-    :format(ns.CYAN, context, ns.CYAN, sess.id))
+  ns.msg(("capturing %s%s|r · %ssession %s|r"):format(ns.CYAN, context, ns.CYAN, sess.id))
 end
 
 -- PLAYER_LOGOUT fires on a /reload as well as on a real logout (#14), and WoW writes the save file right after it. So
